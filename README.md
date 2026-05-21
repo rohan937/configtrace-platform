@@ -177,6 +177,56 @@ All product planning documents live in [`docs/`](docs/):
 - [`UIDesignSystem.txt`](docs/UIDesignSystem.txt) — Design system: colors, typography, interaction
 - [`MVPBuildPlan.txt`](docs/MVPBuildPlan.txt) — Milestone-by-milestone build plan (18 milestones)
 
+## Cloudflare connector
+
+The Cloudflare DNS connector (`backend/app/connectors/cloudflare.py`) is a
+self-contained, database-independent module that fetches all DNS records for a
+zone and returns them as normalised dicts.
+
+**Quick test against a live zone**
+```bash
+export CLOUDFLARE_API_TOKEN=your_token_here
+export CLOUDFLARE_ZONE_ID=your_zone_id_here
+
+# Validate credentials only (no full fetch):
+VALIDATE_ONLY=1 python scripts/test_connector.py
+
+# Fetch all records and print a summary:
+python scripts/test_connector.py
+
+# Print every record:
+VERBOSE=1 python scripts/test_connector.py
+```
+
+**Run the unit tests**
+```bash
+# Inside Docker (recommended — matches the production Python environment):
+docker compose run --rm api pytest backend/tests/ -v
+
+# Locally (requires dev dependencies):
+cd backend
+pip install -r requirements.txt -r requirements-dev.txt
+pytest tests/ -v
+```
+
+**Connector architecture**
+
+```
+credentials dict
+    │
+    ▼
+CloudflareConnector.fetch()
+    │  ├─ paginates GET /zones/{zone_id}/dns_records
+    │  ├─ retries on 429 (max 3, honours Retry-After header)
+    │  └─ raises AuthenticationError / ConnectorError / RateLimitError / NetworkError
+    │
+    ▼
+list[CloudflareDNSRecord]   ← stored verbatim in Snapshot.state (JSONB)
+```
+
+Each `CloudflareDNSRecord` dict contains: `record_id`, `record_type`, `name`,
+`content`, `ttl`, `proxied`, `priority`, `comment`, `modified_on`.
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -185,8 +235,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 2: Docker Compose
 - [x] Milestone 3: FastAPI backend setup (partial — health endpoint + CORS; Clerk auth deferred)
 - [x] Milestone 4: PostgreSQL and SQLAlchemy models
-- [x] Milestone 5: Alembic migrations ← **you are here**
-- [ ] Milestone 6: Cloudflare connector
+- [x] Milestone 5: Alembic migrations
+- [x] Milestone 6: Cloudflare connector ← **you are here**
 - [ ] Milestone 7: Manual sync endpoint
 - [ ] Milestone 8: Snapshot service
 - [ ] Milestone 9: Diff service
