@@ -1,0 +1,364 @@
+"""Diff service — Milestone 9.
+
+Responsibilities
+----------------
+* ``build_record_index``     — stable key → full record dict from snapshot.state
+* ``format_record_identifier`` — human-readable label, e.g. "A api.example.com"
+* ``compute_diff``           — pure function: two Snapshots → list[change_dict]
+* ``store_changes``          — persist change_dicts as Change rows in the DB
+
+Design decisions
+----------------
+* ``compute_diff`` is **pure** — it reads Snapshot.state but never touches the
+  database.  This makes every diff scenario testable without DB fixtures.
+
+* ``store_changes`` is the DB writer.  Keeping it separate from ``compute_diff``
+  means the diff logic can be validated independently of persistence concerns.
+
+* Only the seven fields in ``_TRACKED_FIELDS`` are compared for modified
+  records.  Volatile provider timestamps (``modified_on``, ``created_on``,
+  etc.) are explicitly excluded to prevent false positives on every sync.
+
+* One Change row is written per changed *field* for "modified" records.  A
+  record with three changed fields produces three rows.  This granularity lets
+  Milestone 10 apply different risk levels to TTL changes vs content changes on
+  the same record.
+
+* ``risk_level`` is set to ``"unknown"`` on all rows written here.  Milestone 10
+  (risk service) will update these to low/medium/high/critical.
+
+* ``provider_metadata`` is populated with enough record context (type, name,
+  content, stable ID) for Milestone 10 risk rules and the Milestone 11/15 UI
+  to classify and display changes without reloading snapshot state.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from typing import Any, Optional
+
+from sqlalchemy.orm import Session
+
+from app.models.change import Change
+from app.models.snapshot import Snapshot
+
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Fields compared field-by-field when the same record appears in both snapshots.
+# Ordered deterministically so multi-field modifications are always in the same
+# sequence, which matters for the UI and for risk rule matching.
+_TRACKED_FIELDS: tuple[str, ...] = (
+    "record_type",   # maps from Cloudflare's "type" via connector normalisation
+    "name",
+    "content",
+    "ttl",
+    "proxied",
+    "priority",
+    "comment",
+)
+
+# Fields that must NEVER trigger a change even if they differ between snapshots.
+# These are provider-managed timestamps that change on every API response
+# regardless of whether the configuration actually changed.
+_IGNORED_FIELDS: frozenset[str] = frozenset({
+    "modified_on",
+    "created_on",
+    "created_at",
+    "updated_at",
+})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Index builder
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_record_index(state: list[dict]) -> dict[str, dict]:
+    """Return a mapping from stable record identifier → full record dict.
+
+    Identifier priority (first non-empty value wins):
+    1. ``external_id``  — used by future providers that expose their own ID
+    2. ``id``           — generic fallback
+    3. ``record_id``    — used by the Cloudflare connector (canonical field)
+
+    Args:
+        state: Normalised record list stored in ``Snapshot.state``.
+
+    Returns:
+        Dict keyed by the stable identifier string.
+
+    Raises:
+        ValueError: if any record has none of the recognised identifier fields.
+    """
+    index: dict[str, dict] = {}
+    for record in state:
+        key = (
+            record.get("external_id")
+            or record.get("id")
+            or record.get("record_id")
+        )
+        if not key:
+            raise ValueError(
+                "Record has no stable identifier "
+                "(expected 'external_id', 'id', or 'record_id'): "
+                f"{record!r}"
+            )
+        index[str(key)] = record
+    return index
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def format_record_identifier(record: dict) -> str:
+    """Return a short human-readable label for *record*.
+
+    Examples::
+
+        "A api.example.com"
+        "MX example.com"
+        "CNAME checkout.example.com"
+        "TXT _dmarc.example.com"
+
+    Uses ``record_type`` (Cloudflare normalised field) or ``type`` (raw API
+    field) as the type prefix.  Falls back gracefully if neither is present.
+    """
+    record_type = record.get("record_type") or record.get("type") or "UNKNOWN"
+    name = record.get("name") or ""
+    label = f"{record_type} {name}".strip()
+    return label or "unknown record"
+
+
+def _stable_id(record: dict) -> Optional[str]:
+    """Extract the stable identifier from *record*, or ``None``."""
+    key = (
+        record.get("external_id")
+        or record.get("id")
+        or record.get("record_id")
+    )
+    return str(key) if key else None
+
+
+def _build_provider_metadata(
+    record: dict,
+    alt_record: Optional[dict] = None,
+) -> dict[str, Any]:
+    """Build the ``provider_metadata`` payload stored on each Change row.
+
+    Contains enough context for Milestone 10 risk rules and Milestone 11/15
+    UI to classify and display changes without re-loading snapshot state.
+
+    Args:
+        record:     Primary record (prev for removed/modified; new for added).
+        alt_record: Counterpart record, used for modified changes to include
+                    the new record's content alongside the old one.
+    """
+    metadata: dict[str, Any] = {
+        "record_id": _stable_id(record),
+        "record_type": record.get("record_type") or record.get("type"),
+        "record_name": record.get("name"),
+        "record_content": record.get("content"),
+    }
+    if alt_record is not None:
+        metadata["new_record_content"] = alt_record.get("content")
+    return metadata
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Diff computation — pure, no DB
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_diff(
+    prev_snapshot: Snapshot,
+    new_snapshot: Snapshot,
+) -> list[dict]:
+    """Compare two snapshots and return a list of change dicts.
+
+    This is a **pure function**: it reads ``Snapshot.state`` but never touches
+    the database.  Pass the output to :func:`store_changes` to persist.
+
+    Algorithm
+    ---------
+    1. Build keyed indexes for both snapshot states via :func:`build_record_index`.
+    2. Added records  — keys present in ``new_index`` but not ``prev_index``.
+    3. Removed records — keys present in ``prev_index`` but not ``new_index``.
+    4. Modified records — keys in both indexes where any tracked field differs.
+       One change dict is emitted **per changed field** (not per record).
+
+    Volatile provider timestamps (``modified_on``, ``created_on``, etc.) are
+    always excluded from comparison.  Only the fields in ``_TRACKED_FIELDS``
+    are compared.
+
+    Change dict keys
+    ----------------
+    ``change_type``       : ``"added"``, ``"removed"``, or ``"modified"``
+    ``record_identifier`` : human-readable label, e.g. ``"A api.example.com"``
+    ``field_path``        : field name for ``"modified"``; ``None`` otherwise
+    ``prev_value``        : old value; ``None`` for ``"added"``
+    ``new_value``         : new value; ``None`` for ``"removed"``
+    ``provider_metadata`` : dict with record context for risk rules and UI
+
+    Args:
+        prev_snapshot: The earlier ``Snapshot`` (previous state).
+        new_snapshot:  The later ``Snapshot`` (current state).
+
+    Returns:
+        List of change dicts.  Empty list when snapshots are identical.
+    """
+    prev_index = build_record_index(prev_snapshot.state or [])
+    new_index = build_record_index(new_snapshot.state or [])
+
+    changes: list[dict] = []
+
+    # ── Added records ────────────────────────────────────────────────────────
+    for key, new_record in new_index.items():
+        if key not in prev_index:
+            changes.append({
+                "change_type": "added",
+                "record_identifier": format_record_identifier(new_record),
+                "field_path": None,
+                "prev_value": None,
+                "new_value": new_record,
+                "provider_metadata": _build_provider_metadata(new_record),
+            })
+            logger.debug(
+                "diff: added  id=%s  label=%r",
+                key,
+                format_record_identifier(new_record),
+            )
+
+    # ── Removed records ──────────────────────────────────────────────────────
+    for key, prev_record in prev_index.items():
+        if key not in new_index:
+            changes.append({
+                "change_type": "removed",
+                "record_identifier": format_record_identifier(prev_record),
+                "field_path": None,
+                "prev_value": prev_record,
+                "new_value": None,
+                "provider_metadata": _build_provider_metadata(prev_record),
+            })
+            logger.debug(
+                "diff: removed  id=%s  label=%r",
+                key,
+                format_record_identifier(prev_record),
+            )
+
+    # ── Modified records (field-level) ───────────────────────────────────────
+    for key in sorted(prev_index.keys() & new_index.keys()):
+        prev_record = prev_index[key]
+        new_record = new_index[key]
+        identifier = format_record_identifier(prev_record)
+
+        for field in _TRACKED_FIELDS:
+            prev_val = prev_record.get(field)
+            new_val = new_record.get(field)
+            if prev_val != new_val:
+                changes.append({
+                    "change_type": "modified",
+                    "record_identifier": identifier,
+                    "field_path": field,
+                    "prev_value": prev_val,
+                    "new_value": new_val,
+                    "provider_metadata": _build_provider_metadata(
+                        prev_record, new_record
+                    ),
+                })
+                logger.debug(
+                    "diff: modified  id=%s  field=%s  prev=%r  new=%r",
+                    key,
+                    field,
+                    prev_val,
+                    new_val,
+                )
+
+    logger.info(
+        "compute_diff: %d change(s)  prev_snapshot=%s  new_snapshot=%s",
+        len(changes),
+        getattr(prev_snapshot, "id", "?"),
+        getattr(new_snapshot, "id", "?"),
+    )
+    return changes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Persist changes — writes to DB
+# ─────────────────────────────────────────────────────────────────────────────
+
+def store_changes(
+    *,
+    resource_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    prev_snapshot_id: uuid.UUID,
+    new_snapshot_id: uuid.UUID,
+    change_dicts: list[dict],
+    db: Session,
+) -> list[Change]:
+    """Persist a list of change dicts as ``Change`` rows in the database.
+
+    Each dict in *change_dicts* must contain the keys produced by
+    :func:`compute_diff`.
+
+    Transactional pattern:
+        Calls ``db.flush()`` after adding all rows — consistent with
+        ``store_snapshot``.  The caller (``sync_integration`` task) is
+        responsible for ``db.commit()`` once all per-resource work is done.
+
+    Risk classification:
+        All rows are written with ``risk_level = "unknown"`` and
+        ``risk_reason = None``.  Milestone 10's risk service will update
+        these values.
+
+    Args:
+        resource_id:      UUID of the monitored resource.
+        integration_id:   UUID of the parent integration (denormalised FK).
+        user_id:          UUID of the owning user (denormalised FK).
+        prev_snapshot_id: UUID of the earlier Snapshot.
+        new_snapshot_id:  UUID of the newer Snapshot.
+        change_dicts:     Output of :func:`compute_diff`.
+        db:               Active SQLAlchemy session.
+
+    Returns:
+        List of persisted ``Change`` objects with populated ``id`` fields.
+        Empty list when *change_dicts* is empty.
+    """
+    if not change_dicts:
+        return []
+
+    created: list[Change] = []
+    for cd in change_dicts:
+        change = Change(
+            resource_id=resource_id,
+            integration_id=integration_id,
+            user_id=user_id,
+            prev_snapshot_id=prev_snapshot_id,
+            new_snapshot_id=new_snapshot_id,
+            change_type=cd["change_type"],
+            record_identifier=cd["record_identifier"],
+            field_path=cd.get("field_path"),
+            prev_value=cd.get("prev_value"),
+            new_value=cd.get("new_value"),
+            provider_metadata=cd.get("provider_metadata"),
+            risk_level="unknown",      # Milestone 10 updates to real levels
+            risk_reason=None,
+        )
+        db.add(change)
+        created.append(change)
+
+    db.flush()
+    for change in created:
+        db.refresh(change)
+
+    logger.info(
+        "store_changes: %d row(s) written  resource_id=%s",
+        len(created),
+        resource_id,
+    )
+    return created

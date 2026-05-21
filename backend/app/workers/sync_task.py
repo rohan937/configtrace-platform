@@ -1,11 +1,13 @@
-"""Celery sync task — Milestone 8.
+"""Celery sync task — Milestone 9.
 
 Pipeline (this milestone):
-  connector.fetch() → snapshot_service.store_snapshot()
+  connector.fetch()
+    → snapshot_service.store_snapshot()
+    → diff_service.compute_diff()      ← new in Milestone 9
+    → diff_service.store_changes()     ← new in Milestone 9
 
-Milestones 9–10 will extend the pipeline:
-  → diff_service.compute_diff()
-  → risk_service.classify_changes()
+Milestone 10 will extend the pipeline:
+    → risk_service.classify_changes()
 """
 
 from __future__ import annotations
@@ -33,15 +35,37 @@ def sync_integration(
     Task arguments are plain strings (JSON-serialisable) and converted to
     UUIDs inside the function body.
 
-    Pipeline:
+    Pipeline
+    --------
     1. Mark SyncRun ``running``.
     2. Load the Integration and decrypt its credentials.
     3. Look up all active Resources for the integration.
-    4. For each resource, call the appropriate connector and store a Snapshot
-       (skipped if the config is unchanged since the last snapshot).
-    5. Update ``integration.last_synced_at`` and ``resource.last_snapshot_at``
-       for resources that received new snapshots.
-    6. Mark SyncRun ``completed`` with counts, or ``failed`` on any exception.
+    4. For each resource:
+       a. Capture the current latest snapshot as ``previous_snapshot``.
+       b. Fetch fresh state from the connector.
+       c. Call ``store_snapshot`` — writes only if state changed (hash dedup).
+       d. If a new snapshot was written **and** ``previous_snapshot`` exists,
+          run ``compute_diff`` + ``store_changes`` to persist Change rows.
+       e. Update ``resource.last_snapshot_at`` for resources with new snapshots.
+    5. Commit all snapshot and change writes in a single transaction.
+    6. Update ``integration.last_synced_at``.
+    7. Mark SyncRun ``completed`` with accurate ``snapshot_count`` and
+       ``change_count``, or ``failed`` on any exception.
+
+    Expected behaviour per sync scenario
+    -------------------------------------
+    First sync (baseline):
+        ``snapshot_count = 1``, ``change_count = 0``
+        A snapshot is stored; no previous snapshot exists so diff is skipped.
+
+    No-change sync (identical state):
+        ``snapshot_count = 0``, ``change_count = 0``
+        Hash dedup skips the snapshot write; diff is never run.
+
+    Changed sync (state differs):
+        ``snapshot_count = 1``, ``change_count = N``
+        New snapshot written; diff runs against the previous snapshot and
+        N Change rows are stored.
 
     Args:
         sync_run_id:    UUID string of the SyncRun created by the API.
@@ -49,15 +73,8 @@ def sync_integration(
         user_id:        UUID string of the owning user.
 
     Returns:
-        ``{"status": "completed", "sync_run_id": "<uuid>",
-           "snapshot_count": <int>, "change_count": 0}``
-
-    Side effects:
-        - Sets ``SyncRun.status`` to ``'running'`` then ``'completed'`` or
-          ``'failed'``.
-        - Writes new ``Snapshot`` rows when config has changed.
-        - Sets ``Integration.last_synced_at`` on success.
-        - Sets ``Resource.last_snapshot_at`` when a new snapshot was stored.
+        ``{"status": "completed", "sync_run_id": str,
+           "snapshot_count": int, "change_count": int}``
     """
     # DB-related imports are local so the task module stays importable without
     # a database connection (useful for Celery worker startup and unit tests).
@@ -66,7 +83,8 @@ def sync_integration(
     from app.database import SessionLocal
     from app.models.integration import Integration
     from app.models.resource import Resource
-    from app.services.snapshot_service import store_snapshot
+    from app.services.diff_service import compute_diff, store_changes
+    from app.services.snapshot_service import get_latest_snapshot, store_snapshot
     from app.services.sync_service import (
         mark_sync_completed,
         mark_sync_failed,
@@ -122,8 +140,9 @@ def sync_integration(
                 integration_id,
             )
 
-        # ── Fetch + snapshot each resource ───────────────────────────────────
+        # ── Fetch, snapshot, and diff each resource ──────────────────────────
         snapshot_count = 0
+        change_count = 0
 
         for resource in resources:
             # Select the correct connector based on provider.
@@ -139,7 +158,11 @@ def sync_integration(
                 )
                 continue
 
-            _, created = store_snapshot(
+            # Capture the previous snapshot BEFORE storing the new one.
+            # This is the correct "previous" snapshot to diff against.
+            previous_snapshot = get_latest_snapshot(resource.id, db)
+
+            new_snapshot, created = store_snapshot(
                 resource_id=resource.id,
                 integration_id=_integration_uuid,
                 user_id=resource.user_id,
@@ -153,8 +176,44 @@ def sync_integration(
                 snapshot_count += 1
                 resource.last_snapshot_at = datetime.now(timezone.utc)
 
-        # ── Commit resource timestamp updates ────────────────────────────────
-        # store_snapshot uses flush(); we commit all at once here.
+                # ── Diff against previous snapshot ───────────────────────────
+                # Skip if this is the baseline snapshot (no previous exists).
+                # The first sync creates the reference point; changes are only
+                # meaningful when compared to a known previous state.
+                if previous_snapshot is not None:
+                    change_dicts = compute_diff(previous_snapshot, new_snapshot)
+                    if change_dicts:
+                        changes = store_changes(
+                            resource_id=resource.id,
+                            integration_id=_integration_uuid,
+                            user_id=resource.user_id,
+                            prev_snapshot_id=previous_snapshot.id,
+                            new_snapshot_id=new_snapshot.id,
+                            change_dicts=change_dicts,
+                            db=db,
+                        )
+                        change_count += len(changes)
+                        logger.info(
+                            "sync_integration: %d change(s) detected  resource_id=%s",
+                            len(changes),
+                            resource.id,
+                        )
+                    else:
+                        logger.info(
+                            "sync_integration: snapshots differ by hash but "
+                            "no tracked-field changes found  resource_id=%s",
+                            resource.id,
+                        )
+                else:
+                    logger.info(
+                        "sync_integration: baseline snapshot stored  "
+                        "resource_id=%s  (no diff run)",
+                        resource.id,
+                    )
+
+        # ── Commit all snapshot + change + timestamp writes ──────────────────
+        # store_snapshot and store_changes both use db.flush(); we commit
+        # everything together here so the writes are atomic per sync run.
         integration.last_synced_at = datetime.now(timezone.utc)
         db.commit()
 
@@ -162,20 +221,22 @@ def sync_integration(
         mark_sync_completed(
             _sync_run_uuid,
             snapshot_count=snapshot_count,
-            change_count=0,          # Milestone 9 wires in real diff counts
+            change_count=change_count,
             db=db,
         )
 
         logger.info(
-            "sync_integration completed  sync_run_id=%s  snapshots=%d",
+            "sync_integration completed  sync_run_id=%s  "
+            "snapshots=%d  changes=%d",
             sync_run_id,
             snapshot_count,
+            change_count,
         )
         return {
             "status": "completed",
             "sync_run_id": sync_run_id,
             "snapshot_count": snapshot_count,
-            "change_count": 0,
+            "change_count": change_count,
         }
 
     except Exception as exc:

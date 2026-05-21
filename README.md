@@ -335,6 +335,64 @@ any sequence from the Cloudflare API produces the same hash.
 docker compose run --rm api pytest tests/test_milestone8.py -v
 ```
 
+## Diff service (Milestone 9)
+
+After a sync stores a new snapshot, the diff service compares it against the
+previous snapshot for the same resource and writes one `Change` row per
+detected difference.
+
+**Change types**
+
+| `change_type` | Meaning | `field_path` | `prev_value` | `new_value` |
+|---|---|---|---|---|
+| `added` | DNS record appeared | `null` | `null` | full record dict |
+| `removed` | DNS record disappeared | `null` | full record dict | `null` |
+| `modified` | A tracked field changed | field name | old value | new value |
+
+**Tracked DNS fields** — the diff compares these seven fields per record:
+`record_type`, `name`, `content`, `ttl`, `proxied`, `priority`, `comment`.
+
+**Ignored fields** — `modified_on`, `created_on`, `created_at`, `updated_at`
+are explicitly excluded.  These are provider-managed timestamps that change on
+every API response regardless of whether the configuration actually changed.
+Including them would create false-positive change records on every sync.
+
+**Deduplication interaction** — the diff service only runs when `store_snapshot`
+writes a new row.  If the snapshot hash matches (no change), the diff is
+skipped entirely.
+
+**Baseline sync** — the first sync for a resource creates a snapshot with no
+previous to compare against.  `change_count = 0`.  Subsequent syncs detect
+changes relative to this baseline.
+
+**Risk levels** — all `Change` rows are written with `risk_level = "unknown"`.
+Milestone 10 (risk classification service) will update these to
+`low` / `medium` / `high` / `critical`.
+
+**Inspect Change rows**
+
+```bash
+# Start the stack with the Celery worker (required for syncs to run)
+docker compose --profile celery up --build
+
+# After triggering a sync, inspect detected changes
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "SELECT id, change_type, record_identifier, field_path,
+          prev_value, new_value, risk_level, created_at
+   FROM changes
+   ORDER BY created_at DESC;"
+
+# Count changes per type
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "SELECT change_type, count(*) FROM changes GROUP BY change_type;"
+```
+
+**Run the Milestone 9 tests**
+
+```bash
+docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytest tests/ -v"
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -346,8 +404,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 5: Alembic migrations
 - [x] Milestone 6: Cloudflare connector
 - [x] Milestone 7: Manual sync endpoint
-- [x] Milestone 8: Snapshot service ← **you are here**
-- [ ] Milestone 9: Diff service
+- [x] Milestone 8: Snapshot service
+- [x] Milestone 9: Diff service ← **you are here**
 - [ ] Milestone 10: Risk classification service
 - [ ] Milestone 11: Changes API
 - [ ] Milestone 12: Next.js frontend setup
