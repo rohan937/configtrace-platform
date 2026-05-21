@@ -452,6 +452,163 @@ docker compose exec db psql -U configtrace -d configtrace -c \
 docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytest tests/test_milestone10.py -v"
 ```
 
+## Changes API and Resources API (Milestone 11)
+
+Milestone 11 exposes the read APIs that the frontend dashboard will use to
+fetch the change timeline, change detail view, resource list, resource
+snapshots, and resource-specific change history.  All routes are read-only,
+paginated, and scoped to the authenticated user.  Frontend implementation
+begins in Milestone 12.
+
+### Endpoint overview
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/changes` | Paginated change timeline with optional filters |
+| `GET` | `/changes/{change_id}` | Single change with full snapshot context |
+| `GET` | `/resources` | Paginated list of monitored resources |
+| `GET` | `/resources/{resource_id}` | Resource detail with snapshot/change counts |
+| `GET` | `/resources/{resource_id}/snapshots` | Paginated snapshot history |
+| `GET` | `/resources/{resource_id}/changes` | Paginated change history for a resource |
+
+### Query parameters
+
+**`GET /changes`**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `integration_id` | UUID | — | Filter to one integration |
+| `resource_id` | UUID | — | Filter to one resource |
+| `risk_level` | string | — | `low`, `medium`, `high`, or `critical` |
+| `change_type` | string | — | `added`, `removed`, or `modified` |
+| `since` | ISO 8601 datetime | — | Changes at or after this time |
+| `until` | ISO 8601 datetime | — | Changes at or before this time |
+| `page` | int | `1` | 1-based page number |
+| `page_size` | int | `50` | Results per page (max 100) |
+
+**`GET /resources`**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `integration_id` | UUID | — | Filter to one integration |
+| `page` | int | `1` | 1-based page number |
+| `page_size` | int | `50` | Results per page (max 100) |
+
+**`GET /resources/{resource_id}/snapshots`** — `page`, `page_size` (default 20)
+
+**`GET /resources/{resource_id}/changes`** — `page`, `page_size` (default 50)
+
+### Example curl commands
+
+```bash
+# All changes, newest first
+curl -s http://localhost:8000/changes | jq .
+
+# Only critical changes
+curl -s "http://localhost:8000/changes?risk_level=critical" | jq .
+
+# Changes in the last day using ISO 8601 timestamps
+curl -s "http://localhost:8000/changes?since=2026-05-20T00:00:00Z" | jq .
+
+# Change detail with full snapshot states
+CHANGE_ID="<uuid from GET /changes>"
+curl -s "http://localhost:8000/changes/${CHANGE_ID}" | jq .
+
+# All resources
+curl -s http://localhost:8000/resources | jq .
+
+# Resource detail with counts
+RESOURCE_ID="<uuid from GET /resources>"
+curl -s "http://localhost:8000/resources/${RESOURCE_ID}" | jq .
+
+# Snapshot history for a resource (includes full DNS state per snapshot)
+curl -s "http://localhost:8000/resources/${RESOURCE_ID}/snapshots" | jq .
+
+# Change history for a resource
+curl -s "http://localhost:8000/resources/${RESOURCE_ID}/changes" | jq .
+```
+
+### Pagination
+
+All list endpoints return:
+```json
+{
+  "items": [...],
+  "total": 42,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+`total` is the count of matching rows before pagination so the frontend can
+render "Showing 50 of 142 changes."  Page size is clamped to 100 server-side
+regardless of what the caller requests.
+
+### Filtering (`GET /changes`)
+
+All filters are optional and combined with AND.  The `risk_level` and
+`change_type` filters match exact strings.  `since` / `until` accept
+timezone-aware ISO 8601 datetimes and filter on `created_at`.
+
+### User scoping
+
+Every query is filtered by the authenticated user's `user_id`.  A missing
+record and a record belonging to another user both return `404` — callers
+cannot determine whether an object exists for a different user.
+
+### Change detail snapshot states
+
+`GET /changes/{change_id}` returns the full snapshot states:
+```json
+{
+  "id": "...",
+  "change_type": "modified",
+  "field_path": "content",
+  "prev_value": "1.2.3.4",
+  "new_value": "5.6.7.8",
+  "risk_level": "low",
+  "risk_reason": "...",
+  "prev_snapshot_id": "...",
+  "new_snapshot_id": "...",
+  "prev_snapshot_state": [{ "record_id": "...", "content": "1.2.3.4", ... }],
+  "new_snapshot_state":  [{ "record_id": "...", "content": "5.6.7.8", ... }],
+  "prev_snapshot_created_at": "2026-05-21T10:00:00Z",
+  "new_snapshot_created_at": "2026-05-21T11:00:00Z"
+}
+```
+
+This powers the change detail page without a second request to the snapshots
+endpoint.
+
+### Inspect data with psql
+
+```bash
+# All changes with risk levels
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "SELECT change_type, risk_level, record_identifier, created_at
+   FROM changes ORDER BY created_at DESC LIMIT 20;"
+
+# Count changes by risk level
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "SELECT risk_level, count(*) FROM changes GROUP BY risk_level;"
+
+# All resources
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "SELECT id, display_name, provider_resource_type, last_snapshot_at FROM resources;"
+```
+
+**Run the Milestone 11 tests**
+
+```bash
+docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytest tests/test_milestone11.py -v"
+```
+
+**Run the full test suite**
+
+```bash
+docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytest tests/ -v"
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -465,8 +622,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 7: Manual sync endpoint
 - [x] Milestone 8: Snapshot service
 - [x] Milestone 9: Diff service
-- [x] Milestone 10: Risk classification service ← **you are here**
-- [ ] Milestone 11: Changes API
+- [x] Milestone 10: Risk classification service
+- [x] Milestone 11: Changes API and Resources API ← **you are here**
 - [ ] Milestone 12: Next.js frontend setup
 - [ ] Milestone 13: Dashboard page
 - [ ] Milestone 14: Integrations page
