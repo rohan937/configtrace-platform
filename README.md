@@ -609,6 +609,62 @@ docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytes
 docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytest tests/ -v"
 ```
 
+## Frontend shell (Milestone 12)
+
+Milestone 12 creates the Next.js application shell — routing, layout, API
+client infrastructure, TypeScript types, and placeholder pages.  No real data
+is fetched yet; the dashboard and timeline pages render empty states until
+Milestone 13 wires up API calls.
+
+### Route structure
+
+| Route | Page |
+|---|---|
+| `/` | Redirects to `/dashboard` |
+| `/dashboard` | Dashboard overview (placeholder) |
+| `/timeline` | Change timeline (placeholder) |
+| `/integrations` | Integration management (placeholder) |
+| `/resources` | Resource list (placeholder) |
+| `/settings` | Settings (placeholder) |
+
+### Layout
+
+All pages are wrapped in `AppShell` (sidebar + main content area).  The
+sidebar is 240 px wide with a `#13151a` background and a `#2a2d38` right
+border.  The active nav link is highlighted with a 2 px left border in
+`#4f80f7` (accent blue).
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `src/types/index.ts` | TypeScript types: `PaginatedResponse<T>`, `ChangeListItem`, `ChangeDetail`, `ResourceListItem`, `ResourceDetail`, `SnapshotListItem`, `Integration`, `SyncRun` |
+| `src/lib/api.ts` | Typed API client — `getChanges`, `getChange`, `getResources`, `getResource`, `getResourceSnapshots`, `getResourceChanges`, `getIntegrations`, `triggerSync`, `getSyncStatus` |
+| `src/components/layout/Sidebar.tsx` | Left navigation (client component, uses `usePathname`) |
+| `src/components/layout/AppShell.tsx` | Root layout wrapper — Sidebar + `<main>` |
+| `src/components/common/PageHeader.tsx` | Section title + description |
+| `src/components/common/EmptyState.tsx` | Empty list / placeholder panel |
+| `src/components/common/RiskBadge.tsx` | Coloured badge for `critical` / `high` / `medium` / `low` / `unknown` / `healthy` |
+| `src/components/common/StatusBadge.tsx` | Coloured badge for `active` / `error` / `paused` / `unknown` |
+
+### Start the dev server
+
+```bash
+cd frontend
+npm install
+npm run dev      # http://localhost:3000  →  redirects to /dashboard
+```
+
+### Build
+
+```bash
+cd frontend
+npm run build
+```
+
+All 7 routes (`/`, `/_not-found`, `/dashboard`, `/timeline`, `/integrations`,
+`/resources`, `/settings`) generate as static pages with no API calls on load.
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -623,8 +679,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 8: Snapshot service
 - [x] Milestone 9: Diff service
 - [x] Milestone 10: Risk classification service
-- [x] Milestone 11: Changes API and Resources API ← **you are here**
-- [ ] Milestone 12: Next.js frontend setup
+- [x] Milestone 11: Changes API and Resources API
+- [x] Milestone 12: Next.js frontend setup ← **you are here**
 - [ ] Milestone 13: Dashboard page
 - [ ] Milestone 14: Integrations page
 - [ ] Milestone 15: Change timeline page
