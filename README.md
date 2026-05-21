@@ -19,20 +19,36 @@ docker compose up --build
 The first build takes ~60 seconds (downloading base images, installing packages).
 Subsequent starts reuse the build cache and are much faster.
 
+**Run database migrations** (after `docker compose up --build`)
+```bash
+docker compose exec api alembic upgrade head
+# INFO  [alembic.runtime.migration] Running upgrade  -> 001, Initial schema
+```
+
 **Verify each service**
 ```bash
-# API health
-curl http://localhost:8000/
-# → {"service":"ConfigTrace API","status":"ok"}
+# API liveness
+curl http://localhost:8000/health
+# → {"status":"ok","timestamp":"...","version":"0.1.0"}
 
-# PostgreSQL
+# Database connectivity
+curl http://localhost:8000/health/db
+# → {"status":"ok","database":"connected","timestamp":"..."}
+
+# Confirm all seven tables exist
 docker compose exec db psql -U configtrace -d configtrace -c '\dt'
+# users | integrations | resources | sync_runs | snapshots | changes | alerts
 
 # Redis
 docker compose exec redis redis-cli ping
 # → PONG
 
 # Frontend — open http://localhost:3000 in a browser
+```
+
+**Roll back the migration** (drops all tables)
+```bash
+docker compose exec api alembic downgrade base
 ```
 
 **Stop without wiping data**
@@ -166,10 +182,10 @@ All product planning documents live in [`docs/`](docs/):
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
 
 - [x] Milestone 1: Repository setup
-- [x] Milestone 2: Docker Compose ← **you are here**
-- [ ] Milestone 3: FastAPI backend setup
-- [ ] Milestone 4: PostgreSQL and SQLAlchemy models
-- [ ] Milestone 5: Alembic migrations
+- [x] Milestone 2: Docker Compose
+- [x] Milestone 3: FastAPI backend setup (partial — health endpoint + CORS; Clerk auth deferred)
+- [x] Milestone 4: PostgreSQL and SQLAlchemy models
+- [x] Milestone 5: Alembic migrations ← **you are here**
 - [ ] Milestone 6: Cloudflare connector
 - [ ] Milestone 7: Manual sync endpoint
 - [ ] Milestone 8: Snapshot service
