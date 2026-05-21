@@ -1,21 +1,16 @@
-"""Celery sync task — Milestone 7 placeholder.
+"""Celery sync task — Milestone 8.
 
-In Milestones 8–10, this task will execute the full pipeline:
+Pipeline (this milestone):
   connector.fetch() → snapshot_service.store_snapshot()
-                    → diff_service.compute_diff()
-                    → risk_service.classify_changes()
 
-For Milestone 7, the task validates the end-to-end plumbing:
-  - Loads the integration and SyncRun from the database.
-  - Transitions the SyncRun through the ``pending → running → completed`` lifecycle.
-  - Updates ``integration.last_synced_at``.
-  - Does **not** call the Cloudflare connector or touch snapshots/changes.
+Milestones 9–10 will extend the pipeline:
+  → diff_service.compute_diff()
+  → risk_service.classify_changes()
 """
 
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from datetime import datetime, timezone
 
@@ -36,23 +31,40 @@ def sync_integration(
     Task arguments are plain strings (JSON-serialisable) and converted to
     UUIDs inside the function body.
 
+    Pipeline:
+    1. Mark SyncRun ``running``.
+    2. Load the Integration and decrypt its credentials.
+    3. Look up all active Resources for the integration.
+    4. For each resource, call the appropriate connector and store a Snapshot
+       (skipped if the config is unchanged since the last snapshot).
+    5. Update ``integration.last_synced_at`` and ``resource.last_snapshot_at``
+       for resources that received new snapshots.
+    6. Mark SyncRun ``completed`` with counts, or ``failed`` on any exception.
+
     Args:
         sync_run_id:    UUID string of the SyncRun created by the API.
         integration_id: UUID string of the integration to sync.
         user_id:        UUID string of the owning user.
 
     Returns:
-        ``{"status": "completed", "sync_run_id": "<uuid>"}``
+        ``{"status": "completed", "sync_run_id": "<uuid>",
+           "snapshot_count": <int>, "change_count": 0}``
 
     Side effects:
         - Sets ``SyncRun.status`` to ``'running'`` then ``'completed'`` or
           ``'failed'``.
+        - Writes new ``Snapshot`` rows when config has changed.
         - Sets ``Integration.last_synced_at`` on success.
+        - Sets ``Resource.last_snapshot_at`` when a new snapshot was stored.
     """
     # Local imports: pulled in at task execution time to guarantee fresh
     # DB connections per invocation and to avoid module-load circular imports.
+    from app.connectors.cloudflare import CloudflareConnector
+    from app.core.encryption import decrypt_credentials
     from app.database import SessionLocal
     from app.models.integration import Integration
+    from app.models.resource import Resource
+    from app.services.snapshot_service import store_snapshot
     from app.services.sync_service import (
         mark_sync_completed,
         mark_sync_failed,
@@ -86,35 +98,83 @@ def sync_integration(
             integration.display_name,
         )
 
-        # ── Placeholder work ─────────────────────────────────────────────────
-        # TODO (Milestone 8): replace with:
-        #   credentials = decrypt_credentials(
-        #       integration.encrypted_credentials, integration.credential_iv
-        #   )
-        #   records = CloudflareConnector().fetch(credentials)
-        #   snapshot, changed = snapshot_service.store_snapshot(
-        #       resource_id=..., state=records, triggered_by="manual",
-        #       sync_run_id=_sync_run_uuid, db=db
-        #   )
-        #   if changed:
-        #       changes = diff_service.compute_diff(prev_snapshot, snapshot, db=db)
-        #       risk_service.classify_changes(changes, db=db)
-        time.sleep(2)
+        # ── Decrypt credentials ──────────────────────────────────────────────
+        credentials = decrypt_credentials(
+            integration.encrypted_credentials,
+            integration.credential_iv,
+        )
 
-        # ── Update last_synced_at ────────────────────────────────────────────
+        # ── Load active resources for this integration ───────────────────────
+        resources = (
+            db.query(Resource)
+            .filter(
+                Resource.integration_id == _integration_uuid,
+                Resource.is_active.is_(True),
+            )
+            .all()
+        )
+
+        if not resources:
+            logger.warning(
+                "sync_integration: no active resources  integration_id=%s",
+                integration_id,
+            )
+
+        # ── Fetch + snapshot each resource ───────────────────────────────────
+        snapshot_count = 0
+
+        for resource in resources:
+            # Select the correct connector based on provider.
+            # Future providers add an elif branch here.
+            if integration.provider == "cloudflare":
+                connector = CloudflareConnector()
+                records = connector.fetch(credentials)
+            else:
+                logger.warning(
+                    "sync_integration: unknown provider %r — skipping resource %s",
+                    integration.provider,
+                    resource.id,
+                )
+                continue
+
+            _, created = store_snapshot(
+                resource_id=resource.id,
+                integration_id=_integration_uuid,
+                user_id=resource.user_id,
+                state=records,
+                triggered_by="manual",
+                sync_run_id=_sync_run_uuid,
+                db=db,
+            )
+
+            if created:
+                snapshot_count += 1
+                resource.last_snapshot_at = datetime.now(timezone.utc)
+
+        # ── Commit resource timestamp updates ────────────────────────────────
+        # store_snapshot uses flush(); we commit all at once here.
         integration.last_synced_at = datetime.now(timezone.utc)
         db.commit()
 
-        # ── Mark completed (0 counts until Milestone 8+) ────────────────────
+        # ── Mark completed ───────────────────────────────────────────────────
         mark_sync_completed(
             _sync_run_uuid,
-            snapshot_count=0,
-            change_count=0,
+            snapshot_count=snapshot_count,
+            change_count=0,          # Milestone 9 wires in real diff counts
             db=db,
         )
 
-        logger.info("sync_integration completed  sync_run_id=%s", sync_run_id)
-        return {"status": "completed", "sync_run_id": sync_run_id}
+        logger.info(
+            "sync_integration completed  sync_run_id=%s  snapshots=%d",
+            sync_run_id,
+            snapshot_count,
+        )
+        return {
+            "status": "completed",
+            "sync_run_id": sync_run_id,
+            "snapshot_count": snapshot_count,
+            "change_count": 0,
+        }
 
     except Exception as exc:
         logger.exception(

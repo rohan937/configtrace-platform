@@ -300,6 +300,41 @@ docker compose run --rm worker
 docker compose run --rm api pytest tests/ -v
 ```
 
+## Snapshot service (Milestone 8)
+
+After a sync completes, snapshots are stored in the `snapshots` table and can
+be inspected directly via `psql`:
+
+```bash
+# Connect to the running Postgres container
+docker compose exec db psql -U configtrace -d configtrace
+
+# List all snapshots (most-recent first)
+SELECT id, resource_id, content_hash, triggered_by, created_at
+FROM snapshots
+ORDER BY created_at DESC;
+
+# Inspect the full DNS state of the latest snapshot
+SELECT state
+FROM snapshots
+ORDER BY created_at DESC
+LIMIT 1;
+```
+
+**Deduplication** — if the Cloudflare DNS state has not changed since the last
+sync, no new Snapshot row is written.  The SyncRun still completes with
+`"status": "completed"` but `snapshot_count` will be `0`.
+
+**Hash algorithm** — SHA-256 of a canonical JSON serialisation of all DNS
+records sorted by `record_id`.  Records are order-invariant: fetching them in
+any sequence from the Cloudflare API produces the same hash.
+
+**Run the Milestone 8 tests**
+
+```bash
+docker compose run --rm api pytest tests/test_milestone8.py -v
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -310,9 +345,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 4: PostgreSQL and SQLAlchemy models
 - [x] Milestone 5: Alembic migrations
 - [x] Milestone 6: Cloudflare connector
-- [x] Milestone 7: Manual sync endpoint ← **you are here**
-- [ ] Milestone 7: Manual sync endpoint
-- [ ] Milestone 8: Snapshot service
+- [x] Milestone 7: Manual sync endpoint
+- [x] Milestone 8: Snapshot service ← **you are here**
 - [ ] Milestone 9: Diff service
 - [ ] Milestone 10: Risk classification service
 - [ ] Milestone 11: Changes API
