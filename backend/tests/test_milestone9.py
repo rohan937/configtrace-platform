@@ -586,11 +586,16 @@ def test_sync_task_changed_sync_creates_change_rows(
     assert modified.field_path == "content"
     assert modified.prev_value == "1.1.1.1"
     assert modified.new_value == "9.9.9.9"
-    assert modified.risk_level == "unknown"
+    # A record content change — no specific high rule → default low
+    assert modified.risk_level == "low"
+    assert modified.risk_reason is not None
 
     added = next(c for c in changes if c.change_type == "added")
     assert added.field_path is None
     assert added.prev_value is None
+    # sub.example.com is a subdomain A addition → medium
+    assert added.risk_level == "medium"
+    assert added.risk_reason is not None
 
 
 @patch("app.workers.sync_task.CloudflareConnector")

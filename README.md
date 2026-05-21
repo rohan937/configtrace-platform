@@ -365,9 +365,10 @@ skipped entirely.
 previous to compare against.  `change_count = 0`.  Subsequent syncs detect
 changes relative to this baseline.
 
-**Risk levels** — all `Change` rows are written with `risk_level = "unknown"`.
-Milestone 10 (risk classification service) will update these to
-`low` / `medium` / `high` / `critical`.
+**Risk levels** — all `Change` rows are written by the diff service with
+`risk_level = "unknown"`. The risk classification service (Milestone 10)
+immediately updates these to `low` / `medium` / `high` / `critical` within
+the same sync pipeline.
 
 **Inspect Change rows**
 
@@ -393,6 +394,64 @@ docker compose exec db psql -U configtrace -d configtrace -c \
 docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytest tests/ -v"
 ```
 
+## Risk classification service (Milestone 10)
+
+After the diff service writes `Change` rows, the risk service immediately
+classifies each one with a `risk_level` and `risk_reason`.  Classification
+runs synchronously inside the Celery sync task — no additional worker needed.
+
+**Risk levels**
+
+| Level | Meaning |
+|---|---|
+| `critical` | Can take services completely offline |
+| `high` | Likely to disrupt traffic or degrade service |
+| `medium` | Alters behaviour but generally reversible |
+| `low` | Cosmetic or low-impact changes |
+
+**Cloudflare DNS rules**
+
+| Rule | Level |
+|---|---|
+| Apex A / AAAA / CNAME record deleted | `critical` |
+| Any MX record deleted | `critical` |
+| NS or SOA record modified | `critical` |
+| Any other record deleted | `high` |
+| CNAME or MX target (`content`) changed | `high` |
+| MX `priority` changed | `high` |
+| Cloudflare proxy disabled (True→False) | `high` |
+| TTL reduced to ≤ 60 seconds | `high` |
+| Cloudflare proxy enabled (False→True) | `medium` |
+| TTL changed (above 60 s threshold) | `medium` |
+| TXT record `content` changed | `medium` |
+| Subdomain A / AAAA record added | `medium` |
+| `comment` field changed | `low` |
+| All other changes | `low` |
+
+**Apex detection** — a record is considered apex when its name has ≤ 2
+dot-separated labels (e.g. `example.com`).  If `zone_name` is present in
+`provider_metadata`, an exact string match is used instead (more accurate for
+multi-part TLDs such as `.co.uk`).
+
+**Inspect risk levels after a sync**
+
+```bash
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "SELECT change_type, risk_level, record_identifier, risk_reason
+   FROM changes
+   ORDER BY created_at DESC;"
+
+# Breakdown by risk level
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "SELECT risk_level, count(*) FROM changes GROUP BY risk_level ORDER BY risk_level;"
+```
+
+**Run the Milestone 10 tests**
+
+```bash
+docker compose run --rm api sh -lc "pip install -r requirements-dev.txt && pytest tests/test_milestone10.py -v"
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -405,8 +464,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 6: Cloudflare connector
 - [x] Milestone 7: Manual sync endpoint
 - [x] Milestone 8: Snapshot service
-- [x] Milestone 9: Diff service ← **you are here**
-- [ ] Milestone 10: Risk classification service
+- [x] Milestone 9: Diff service
+- [x] Milestone 10: Risk classification service ← **you are here**
 - [ ] Milestone 11: Changes API
 - [ ] Milestone 12: Next.js frontend setup
 - [ ] Milestone 13: Dashboard page

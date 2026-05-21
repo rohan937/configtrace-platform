@@ -1,13 +1,11 @@
-"""Celery sync task — Milestone 9.
+"""Celery sync task — Milestone 10.
 
 Pipeline (this milestone):
   connector.fetch()
     → snapshot_service.store_snapshot()
-    → diff_service.compute_diff()      ← new in Milestone 9
-    → diff_service.store_changes()     ← new in Milestone 9
-
-Milestone 10 will extend the pipeline:
-    → risk_service.classify_changes()
+    → diff_service.compute_diff()
+    → diff_service.store_changes()
+    → risk_service.classify_changes()  ← new in Milestone 10
 """
 
 from __future__ import annotations
@@ -84,6 +82,7 @@ def sync_integration(
     from app.models.integration import Integration
     from app.models.resource import Resource
     from app.services.diff_service import compute_diff, store_changes
+    from app.services.risk_service import classify_changes as apply_risk_classification
     from app.services.snapshot_service import get_latest_snapshot, store_snapshot
     from app.services.sync_service import (
         mark_sync_completed,
@@ -192,6 +191,7 @@ def sync_integration(
                             change_dicts=change_dicts,
                             db=db,
                         )
+                        apply_risk_classification(changes, db)
                         change_count += len(changes)
                         logger.info(
                             "sync_integration: %d change(s) detected  resource_id=%s",
