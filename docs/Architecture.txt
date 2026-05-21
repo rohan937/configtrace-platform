@@ -1,0 +1,403 @@
+ConfigTrace Architecture
+Internal Document — May 2026
+
+
+1. System Overview
+
+ConfigTrace is configuration change intelligence for production systems. Its job is to snapshot the state of critical configuration across cloud providers and SaaS tools, detect changes between snapshots, classify the risk of those changes, and surface them in a timeline that engineers can use to diagnose production incidents.
+
+The architecture is organized around a core product loop. A user connects an integration. ConfigTrace fetches and stores the current configuration state as a snapshot. When a new sync runs, ConfigTrace fetches fresh state, compares it to the previous snapshot, generates a structured diff, classifies the risk of each change, and records the change in a timeline. Later, alerts fire when high-risk changes are detected.
+
+The MVP focuses exclusively on Cloudflare DNS. The architecture is designed to extend to additional providers without rearchitecting the core snapshot, diff, and risk engine.
+
+The system is built on the following stack:
+
+    Frontend:          Next.js, TypeScript, Tailwind CSS
+    Backend API:       Python, FastAPI
+    Database:          PostgreSQL
+    Background Jobs:   Celery with Redis as the broker
+    Auth:              Clerk (or NextAuth as an alternative)
+    Notifications:     Slack webhooks (post-MVP)
+    Deployment:        Docker Compose for local and single-server; extendable to cloud
+
+
+2. Core Product Flow
+
+The following sequence describes what happens when an engineer uses ConfigTrace for the first time with Cloudflare DNS.
+
+Step 1 — Connect Integration
+The engineer authenticates via Clerk and creates a new integration in the dashboard. They paste a Cloudflare API token and select the zones to monitor. The backend validates the token against the Cloudflare API and stores the integration credentials securely in PostgreSQL.
+
+Step 2 — Initial Snapshot
+The engineer triggers a manual sync. The backend dispatches a Celery task to the Cloudflare connector. The connector calls the Cloudflare API, fetches all DNS records for each monitored zone, normalizes the response into ConfigTrace's internal format, and stores the result as a snapshot in the database. This is the baseline.
+
+Step 3 — Subsequent Sync
+When the engineer triggers another manual sync (or when a scheduled sync runs later), the same connector task runs. It fetches current DNS state from Cloudflare. The snapshot service stores the new snapshot. The diff service compares the new snapshot to the most recent previous snapshot for the same integration and resource scope.
+
+Step 4 — Diff Generation
+The diff service produces a structured, human-readable diff. Each changed field is recorded: what the value was before, what it is now, what type of change occurred (addition, deletion, modification), and which record it applies to. The diff is stored in the changes table linked to the new snapshot.
+
+Step 5 — Risk Classification
+The risk engine reads each diff entry and applies a classification rule set. It assigns each change a risk level: low, medium, high, or critical. Risk classification is based on the type of change, the field affected, and the record type. High-risk changes are surfaced prominently in the dashboard.
+
+Step 6 — Timeline Display
+The dashboard renders a timeline of all detected changes, ordered by recency. Each entry shows the integration, the resource, the type of change, the risk level, and a human-readable summary. The engineer can expand any entry to see the full field-by-field diff.
+
+
+3. Main System Components
+
+3.1 Frontend Dashboard
+
+The frontend is a Next.js application written in TypeScript and styled with Tailwind CSS. It is the primary interface engineers use to view configuration state, sync integrations, and investigate changes.
+
+The dashboard contains the following main views:
+
+    Integrations page — list connected integrations, status, last synced time, and a manual sync trigger
+    Timeline view — chronological feed of all detected configuration changes across integrations
+    Change detail view — full diff for a specific change, with field-by-field comparison and risk level
+    Resource view — all snapshots and changes for a specific resource (e.g., a single DNS zone)
+    Settings — manage integrations, API tokens, and user preferences
+
+The frontend communicates with the backend exclusively through a REST API. It does not access the database or call provider APIs directly.
+
+3.2 Backend API
+
+The backend is a Python FastAPI application. It handles all business logic, coordinates between services, dispatches background jobs, and exposes a versioned REST API consumed by the frontend.
+
+The API is organized around the following resource groups:
+
+    /auth         — session validation and user context via Clerk JWTs
+    /integrations — create, list, update, and delete integration connections
+    /syncs        — trigger manual syncs, view sync history
+    /snapshots    — retrieve snapshot records for a resource
+    /changes      — list and retrieve detected diffs with risk metadata
+    /alerts       — list and manage alert configurations (post-MVP)
+
+The backend does not call provider APIs directly during request handling. All provider interactions are offloaded to Celery tasks to avoid blocking the API and to support retries and scheduled execution.
+
+3.3 Cloudflare Connector
+
+The Cloudflare connector is a self-contained module within the backend that knows how to fetch configuration state from the Cloudflare API and normalize it into ConfigTrace's internal snapshot format.
+
+For the MVP, the connector fetches DNS records from the Cloudflare Zones API. It handles pagination, rate limit backoff, and error handling. The connector transforms the raw API response into a normalized Python dictionary that the snapshot service can store and the diff service can compare.
+
+The connector is designed to be one of many. The connector interface is a protocol: every connector implements a fetch method that accepts integration credentials and returns normalized configuration state. Adding a new provider means implementing this interface — it does not require changes to the snapshot, diff, or risk services.
+
+3.4 Snapshot Service
+
+The snapshot service is responsible for taking normalized configuration state from a connector and persisting it as a point-in-time record in the database.
+
+Each snapshot records: the integration it belongs to, the provider and resource type, the raw normalized state as JSONB, a content hash for fast comparison, and a timestamp. The content hash allows the system to skip diff computation when the state has not changed.
+
+The snapshot service does not know anything about Cloudflare. It receives normalized state and stores it. This separation is what allows the same service to handle snapshots from any connector.
+
+3.5 Diff Service
+
+The diff service compares two snapshots of the same resource and produces a structured list of changes. It runs after every sync that produces a new snapshot.
+
+For DNS records, the diff service compares the current snapshot to the previous snapshot at the record level. It identifies records that were added, records that were deleted, and records that were modified. For modified records, it identifies which fields changed and records the before and after values.
+
+The output of the diff service is a list of change objects, each containing: the change type (added, removed, modified), the affected field or record, the previous value, the new value, and a reference to both snapshots. These change objects are stored in the changes table and passed to the risk engine.
+
+3.6 Risk Service
+
+The risk service reads the output of the diff service and assigns a risk level to each change. Risk levels are: low, medium, high, and critical.
+
+Risk classification rules for the MVP DNS scope are described in Section 8. The risk service is rule-based in the MVP. Rules are stored as code in a configuration module that can be updated without schema changes. Post-MVP, rules may become database-driven or incorporate heuristics based on historical patterns.
+
+Each change record stores its assigned risk level. The highest risk level across all changes in a sync is surfaced as the headline risk for that sync event in the timeline.
+
+3.7 PostgreSQL Database
+
+PostgreSQL is the single source of truth for all persistent data. It stores users, integrations, credentials, resources, snapshots, diffs, changes, and alert configurations. JSONB columns are used for snapshot state, diff output, and change records, which allows structured querying without requiring rigid schema changes as providers are added.
+
+The schema is described in Section 5.
+
+3.8 Background Worker
+
+Celery workers consume tasks from a Redis queue. Workers are responsible for all provider API calls, snapshot storage, diff computation, risk classification, and alert dispatch.
+
+The primary task types are:
+
+    sync_integration  — fetch state from a provider, store snapshot, run diff, run risk classification
+    dispatch_alert    — send a Slack notification for a high-risk change (post-MVP)
+    scheduled_sync    — enqueue a sync_integration task for all integrations with scheduled sync enabled (post-MVP)
+
+Workers are stateless. They pull credentials and configuration from the database at task execution time. This makes them safe to scale horizontally.
+
+3.9 Alerting System
+
+The alerting system is a post-MVP milestone. When implemented, it will consist of alert rules stored in the database and a dispatch task that fires when a change meets the alert criteria. The MVP architecture reserves the alerts table in the schema and the dispatch_alert task type, but does not implement them.
+
+Slack is the first alert destination. Each alert sends a Slack webhook message with the integration name, the resource affected, the risk level, a short summary of the change, and a link to the full diff in the dashboard.
+
+3.10 Auth System
+
+Authentication is handled by Clerk. The frontend uses Clerk's hosted login flow. The backend validates Clerk JWTs on every request using FastAPI middleware. User identity from the JWT is used to scope all database queries to the authenticated user's organization.
+
+All integration credentials stored in the database are encrypted at rest using a server-side key. Credentials are never returned in API responses in plaintext.
+
+
+4. Service Boundaries
+
+Frontend
+    Renders UI components and manages client state
+    Calls the backend REST API for all data
+    Never calls provider APIs directly
+    Never reads from the database directly
+    Owns auth session state via Clerk's frontend SDK
+
+Backend API
+    Handles all REST API routing and request validation
+    Validates user identity and scopes responses to authenticated users
+    Reads and writes to PostgreSQL for non-sync data (integrations, changes, alerts)
+    Dispatches Celery tasks for all sync operations
+    Does not perform provider API calls in-process
+
+Celery Workers
+    Execute all provider API calls
+    Invoke the connector, snapshot service, diff service, and risk service in sequence
+    Write snapshot and change records to PostgreSQL
+    Dispatch alert tasks when thresholds are met
+    Handle retries and backoff for failed provider calls
+
+PostgreSQL Database
+    Stores all persistent application state
+    Is accessed by the backend API and Celery workers
+    Is not accessed by the frontend directly
+
+Integration Layer (Connectors)
+    One connector module per provider
+    Each connector knows how to authenticate, fetch, paginate, and normalize provider state
+    Connectors have no knowledge of the snapshot, diff, or risk systems
+    Connectors are pure functions: credentials and parameters in, normalized state out
+
+Redis
+    Serves as the Celery task broker and result backend
+    Holds no persistent application state
+    Can be cleared and rebuilt without data loss
+
+
+5. Database Entities
+
+5.1 users
+
+Stores the user record created on first login via Clerk. The user's Clerk ID is the primary external identifier. The table also stores email and display name for reference.
+
+Why it exists: all other entities belong to a user. Row-level scoping in every query requires a resolved user ID.
+
+5.2 integrations
+
+Stores one record per connected provider account. Each record includes: the user ID, the provider name (e.g., cloudflare), a display name, the encrypted API credentials, the integration status (active, paused, error), and timestamps for creation and last successful sync.
+
+Why it exists: this is the registry of what providers ConfigTrace is monitoring for a given user. Every sync, snapshot, and change is tied back to an integration.
+
+5.3 resources
+
+Stores one record per monitored resource within an integration. For Cloudflare, a resource is a DNS zone. A single Cloudflare integration may contain multiple zones, each tracked independently.
+
+Each resource record includes: the integration ID, the provider resource type (e.g., cloudflare_dns_zone), the provider's native resource ID, a display name, and the timestamp of the last snapshot.
+
+Why it exists: snapshot and diff operations run at the resource level, not the integration level. Resources allow the system to track configuration state at the right granularity.
+
+5.4 snapshots
+
+Stores one record per point-in-time snapshot of a resource's configuration state. Each snapshot includes: the resource ID, the integration ID, the full normalized state as JSONB, a SHA-256 content hash, a sync trigger type (manual or scheduled), and a timestamp.
+
+Why it exists: snapshots are the foundation of the entire product. Diffs are computed by comparing two snapshots. Without snapshots there is no history and no diff.
+
+5.5 changes
+
+Stores one record per detected change between two consecutive snapshots of a resource. Each change record includes: the resource ID, the previous snapshot ID, the new snapshot ID, the change type (added, removed, modified), the affected field or record identifier, the previous value, the new value, the risk level assigned by the risk service, and a timestamp.
+
+Why it exists: changes are what the dashboard displays. They represent the meaningful signal extracted from raw snapshot comparison. Storing them separately means the timeline query does not require re-running the diff at read time.
+
+5.6 alerts
+
+Stores one record per alert event. Each alert record includes: the change ID that triggered it, the alert channel (slack), the destination (webhook URL or channel ID), the delivery status, and timestamps for creation and delivery.
+
+Why it exists: the alerting system needs an audit trail of what was sent, when, and whether it succeeded. This table also allows the UI to show which changes have already triggered alerts.
+
+
+6. Sync Workflow
+
+6.1 Manual Sync (MVP)
+
+The MVP supports manual sync only. The engineer clicks the Sync Now button in the dashboard for a specific integration. The frontend calls POST /syncs with the integration ID. The backend validates the request, creates a sync record in the database with status pending, enqueues a sync_integration Celery task, and returns the sync ID to the frontend.
+
+The Celery worker picks up the task. It loads the integration credentials from the database, instantiates the appropriate connector (Cloudflare in the MVP), and calls the connector's fetch method for each resource under the integration. For each resource, it invokes the snapshot service to store the result, then invokes the diff service to compare it to the previous snapshot. If changes are detected, it invokes the risk service to classify each change and stores the resulting change records. When complete, it updates the sync record status to completed or failed.
+
+The frontend polls the sync status endpoint and updates the UI when the sync completes.
+
+6.2 Scheduled Sync (Post-MVP)
+
+After the MVP, Celery Beat will run a scheduled_sync task on a configurable interval (default: every 15 minutes). The task queries all active integrations with scheduled sync enabled and enqueues a sync_integration task for each one. The rest of the flow is identical to manual sync. The frontend will show a last synced timestamp and a next sync estimate for each integration.
+
+
+7. Snapshot and Diff Workflow
+
+7.1 Fetching Provider State
+
+The connector calls the provider API with the stored credentials. For Cloudflare DNS, this means calling the Cloudflare Zones API to list DNS records for each zone. The connector handles pagination by following the API's cursor or page-based pagination until all records are retrieved. The raw response is transformed into a normalized format: a list of record objects, each with a stable identifier, type, name, value, TTL, proxied status, and other relevant fields.
+
+7.2 Storing the Snapshot
+
+The snapshot service receives the normalized state and computes a SHA-256 hash of the serialized content. It checks whether the most recent snapshot for this resource has the same hash. If the hashes match, the state has not changed and no new snapshot is stored. If the hashes differ, a new snapshot record is written with the full state, hash, and timestamp.
+
+7.3 Computing the Diff
+
+The diff service loads the two most recent snapshots for the resource. It compares them by building a keyed index of records from each snapshot using the record's stable identifier (e.g., the DNS record ID from Cloudflare). It then identifies:
+
+    Records present in the new snapshot but not the previous one — these are additions
+    Records present in the previous snapshot but not the new one — these are deletions
+    Records present in both snapshots where one or more field values differ — these are modifications
+
+For modifications, the diff service produces a field-level comparison showing exactly which fields changed and what the values were before and after.
+
+7.4 Storing Changes
+
+Each addition, deletion, or modification becomes one change record in the database. The change record stores the before state, the after state, the change type, and references to both snapshots. The risk level field is populated by the risk service immediately after diff computation, before the change records are committed.
+
+
+8. Risk Classification Workflow
+
+The risk service applies a rule set to each change to assign a risk level. The four levels are: low, medium, high, and critical.
+
+The following rules apply to Cloudflare DNS changes in the MVP. These rules are stored as code and can be adjusted without schema changes.
+
+Critical risk
+    Deletion of an A, AAAA, or CNAME record for a root or apex domain
+    Deletion of an MX record (disrupts email delivery)
+    Modification of NS records (nameserver delegation changes)
+    Modification of SOA records
+
+High risk
+    Deletion of any DNS record
+    Addition of a record that shadows or conflicts with an existing record
+    Modification of a CNAME target
+    Modification of an MX target or priority
+    Disabling Cloudflare proxy (orange-to-gray cloud) on a record that was previously proxied
+    TTL reduction to 60 seconds or below on any record
+
+Medium risk
+    Enabling Cloudflare proxy (gray-to-orange cloud) on a record
+    TTL increase or decrease outside the high-risk threshold
+    Modification of a TXT record value
+    Addition of a new subdomain A or AAAA record
+
+Low risk
+    Modification of record metadata that does not affect resolution
+    Addition of informational TXT records (e.g., SPF record updates with no structural change)
+    Changes to records in non-production zones as identified by naming convention
+
+Each change is stored with its assigned risk level. The highest risk level across all changes in a single sync event is used as the headline risk displayed in the timeline for that sync.
+
+
+9. Alerting Workflow
+
+Alerting is a post-MVP milestone. The following describes the intended design.
+
+When a sync completes and the risk service assigns a high or critical risk level to any change, the Celery worker enqueues a dispatch_alert task. The task loads the user's alert configuration for the integration. If a Slack webhook destination is configured, the task sends an HTTP POST to the webhook URL with a structured payload.
+
+The Slack message includes:
+
+    The integration name and provider
+    The affected resource (zone or record name)
+    The risk level of the change
+    A one-line human-readable summary of the change
+    A direct link to the change detail view in the ConfigTrace dashboard
+
+Alert delivery is recorded in the alerts table with a status of delivered or failed. Failed alerts are retried up to three times with exponential backoff.
+
+Alert configuration is per-integration. A user can choose which risk levels trigger alerts, which Slack channel to notify, and whether to receive alerts for manual syncs, scheduled syncs, or both.
+
+
+10. Incident Diagnosis and Future Correlation
+
+The long-term value of ConfigTrace is not just showing what changed — it is helping engineers understand whether a configuration change caused a production incident. The architecture supports this through a future correlation layer.
+
+10.1 Manual Correlation (Near-Term)
+
+Before automated correlation, the timeline view already supports incident diagnosis. An engineer responding to a production anomaly opens ConfigTrace and looks at the timeline for the 30 to 60 minutes preceding the incident. If a high or critical risk change appears in that window, ConfigTrace has done its job: it surfaced the candidate cause. The engineer does not need integration with incident tools to get this value.
+
+10.2 Automated Correlation (Post-MVP)
+
+The architecture reserves a correlation service that will link ConfigTrace change records to external incident events. The correlation service will accept webhook events from external systems — Datadog monitor alerts, Sentry error spikes, PagerDuty incidents, GitHub deployment events — and store them in an incident_events table with a timestamp and source metadata.
+
+When an incident event arrives, the correlation service queries the changes table for high and critical risk changes in the 60 minutes preceding the event timestamp. Correlated changes are stored in a change_incident_links junction table and surfaced in the incident detail view.
+
+This correlation is additive. It does not require changes to the snapshot, diff, or risk systems. The change records are already there; correlation adds a layer of cross-referencing.
+
+10.3 Future External Integrations for Correlation
+
+    Datadog: webhook on monitor alert state changes
+    Sentry: webhook on new issues or error rate spikes
+    PagerDuty: webhook on incident creation and resolution
+    GitHub: deployment events via GitHub webhook for deployment context
+    Custom: a generic webhook endpoint that accepts ISO 8601 timestamps and event metadata
+
+The correlation service is intentionally read-only with respect to external systems. It receives events from those systems; it does not write back to them.
+
+
+11. Deployment Architecture
+
+11.1 Local Development (Docker Compose)
+
+The local environment runs all services in Docker Compose. The compose file defines the following services:
+
+    db          — PostgreSQL database
+    redis       — Redis broker for Celery
+    api         — FastAPI backend with hot reload
+    worker      — Celery worker for background tasks
+    frontend    — Next.js development server
+    beat        — Celery Beat scheduler (inactive in MVP, present in compose for future use)
+
+All services share a Docker network. The API and worker connect to the database and Redis using service names as hostnames. Environment variables are managed via a .env file at the project root that is not committed to source control.
+
+The frontend runs on port 3000. The API runs on port 8000. The database runs on port 5432. Redis runs on port 6379.
+
+11.2 Staging and Production (Single Server, Near-Term)
+
+For early staging and production, all services run on a single server using Docker Compose with a production configuration overlay. A reverse proxy (Caddy or Nginx) sits in front of the API and frontend services and handles TLS termination. Certbot or Caddy's built-in ACME client manages SSL certificates.
+
+The production compose file uses environment variables injected at runtime rather than a .env file. Secrets (database password, Redis password, encryption key, Clerk secret) are managed as environment variables in the deployment environment.
+
+11.3 Future Cloud Deployment
+
+As the product scales, the architecture supports migration to managed cloud services without structural changes to the application. The API and worker are stateless containers and can run on any container orchestration platform. The database can be migrated to a managed PostgreSQL service such as Amazon RDS, Supabase, or Neon. Redis can be replaced with a managed service such as Upstash or Amazon ElastiCache.
+
+The frontend can be deployed independently on Vercel with the backend API running separately on a cloud server or container service. This separation is already implicit in the architecture because the frontend communicates with the backend only through the REST API.
+
+
+12. Future Extensibility
+
+The core architecture — connector, snapshot, diff, risk — is designed as a general framework, even though the MVP implements only one connector. Adding a new integration requires implementing one new module without touching the existing system.
+
+12.1 Adding a New Connector
+
+To add a new provider, an engineer implements the connector interface: a Python class with a fetch method that accepts integration credentials and returns normalized configuration state as a list of resource objects. The connector handles authentication, pagination, and normalization. Nothing else in the system changes.
+
+The snapshot service stores whatever the connector returns. The diff service compares two snapshots field by field. The risk service applies rules from the provider's rule module. New providers require new connectors and new risk rules. The pipeline that connects them is shared.
+
+12.2 Planned Future Integrations
+
+    Stripe — API keys, webhook endpoints, product and pricing configuration, tax settings
+    GitHub — branch protection rules, repository settings, Actions secrets and environment configurations, team permissions
+    AWS — IAM policies, security group rules, S3 bucket policies, Route 53 records, CloudFront distributions
+    Vercel — environment variables, domain configuration, deployment settings, access controls
+    Firebase — security rules, authentication provider settings, project configuration
+    Supabase — RLS policies, API settings, auth configuration
+    LaunchDarkly — feature flag states, targeting rules, rollout percentages
+    Shopify — webhook configurations, app settings, fulfillment and payment configurations
+    Twilio — phone number routing, messaging service configuration
+    SendGrid — sending domain authentication, inbound parse settings, API key scopes
+
+Each of these follows the same model: the connector fetches the provider's configuration state, the snapshot service stores it, the diff service detects changes, and the risk service classifies them. The dashboard timeline, change detail view, and alerting system work identically across all providers.
+
+12.3 Schema Extensibility
+
+The resources and snapshots tables use a provider resource type string and a JSONB column for the normalized state. This means new resource types from new providers can be stored without schema migrations. New risk rules are code, not schema. New connectors are new Python modules, not new database tables. The system is designed to grow horizontally across providers without accumulating structural debt.
+
+12.4 Preserving Focus
+
+As integrations are added, the product remains centered on configuration state, snapshots, diffs, risk, and incident diagnosis. ConfigTrace is not a logging platform, a metrics platform, or a deployment platform. Each new integration should answer the same question the Cloudflare connector answers: what is the current configuration state of this system, and what changed since the last time we checked.

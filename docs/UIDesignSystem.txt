@@ -1,0 +1,270 @@
+ConfigTrace UI Design System
+Version 1.0
+
+
+OVERVIEW
+
+This document defines the visual and interaction language for ConfigTrace. It is intended for use by designers, engineers, and anyone contributing to the frontend. Every decision described here is a product decision, not an aesthetic one. ConfigTrace is used by infrastructure engineers during incident diagnosis, change reviews, and production audits. The UI must communicate precision and trust. It must feel like something built for real operational work, not something built to impress investors on a demo call.
+
+
+1. OVERALL UI PHILOSOPHY
+
+ConfigTrace should look and feel like the tool that an infrastructure engineer would keep open in a second monitor during a production incident. It belongs in the same visual family as Datadog, Grafana, Cloudflare's analytics dashboard, Linear, and Vercel's deployment history. It does not belong in the same family as Notion, Figma, a startup landing page, or a consumer AI product.
+
+The product presents structured data. The UI should disappear and let that data speak. Whitespace is used deliberately and sparingly. Information density is high but never chaotic. Every pixel earns its place.
+
+The guiding principle is restrained precision. No decorative elements that do not carry information. No animations that do not communicate state change. No colors used for aesthetic variety. Every color in the system means something specific.
+
+ConfigTrace is a tool that engineers trust with their production configuration state. That trust is communicated through typographic consistency, predictable layout, a stable color vocabulary, and interactions that never surprise.
+
+
+2. COLOR PALETTE
+
+The entire UI runs in dark mode. There is no light mode for the initial product. Dark mode is not a stylistic choice here; it is appropriate for the environment where this tool is used (terminal-adjacent workspaces, high-information density contexts, extended focused sessions).
+
+Background Colors
+
+Page background: #0e0f11  (near-black, very slightly warm charcoal, not pure black)
+Surface level 1 (panels, cards, sidebars): #13151a
+Surface level 2 (elevated elements, modals, dropdowns): #1c1e26
+Surface level 3 (hover states, selected rows, inline highlights): #22252f
+Border/divider: #2a2d38  (subtle, low-contrast separators)
+
+Text Colors
+
+Primary text: #e8eaf0  (off-white, not pure white, reduces harshness)
+Secondary text: #8b90a0  (muted gray for labels, metadata, timestamps)
+Tertiary text: #565b6e  (very muted, used for disabled states and placeholders)
+Link text: #6b9cf8  (muted blue, not bright)
+
+Accent Colors
+
+Primary accent (interactive elements, links, focus rings, active states): #4f80f7
+Accent hover: #6b9cf8
+Accent subtle background (for badges, highlights): rgba(79, 128, 247, 0.12)
+
+Status and Risk Colors
+
+Healthy / no change: #3ccf7e  (muted green)
+Healthy background: rgba(60, 207, 126, 0.10)
+
+Low risk: #6b9cf8  (same as accent blue, informational)
+Low risk background: rgba(107, 156, 248, 0.10)
+
+Medium risk: #f5a623  (amber/orange)
+Medium risk background: rgba(245, 166, 35, 0.10)
+
+High risk: #f5632a  (orange-red)
+High risk background: rgba(245, 99, 42, 0.10)
+
+Critical: #e84040  (clear red, reserved for truly dangerous changes)
+Critical background: rgba(232, 64, 64, 0.12)
+
+Unknown / unclassified: #565b6e  (same as tertiary text)
+
+Do not use colors outside this palette to represent status. Do not use purple, teal, pink, or any color not listed here for any status-bearing UI. Color in ConfigTrace is a communication system, not a design accent.
+
+
+3. TYPOGRAPHY
+
+Typeface Family
+
+Primary: "Inter", system-ui, -apple-system, sans-serif
+Code/monospace: "JetBrains Mono", "Fira Code", "Menlo", monospace
+
+Monospace is used for config values, resource IDs, record names, diff content, API tokens, and any data that is technically structured. If the user is reading a DNS record value, a config key, or a hash, it should be rendered in monospace. This is a deliberate signal that the content is exact and copy-pasteable.
+
+Type Scale
+
+Display (page titles, primary headings): 20px / weight 600 / line-height 1.3
+Section heading: 14px / weight 600 / letter-spacing 0.04em / uppercase / color secondary text
+Body default: 14px / weight 400 / line-height 1.6 / color primary text
+Body small: 13px / weight 400 / line-height 1.5 / color secondary text
+Label/caption: 12px / weight 500 / color secondary text
+Code inline: 12px / monospace / background surface level 2 / padding 2px 5px / border-radius 3px
+Code block: 13px / monospace / background surface level 1 / padding 12px 16px / border-radius 6px
+
+The section heading style (small caps, secondary color, tight letter spacing) is used for labeling groups of content in sidebars, panels, and form sections. It creates structure without the visual weight of a full heading.
+
+Do not use type sizes below 12px anywhere in the product. Do not use font weights above 600. Anything heavier reads as alarm, and we reserve visual alarm for genuine risk states.
+
+
+4. LAYOUT PRINCIPLES
+
+Grid and Spacing
+
+ConfigTrace uses an 8px base grid. All spacing values are multiples of 4px or 8px. Padding inside cards: 16px. Padding inside modals: 24px. Page-level horizontal padding: 24px on desktop, 16px on narrow viewports. Gap between cards or list items: 8px.
+
+The layout should never feel crowded but should also never feel wasteful. Avoid excessive padding that makes the page feel like a marketing site. Avoid cramped rows that make data hard to scan.
+
+Page Structure
+
+ConfigTrace uses a persistent left sidebar for navigation and a main content area. There is no top navbar that competes with the sidebar. The sidebar is narrow (240px), dark, and stable. It does not expand or collapse on hover. It is always present. Navigation items are plain text, left-aligned, 14px, with a subtle left-border indicator on the active state.
+
+The main content area has no maximum width constraint on data-dense pages like the timeline and resource history. On settings and integration pages, a max-width of 720px centers the content for readability.
+
+Panels and Cards
+
+Cards should not look like cards unless they need the visual separation. The default list of changes, for example, should use a table or flat list with row-level hover states rather than individual cards per change. Cards are appropriate for summary stats at the top of the dashboard and for individual resource snapshots.
+
+Card borders should be single-pixel at the border/divider color. Do not use box-shadow for depth. Shadow implies elevation in consumer UI; ConfigTrace uses color contrast for depth instead.
+
+
+5. DASHBOARD STRUCTURE
+
+The main dashboard is the entry point after login and after completing the first integration setup. It contains:
+
+A summary bar at the top with three or four stat blocks: total changes in the last 24 hours, total resources being monitored, number of critical or high-risk changes, and last sync time. These are plain numbers in large display text (24px, weight 600) with a small label below in secondary text. They are not wrapped in heavy cards with shadows. They sit in a horizontal row with a light bottom border separating them from the timeline below.
+
+Below the summary bar is the change timeline, which is the primary content of the dashboard.
+
+In the sidebar, the navigation items should be: Dashboard, Resources, Timeline, Integrations, Settings. No more at MVP. Each item is plain, no icons required, though a simple line icon (16px, 1.5px stroke) can accompany each if it aids scanning.
+
+
+6. CHANGE TIMELINE DESIGN
+
+The timeline is the core UI surface of ConfigTrace. It is where engineers spend most of their time during incident diagnosis. It must be optimized for fast scanning, not for beauty.
+
+The timeline is a reverse-chronological list of detected configuration changes. Each row contains:
+
+On the left, a timestamp in secondary text. The format is relative for recent items (2 hours ago, 45 minutes ago) and absolute ISO-8601 for items older than 24 hours (2026-05-19 14:32 UTC). Absolute time should always be available on hover as a tooltip.
+
+Next, a resource identifier. For Cloudflare DNS this would be the record name and type, rendered in monospace at 13px. This should be the most prominent piece of text in the row.
+
+Next, a change type label. This is small secondary text: "RECORD MODIFIED", "RECORD ADDED", "RECORD DELETED". Uppercase, 11px, slightly spaced out.
+
+On the right side of the row, a risk badge (see section 7).
+
+Clicking a row expands an inline diff view below it, or navigates to the change detail page, depending on implementation preference. The diff view should use a two-column or unified diff format in monospace, with removed lines highlighted against the critical color background at low opacity, and added lines highlighted against the healthy color background at low opacity.
+
+The timeline should support filtering by: provider (Cloudflare, Stripe, etc.), risk level, resource type, and time range. Filters appear as a compact filter bar above the timeline list, using pill-style toggles in the surface level 2 color. Active filters are shown in the accent color.
+
+Do not paginate the timeline with numbered pages. Use infinite scroll or a "load more" pattern with a visible count of remaining items.
+
+
+7. RISK BADGE DESIGN
+
+Risk badges are the primary at-a-glance signal in ConfigTrace. They appear on the timeline, resource history, and anywhere a change is summarized.
+
+Badge structure: a small rounded-rectangle chip, 5px border-radius, 4px vertical padding, 8px horizontal padding, 11px type, weight 600, uppercase.
+
+Risk levels and their visual treatment:
+
+CRITICAL: red text (#e84040) on the critical background color. This is the most alarming state.
+HIGH: orange-red text (#f5632a) on the high risk background.
+MEDIUM: amber text (#f5a623) on the medium risk background.
+LOW: accent blue text (#6b9cf8) on the low risk background.
+HEALTHY: green text (#3ccf7e) on the healthy background.
+UNKNOWN: tertiary text on a transparent background with a border at the border/divider color.
+
+Do not add icons to risk badges. The text label is sufficient and cleaner. Do not animate badges under any circumstances. Blinking or pulsing badges are appropriate in consumer alarm contexts; ConfigTrace engineers are reading multiple badges quickly and animation creates noise.
+
+
+8. RESOURCE HISTORY DESIGN
+
+Each monitored resource (for example, a specific Cloudflare DNS record) has its own history page. This page shows a chronological log of all snapshots taken and changes detected for that resource.
+
+The layout is a two-panel view on desktop. The left panel shows the snapshot timeline: a vertical list of snapshots sorted newest first, with timestamp, sync method (manual or scheduled), and a change indicator dot (green for no change, colored per risk level if a change was detected).
+
+The right panel shows the full structured snapshot content for the selected snapshot. For DNS records this is the raw record data in a structured key-value display using monospace for values. Above the snapshot content is a diff toggle: if the selected snapshot contains changes versus the previous snapshot, a diff button appears that switches the right panel to a diff view.
+
+The diff view follows the same convention as the timeline diff: monospace, red/green background tinting at low opacity for removed/added content, unchanged lines in secondary text.
+
+
+9. INTEGRATION PAGE DESIGN
+
+The integrations page is where users connect providers. At MVP this is Cloudflare DNS only, but the page should be designed to scale to multiple providers.
+
+Layout: a grid of integration cards, two per row on desktop. Each card is a clean bordered rectangle (surface level 1 background, border/divider border). Inside the card: provider logo (16x16 or 24x24, treated as a simple icon, do not use full-color logos as they will clash with the dark palette), provider name in body text, connection status below the name in secondary text, and a button on the right side of the card (Connect or Manage).
+
+Connected integrations show a small green dot next to the status text. Disconnected or errored integrations show a red or amber dot.
+
+For the Cloudflare connection flow specifically: clicking Connect opens a right-side drawer (not a modal) that contains a single API token input field, a brief instruction about what scopes are needed, and a Save button. The drawer should be 400px wide on desktop. The input field uses the standard form style: surface level 2 background, border/divider border, which becomes accent color on focus. Below the field is a small piece of secondary text that says the token is stored encrypted and is never logged.
+
+After a successful connection, the drawer closes and the integration card updates in place to show the connected state.
+
+
+10. EMPTY STATES
+
+Empty states should feel honest and functional, not cute or playful. No large illustrated graphics, no mascots, no whimsical copy.
+
+An empty timeline (no syncs yet, or no changes detected) should show a single block of centered secondary text: the reason for the empty state in plain language, followed by a primary action button if there is an obvious next step. For example: "No changes detected yet. Run your first sync to begin monitoring." with a "Run Sync" button below.
+
+Resource pages with no history show: "No snapshots yet for this resource." No button is needed unless the user can initiate a sync from here.
+
+The visual treatment: secondary text, 14px, centered in the content area with 48px of vertical padding above and below. No decorative elements.
+
+
+11. LOADING STATES
+
+There are two types of loading in ConfigTrace: page-level loading (first navigation to a route) and inline loading (a sync running, a diff loading).
+
+Page-level loading: a subtle horizontal progress bar at the very top of the viewport, accent color, 2px height. No full-page spinner. No skeleton screens with aggressive pulsing at MVP (consider adding skeletons in a later iteration once the data shapes stabilize).
+
+Inline loading: a small spinner (16px, 2px stroke, accent color) next to the element being loaded, or replacing the element's content if it has not loaded yet. When a sync is running, the "Run Sync" button text changes to "Syncing..." with a spinner to its left and the button is disabled. No other feedback is necessary during the sync.
+
+Do not use heavy full-screen loading overlays. They communicate lost control. ConfigTrace should always feel responsive and grounded.
+
+
+12. ERROR STATES
+
+Errors are displayed inline, close to the action that caused them. There is no global toast notification system at MVP.
+
+Form errors: below the relevant field, in the critical color text (not background), 13px. Specific and actionable: "Invalid API token. Make sure it has DNS read permissions." not "Something went wrong."
+
+Sync errors: on the integration card and on the timeline if the sync is represented there, show a small amber or red status indicator with a short error message. The full error detail (if available from the API) should be accessible via an inline expand or a link to a details view, not surfaced by default.
+
+API/network errors when loading data: replace the content area with a centered error message in secondary text, and a Retry button in the accent color. The message should be plain and direct: "Failed to load changes. Check your connection and try again."
+
+Do not swallow errors silently. Do not show generic "oops" copy. Infrastructure engineers need to understand what failed and why.
+
+
+13. INTERACTION STYLE
+
+Hover States
+Row hovers use surface level 3 as the background color. No transition duration is needed; instant hover response feels more precise. Avoid transitions longer than 100ms for interactive state changes.
+
+Focus States
+All interactive elements (buttons, inputs, links, rows) must have visible focus rings. Use a 2px outline at the accent color (#4f80f7) with 2px offset. Never remove focus outlines. ConfigTrace engineers may be keyboard-navigating in high-stress situations.
+
+Buttons
+Primary button: accent background (#4f80f7), white primary text, 8px vertical padding, 16px horizontal padding, 6px border-radius, weight 500. Hover darkens the background by one step.
+Secondary button: transparent background, border/divider border, primary text. Hover shifts background to surface level 2.
+Destructive button: used only for actions like disconnecting an integration or deleting a resource. Critical text color, transparent background, shows destructive state only on hover (shifts to a low-opacity critical background).
+
+No rounded pill buttons anywhere in the product. 6px border-radius is the maximum.
+
+Clicks and Selections
+Selected rows in lists should use surface level 3 as their persistent background. A subtle left border in the accent color (2px) should accompany selection on the active row.
+
+Tooltips
+Used for: truncated text, timestamps, technical abbreviations, and icon-only buttons. Tooltips are surface level 2 background, primary text, 12px, 4px border-radius, no arrow. They appear after a 300ms hover delay to prevent tooltip flicker during fast navigation.
+
+No Animations
+ConfigTrace should not animate elements in or out of the page. No slide-in sidebars, no fade-in cards, no staggered list reveals. These patterns belong to marketing sites. Data should appear immediately. The only acceptable transitions are: hover state color changes (instant), focus rings appearing (instant), and the loading bar progressing (continuous).
+
+
+14. WHAT THE UI SHOULD NOT LOOK LIKE
+
+This section is as important as the sections above. There are many common patterns in SaaS and AI products that ConfigTrace should actively avoid.
+
+It should not look like a generic SaaS dashboard. No large friendly illustration on the empty state. No "Good morning, Rohan" greeting. No motivational copy. No colorful gradient hero blocks at the top of the page.
+
+It should not look like a cyberpunk or hacker tool. No neon green or cyan on black. No matrix-style effects. No fake terminal aesthetics applied to things that are not actually terminal output. Dark mode is not the same as hacker aesthetic.
+
+It should not look like an AI chatbot product. No centered chat interface. No gradient backgrounds. No large model-provider branding. No "Ask ConfigTrace anything" search bar as the primary UI element.
+
+It should not have bloated dashboard cards. Each card must justify its existence. Cards with a single number in huge text, surrounded by excessive padding, and decorated with a thin colored top border are not acceptable. Information density should be deliberately high on operational pages.
+
+It should not use more than five colors for status. The risk classification system uses exactly five levels (critical, high, medium, low, healthy) plus unknown. No additional colors should be introduced for sub-statuses or secondary signals.
+
+It should not feel playful. Rounded corners, soft shadows, pastel colors, illustrated avatars, and cheerful microcopy all communicate the wrong thing about what ConfigTrace is. This tool is used when something may have broken in production. It should communicate authority, not friendliness.
+
+It should not be a generic DevOps dashboard with line charts and uptime percentages. ConfigTrace is not a metrics tool. There should be no line charts, bar charts, or area charts in the initial product. The data model is discrete change events and snapshots, and the visualizations should reflect that: timelines, diffs, and structured record displays.
+
+
+CLOSING NOTE
+
+Every future component, screen, or feature added to ConfigTrace should be evaluated against a single question: does this look like it belongs in the same room as Cloudflare's DNS management interface, Linear's issue tracker, and Vercel's deployment logs? If the answer is no, reconsider the design before shipping it.
+
+The goal is not a beautiful product. The goal is a credible, trusted, operationally useful product that engineers will open without hesitation during a production incident.

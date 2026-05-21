@@ -1,0 +1,137 @@
+ConfigTrace Vision
+Internal Document — May 2026
+
+
+1. One-Line Explanation
+
+ConfigTrace is configuration change intelligence for production systems: it snapshots, diffs, risk-scores, and surfaces dangerous configuration changes across cloud providers, SaaS tools, and infrastructure before they cause incidents.
+
+
+2. Mission
+
+To make production configuration changes visible, auditable, and actionable — so engineering teams can detect, understand, and respond to dangerous changes before they become outages.
+
+
+3. Core Problem
+
+Production systems break in two ways: code changes and configuration changes. Engineering teams have invested heavily in solving the first problem. Git, CI/CD, code review, feature flags, and deployment pipelines all exist to make code changes safe and traceable. The second problem has been largely ignored.
+
+Critical configuration lives outside Git. DNS records, firewall rules, rate limit policies, OAuth app settings, API gateway configurations, environment variables, and cloud IAM policies change constantly — through dashboards, CLI tools, Terraform runs outside state, and manual edits made under pressure during an incident. None of this is automatically captured, diffed, or correlated with production behavior.
+
+When something breaks, engineers spend hours asking: what changed? They dig through Cloudflare audit logs, Slack history, Terraform state files, and cloud console activity trails — all in different places, with different formats, and no unified timeline. Most of the time, the answer was a configuration change nobody remembered making.
+
+ConfigTrace exists to solve this. One place to see what configuration looks like right now, what it looked like before, what changed and when, and how risky that change is.
+
+
+4. Why Now
+
+Three things are converging.
+
+First, infrastructure complexity is exploding. Modern production systems span dozens of SaaS tools, cloud providers, and infrastructure platforms. Each one has its own configuration model, audit trail, and API. Configuration surface area is growing faster than any team's ability to track it manually.
+
+Second, incidents are getting more expensive. The cost of a production outage — in engineering time, customer trust, and revenue — has risen sharply. Teams need faster diagnosis, not just better post-mortems.
+
+Third, the tooling gap is obvious. Datadog tells you metrics are anomalous. PagerDuty wakes someone up. Neither one tells you that a DNS record changed two minutes before the anomaly started. Infrastructure observability has matured; configuration observability has not.
+
+The time to build configuration change intelligence is now, before the problem gets papered over with more dashboards that miss the signal.
+
+
+5. Target Users
+
+The primary user is a senior software engineer or infrastructure engineer at a company running production services on cloud infrastructure. They have experienced an incident caused by a configuration change — probably more than once. They understand the problem viscerally.
+
+Secondary users include SREs who own production reliability, DevOps engineers who manage infrastructure tooling, and engineering leads who need audit trails for compliance or postmortem documentation.
+
+The initial target company size is 20 to 500 engineers. Large enough to have real infrastructure complexity, small enough that a focused tool can land without a six-month procurement cycle.
+
+These users do not want another dashboard. They want a specific, reliable answer to a specific question: what configuration changed, when, and is it the reason things are broken right now.
+
+
+6. Real-World Examples of Dangerous Config Changes
+
+These are not hypotheticals. Incidents like these happen regularly across engineering organizations.
+
+A DNS TTL is reduced from 3600 to 60 seconds during routine maintenance. The change is never reverted. Weeks later, a record update that should have been low-risk instead propagates globally in under a minute, before the engineering team can respond to the resulting spike in errors.
+
+An engineer removes a firewall rule that was blocking a staging CIDR range. In production, the same rule was also blocking external scanners. The rule removal goes unreviewed because it was made directly in the cloud console, not through Terraform. The exposure is discovered three weeks later during an unrelated audit.
+
+A rate limit on an API gateway is doubled to handle an expected traffic spike during a product launch. The launch ends. The rate limit is never reset. Six months later, a buggy client floods the service with requests. The system does not throttle it.
+
+A Cloudflare redirect rule is added to fix a broken URL during an incident. It shadows a deeper routing rule. Two sprints later, a new feature breaks in production. The redirect, which no one remembers, is the cause.
+
+A GitHub Actions environment secret is updated to a new value as part of a key rotation. The rotation script updates the wrong environment. Deployments to staging begin failing. The on-call engineer spends forty minutes checking code changes before checking configuration.
+
+In each case, the configuration change was legitimate at the time. The problem was that it was invisible — no snapshot, no diff, no risk signal, and no connection to the production behavior it eventually caused.
+
+
+7. Product Philosophy
+
+ConfigTrace is built around four principles.
+
+Visibility before action. The most valuable thing ConfigTrace does is show what changed. Before alerting, before automation, before integration with incident tools — the product must reliably answer the question of what configuration looks like right now and how it differs from before. This is the core capability everything else depends on.
+
+Configuration is first-class. ConfigTrace is not a logging tool that also captures config. It is not a SIEM with a config tab. Configuration state is the primary data model. Every design decision should reinforce this.
+
+Useful at 2am. When an engineer is debugging a production incident, they need fast answers, not rich features. The UI should surface the most relevant configuration changes immediately — most recent, highest risk, tied to the affected system. Clarity over completeness.
+
+Incremental trust. Engineers will not connect ConfigTrace to their production systems unless they trust it. The product earns that trust by being accurate, quiet, and non-destructive. It reads configuration — it does not write it, push changes, or act on behalf of the user unless explicitly asked. Trust is built slowly and lost instantly.
+
+
+8. What ConfigTrace Is Not
+
+ConfigTrace is not a Datadog clone. It does not monitor metrics, traces, or logs. It does not alert on CPU utilization or error rate spikes. Those problems are solved. ConfigTrace monitors configuration state.
+
+ConfigTrace is not a Terraform replacement. It does not manage infrastructure. It does not apply changes or maintain desired state. It is not an IaC tool. It is an observation layer that works alongside IaC and captures what IaC does not.
+
+ConfigTrace is not a security scanner. It does not run vulnerability assessments, scan for CVEs, or produce compliance reports. Security teams may find it useful, but it is built for engineering teams diagnosing production problems.
+
+ConfigTrace is not a generic DevOps dashboard. It does not aggregate deployment status, CI/CD pipelines, on-call schedules, or incident queues. Focus is the product's most important feature. A tool that monitors everything monitors nothing.
+
+ConfigTrace is not an audit log aggregator. Cloud providers already produce audit logs. ConfigTrace does not replace or replicate them wholesale. It snapshots configuration state at a point in time, detects meaningful changes, classifies risk, and presents diffs — which is different from streaming every API call into a database.
+
+
+9. Why Existing Monitoring Is Insufficient
+
+Existing tools fail the configuration change problem in predictable ways.
+
+Cloud-native audit logs are comprehensive but unusable during an incident. They are raw, high-volume, and not structured around configuration state. They tell you every API call, not what the configuration actually looked like before and after. Correlating them with a production anomaly requires manual effort that most teams do not have time for.
+
+Terraform state captures infrastructure-as-code resources, but only the resources managed by that Terraform workspace. Manual changes, changes made through other tools, and configurations that do not map cleanly to Terraform resources are invisible. Terraform also does not snapshot SaaS configuration, DNS records not managed as code, or application-level settings.
+
+SIEM tools ingest logs for security investigations. They are not designed for operational diagnosis. They are expensive to operate, slow to query, and require security engineering expertise to configure meaningfully.
+
+APM and observability platforms show what the system is doing — latency, error rate, throughput — but not what changed in the configuration layer that caused the behavior to shift. The gap between "something is wrong" and "here is the configuration change that caused it" is exactly the gap ConfigTrace fills.
+
+
+10. Long-Term Vision
+
+In five years, ConfigTrace is the configuration layer for production systems — the place where engineering teams go to understand the state and history of every critical configuration across their infrastructure, cloud, and SaaS stack.
+
+The long-term product is a unified configuration timeline: every connected system's configuration state, snapshotted continuously, with diffs annotated with risk scores, correlated with deployment events and incident timelines, and accessible through a fast, searchable interface.
+
+Configuration changes are linked to incidents automatically. When an on-call engineer opens an incident, ConfigTrace surfaces the highest-risk configuration changes from the preceding window — across every connected system — without them asking.
+
+Teams use ConfigTrace for postmortems not as an afterthought but as primary documentation. The configuration change that caused the incident is in the record, with a timestamp, a diff, and a risk score, before the postmortem document is written.
+
+Compliance and audit teams use ConfigTrace to answer questions about configuration state at a point in time — what did our firewall rules look like on the day of this audit? What did our DNS configuration look like before this migration? These questions currently take hours. They should take seconds.
+
+The business outcome is fewer incidents caused by configuration drift, faster diagnosis when incidents happen, and a historical record of configuration state that makes production systems fundamentally more trustworthy.
+
+
+11. What the MVP Must Prove
+
+The MVP has one job: prove that ConfigTrace can reliably snapshot configuration state, detect changes, and surface diffs in a way that an engineer actually finds useful.
+
+The scope is deliberately narrow. The MVP monitors Cloudflare DNS records only. An engineer connects their Cloudflare account using an API token. ConfigTrace snapshots all DNS records. The engineer triggers a manual sync. ConfigTrace detects any changes since the last snapshot, stores a structured diff, classifies each change by risk level, and displays the change in a dashboard timeline.
+
+The MVP must prove four things.
+
+First, that the snapshot and diff engine works correctly and reliably. If ConfigTrace misses a change or reports a false diff, the product is worthless. Accuracy is the non-negotiable foundation.
+
+Second, that the risk classification is meaningful. A DNS record deletion is not the same risk as a TTL update. The system must distinguish between change types and surface the most dangerous ones clearly. If every change shows up as medium risk, engineers will stop looking.
+
+Third, that the timeline interface is useful for diagnosis. An engineer who sees something wrong in production should be able to open ConfigTrace and immediately see whether a configuration change preceded the anomaly. The UI has to be fast, clear, and data-dense enough to be useful under pressure.
+
+Fourth, that engineers will connect a real system to a new tool they have not heard of. This is a trust and onboarding problem. The MVP must be simple enough to connect in under five minutes and credible enough that a careful engineer is comfortable pointing it at their production Cloudflare account.
+
+If the MVP proves these four things, the product is real. Everything else — additional integrations, scheduled sync, Slack alerts, risk correlation with incidents — comes after the foundation is proven.

@@ -1,0 +1,564 @@
+ConfigTrace Roadmap
+Internal Document — May 2026
+
+
+Overview
+
+ConfigTrace is configuration change intelligence for production systems. The product snapshots configuration state, detects changes, generates structured diffs, classifies risk, surfaces a timeline, and eventually correlates configuration changes with production incidents.
+
+This roadmap is structured as eight sequential phases. Each phase has a clear goal, a defined set of features, and explicit criteria for what success looks like before moving on. The phases are ordered to preserve the core product loop: get the snapshot and diff engine working first, then build the interface around it, then add risk intelligence, then add automation, then expand to new providers.
+
+Do not collapse phases. Do not build Phase 3 while Phase 2 is unfinished. The phases are deliberately narrow to ensure the foundation is solid before expanding scope.
+
+
+Phase 0: Project Setup
+
+Goal
+
+Set up the full-stack development environment so every layer of the system can be run locally, tested independently, and committed to source control in a clean state. Nothing ships in this phase, but everything is ready to build on.
+
+Features
+
+    Running local environment via Docker Compose with all five services
+    Authenticated frontend with a working login screen
+    Backend API returns a health check response
+    Database schema is initialized via Alembic migrations
+    Celery worker boots and processes a test task
+    Environment configuration is managed cleanly via .env without hardcoded secrets
+
+Backend tasks
+
+    Initialize a FastAPI project with folder structure: app, routers, services, connectors, models, workers
+    Set up PostgreSQL connection with SQLAlchemy and connection pooling
+    Write the initial Alembic migration with the users, integrations, resources, snapshots, changes, and alerts tables
+    Set up Celery with Redis as the broker and a test task that writes a log entry
+    Add a GET /health endpoint that returns service status
+    Configure Clerk JWT middleware to validate tokens on protected routes
+
+Frontend tasks
+
+    Initialize a Next.js project with TypeScript and Tailwind CSS
+    Set up Clerk authentication and the hosted login flow
+    Create a minimal authenticated layout with a sidebar placeholder and a route for the dashboard
+    Configure environment variables for the backend API base URL
+
+Database tasks
+
+    Write initial Alembic migration for the following tables:
+        users: id, clerk_id, email, display_name, created_at
+        integrations: id, user_id, provider, display_name, encrypted_credentials, status, last_synced_at, created_at
+        resources: id, integration_id, provider_resource_type, provider_resource_id, display_name, last_snapshot_at
+        snapshots: id, resource_id, integration_id, state JSONB, content_hash, triggered_by, created_at
+        changes: id, resource_id, prev_snapshot_id, new_snapshot_id, change_type, field_path, prev_value JSONB, new_value JSONB, risk_level, created_at
+        alerts: id, change_id, channel, destination, status, created_at, delivered_at
+
+Testing and demo criteria
+
+    Docker Compose brings up all services cleanly with no manual intervention
+    GET /health returns HTTP 200
+    Logging in via Clerk lands the user on the authenticated dashboard layout
+    Celery worker processes the test task and logs the result
+    Alembic migration runs cleanly against a fresh database
+
+What not to build yet
+
+    Any Cloudflare API calls
+    Any sync or snapshot logic
+    Any UI pages beyond the shell layout and login screen
+    Scheduled tasks or Celery Beat
+
+
+Phase 1: Cloudflare DNS Manual Sync MVP
+
+Goal
+
+Deliver the complete core product loop for Cloudflare DNS. An engineer connects their Cloudflare account, syncs DNS records, changes a record, syncs again, and sees exactly what changed, when, and at what risk level. This is the MVP that proves the product is real.
+
+Features
+
+    Integration setup flow: enter Cloudflare API token and zone ID, validate and save
+    Manual Sync Now button per integration
+    Backend fetches all DNS records from the Cloudflare Zones API
+    Snapshot stored in the database on every sync
+    Diff computed against the previous snapshot on every subsequent sync
+    Risk level assigned to each detected change
+    Changes displayed in a timeline view: what changed, old value, new value, timestamp, risk level
+    Change detail view with a field-by-field diff
+
+Backend tasks
+
+    Build the Cloudflare connector module:
+        Authenticate using the stored API token
+        Call the Cloudflare Zones API for DNS records with full pagination
+        Handle rate limit backoff and error responses
+        Normalize the raw Cloudflare response into ConfigTrace's internal format: record id, type, name, content, TTL, proxied, modified_on
+    Build the snapshot service:
+        Accept normalized state from the connector
+        Compute SHA-256 content hash
+        Compare hash to the most recent snapshot; skip storage if unchanged
+        Write new snapshot record with full JSONB state, hash, triggered_by, and timestamp
+    Build the diff service:
+        Load the two most recent snapshots for a resource
+        Build a keyed index of DNS records from each snapshot using the Cloudflare record ID
+        Identify additions: records in the new snapshot not present in the previous one
+        Identify deletions: records in the previous snapshot not present in the new one
+        Identify modifications: records present in both with differing field values
+        For modifications, produce field-level before/after comparisons
+        Write each detected change as a row in the changes table
+    Build the risk service for Cloudflare DNS:
+        Critical: deletion of A, AAAA, or CNAME on a root or apex domain; deletion of any MX record; modification of NS or SOA records
+        High: deletion of any DNS record; modification of a CNAME target; modification of an MX target or priority; disabling Cloudflare proxy on a previously proxied record; TTL reduction to 60 seconds or below
+        Medium: enabling Cloudflare proxy on a record; TTL increase or non-high-risk decrease; modification of a TXT record value; addition of a new subdomain A or AAAA record
+        Low: metadata-only changes; SPF record updates with no structural change; changes in non-production zones identified by naming convention
+        Store the assigned risk level on each change record
+    Build the sync orchestration task in Celery:
+        Accept integration ID as input
+        Load encrypted credentials, decrypt, instantiate the Cloudflare connector
+        Fetch state, run snapshot service, run diff service, run risk service in sequence
+        Update integration last_synced_at on success; set status to error on failure
+    Add API routes:
+        POST /integrations — create an integration, validate Cloudflare token before saving
+        GET /integrations — list integrations for the authenticated user
+        POST /syncs — trigger manual sync for an integration, enqueue Celery task, return sync ID
+        GET /syncs/:id — return sync status and result summary
+        GET /changes — return paginated list of changes with filters for integration, risk level, and time range
+        GET /changes/:id — return full change detail with both snapshot states
+    Encrypt integration credentials at rest using a symmetric key from the environment
+
+Frontend tasks
+
+    Build the integrations page:
+        List connected integrations with provider name, display name, status, and last synced timestamp
+        Add New Integration button that opens a form for Cloudflare API token and zone selection
+        Sync Now button per integration that calls POST /syncs and polls for completion
+        Status indicator while sync is in progress
+    Build the timeline view:
+        Paginated chronological list of all detected changes
+        Each row shows: integration name, resource name, change type, affected field or record, risk level badge, and timestamp
+        Risk level color coding: critical in red, high in orange, medium in yellow, low in gray
+        Click any row to open the change detail view
+    Build the change detail view:
+        Show the full field-by-field diff for the change
+        Show both the previous value and the new value
+        Show the risk level and a plain-language explanation of why the risk level was assigned
+        Show the snapshot timestamps for both the before and after states
+    Keep the UI dark, dense, and professional. No decorative elements. Design as if this is internal infrastructure tooling.
+
+Database tasks
+
+    Confirm all Phase 0 schema tables support the Phase 1 data shapes
+    Index the changes table on resource_id, risk_level, and created_at for timeline query performance
+    Index the snapshots table on resource_id and created_at for diff service lookups
+
+Testing and demo criteria
+
+    User can connect a Cloudflare account with a valid API token in under five minutes
+    Invalid API tokens are rejected with a clear error message before the integration is saved
+    Clicking Sync Now fetches DNS records and stores a snapshot within 10 seconds for a typical zone
+    A manual DNS record change in the Cloudflare dashboard is detected on the next sync
+    The timeline shows the change with the correct old value, new value, timestamp, and risk level
+    Deleting an A record shows as critical risk. Reducing a TTL to 60 seconds shows as high risk. A TXT record value change shows as medium risk.
+    The change detail view shows the field-by-field diff with both before and after values
+
+What not to build yet
+
+    Scheduled sync
+    Slack alerts
+    Multiple Cloudflare zones per integration
+    Any provider other than Cloudflare DNS
+    User registration beyond Clerk-managed login
+
+
+Phase 2: Dashboard Timeline and Resource History
+
+Goal
+
+Make the timeline and resource history genuinely useful for incident diagnosis. An engineer responding to a production anomaly should be able to open ConfigTrace, filter to the relevant integration and time window, and identify the most dangerous configuration change in under 30 seconds.
+
+Features
+
+    Timeline filtering by integration, risk level, change type, and time range
+    Resource detail view showing all snapshots and changes for a single DNS zone
+    Snapshot history for a resource with the ability to view the full state at any point in time
+    Diff comparison between any two historical snapshots, not just consecutive ones
+    Search across change records by record name or value
+    Summary header on the timeline showing counts by risk level for the selected time range
+
+Backend tasks
+
+    Add query parameters to GET /changes: filter by integration_id, risk_level, change_type, resource_id, since, until
+    Add GET /resources/:id — return resource metadata and last snapshot timestamp
+    Add GET /resources/:id/snapshots — return paginated list of snapshots for a resource, with hash and timestamp
+    Add GET /snapshots/:id — return the full snapshot state for a specific snapshot
+    Add GET /resources/:id/changes — return all changes for a resource with the same filter parameters as the global timeline
+    Add a diff-on-demand endpoint: POST /snapshots/compare — accepts two snapshot IDs and returns a structured diff without storing it
+    Add a search endpoint: GET /changes/search?q= — searches record name and value fields in change records
+
+Frontend tasks
+
+    Add filter controls to the timeline: dropdowns for integration, risk level, and time range; text input for search
+    Add a risk level summary bar at the top of the timeline: counts of critical, high, medium, and low changes for the active filter
+    Build the resource detail view:
+        Show the resource name, provider type, and integration
+        Show a chronological list of snapshots with timestamps and change counts
+        Allow the user to click any snapshot to view the full DNS state at that point in time
+        Allow the user to select any two snapshots and view a field-by-field diff between them
+    Build a snapshot state view: render the full DNS record list from a snapshot in a clean table format, not raw JSON
+    Add empty states and loading states to all views
+
+Database tasks
+
+    Verify indexes support the new filter queries without full table scans on the changes and snapshots tables
+    Add a GIN index on snapshot state JSONB for future full-text search if needed
+
+Testing and demo criteria
+
+    Filtering the timeline by risk level critical shows only critical changes
+    Filtering by time range shows only changes within that window
+    The resource detail view shows all snapshots and changes for a single zone
+    Selecting two snapshots that differ produces a correct field-by-field diff
+    Searching for a record name returns the matching changes
+    The risk summary counts match the filtered results
+
+What not to build yet
+
+    Slack alerts
+    Scheduled sync
+    User-facing alert configuration
+    Multiple provider support
+
+
+Phase 3: Risk Classification and Slack Alerts
+
+Goal
+
+Make dangerous changes impossible to miss. When ConfigTrace detects a high or critical risk change, the relevant engineer receives a Slack message with enough context to act immediately, along with a direct link to the diff in the dashboard.
+
+Features
+
+    Alert configuration per integration: choose which risk levels trigger alerts and provide a Slack webhook URL
+    Slack notification sent automatically after any sync that detects a high or critical risk change
+    Alert delivery recorded in the database with status and timestamp
+    Failed alert retries with exponential backoff
+    Alert history view: list of all alerts sent, with delivery status and the associated change
+
+Backend tasks
+
+    Add the alerts configuration table: user_id, integration_id, min_risk_level, slack_webhook_url, enabled
+    Build the Slack alert dispatcher as a Celery task:
+        Load alert configuration for the integration
+        Format a Slack Block Kit message with: integration name, resource name, risk level, change summary in plain English, and a direct link to the change detail view
+        POST to the Slack webhook URL
+        Record delivery status and timestamp in the alerts table
+        On failure, retry up to three times with exponential backoff; mark as failed after exhausting retries
+    Wire the alert dispatch into the sync orchestration task: after risk classification, if any change meets the min_risk_level threshold, enqueue the dispatch_alert task
+    Add API routes:
+        GET /alert-configs — return alert configuration for all integrations
+        POST /alert-configs — create or update alert configuration for an integration
+        GET /alerts — return paginated alert history with filters for integration and status
+
+Frontend tasks
+
+    Add an alert configuration section to the integration settings view:
+        Toggle to enable or disable alerts
+        Slack webhook URL input with a test button that sends a test message
+        Dropdown to select the minimum risk level that triggers an alert
+    Add an alerts history view: paginated list of sent alerts with integration name, change summary, risk level, delivery status, and timestamp
+    Show an alert badge on the timeline row for any change that triggered an alert
+
+Database tasks
+
+    Write migration for the alert_configs table: id, user_id, integration_id, min_risk_level, slack_webhook_url, enabled, created_at, updated_at
+    Update the alerts table to reference alert_config_id in addition to change_id
+
+Testing and demo criteria
+
+    Configuring a Slack webhook and clicking the test button delivers a correctly formatted test message to the channel
+    A critical risk change detected on sync triggers a Slack message within 30 seconds
+    The Slack message includes the integration name, resource name, risk level, a one-line change summary, and a valid link to the change detail view
+    A failed webhook delivery is retried and eventually marked as failed in the alert history
+    Changing the minimum risk level to high means medium and low changes do not trigger alerts
+
+What not to build yet
+
+    Email notifications
+    PagerDuty integration
+    Alert rule conditions beyond risk level threshold
+    Scheduled sync
+
+
+Phase 4: Scheduled Background Monitoring
+
+Goal
+
+Remove the manual sync requirement. ConfigTrace monitors Cloudflare DNS automatically on a configurable schedule and surfaces changes in the timeline without the engineer doing anything. This is the first step toward making ConfigTrace a passive monitoring system rather than an on-demand tool.
+
+Features
+
+    Per-integration scheduled sync configuration: enable or disable, set interval in minutes
+    Celery Beat scheduler enqueues sync tasks for all active scheduled integrations
+    Last synced and next sync timestamps shown in the integrations list
+    Sync history view: log of all syncs with trigger type (manual or scheduled), status, duration, and change count
+    No-change syncs are still logged with a timestamp but do not create change records
+
+Backend tasks
+
+    Add a scheduled_sync_enabled and sync_interval_minutes column to the integrations table
+    Write the Celery Beat periodic task: query all integrations where scheduled_sync_enabled is true; enqueue a sync_integration task for each one
+    Add a syncs table: id, integration_id, triggered_by (manual or scheduled), status, started_at, completed_at, change_count, error_message
+    Update the sync orchestration task to write sync records throughout execution
+    Add API routes:
+        GET /syncs — return paginated sync history for an integration
+        GET /syncs/:id — return full sync detail with duration, change count, and any error
+    Update the integration settings to accept scheduled_sync_enabled and sync_interval_minutes
+    Handle the case where a previous sync is still running when the next scheduled sync fires: skip or queue depending on configuration
+
+Frontend tasks
+
+    Add a scheduled sync toggle and interval selector to integration settings
+    Update the integrations list to show last synced timestamp and next scheduled sync estimate
+    Build a sync history view: paginated log of syncs with trigger type, status, duration, and change count
+    Add a visual indicator on the timeline for scheduled versus manual syncs
+
+Database tasks
+
+    Write migration to add scheduled_sync_enabled, sync_interval_minutes to integrations
+    Write migration to create the syncs table
+
+Testing and demo criteria
+
+    Enabling scheduled sync with a 15-minute interval results in automatic syncs without manual intervention
+    The sync history log shows both manual and scheduled syncs with correct timestamps and change counts
+    A configuration change made between two scheduled syncs is detected and appears in the timeline after the next sync runs
+    Disabling scheduled sync stops automatic syncs
+    A sync that produces no changes still logs a sync record with change_count zero
+
+What not to build yet
+
+    Stripe integration
+    GitHub integration
+    Sub-minute sync intervals
+    Webhook-triggered syncs
+
+
+Phase 5: Stripe Webhook and Configuration Monitoring
+
+Goal
+
+Add the second integration. Stripe configuration — API keys, webhook endpoints, and product and pricing settings — changes frequently and carries significant production risk. Connecting Stripe follows the same connector, snapshot, diff, and risk pipeline established in Phase 1.
+
+Features
+
+    Stripe integration setup: enter Stripe restricted API key with read access
+    Connector fetches and snapshots: webhook endpoints, API keys (metadata only, not secret values), products and prices, tax settings
+    Diff detects changes to webhook endpoint URLs, event subscriptions, API key creation or deletion, product and price modifications
+    Risk rules for Stripe: deletion of a webhook endpoint is critical; addition of a webhook endpoint for an unknown URL is high; price changes are high; API key deletion is critical
+
+Backend tasks
+
+    Build the Stripe connector module:
+        Authenticate using the stored restricted API key
+        Fetch webhook endpoints, API keys, products, and prices from the Stripe API
+        Normalize into ConfigTrace's internal format with stable identifiers per resource type
+        Handle Stripe API pagination
+    Write Stripe-specific risk rules in the risk service:
+        Critical: deletion of a webhook endpoint; deletion of an API key
+        High: creation of a new webhook endpoint with an external URL; modification of a webhook endpoint URL or event subscriptions; price amount change on an active product; disabling a product that has active subscriptions
+        Medium: addition of a new product; modification of product metadata; price currency change
+        Low: modification of product description or display name; addition of a new API key
+    Wire the Stripe connector into the sync orchestration task so it follows the same flow as the Cloudflare connector
+    No schema changes required: the connector, snapshot, diff, and risk pipeline is already provider-agnostic
+
+Frontend tasks
+
+    Add Stripe as a provider option in the Add New Integration flow with appropriate credential fields
+    No other frontend changes required: the timeline, change detail, and resource history views already handle multiple providers
+    Verify the risk level color coding and change type labels render correctly for Stripe change records
+
+Database tasks
+
+    No schema migrations required
+
+Testing and demo criteria
+
+    Connecting a Stripe account with a valid restricted API key completes in under two minutes
+    A webhook endpoint deletion is detected on the next sync and shows as critical risk
+    A price change on an active product is detected and shows as high risk
+    Stripe changes appear in the unified timeline alongside Cloudflare DNS changes
+
+What not to build yet
+
+    GitHub integration
+    Stripe event stream or billing data monitoring
+    Stripe-to-incident correlation
+
+
+Phase 6: GitHub Security and Configuration Monitoring
+
+Goal
+
+Add GitHub as the third integration. GitHub repository and organization configuration — branch protection rules, secrets, environment variables, and team permissions — changes in ways that directly affect production deployments and security posture.
+
+Features
+
+    GitHub integration setup: enter a GitHub personal access token or GitHub App credentials
+    Connector fetches and snapshots: branch protection rules per repository, repository secrets and environments, Actions workflow permissions, team membership and repository access, organization security settings
+    Risk rules for GitHub: deletion of a branch protection rule is critical; addition of a new secret in a production environment is high; modification of workflow permissions is high; removal of required reviewers from a protected branch is critical
+
+Backend tasks
+
+    Build the GitHub connector module:
+        Authenticate using the stored token or App credentials
+        Fetch branch protection rules, secrets (names only, not values), environments, team memberships, and organization settings using the GitHub REST API
+        Handle pagination and secondary rate limits
+        Normalize into ConfigTrace's internal format
+    Write GitHub-specific risk rules:
+        Critical: deletion of any branch protection rule on a default branch; removal of required pull request reviews from a protected branch; deletion of a required status check
+        High: disabling branch protection on any branch; addition of a new secret in a production or main environment; modification of workflow permissions to allow write access from pull requests; addition of a new team with write or admin access
+        Medium: addition of a new repository environment; addition of a secret in a non-production environment; change to auto-merge settings; change to team repository access level
+        Low: modification of repository metadata; addition of a collaborator with read access
+    Wire the GitHub connector into the sync orchestration pipeline
+
+Frontend tasks
+
+    Add GitHub as a provider option in the Add New Integration flow
+    No other frontend changes required
+
+Database tasks
+
+    No schema migrations required
+
+Testing and demo criteria
+
+    Deleting a branch protection rule from a repository is detected on the next sync and shows as critical risk
+    Adding a new secret to a production environment shows as high risk
+    GitHub changes appear correctly in the unified timeline
+    Connecting a GitHub account with valid credentials completes in under two minutes
+
+What not to build yet
+
+    GitHub Actions run monitoring
+    Code change correlation
+    Incident correlation layer
+
+
+Phase 7: Incident Correlation and Config Intelligence
+
+Goal
+
+Connect configuration changes to production incidents. When an incident is active, ConfigTrace should automatically surface the highest-risk configuration changes from the preceding time window so engineers do not have to hunt for them manually.
+
+Features
+
+    Incident events table: stores external incident events received via webhook from Datadog, PagerDuty, Sentry, or a custom endpoint
+    Correlation engine: for each incoming incident event, queries high and critical changes in the preceding 60-minute window and links them to the incident
+    Incident detail view: shows the incident event alongside all correlated configuration changes ranked by risk level
+    Timeline annotation: incident markers shown on the timeline so engineers can visually see whether a configuration change preceded an incident
+    Custom webhook endpoint: accepts any ISO 8601 timestamp and event metadata so teams can pipe in any external signal
+
+Backend tasks
+
+    Write migration for the incident_events table: id, source, external_id, title, severity, started_at, raw_payload JSONB, created_at
+    Write migration for the change_incident_links table: id, incident_event_id, change_id, correlation_score, created_at
+    Build the incident webhook receiver: POST /webhooks/incidents — validates webhook signature, writes to incident_events, enqueues a correlation task
+    Build the correlation Celery task:
+        Load the incident event timestamp
+        Query changes table for high and critical risk changes in the 60 minutes before the incident started
+        Write change_incident_links records for all correlated changes
+        Score correlation by recency and risk level
+    Add API routes:
+        GET /incidents — return paginated list of incident events
+        GET /incidents/:id — return incident detail with correlated changes ranked by correlation score
+    Add Datadog, PagerDuty, and Sentry webhook signature validation for each respective source
+
+Frontend tasks
+
+    Build the incidents view: list of received incident events with source, title, severity, and count of correlated configuration changes
+    Build the incident detail view: show incident metadata alongside a ranked list of correlated changes with risk levels and diffs
+    Add incident markers to the timeline view: vertical lines or annotations at incident timestamps so engineers can see the relationship between configuration changes and incidents
+    Add a correlated incidents count to each change record in the timeline
+
+Database tasks
+
+    Migrations for incident_events and change_incident_links as described above
+
+Testing and demo criteria
+
+    Sending a test webhook from Datadog or a custom POST creates an incident event record
+    A critical configuration change made 30 minutes before the incident timestamp appears as correlated in the incident detail view
+    The incident detail view ranks correlated changes with the highest risk and most recent changes first
+    Incident markers appear on the timeline in the correct time positions
+
+What not to build yet
+
+    Automated remediation or change rollback
+    Bi-directional incident tool integration
+    ML-based anomaly correlation
+    Team SaaS hardening features
+
+
+Phase 8: Multi-User and Team SaaS Hardening
+
+Goal
+
+Make ConfigTrace ready for real teams. A company's ConfigTrace account should support multiple engineers with appropriate access controls, organization-level integration management, audit trails, and production-grade operational reliability.
+
+Features
+
+    Organization model: users belong to an organization; integrations belong to an organization, not an individual user
+    Role-based access: admin users can manage integrations and credentials; member users can view the timeline and changes but cannot modify integrations
+    Invitation flow: admins can invite team members via email
+    Organization-level audit log: who connected what integration, who triggered a manual sync, who changed alert configuration
+    Integration credential rotation: admins can update or rotate integration credentials without losing snapshot history
+    Soft delete for integrations: deactivating an integration preserves all historical snapshot and change data
+    Rate limiting on the API to prevent abuse
+    Database connection pooling tuned for concurrent team access
+    Error monitoring and structured logging for production operations
+
+Backend tasks
+
+    Write migration to add an organizations table and update the users and integrations tables to belong to an organization
+    Implement role-based access control in FastAPI middleware: check role before any integration write operation
+    Build the invitation flow: generate signed invitation tokens, send via email, accept and create user records
+    Add an audit_log table and write audit events for all sensitive operations: integration create, integration delete, sync trigger, credential update, alert config change
+    Add API rate limiting per user and per organization using a Redis-backed token bucket
+    Update all database queries to scope by organization ID rather than user ID
+    Implement credential rotation endpoint: POST /integrations/:id/rotate-credentials — decrypts existing credentials, validates new credentials against the provider, re-encrypts and stores
+
+Frontend tasks
+
+    Build an organization settings page: member list with roles, invite member form, pending invitations
+    Update the integrations page to show which team member connected each integration and the last sync trigger source
+    Add a role-aware UI: member users see a read-only view without Sync Now buttons or integration management controls
+    Build an audit log view: chronological list of organization-level events with actor, action, target, and timestamp
+
+Database tasks
+
+    Migration for organizations table: id, name, created_at
+    Migration to add organization_id to users, integrations, snapshots, changes, and alerts tables
+    Migration for audit_log table: id, organization_id, user_id, action, target_type, target_id, metadata JSONB, created_at
+
+Testing and demo criteria
+
+    An admin user can invite a team member who then logs in and sees the shared timeline
+    A member user cannot create, edit, or delete integrations
+    Rotating integration credentials preserves all historical snapshot and change data
+    The audit log records every sensitive action with the correct actor and timestamp
+    Deactivating an integration preserves all historical data and the resource history view still shows it
+
+What not to build yet
+
+    SSO or SAML integration
+    Advanced permissions beyond admin and member
+    Self-hosted deployment documentation
+    SLA monitoring or uptime guarantees
+    Dedicated mobile interface
+
+
+What Stays Constant Across All Phases
+
+The core loop never changes. Every phase either deepens the loop or extends it to a new provider. The snapshot service, diff service, and risk service are the center of the product. UI, alerts, correlation, and team features all exist to surface the output of that loop more effectively.
+
+ConfigTrace is not a logging tool, a metrics platform, a deployment system, or a security scanner. Every feature decision should be evaluated against the question: does this help engineers understand what configuration changed, when it changed, how risky it was, and whether it caused a problem?
+
+Build phases in order. Ship something real at the end of each one.

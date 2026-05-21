@@ -1,0 +1,147 @@
+services:
+
+  # ──────────────────────────────────────────────────────────────
+  # Infrastructure
+  # ──────────────────────────────────────────────────────────────
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ──────────────────────────────────────────────────────────────
+  # Backend API
+  # ──────────────────────────────────────────────────────────────
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      # Hot reload: mount source so code changes apply without rebuild.
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override DATABASE_URL and REDIS_URL so they always resolve to Docker
+      # service hostnames regardless of what .env contains (which may use
+      # "localhost" for local-only development).
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # ──────────────────────────────────────────────────────────────
+  # Frontend
+  # ──────────────────────────────────────────────────────────────
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      # Hot reload: mount source so code changes apply without rebuild.
+      - ./frontend:/app
+      # Preserve the container's node_modules so the host mount does not
+      # shadow the packages installed during the image build.
+      - /app/node_modules
+      # Preserve Next.js build cache across container restarts.
+      - /app/.next
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      # Enable filesystem polling so Next.js hot reload works inside Docker
+      # on both Linux and macOS (where inotify events may not propagate).
+      WATCHPACK_POLLING: "true"
+      # Browser-facing API URL: must use localhost (the host machine's port),
+      # not the Docker service name, because this value is embedded in the
+      # browser bundle.
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    depends_on:
+      - api
+
+  # ──────────────────────────────────────────────────────────────
+  # Background workers  (Milestone 3 — not started by default)
+  #
+  # To include them:  docker compose --profile celery up
+  # ──────────────────────────────────────────────────────────────
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app worker --loglevel=info
+    profiles:
+      - celery
+
+  beat:
+    # Celery Beat scheduler — inactive in MVP, present for Phase 4.
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    restart: "no"
+    profiles:
+      - celery
+
+volumes:
+  postgres_data:
+    # Named volume keeps database state across `docker compose down` restarts.
+    # Use `docker compose down -v` to wipe it completely.

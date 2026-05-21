@@ -1,0 +1,240 @@
+ConfigTrace Product Specification
+Internal Document - May 2026
+
+
+SECTION 1: PRODUCT OVERVIEW
+
+ConfigTrace is configuration change intelligence for production systems. It snapshots the state of critical configuration across cloud providers and SaaS tools, detects changes between snapshots, classifies the risk of those changes, and surfaces them in a timeline that engineers can use to diagnose production incidents.
+
+The core problem ConfigTrace solves is this: production systems break not only because code changed, but because critical configuration changed outside Git. DNS records, API gateway settings, firewall rules, OAuth app configurations, and cloud policies change constantly through dashboards, CLI tools, and manual edits made under pressure. None of this is automatically captured, diffed, or correlated with production behavior. When something breaks, engineers spend hours asking what changed. ConfigTrace answers that question.
+
+ConfigTrace is not a Datadog clone. It does not monitor metrics, traces, or logs. It is not a Terraform replacement and does not manage infrastructure or maintain desired state. It is not a security scanner and does not produce compliance reports. It is not a generic DevOps dashboard. It is an observation layer for configuration state, purpose-built to help engineers see what changed, when it changed, and how risky that change was.
+
+The MVP is deliberately narrow in scope. It monitors Cloudflare DNS records only. This scope is chosen to prove the core product loop before expanding to additional integrations. The core loop is: connect an integration, sync configuration state, store a snapshot, detect changes, classify risk, and display the result in a timeline. Everything else in the product - scheduled sync, Slack alerts, Stripe, GitHub, team accounts, billing, and incident correlation - comes after the loop is proven reliable and useful.
+
+The primary user is a senior software engineer or infrastructure engineer at a company running production services on cloud infrastructure. Secondary users include SREs, DevOps engineers, and engineering leads who need audit trails for postmortems or compliance. Target company size is 20 to 500 engineers.
+
+
+SECTION 2: CORE USER FLOW
+
+The following describes the complete user journey through the ConfigTrace MVP.
+
+Step 1: User creates an account. The engineer opens ConfigTrace and signs in via the hosted login flow. Authentication is handled by Clerk. On first login, a user record is created scoped to that individual.
+
+Step 2: User connects Cloudflare. From the Integrations page, the engineer clicks Add New Integration. They enter a Cloudflare API token and their zone ID. The backend validates the token against the Cloudflare API before saving. Invalid tokens are rejected immediately with a clear error message. Valid credentials are encrypted at rest before storage. The full setup process should take under five minutes.
+
+Step 3: User clicks Sync Now. The engineer triggers a manual sync for the connected integration by clicking the Sync Now button. The frontend calls the backend sync API, which enqueues a background job. A status indicator shows the sync is in progress.
+
+Step 4: ConfigTrace fetches DNS records. The Cloudflare connector calls the Cloudflare Zones API, retrieves all DNS records for the zone with full pagination, handles rate limit backoff, and normalizes the response into ConfigTrace's internal format. This all happens in the background via a Celery worker.
+
+Step 5: ConfigTrace stores a baseline snapshot. The normalized DNS state is stored as a point-in-time snapshot in the database with a content hash and timestamp. This is the baseline. The dashboard reflects the completed sync and shows the last synced timestamp.
+
+Step 6: User changes a DNS record in Cloudflare. Outside of ConfigTrace, the engineer makes a change in the Cloudflare dashboard: modifying a record's content, changing a TTL, deleting a record, toggling proxy status, or adding a new record.
+
+Step 7: User clicks Sync Now again. The engineer returns to ConfigTrace and triggers another manual sync for the same integration.
+
+Step 8: ConfigTrace detects the change. The connector fetches fresh DNS state. The diff service compares the new snapshot to the previous baseline. It identifies which records were added, removed, or modified, and for modified records, which specific fields changed. The risk service classifies each detected change.
+
+Step 9: Dashboard shows what changed. The timeline displays the change with the full diff: the old value, the new value, the specific field that changed, the risk level, and the timestamp of detection. The engineer can click the change to see the full field-by-field comparison.
+
+
+SECTION 3: MVP FEATURES
+
+The following features are in scope for the ConfigTrace MVP.
+
+Cloudflare Integration Setup
+The engineer can connect a Cloudflare account by entering an API token and zone ID. The backend validates the token before saving. Credentials are encrypted at rest. The integration is shown on the Integrations page with its display name, status, and last synced timestamp.
+
+Manual Sync
+Each integration has a Sync Now button. Clicking it triggers an immediate sync: the backend enqueues a Celery task, the worker fetches current DNS state, and the frontend polls for completion. Syncs that complete with changes update the timeline. Syncs with no changes still record a completed sync timestamp.
+
+DNS Record Snapshotting
+Every sync stores the full normalized DNS state as a point-in-time snapshot. Snapshots are stored with a content hash, a trigger type (manual), and a timestamp. If the content hash matches the previous snapshot, no new snapshot is written. Snapshots are never deleted; they form the historical record.
+
+Diff Detection
+On every sync with a new snapshot, the diff service compares the new snapshot to the previous one for the same zone. It identifies additions (records present in the new snapshot but not the previous), deletions (records present in the previous snapshot but not the new), and modifications (records present in both with changed field values). For modifications, the diff records the before and after value for each changed field.
+
+Risk Classification
+Every detected change is assigned a risk level: low, medium, high, or critical. Risk is based on the type of change, the record type, the specific field affected, and the direction of the change. Risk is stored with each change record. The highest risk level across all changes in a single sync is shown as the headline risk for that sync in the timeline.
+
+Change Timeline
+The dashboard shows a chronological list of all detected changes. Each row shows the integration name, the affected record, the change type, the risk level badge with color coding, and the detection timestamp. The timeline is paginated. Engineers can click any row to see the full change detail.
+
+Resource History Page
+Each DNS zone can be viewed individually. The resource detail page shows all historical snapshots and all detected changes for that zone in chronological order. Engineers can click any snapshot to see the full DNS state at that point in time.
+
+Integration Status Page
+The Integrations page shows all connected integrations with their provider, display name, current status (active, error, or paused), and last synced timestamp. The Sync Now button and integration status indicator are visible here.
+
+Change Detail View
+Clicking any change in the timeline opens the change detail view. This view shows the full field-by-field diff: old value, new value, field name, change type, risk level, and a plain-language explanation of why the risk level was assigned. It also shows the timestamps of both the before and after snapshots.
+
+
+SECTION 4: NON-MVP FEATURES
+
+The following features are explicitly out of scope for the MVP and will be built in later phases. They should not be designed for, prototyped, or partially implemented during MVP development.
+
+Scheduled Sync
+Automatic background syncs on a configurable interval will be added in Phase 4. The MVP requires manual sync only. The Celery Beat scheduler is included in the Docker Compose setup but is not active in the MVP.
+
+Slack Alerts
+Automated Slack notifications when high or critical risk changes are detected will be added in Phase 3. The alerts table is created in the MVP schema as a placeholder, but no alert dispatch logic is implemented.
+
+Stripe Integration
+Stripe configuration monitoring will be added in Phase 5. This includes webhook endpoints, API keys, products, prices, and tax settings.
+
+GitHub Integration
+GitHub configuration monitoring will be added in Phase 6. This includes branch protection rules, secrets, environments, workflow permissions, and team access.
+
+Team Accounts and Multi-User Support
+Organization-level accounts with role-based access control, member invitations, and shared integration management will be added in Phase 8. The MVP is single-user.
+
+Billing and Subscription Management
+Stripe billing, subscription plans, and usage metering are not part of the MVP. ConfigTrace is a free internal tool during MVP validation.
+
+Incident Correlation
+Automated correlation of configuration changes with production incidents, via webhooks from Datadog, PagerDuty, Sentry, or a custom endpoint, will be added in Phase 7.
+
+Multiple Cloudflare Zones Per Integration
+The MVP supports one zone per integration. Multi-zone support within a single integration will be added post-MVP.
+
+Snapshot Comparison Across Non-Consecutive Snapshots
+The MVP diffs consecutive snapshots only. Arbitrary two-snapshot comparison will be added in Phase 2.
+
+Timeline Filtering and Search
+Advanced filtering by risk level, time range, change type, and record name search will be added in Phase 2.
+
+
+SECTION 5: USER STORIES
+
+Infrastructure Engineer
+
+As an infrastructure engineer who manages production DNS configuration, I want to sync my Cloudflare DNS zone and immediately see a snapshot of all current records, so I have a reliable baseline before making any changes.
+
+As an infrastructure engineer, I want to be able to trigger a sync after making a DNS change and see exactly which records changed, what values they changed from and to, and how risky the change is classified, so I can confirm the change landed correctly and understand its production risk.
+
+As an infrastructure engineer responding to a production issue, I want to open ConfigTrace and immediately see the most recent high and critical risk changes across my Cloudflare DNS zones, so I can quickly determine whether a configuration change preceded the anomaly I am investigating.
+
+Platform Engineer
+
+As a platform engineer responsible for multiple zones, I want to see a unified timeline of all DNS changes across all my connected integrations in chronological order, so I can maintain situational awareness of what is changing across my production infrastructure without logging into Cloudflare manually.
+
+As a platform engineer, I want to view the complete DNS state of a zone at any historical snapshot point, so I can reconstruct what the configuration looked like at a specific time during or before an incident.
+
+As a platform engineer, I want clear risk classification on every detected change so I can immediately distinguish between a low-stakes record metadata update and a critical deletion that could disrupt production traffic.
+
+Engineering Manager
+
+As an engineering manager, I want an auditable history of all configuration changes detected across our connected integrations, with timestamps and risk levels, so I have documentation for postmortems and can answer questions about what changed during an incident window.
+
+As an engineering manager, I want to be able to share a direct link to a specific change detail view with an engineer on my team so we can collaborate on investigating a suspicious change without needing to explain what to look for.
+
+On-Call Engineer
+
+As an on-call engineer who has just been paged for a production incident, I want to open ConfigTrace and see a list of the most recent high and critical risk configuration changes sorted by recency, so I can check whether a configuration change is a likely contributing factor within the first 60 seconds of my investigation.
+
+As an on-call engineer, I want the change detail view to show me both the before and after state of a changed field in plain text, not raw JSON, so I can immediately understand what changed without parsing data structures under pressure at 2am.
+
+
+SECTION 6: MAIN SCREENS
+
+Dashboard and Timeline View
+
+The main screen of the ConfigTrace application. Shows a chronological, paginated feed of all detected configuration changes across connected integrations. Each row in the feed displays the integration name, the provider, the affected resource name, the record name or identifier, the type of change (added, removed, or modified), the specific field that changed for modifications, the risk level badge with color coding, and the detection timestamp. Rows are sorted by most recent first. The visual design is dark, data-dense, and professional. Risk level badges use distinct colors: critical in red, high in orange, medium in yellow, low in gray. Clicking any row navigates to the Change Detail View.
+
+Integrations Page
+
+Shows all connected integrations. Each integration entry displays the provider name and icon, the display name given by the user, the current status (active, error, or paused), the last synced timestamp, and a Sync Now button. A status indicator animates while a sync is in progress and updates to a completion state when the sync finishes. An Add New Integration button opens the integration creation flow. The integration creation flow for Cloudflare asks for an API token and zone ID, validates both before saving, and shows a clear error message if validation fails.
+
+Change Timeline
+
+An alternate name for the primary timeline view described above. In the roadmap, Phase 2 extends this view with filtering controls, a risk level summary bar, and search. In the MVP, the timeline is a flat paginated list with no filters.
+
+Resource History Page
+
+Accessed by clicking on a specific DNS zone or resource. Shows all historical snapshots and all detected changes for that single resource in chronological order. The snapshot list shows each snapshot with its timestamp and a count of changes detected from that snapshot. The change list shows each detected change with its type, affected field, risk level, and timestamp. In the MVP, engineers can click any snapshot to view the full DNS state at that point in time rendered as a table of records.
+
+Change Detail Page
+
+Accessed by clicking any change row in the timeline or resource history view. Shows the full context of a single detected change. Displays the integration name and provider, the resource name and zone, the detection timestamp, the change type, the risk level with a plain-language explanation of why that risk level was assigned, and a field-by-field diff table showing each changed field with the previous value on the left and the new value on the right. For added records, all fields show the new value with a visual indicator that the record did not previously exist. For deleted records, all fields show the previous value with a visual indicator that the record no longer exists. The snapshot timestamps for both the before and after states are shown.
+
+
+SECTION 7: CHANGE TYPES
+
+Added
+
+A DNS record is present in the new snapshot that was not present in the previous snapshot. The record did not exist in the zone at the time of the last sync. The diff stores no previous value for added records and stores the full new record state as the new value. Added records are assessed for risk based on whether they conflict with or shadow existing records, the record type, and the subdomain they are associated with.
+
+Removed
+
+A DNS record is present in the previous snapshot but not in the new snapshot. The record has been deleted from the zone since the last sync. The diff stores the full previous record state as the old value and no new value. Deleted records carry elevated default risk because removals are more likely to cause immediate production impact than additions or modifications.
+
+Modified
+
+A DNS record is present in both the previous and new snapshots but one or more field values differ. The record identity is preserved via the provider's stable record ID, but the content has changed. The diff stores the specific fields that changed, with the previous value and the new value for each. Risk is assessed per field: a change to a TTL carries different risk than a change to the content value of an A record.
+
+
+SECTION 8: RISK LEVELS
+
+Low
+
+A change that is unlikely to affect production traffic, availability, or security. Typically includes modifications to record metadata that do not affect DNS resolution, updates to informational TXT records such as SPF records with no structural change, and changes to records in zones identified by naming convention as non-production environments. Low risk changes are shown in the timeline with a gray badge.
+
+Medium
+
+A change that may affect production behavior but is not immediately dangerous under normal conditions. Includes enabling Cloudflare proxy on a record that was not previously proxied, TTL increases or moderate decreases that do not cross the high-risk threshold, modifications to TXT record content, and additions of new subdomain A or AAAA records. Medium risk changes are shown with a yellow badge.
+
+High
+
+A change that carries meaningful production risk and warrants prompt review. Includes deletion of any DNS record, modification of a CNAME target, modification of an MX record target or priority, disabling Cloudflare proxy on a record that was previously proxied (removing DDoS protection and hiding the origin IP), and TTL reduction to 60 seconds or below on any record. High risk changes are shown with an orange badge.
+
+Critical
+
+A change with high potential to cause immediate production impact or service disruption. Includes deletion of an A, AAAA, or CNAME record for a root or apex domain, deletion of any MX record (which disrupts email delivery), modification of NS records (which changes nameserver delegation and can redirect all DNS traffic), and modification of SOA records. Critical risk changes are shown with a red badge and are surfaced prominently in the timeline.
+
+
+SECTION 9: CLOUDFLARE DNS FIELDS TO TRACK
+
+The following fields are captured for each DNS record in every snapshot and used as the basis for diff detection. Changes to any of these fields result in a detected change record with an assigned risk level.
+
+Record ID
+The stable identifier assigned by Cloudflare to the DNS record. Used as the primary key for matching records across snapshots. Not surfaced to the user directly but essential for correct diff detection.
+
+Type
+The DNS record type: A, AAAA, CNAME, MX, TXT, NS, SOA, SRV, CAA, or any other supported record type. Changes to record type are treated as a deletion of the old record and addition of a new one.
+
+Name
+The hostname or subdomain the record applies to, for example api.example.com or example.com for an apex record.
+
+Content
+The value of the DNS record. For A records, the IPv4 address. For AAAA records, the IPv6 address. For CNAME records, the target hostname. For MX records, the mail server hostname. For TXT records, the text string value. Changes to content are the most common and often the most consequential type of modification.
+
+TTL
+The time-to-live value in seconds. Determines how long DNS resolvers cache the record. TTL reductions to 60 seconds or below are classified as high risk because they accelerate record propagation globally and reduce the ability of engineers to control rollback timing.
+
+Proxied
+A boolean indicating whether the record is being proxied through Cloudflare's network. When proxied is true, Cloudflare masks the origin IP and provides DDoS protection, CDN, and other network services. When proxied is false, the record resolves directly to the content value. Changes to the proxied status in either direction carry elevated risk.
+
+Priority
+Applicable to MX records only. Indicates the priority of the mail server for delivery ordering. Changes to MX priority may affect which server receives email first during failover or routing scenarios.
+
+Comment
+An optional human-readable note attached to the record in Cloudflare. If present, changes to the comment field are captured and displayed in the diff. Comment changes are classified as low risk.
+
+Modified On
+The timestamp of the last modification as reported by Cloudflare's API. Stored as part of the normalized record state for reference but not used directly in diff detection since ConfigTrace uses its own snapshot timestamps as the authoritative change timeline.
+
+
+SECTION 10: SUCCESS CRITERIA
+
+A successful ConfigTrace MVP demo must prove the following four things. These criteria are the test the MVP must pass before any further development begins.
+
+First: The snapshot and diff engine works correctly and reliably. An engineer can connect a Cloudflare account with a valid API token in under five minutes. Clicking Sync Now fetches all DNS records and stores a complete snapshot within 10 seconds for a typical zone. After making a DNS record change in the Cloudflare dashboard, clicking Sync Now again detects the change on the very next sync. No changes are missed. No false diffs are generated when the configuration has not actually changed. An invalid API token is rejected at setup time with a clear error message before any credentials are saved.
+
+Second: The risk classification is meaningful and correct. Specific change types produce the expected risk levels. Deleting an A record for a root domain shows as critical. Reducing a TTL to 60 seconds shows as high. Enabling Cloudflare proxy on a record shows as medium. Modifying a record comment shows as low. Risk level badges use distinct visual treatment: critical in red, high in orange, medium in yellow, low in gray. The risk level shown in the timeline matches the stored risk level on the change record.
+
+Third: The timeline interface is useful for incident diagnosis under pressure. An engineer who sees something wrong in production can open ConfigTrace, look at the timeline, and identify the most recent high and critical risk changes within 30 seconds. The timeline shows the old value, new value, field changed, risk level, and detection time without requiring the engineer to click into a detail view. The change detail view shows the full field-by-field diff in plain text that is immediately readable without parsing JSON or decoding data structures.
+
+Fourth: Engineers will connect a real system to the product. The onboarding flow is simple enough to complete in under five minutes. The product feels like serious infrastructure tooling: dark, data-dense, and professional, not a generic SaaS application. The credential handling is transparent: the engineer knows that their API token is validated before saving, that it is encrypted at rest, and that ConfigTrace only reads configuration and never writes back to Cloudflare. A careful engineer should be comfortable pointing the tool at their production Cloudflare account after reviewing the integration setup flow.
+
+If a live demo can walk through connecting Cloudflare, syncing a baseline, making a DNS change, syncing again, and immediately showing the correct diff with the correct risk level in the timeline, the MVP has proven the product is real. Everything that comes after - scheduled sync, Slack alerts, Stripe, GitHub, teams, billing, incident correlation - is an extension of a working foundation. Nothing ships after the MVP until these four criteria are met without qualification.

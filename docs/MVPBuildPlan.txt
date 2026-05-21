@@ -1,0 +1,757 @@
+ConfigTrace MVP Build Plan
+Internal Document - May 2026
+
+
+PURPOSE
+
+This document is the ground-level engineering execution plan for the ConfigTrace Cloudflare DNS monitoring MVP. It is written for a solo founder-engineer building milestone by milestone. Each milestone has a clear goal, specific files to create, backend and frontend tasks, a test criterion, and a definition of done. Do not start a new milestone until the current one is done. Do not implement future-phase features inside MVP milestones.
+
+The completed MVP must prove four things: the snapshot and diff engine works reliably, the risk classification is meaningful, the timeline is useful for incident diagnosis, and engineers will trust the product enough to connect a real system to it.
+
+
+MILESTONE 1: REPOSITORY SETUP
+
+Goal
+
+Initialize the monorepo with a clean, committed folder structure that all future milestones build on. Every layer of the system has its own directory. Nothing is functional yet. The structure just needs to exist and make sense.
+
+Files to Create
+
+    /                           root directory
+    /backend/                   FastAPI application root
+    /backend/app/               main application package
+    /backend/app/main.py        FastAPI app entry point
+    /backend/app/routers/       route modules (empty)
+    /backend/app/services/      business logic modules (empty)
+    /backend/app/connectors/    provider connector modules (empty)
+    /backend/app/models/        SQLAlchemy ORM models (empty)
+    /backend/app/workers/       Celery task modules (empty)
+    /backend/app/schemas/       Pydantic request/response schemas (empty)
+    /backend/app/config.py      application settings via pydantic-settings
+    /backend/requirements.txt   Python dependencies
+    /backend/Dockerfile         backend Docker image definition
+    /frontend/                  Next.js application root
+    /frontend/src/app/          Next.js app router pages
+    /frontend/src/components/   shared UI components (empty)
+    /frontend/src/lib/          API client and utilities (empty)
+    /frontend/Dockerfile        frontend Docker image definition
+    /.env.example               documented environment variable template
+    /.gitignore                 ignore .env, __pycache__, node_modules, .next
+    /README.md                  one paragraph explaining what to do to run the project
+
+Backend Tasks
+
+    Initialize the FastAPI app in main.py with a single placeholder route.
+    Set up pydantic-settings in config.py to read DATABASE_URL, REDIS_URL, SECRET_KEY, CLERK_SECRET_KEY, and ENCRYPTION_KEY from environment variables.
+    Write requirements.txt with: fastapi, uvicorn, sqlalchemy, psycopg2-binary, alembic, celery, redis, pydantic-settings, cryptography, httpx, python-jose.
+
+Frontend Tasks
+
+    Run create-next-app with TypeScript and Tailwind CSS in the /frontend directory.
+    Remove all default Next.js boilerplate content.
+
+Test Criteria
+
+    The /backend and /frontend directories exist with the correct subdirectory structure.
+    requirements.txt is present and pip install -r requirements.txt succeeds.
+    The Next.js app compiles without errors.
+    .env.example documents every required environment variable.
+
+Definition of Done
+
+The repository is committed to source control. A new engineer cloning the repo can understand the project structure at a glance. No secrets are committed. Both the backend and frontend can be initialized from scratch following the README.
+
+
+MILESTONE 2: DOCKER SETUP
+
+Goal
+
+All five services (API, frontend, PostgreSQL, Redis, Celery worker) run together via a single docker compose up command. No service requires manual configuration beyond copying .env.example to .env and filling in values. The development environment is fully reproducible.
+
+Files to Create
+
+    /docker-compose.yml         defines all five services and shared network
+    /backend/.dockerignore      excludes __pycache__, .env, *.pyc
+    /frontend/.dockerignore     excludes node_modules, .next, .env
+
+Backend Tasks
+
+    Write the Dockerfile for the FastAPI backend: Python 3.11 base image, install requirements, run uvicorn with hot reload via volume mount.
+    Define the api service in docker-compose.yml: build from /backend, mount the backend directory as a volume, expose port 8000, set environment variables from .env, depend on db and redis.
+    Define the worker service: same image as api, command celery -A app.workers.celery_app worker --loglevel=info, depend on db and redis.
+    Define the db service: postgres:16 image, set POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD from environment, persist data via a named volume, expose port 5432.
+    Define the redis service: redis:7 image, expose port 6379.
+    Define the beat service (inactive in MVP): same image as worker, command celery -A app.workers.celery_app beat, set restart: no so it does not loop, present for future use.
+
+Frontend Tasks
+
+    Write the Dockerfile for the Next.js frontend: Node 20 base image, install dependencies, run the dev server with hot reload, expose port 3000.
+    Define the frontend service in docker-compose.yml: build from /frontend, mount the frontend directory as a volume, expose port 3000.
+
+Test Criteria
+
+    docker compose up brings all five services to a healthy state with no manual steps beyond .env setup.
+    The API is reachable at http://localhost:8000 and returns a response.
+    The frontend is reachable at http://localhost:3000 and loads the Next.js dev page.
+    PostgreSQL accepts connections on port 5432 using the credentials from .env.
+    Redis accepts connections on port 6379.
+
+Definition of Done
+
+Any developer can clone the repo, copy .env.example to .env, run docker compose up, and have a working local environment in under five minutes. No additional installation steps are required.
+
+
+MILESTONE 3: FASTAPI BACKEND SETUP
+
+Goal
+
+The FastAPI backend has a running server, a health check endpoint, a configured CORS policy for the frontend, Clerk JWT middleware on protected routes, and a Celery application with a test task that confirms the worker is receiving and processing jobs.
+
+Files to Create
+
+    /backend/app/main.py                        updated with routers, middleware, and CORS
+    /backend/app/routers/health.py              GET /health endpoint
+    /backend/app/workers/celery_app.py          Celery app instantiation and configuration
+    /backend/app/workers/test_task.py           a simple test task that logs a message
+    /backend/app/middleware/auth.py             Clerk JWT validation middleware
+
+Backend Tasks
+
+    In main.py, initialize FastAPI, configure CORS to allow http://localhost:3000, and register the health router.
+    In health.py, implement GET /health that returns a JSON object with status, timestamp, and version fields. HTTP 200.
+    In celery_app.py, instantiate a Celery app with the REDIS_URL broker and result backend. Configure task serialization to JSON.
+    In test_task.py, define a Celery task called test_task that accepts a message string and logs it. This task has no other effect.
+    In middleware/auth.py, implement Clerk JWT validation using python-jose. Extract the user's clerk_id from the JWT sub claim. Attach a user context object to the request state. Protected routes call a get_current_user dependency that reads from request state and raises HTTP 401 if no valid user is found.
+    Wire the auth middleware so it validates tokens on all routes except GET /health.
+
+Frontend Tasks
+
+    None required in this milestone.
+
+Test Criteria
+
+    GET http://localhost:8000/health returns HTTP 200 with a valid JSON body.
+    A Python test or manual Celery call confirms test_task.delay("hello") is picked up by the worker and logs the message.
+    A request to a protected endpoint without a valid Clerk JWT returns HTTP 401.
+    A request to GET /health without a token returns HTTP 200.
+
+Definition of Done
+
+The FastAPI server starts cleanly inside Docker. The health endpoint responds. The Celery worker connects to Redis and processes the test task. JWT validation is enforced on protected routes. No placeholder routes beyond health exist.
+
+
+MILESTONE 4: POSTGRESQL AND SQLALCHEMY MODELS
+
+Goal
+
+All seven database tables defined in the schema document have corresponding SQLAlchemy ORM models. The models are correct, typed, and ready for migration. No data is written yet. No API routes use these models yet.
+
+Files to Create
+
+    /backend/app/models/__init__.py     imports all models for Alembic autogenerate
+    /backend/app/models/base.py         declarative base and common mixin (id, created_at, updated_at)
+    /backend/app/models/user.py         User model
+    /backend/app/models/integration.py  Integration model
+    /backend/app/models/resource.py     Resource model
+    /backend/app/models/snapshot.py     Snapshot model
+    /backend/app/models/change.py       Change model
+    /backend/app/models/alert.py        Alert model
+    /backend/app/models/sync_run.py     SyncRun model
+    /backend/app/database.py            SQLAlchemy engine, session factory, get_db dependency
+
+Backend Tasks
+
+    In base.py, define a BaseMixin that provides a UUID primary key using gen_random_uuid(), created_at as TIMESTAMPTZ with default now(), and updated_at as TIMESTAMPTZ with onupdate set to now().
+    In database.py, create the SQLAlchemy engine from DATABASE_URL with connection pooling (pool_size=5, max_overflow=10). Define a SessionLocal factory and a get_db FastAPI dependency that yields a session and closes it after use.
+    Implement the User model with fields: id, clerk_id (unique), email, display_name, created_at, updated_at.
+    Implement the Integration model with fields: id, user_id (FK to users), provider, display_name, encrypted_credentials (LargeBinary), credential_iv (LargeBinary), status (default active), last_synced_at, scheduled_sync_enabled (default false), sync_interval_minutes, created_at, updated_at.
+    Implement the Resource model with fields: id, integration_id (FK), user_id (FK), provider_resource_type, provider_resource_id, display_name, metadata (JSONB), last_snapshot_at, is_active (default true), created_at, updated_at. Add a unique constraint on (integration_id, provider_resource_id).
+    Implement the SyncRun model with fields: id, integration_id (FK), user_id (FK), triggered_by, status (default pending), started_at, completed_at, change_count, snapshot_count, error_message, created_at.
+    Implement the Snapshot model with fields: id, resource_id (FK), integration_id (FK), user_id (FK), state (JSONB), content_hash, triggered_by, sync_run_id (FK nullable to sync_runs), created_at.
+    Implement the Change model with fields: id, resource_id (FK), integration_id (FK), user_id (FK), prev_snapshot_id (FK to snapshots), new_snapshot_id (FK to snapshots), change_type, record_identifier, field_path, prev_value (JSONB), new_value (JSONB), risk_level, risk_reason, provider_metadata (JSONB), created_at.
+    Implement the Alert model with fields: id, change_id (FK), user_id (FK), integration_id (FK), alert_config_id (nullable), channel, destination, payload (JSONB), status (default pending), error_message, retry_count (default 0), created_at, delivered_at.
+    Use JSONB from sqlalchemy.dialects.postgresql for all JSONB fields.
+    Use DateTime(timezone=True) for all timestamp fields.
+    Import all models in __init__.py so Alembic can detect them during autogenerate.
+
+Test Criteria
+
+    All model files import without Python errors.
+    SQLAlchemy can reflect all models against an empty database with no mapping errors.
+    Foreign key relationships are navigable via SQLAlchemy relationship definitions (Integration.resources, Resource.snapshots, Resource.changes).
+
+Definition of Done
+
+All seven models exist, are correctly typed, and import cleanly. The get_db dependency works inside a FastAPI route. No database tables exist yet (that is the next milestone).
+
+
+MILESTONE 5: ALEMBIC MIGRATIONS
+
+Goal
+
+Alembic is configured and the initial migration creates all seven tables in the correct dependency order with all indexes specified in the schema document. Running alembic upgrade head against a fresh database produces the full schema with no errors.
+
+Files to Create
+
+    /backend/alembic.ini                Alembic configuration file
+    /backend/alembic/env.py             migration environment with SQLAlchemy metadata
+    /backend/alembic/versions/          directory for migration scripts
+    /backend/alembic/versions/001_initial_schema.py     initial migration
+
+Backend Tasks
+
+    Run alembic init in the backend directory to scaffold the alembic directory and alembic.ini.
+    Update alembic.ini to read sqlalchemy.url from the DATABASE_URL environment variable so the migration can run inside Docker.
+    Update env.py to import the Base metadata from app.models and pass it to the autogenerate context so Alembic can detect model changes.
+    Write migration 001_initial_schema.py manually (do not rely solely on autogenerate, verify the output). Create tables in dependency order: users, integrations, resources, sync_runs, snapshots, changes, alerts.
+    Include all indexes from the schema document in the migration. Specifically:
+        users: unique index on clerk_id.
+        integrations: index on user_id, index on (user_id, status).
+        resources: index on integration_id, index on user_id, unique index on (integration_id, provider_resource_id).
+        snapshots: index on (resource_id, created_at DESC), index on (integration_id, created_at DESC), index on (user_id, created_at DESC), index on content_hash, GIN index on state.
+        changes: index on (user_id, created_at DESC), index on (resource_id, created_at DESC), index on (integration_id, created_at DESC), index on (risk_level, created_at DESC), index on (user_id, risk_level, created_at DESC).
+        alerts: index on (user_id, created_at DESC), index on change_id, index on (status, created_at DESC).
+        sync_runs: index on (integration_id, started_at DESC), index on (user_id, started_at DESC), index on (status, started_at).
+    Write the downgrade function in the migration to drop all tables in reverse dependency order.
+
+Test Criteria
+
+    alembic upgrade head runs against a fresh PostgreSQL database with no errors.
+    All seven tables exist in the database after the migration.
+    All indexes exist as defined.
+    alembic downgrade base drops all tables cleanly.
+    alembic upgrade head can be run again after downgrade with no errors.
+
+Definition of Done
+
+Running docker compose up followed by alembic upgrade head produces the full schema. The migration is reversible. The database is ready to receive data.
+
+
+MILESTONE 6: CLOUDFLARE CONNECTOR
+
+Goal
+
+The Cloudflare connector is a self-contained Python module that accepts an API token and zone ID, calls the Cloudflare Zones API, handles pagination and rate limit backoff, and returns a normalized list of DNS record objects in ConfigTrace's internal format. The connector has no knowledge of snapshots, diffs, or risk. It is a pure fetch-and-normalize function.
+
+Files to Create
+
+    /backend/app/connectors/__init__.py          connector package
+    /backend/app/connectors/base.py              BaseConnector protocol/abstract class
+    /backend/app/connectors/cloudflare.py        CloudflareConnector implementation
+    /backend/app/connectors/cloudflare_schema.py normalized DNS record dataclass or TypedDict
+
+Backend Tasks
+
+    In base.py, define a BaseConnector abstract class with one required method: fetch(credentials: dict) -> list[dict]. All connectors must implement this interface. The return type is a list of normalized record dictionaries.
+    In cloudflare_schema.py, define a CloudflareDNSRecord TypedDict or dataclass with fields: record_id (str), record_type (str), name (str), content (str), ttl (int), proxied (bool), priority (int or None), comment (str or None), modified_on (str). This is ConfigTrace's internal normalized format for a DNS record.
+    In cloudflare.py, implement CloudflareConnector(BaseConnector).
+        The fetch method accepts a credentials dict with api_token and zone_id keys.
+        Call GET https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records with the Authorization: Bearer {api_token} header.
+        Handle pagination: the Cloudflare API returns a result_info object with page, per_page, and total_count. Loop through pages until all records are retrieved.
+        Implement rate limit backoff: on a 429 response, read the Retry-After header and sleep for that duration before retrying. Maximum three retries.
+        On a 401 or 403 response, raise an AuthenticationError with a clear message.
+        On any other non-200 response, raise a ConnectorError with the status code and response body.
+        Normalize each raw Cloudflare DNS record object into a CloudflareDNSRecord. Map Cloudflare's id field to record_id. Map type to record_type. Map all other fields directly.
+        Return a list of CloudflareDNSRecord objects serialized to plain dicts.
+    Write a standalone validate_token function that takes an api_token and zone_id, makes a single HEAD or GET call to verify the token has DNS read access to that zone, and returns True or raises an AuthenticationError. This is used during integration setup to reject bad tokens before saving.
+
+Test Criteria
+
+    With a valid Cloudflare API token and zone ID pointing at a real or test zone, fetch() returns a non-empty list of normalized DNS record dicts.
+    Each returned dict contains record_id, record_type, name, content, ttl, and proxied keys.
+    With an invalid token, fetch() raises AuthenticationError.
+    With a nonexistent zone ID and valid token, fetch() raises ConnectorError.
+    validate_token() returns True for a valid credential pair and raises AuthenticationError for an invalid token.
+    The connector correctly pages through zones with more than 100 records (Cloudflare's default page size).
+
+Definition of Done
+
+The Cloudflare connector can be imported and called standalone, without any database, without any Celery task, and without any other application code. It is a pure function. Calling it with valid credentials returns the right data. Calling it with invalid credentials raises the right errors.
+
+
+MILESTONE 7: MANUAL SYNC ENDPOINT
+
+Goal
+
+Two API routes exist and work end-to-end: POST /integrations to create and validate a new Cloudflare integration, and POST /syncs to trigger a manual sync for an existing integration. The sync enqueues a Celery task. The task runs the connector and logs the result. Snapshot and diff logic are wired in later milestones. The goal here is the plumbing: credentials encrypted and stored, tasks enqueued and received.
+
+Files to Create
+
+    /backend/app/routers/integrations.py        POST /integrations, GET /integrations routes
+    /backend/app/routers/syncs.py               POST /syncs, GET /syncs/{id} routes
+    /backend/app/schemas/integration.py         Pydantic schemas for integration create and response
+    /backend/app/schemas/sync.py                Pydantic schemas for sync trigger and response
+    /backend/app/services/encryption.py         AES-GCM encrypt and decrypt helpers
+    /backend/app/services/user_service.py       get-or-create user record from Clerk JWT
+    /backend/app/workers/sync_tasks.py          sync_integration Celery task (stub for now)
+
+Backend Tasks
+
+    In encryption.py, implement encrypt(plaintext: str) -> tuple[bytes, bytes] and decrypt(ciphertext: bytes, iv: bytes) -> str using AES-GCM with the ENCRYPTION_KEY from config. The key should be a 32-byte base64-encoded value from the environment. Store the IV alongside the ciphertext in the integrations table.
+    In user_service.py, implement get_or_create_user(clerk_id: str, email: str, display_name: str, db: Session) -> User. If a user with that clerk_id exists, return it. If not, create and return a new User row.
+    In integrations.py:
+        Implement POST /integrations. Accept a JSON body with provider (must be cloudflare), display_name, api_token, and zone_id. Call validate_token from the Cloudflare connector. If validation fails, return HTTP 400 with the error message. If validation succeeds, encrypt the credentials (serialize api_token and zone_id to JSON, then encrypt), create the Integration row, create a Resource row with provider_resource_type cloudflare_dns_zone and provider_resource_id equal to the zone_id. Return the created integration ID and status.
+        Implement GET /integrations. Return a list of all integrations for the authenticated user, including id, provider, display_name, status, and last_synced_at.
+    In syncs.py:
+        Implement POST /syncs. Accept a JSON body with integration_id. Verify the integration belongs to the authenticated user. Create a SyncRun row with status pending and triggered_by manual. Enqueue a sync_integration Celery task with the sync_run_id and integration_id. Return the sync_run_id.
+        Implement GET /syncs/{id}. Return the SyncRun record by ID, scoped to the authenticated user, with status, started_at, completed_at, change_count, and error_message.
+    In sync_tasks.py, write a stub sync_integration Celery task that accepts sync_run_id and integration_id, loads the integration from the database, decrypts credentials, calls the Cloudflare connector's fetch method, logs the number of records returned, and updates the SyncRun status to completed. No snapshot or diff logic yet.
+
+Test Criteria
+
+    POST /integrations with valid Cloudflare credentials creates an Integration row and a Resource row in the database.
+    POST /integrations with an invalid API token returns HTTP 400 with a descriptive error message and does not create any database rows.
+    POST /syncs enqueues a Celery task and returns a sync_run_id.
+    The Celery worker picks up the task, loads credentials, calls the Cloudflare connector, and logs the record count.
+    GET /syncs/{id} returns the correct status for the sync run.
+    Credentials stored in the integrations table are ciphertext, not plaintext.
+
+Definition of Done
+
+An engineer can use the API to connect a Cloudflare account and trigger a sync. The sync task runs in the background and successfully calls the Cloudflare API using the stored credentials. The sync run record reflects the outcome. No snapshots are stored yet.
+
+
+MILESTONE 8: SNAPSHOT SERVICE
+
+Goal
+
+The snapshot service accepts normalized DNS state from the Cloudflare connector, computes a SHA-256 content hash, compares it to the most recent snapshot for the resource, and writes a new Snapshot row only if the state has changed. The sync task is updated to call the snapshot service after fetching DNS records.
+
+Files to Create
+
+    /backend/app/services/snapshot_service.py   snapshot creation and deduplication logic
+
+Backend Tasks
+
+    In snapshot_service.py, implement store_snapshot(resource_id, integration_id, user_id, state: list[dict], triggered_by: str, sync_run_id, db: Session) -> tuple[Snapshot | None, bool].
+        Compute a SHA-256 hash: sort the state list by record_id for determinism, serialize to canonical JSON (sorted keys, no extra whitespace), hash with hashlib.sha256.
+        Query the most recent snapshot for the given resource_id ordered by created_at DESC. If a snapshot exists and its content_hash matches the new hash, return (None, False) indicating no change.
+        If no existing snapshot exists, or the hash differs, create a new Snapshot row with state as JSONB, the content_hash, triggered_by, and sync_run_id. Commit and return (snapshot, True).
+    Update the sync_integration Celery task in sync_tasks.py to call store_snapshot after fetching DNS records. Log whether a new snapshot was written or skipped.
+    Update the SyncRun record's snapshot_count field to reflect how many new snapshots were written.
+
+Test Criteria
+
+    Calling store_snapshot with fresh DNS state creates a new Snapshot row in the database.
+    Calling store_snapshot again with identical state returns (None, False) and writes no new row.
+    Calling store_snapshot with slightly different state (one record modified) returns a new Snapshot.
+    The content_hash stored on the Snapshot row matches the SHA-256 of the canonical serialization of the state.
+    The sync task correctly updates snapshot_count on the SyncRun.
+
+Definition of Done
+
+After a sync runs, a Snapshot row exists in the database containing the full normalized DNS state. A second sync with no DNS changes produces no new snapshot. A second sync after a DNS record change produces a new snapshot. The snapshot is the permanent, immutable record of configuration state at a point in time.
+
+
+MILESTONE 9: DIFF SERVICE
+
+Goal
+
+The diff service takes two consecutive snapshots for a resource, compares them record by record, identifies additions, deletions, and field-level modifications, and writes Change rows to the database. The sync task is updated to run the diff service after every snapshot write.
+
+Files to Create
+
+    /backend/app/services/diff_service.py       snapshot comparison and change record creation
+
+Backend Tasks
+
+    In diff_service.py, implement compute_diff(prev_snapshot: Snapshot, new_snapshot: Snapshot, resource_id, integration_id, user_id, db: Session) -> list[Change].
+        Parse prev_snapshot.state and new_snapshot.state as lists of record dicts.
+        Build a keyed index from each list using record_id as the key.
+        Identify additions: record_ids present in new_snapshot but not in prev_snapshot. For each addition, create a Change row with change_type added, record_identifier set to a human-readable label (e.g., "A record: api.example.com"), prev_value null, new_value the full record dict as JSONB, risk_level pending (to be set by risk service), field_path null.
+        Identify deletions: record_ids present in prev_snapshot but not in new_snapshot. For each deletion, create a Change row with change_type removed, prev_value the full record dict, new_value null.
+        Identify modifications: record_ids present in both where field values differ. Compare these fields: record_type, name, content, ttl, proxied, priority, comment. For each field that differs, create one Change row with change_type modified, field_path set to the field name, prev_value and new_value as the specific field values wrapped in JSONB.
+        Write all Change rows in a single database transaction. Return the list of Change objects.
+    Update the sync_integration Celery task to call compute_diff after store_snapshot when a new snapshot was written. Pass the previous snapshot (the second most recent for the resource) and the new snapshot.
+    Update the SyncRun record's change_count to reflect how many Change rows were written.
+
+Test Criteria
+
+    Given two snapshots with identical state, compute_diff returns an empty list and writes no Change rows.
+    Given a snapshot where one A record is new, compute_diff returns one Change with change_type added.
+    Given a snapshot where one record is missing compared to the previous, compute_diff returns one Change with change_type removed.
+    Given a snapshot where a record's content field changed, compute_diff returns one Change with change_type modified and field_path content and the correct prev_value and new_value.
+    Given a snapshot where two fields on the same record changed, compute_diff returns two Change rows for that record.
+    All Change rows reference the correct prev_snapshot_id and new_snapshot_id.
+
+Definition of Done
+
+After two syncs where at least one DNS change occurred between them, the changes table contains accurate Change rows describing every field-level difference. The change_count on the SyncRun is correct. If no changes occurred between syncs, the changes table gains no new rows.
+
+
+MILESTONE 10: RISK CLASSIFICATION SERVICE
+
+Goal
+
+The risk service reads Change rows produced by the diff service and assigns a risk level (low, medium, high, or critical) and a plain-English risk_reason to each one. Risk rules are stored as code in a dedicated module. The sync task is updated to call the risk service after the diff service.
+
+Files to Create
+
+    /backend/app/services/risk_service.py               risk classification logic and rule application
+    /backend/app/services/risk_rules/cloudflare.py      Cloudflare DNS risk rules
+
+Backend Tasks
+
+    In risk_rules/cloudflare.py, define the rule set as a function classify_cloudflare_change(change: Change) -> tuple[str, str] that returns a (risk_level, risk_reason) pair based on the following logic:
+        Critical: change_type is removed and the record being deleted is an A, AAAA, or CNAME at a root or apex domain (no subdomain prefix). Critical: change_type is removed and the record is type MX. Critical: change_type is modified, field_path is record_type and the type is NS or SOA.
+        High: change_type is removed for any record type not already classified as critical. High: change_type is modified, field_path is content, and the record type is CNAME or MX. High: change_type is modified, field_path is proxied, and prev_value is true and new_value is false (proxy disabled). High: change_type is modified, field_path is ttl, and new_value is 60 or below.
+        Medium: change_type is modified, field_path is proxied, and prev_value is false and new_value is true (proxy enabled). Medium: change_type is modified and field_path is ttl and new_value is above 60 (general TTL change). Medium: change_type is modified and field_path is content and record type is TXT. Medium: change_type is added and record type is A or AAAA and the name contains a subdomain.
+        Low: change_type is modified and field_path is comment. Low: any change that does not match a higher rule.
+        Each risk reason should be a one to two sentence plain English explanation of why the risk level was assigned. For example: "Disabling Cloudflare proxy removes DDoS protection and exposes the origin IP address directly to the internet."
+    In risk_service.py, implement classify_changes(changes: list[Change], db: Session) -> None.
+        For each Change in the list, call the appropriate provider rule function based on the integration's provider type. In the MVP, all changes go through classify_cloudflare_change.
+        Update each Change row with the returned risk_level and risk_reason.
+        Commit all updates in a single transaction.
+    Update the sync_integration Celery task to call classify_changes immediately after compute_diff.
+
+Test Criteria
+
+    A Change with change_type removed for an A record at the apex domain (name equals the bare zone, e.g., example.com) is assigned risk_level critical.
+    A Change with change_type removed for any MX record is assigned risk_level critical.
+    A Change with change_type modified, field_path ttl, and new_value 60 is assigned risk_level high.
+    A Change with change_type modified, field_path ttl, and new_value 61 is assigned risk_level medium.
+    A Change with change_type modified, field_path comment is assigned risk_level low.
+    A Change with change_type modified, field_path proxied, prev_value true, new_value false is assigned risk_level high.
+    Each Change row has a non-null risk_reason after classification.
+
+Definition of Done
+
+After a full sync that detected changes, every Change row in the database has a risk_level of low, medium, high, or critical, and a non-null risk_reason in plain English. The risk levels match the rules defined in this milestone. No change is left with a null or pending risk level after the sync task completes.
+
+
+MILESTONE 11: CHANGES API
+
+Goal
+
+Three read API routes are implemented that power the frontend timeline and change detail views: GET /changes for the paginated timeline, GET /changes/{id} for a single change detail, and GET /resources/{id}/changes for resource-scoped change history. These routes read from the changes and snapshots tables and return clean, typed JSON responses.
+
+Files to Create
+
+    /backend/app/routers/changes.py             GET /changes, GET /changes/{id}
+    /backend/app/routers/resources.py           GET /resources/{id}, GET /resources/{id}/changes, GET /resources/{id}/snapshots
+    /backend/app/schemas/change.py              Pydantic response schemas for change and change detail
+    /backend/app/schemas/resource.py            Pydantic response schemas for resource and snapshot
+
+Backend Tasks
+
+    In changes.py, implement GET /changes with query parameters: integration_id (optional UUID), risk_level (optional string), resource_id (optional UUID), limit (default 50, max 200), offset (default 0). Return a list of ChangeResponse objects ordered by created_at DESC, scoped to the authenticated user. Each ChangeResponse includes: id, resource_id, integration_id, change_type, record_identifier, field_path, prev_value, new_value, risk_level, risk_reason, created_at, and the resource's display_name and the integration's display_name via joins.
+    In changes.py, implement GET /changes/{id}. Return a ChangeDetailResponse that includes all ChangeResponse fields plus the full prev_snapshot state and new_snapshot state as JSON, and both snapshot created_at timestamps.
+    In resources.py, implement GET /resources/{id} returning resource metadata: id, provider_resource_type, display_name, last_snapshot_at, integration_id, and the integration's provider and display_name.
+    In resources.py, implement GET /resources/{id}/changes with limit and offset parameters, returning the same ChangeResponse shape filtered by resource_id.
+    In resources.py, implement GET /resources/{id}/snapshots with limit and offset parameters. Return a list of SnapshotSummaryResponse objects: id, content_hash, triggered_by, created_at, and a change_count computed by counting Change rows with new_snapshot_id equal to this snapshot's id.
+    All routes must be scoped to the authenticated user via the get_current_user dependency. A user cannot read resources or changes that belong to another user.
+
+Test Criteria
+
+    GET /changes returns a list of changes for the authenticated user ordered by most recent first.
+    GET /changes?risk_level=critical returns only critical changes.
+    GET /changes?integration_id={id} returns only changes for that integration.
+    GET /changes/{id} returns the change with full prev_snapshot.state and new_snapshot.state included.
+    GET /resources/{id}/changes returns changes for that resource only.
+    GET /resources/{id}/snapshots returns a list with correct change_count per snapshot.
+    Requesting a resource or change that belongs to a different user returns HTTP 404.
+
+Definition of Done
+
+The backend can serve all the data the frontend needs to render the timeline, change detail, and resource history views. All routes are paginated, scoped by user, and return typed JSON. No SQL queries scan the full changes or snapshots tables; all queries use the indexes defined in Milestone 5.
+
+
+MILESTONE 12: NEXT.JS FRONTEND SETUP
+
+Goal
+
+The Next.js frontend has Clerk authentication wired up, a working login flow, an authenticated layout with a sidebar, and route placeholders for every page in the MVP. No real data is displayed yet. The visual foundation matches the UI design system: dark mode, Inter typeface, correct color palette, sidebar navigation.
+
+Files to Create
+
+    /frontend/src/app/layout.tsx                root layout with ClerkProvider
+    /frontend/src/app/page.tsx                  redirect to /dashboard or /sign-in
+    /frontend/src/app/sign-in/page.tsx          Clerk hosted sign-in page
+    /frontend/src/app/(authenticated)/layout.tsx    authenticated shell with sidebar
+    /frontend/src/app/(authenticated)/dashboard/page.tsx    placeholder
+    /frontend/src/app/(authenticated)/integrations/page.tsx placeholder
+    /frontend/src/app/(authenticated)/timeline/page.tsx     placeholder
+    /frontend/src/app/(authenticated)/resources/page.tsx    placeholder
+    /frontend/src/app/(authenticated)/settings/page.tsx     placeholder
+    /frontend/src/components/layout/Sidebar.tsx             persistent left sidebar
+    /frontend/src/components/layout/TopBar.tsx              optional minimal header
+    /frontend/src/lib/api.ts                                base fetch client with Clerk auth headers
+    /frontend/src/lib/types.ts                              TypeScript interfaces matching backend schemas
+    /frontend/.env.local                                    Clerk publishable key and API base URL
+
+Frontend Tasks
+
+    Install Clerk for Next.js: npm install @clerk/nextjs.
+    Wrap the root layout in ClerkProvider. Add the NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY to environment variables.
+    Set up middleware.ts to protect all routes under /dashboard, /integrations, /timeline, /resources, /settings with Clerk's authMiddleware.
+    The sign-in page uses Clerk's SignIn component centered on a page-background-colored full-height screen.
+    The authenticated layout renders the sidebar on the left (240px, fixed) and a main content area that fills the remaining width.
+    The sidebar contains the ConfigTrace wordmark at the top (14px, weight 600, primary text), then navigation links: Dashboard, Timeline, Integrations, Resources, Settings. Active link has a 2px left border in the accent color. Link text is 14px, primary text, no icons required at MVP. Below the nav links, at the bottom of the sidebar, show the signed-in user's email in secondary text at 12px.
+    In api.ts, implement a base fetchAPI function that prepends the NEXT_PUBLIC_API_BASE_URL to the path, reads the Clerk auth token via getToken(), adds an Authorization: Bearer header, handles non-200 responses by throwing an error with the response body, and returns the parsed JSON.
+    In types.ts, define TypeScript interfaces that mirror the Pydantic schemas from the backend: Integration, SyncRun, Change, ChangeDetail, Resource, Snapshot, SnapshotSummary.
+    Apply global Tailwind CSS configuration to match the design system: set the default font to Inter, add the exact color values from the UI design document as custom Tailwind theme colors (background, surface1, surface2, surface3, border, textPrimary, textSecondary, textTertiary, accentBlue, riskCritical, riskHigh, riskMedium, riskLow, healthy).
+    The page background is #0e0f11. The sidebar background is #13151a. Use a 1px right border on the sidebar at #2a2d38.
+
+Test Criteria
+
+    Unauthenticated users are redirected to /sign-in when accessing any authenticated route.
+    After signing in with Clerk, users land on the /dashboard page.
+    The sidebar renders with all five navigation links.
+    The active link is visually distinct from inactive links.
+    Clicking a nav link routes to the correct page.
+    fetchAPI successfully includes a valid Clerk auth token in requests to the backend.
+
+Definition of Done
+
+An engineer can sign in via Clerk, land on the authenticated layout, and navigate between the five placeholder pages. The visual treatment matches the design system. The API client is functional and authenticated.
+
+
+MILESTONE 13: DASHBOARD PAGE
+
+Goal
+
+The dashboard page displays the main change timeline: a reverse-chronological list of changes from the backend, with correct risk badge colors, a summary bar showing counts by risk level, and a working Sync Now button on each integration. Clicking a change row navigates to the change detail view.
+
+Files to Create
+
+    /frontend/src/app/(authenticated)/dashboard/page.tsx            main dashboard and timeline
+    /frontend/src/components/timeline/ChangeRow.tsx                 single row in the timeline list
+    /frontend/src/components/timeline/RiskBadge.tsx                 risk level badge component
+    /frontend/src/components/timeline/SummaryBar.tsx                stats header bar
+    /frontend/src/components/changes/ChangeDetail.tsx               change detail modal or page
+    /frontend/src/app/(authenticated)/changes/[id]/page.tsx         change detail route
+
+Frontend Tasks
+
+    On the dashboard page, fetch GET /changes on mount using the fetchAPI client. Show a loading state (spinner at 16px, accent color) while data is loading. Show an error state if the request fails with a retry button.
+    Render the SummaryBar component above the timeline. It displays four counts in a horizontal row: total changes in the last 24 hours, critical count, high count, and number of resources being monitored. These are plain numbers at 24px weight 600 with a 12px label below in secondary text. Separate them with a 1px vertical divider. No card borders or shadows.
+    Each change row in the list contains: timestamp on the left (relative for under 24 hours, ISO for older), resource identifier in monospace at 13px, change type label in uppercase secondary text at 11px (RECORD MODIFIED, RECORD ADDED, RECORD DELETED), and a RiskBadge on the right.
+    The RiskBadge component renders a rounded rectangle chip (5px border-radius, 4px vertical padding, 8px horizontal padding, 11px weight 600 uppercase text). Critical: #e84040 text on rgba(232,64,64,0.12) background. High: #f5632a text on rgba(245,99,42,0.10) background. Medium: #f5a623 text on rgba(245,166,35,0.10) background. Low: #6b9cf8 text on rgba(107,156,248,0.10) background.
+    Row hover state uses surface level 3 (#22252f) as background. Instant transition, no animation delay.
+    Clicking a row navigates to /changes/{id}.
+    The change detail page fetches GET /changes/{id} and renders: integration name and provider at the top, resource display name, detection timestamp (absolute UTC), change type, the RiskBadge, the risk_reason in plain text, and a diff table. The diff table has two columns: Previous Value and New Value. Use monospace at 13px for all values. For removed changes, Previous Value column shows the full record fields and New Value column shows "Record deleted" in secondary text. For added changes, Previous Value column shows "Record did not exist" and New Value shows all fields. For modified changes, show only the changed field with the old and new values.
+    Empty state when no changes exist: centered secondary text saying "No changes detected yet. Connect an integration and run your first sync."
+
+Test Criteria
+
+    The dashboard loads and displays real changes from the backend.
+    Each change row shows the correct risk badge color.
+    Clicking a row navigates to the correct change detail page.
+    The change detail page renders the diff correctly with before and after values.
+    The empty state renders when there are no changes.
+    Loading and error states render correctly.
+
+Definition of Done
+
+An engineer can open the dashboard, see a list of real changes from the database, read the risk level at a glance, click through to a change detail, and see the full field-by-field diff with the risk reason explained in plain text.
+
+
+MILESTONE 14: INTEGRATIONS PAGE
+
+Goal
+
+The integrations page shows all connected integrations, their sync status, and last synced time. It includes an Add Integration flow with a Cloudflare API token form, inline validation, and the Sync Now button with live status polling.
+
+Files to Create
+
+    /frontend/src/app/(authenticated)/integrations/page.tsx         integrations list page
+    /frontend/src/components/integrations/IntegrationCard.tsx       card for a single integration
+    /frontend/src/components/integrations/AddIntegrationDrawer.tsx  right-side drawer for connecting Cloudflare
+    /frontend/src/components/integrations/SyncButton.tsx            sync now button with polling logic
+
+Frontend Tasks
+
+    On the integrations page, fetch GET /integrations on mount. Display a grid of IntegrationCard components, two per row on desktop.
+    IntegrationCard shows: a small icon or text label for the provider (CF for Cloudflare), the display_name in body text, the status with a green dot for active or red dot for error, and the last_synced_at timestamp formatted as a relative time. The Sync Now button is on the right side of the card.
+    An Add New Integration button opens AddIntegrationDrawer as a right-side panel (400px wide, full height, sliding in over the main content). The drawer has: a title, an API Token input field, a Zone ID input field, and a Connect button. Below the token input, show secondary text: "Your token is stored encrypted and is never logged." The input fields use the design system form style: surface level 2 background (#1c1e26), border at #2a2d38, focus border at #4f80f7, primary text.
+    The Connect button calls POST /integrations. On a 400 error (invalid token), show the error message below the form field in #e84040 text at 13px. On success, close the drawer and refetch the integrations list.
+    The SyncButton component calls POST /syncs when clicked, receives the sync_run_id, then polls GET /syncs/{id} every two seconds until the status is completed or failed. While polling, the button shows "Syncing..." with a 16px spinner and is disabled. On completion, show "Synced" briefly, then reset. On failure, show the error_message inline below the card.
+    If no integrations exist, show an empty state: "No integrations connected yet." with the Add New Integration button below.
+
+Test Criteria
+
+    The integrations list loads and shows connected Cloudflare integrations.
+    Clicking Add New Integration opens the drawer.
+    Submitting a valid API token and zone ID creates the integration and shows it in the list.
+    Submitting an invalid token shows an error message inline and does not close the drawer.
+    Clicking Sync Now shows the syncing state and updates to completed after the sync finishes.
+    A failed sync shows the error message below the card.
+
+Definition of Done
+
+An engineer can connect a Cloudflare account through the UI in under five minutes, trigger a sync, and see the sync complete. No page reloads required. The integration form rejects bad tokens before saving.
+
+
+MILESTONE 15: CHANGE TIMELINE PAGE
+
+Goal
+
+The standalone /timeline page provides the full change feed with filter controls. An engineer can filter by risk level and time range and see the summary counts update. This extends the dashboard timeline with filtering UI.
+
+Files to Create
+
+    /frontend/src/app/(authenticated)/timeline/page.tsx         full timeline with filters
+    /frontend/src/components/timeline/FilterBar.tsx             filter controls component
+
+Frontend Tasks
+
+    The timeline page renders the same ChangeRow list as the dashboard, with the same RiskBadge and diff row click behavior.
+    Above the list, render the FilterBar component. It contains a risk level filter as pill toggles (CRITICAL, HIGH, MEDIUM, LOW, ALL). Active pills use the accent background color. An inactive pill uses surface level 2 with a border at the border/divider color. Add a time range selector as a dropdown with options: Last 1 hour, Last 24 hours, Last 7 days, Last 30 days, All time.
+    When a filter is applied, re-fetch GET /changes with the appropriate risk_level and time range parameters. Show a loading state during the refetch.
+    The SummaryBar above the filter bar shows counts for the current filter selection, not all-time totals.
+    Use infinite scroll or a "Load More" button to handle pagination. Show the count of remaining changes above the Load More button (e.g., "Showing 50 of 142 changes").
+    Empty state for a filtered view: "No changes found for these filters." with a "Clear filters" link.
+
+Test Criteria
+
+    Selecting CRITICAL filter shows only critical changes and the summary counts update.
+    Selecting Last 1 hour shows only changes from the past hour.
+    Load More loads the next page of results and appends them to the list.
+    Clearing filters returns to the full unfiltered timeline.
+    An empty filtered state renders the correct empty message.
+
+Definition of Done
+
+An engineer responding to a production incident can open the timeline, filter to high and critical changes in the last hour, and identify the most relevant changes within 30 seconds.
+
+
+MILESTONE 16: RESOURCE HISTORY PAGE
+
+Goal
+
+The /resources page lists all monitored resources. Clicking a resource opens its history page, which shows all snapshots and changes for that resource in a two-panel layout. An engineer can select any snapshot to view the full DNS state at that point in time.
+
+Files to Create
+
+    /frontend/src/app/(authenticated)/resources/page.tsx                    resources list
+    /frontend/src/app/(authenticated)/resources/[id]/page.tsx               resource history view
+    /frontend/src/components/resources/ResourceHistoryPanel.tsx             two-panel layout
+    /frontend/src/components/resources/SnapshotStateView.tsx                full DNS record table for a snapshot
+    /frontend/src/components/resources/SnapshotDiffView.tsx                 diff view between a snapshot and the previous one
+
+Frontend Tasks
+
+    The resources list page fetches all resources for the user and shows a flat list. Each row shows: resource display_name (monospace), provider_resource_type in secondary text, integration display_name, and last_snapshot_at. Clicking a row navigates to /resources/{id}.
+    The resource history page uses a two-panel layout on desktop. Left panel (30% width): a vertical list of snapshots for the resource, fetched from GET /resources/{id}/snapshots. Each snapshot row shows the timestamp, triggered_by label, and a colored dot indicating whether changes were detected (green for no changes, colored per highest risk level if changes exist). The selected snapshot has a 2px left border in the accent color.
+    Right panel (70% width): if no snapshot is selected, show the resource metadata. When a snapshot is selected, show either the SnapshotStateView or SnapshotDiffView based on whether the user has toggled to diff mode.
+    SnapshotStateView renders all DNS records from the selected snapshot as a structured table with columns: Type, Name, Content, TTL, Proxied. Values are rendered in monospace at 13px. The table has alternating row background at surface level 1 and surface level 2 for scannability.
+    If the selected snapshot has changes associated with it (from GET /resources/{id}/changes filtered by new_snapshot_id), show a "View Diff" button above the table. Clicking it switches the right panel to SnapshotDiffView, which renders a two-column diff table showing only the fields that changed: Previous and New Value in monospace, with prev_value lines using a low-opacity critical color background and new_value lines using a low-opacity healthy green background.
+    Empty state when no snapshots exist for a resource: "No snapshots yet. Run a sync for this resource."
+
+Test Criteria
+
+    The resources list shows all connected DNS zones.
+    Clicking a resource loads the history page with the snapshot list in the left panel.
+    Clicking a snapshot in the left panel renders the full DNS state in the right panel.
+    A snapshot that detected changes shows the View Diff button.
+    Clicking View Diff renders the diff with correct before and after values.
+    No snapshot selected shows the resource metadata correctly.
+
+Definition of Done
+
+An engineer can navigate to any monitored DNS zone, scroll through its snapshot history, click a snapshot to see the exact configuration state at that point in time, and view the diff for any snapshot that detected changes.
+
+
+MILESTONE 17: BASIC TESTING
+
+Goal
+
+The core services have test coverage sufficient to prevent regressions during future development. Tests cover snapshot deduplication, diff correctness, and risk classification accuracy. The frontend has smoke tests confirming key flows render without errors.
+
+Files to Create
+
+    /backend/tests/__init__.py
+    /backend/tests/conftest.py              pytest fixtures: test database session, sample data factories
+    /backend/tests/test_snapshot_service.py tests for snapshot deduplication logic
+    /backend/tests/test_diff_service.py     tests for addition, deletion, and modification detection
+    /backend/tests/test_risk_service.py     tests for all risk classification rules
+    /backend/tests/test_cloudflare_connector.py  tests for connector normalization using mocked HTTP responses
+
+Backend Tasks
+
+    In conftest.py, set up a pytest fixture that creates an in-memory SQLite database (or a test PostgreSQL database via environment variable) and provides a clean session per test. Define a factory function for creating sample Integration, Resource, Snapshot, and Change rows with sensible defaults.
+    In test_snapshot_service.py, write tests for: identical state produces no new snapshot, different state produces a new snapshot, the content_hash on the new snapshot matches the expected SHA-256, a first sync with no previous snapshot creates a snapshot.
+    In test_diff_service.py, write tests for: two identical snapshots produce no changes, one new record produces one added change, one missing record produces one removed change, one record with a modified content field produces one modified change with the correct prev_value and new_value, one record with two modified fields produces two change rows.
+    In test_risk_service.py, write a parameterized test that covers all rules defined in Milestone 10. For each rule, create a synthetic Change object, call classify_cloudflare_change, and assert the expected risk_level and that risk_reason is non-empty. Cover at minimum: apex A record deletion is critical, MX record deletion is critical, TTL reduction to 60 is high, TTL reduction to 61 is medium, proxy disabled is high, proxy enabled is medium, comment modification is low.
+    In test_cloudflare_connector.py, use httpx mock or responses library to mock Cloudflare API responses. Test: valid credentials return normalized records with correct field mapping, pagination fetches all pages, a 401 response raises AuthenticationError, a 429 response triggers retry, the normalized output for a known API response matches the expected CloudflareDNSRecord format.
+
+Test Criteria
+
+    All backend tests pass with pytest.
+    Test coverage for snapshot_service, diff_service, and risk_service is 90 percent or above.
+    No test requires a live Cloudflare API call.
+    Tests run inside Docker with a command like docker compose run api pytest.
+
+Definition of Done
+
+The test suite runs cleanly. All risk classification rules are tested against known inputs. The diff service is tested against all three change types. The snapshot service deduplication is tested. A regression in any of these services will be caught by the test suite before it ships.
+
+
+MILESTONE 18: MVP DEMO SCRIPT
+
+Goal
+
+A step-by-step demo script exists that proves all four MVP success criteria from the product spec. The script is runnable end-to-end and produces the intended result every time. It is the final gate before the MVP is considered complete.
+
+Files to Create
+
+    /DEMO.txt   plain text demo script with each step, what to do, and what to expect
+
+Backend Tasks
+
+    Ensure the full sync pipeline runs cleanly from a fresh database: connect integration, first sync, DNS change, second sync, changes appear in the database with correct risk levels.
+    Verify that GET /changes returns the correct changes after the demo flow and that the risk levels match the manual DNS changes made.
+
+Frontend Tasks
+
+    Verify the demo flow is smooth in the browser. No broken states, no console errors, no loading states that never resolve.
+    Confirm the risk badge colors match the expected levels during the demo.
+
+Demo Script Steps
+
+    Step 1: Open ConfigTrace in the browser. Confirm the sign-in page loads. Sign in with a Clerk account. Confirm the authenticated layout loads with the sidebar.
+    Step 2: Navigate to the Integrations page. Click Add New Integration. Enter a valid Cloudflare API token and zone ID for a test zone. Click Connect. Confirm the integration appears as active in the list.
+    Step 3: Click Sync Now. Observe the syncing state on the button. Wait for the sync to complete. Confirm the last synced timestamp updates.
+    Step 4: Navigate to the Timeline. Confirm there are no changes yet (empty state or first-sync message).
+    Step 5: Open the Cloudflare dashboard in another browser tab. Make at least three DNS changes in the test zone: reduce a TTL to 60 seconds on an A record, add a new TXT record, delete an existing subdomain A record.
+    Step 6: Return to ConfigTrace. Click Sync Now on the Cloudflare integration. Wait for the sync to complete.
+    Step 7: Navigate to the Timeline. Confirm three new change rows appear. Verify: the TTL change has a HIGH badge. The TXT record addition has a MEDIUM badge. The A record deletion has a CRITICAL badge.
+    Step 8: Click the CRITICAL change row. Confirm the change detail page loads. Confirm the previous value shows the deleted record's content field. Confirm the risk reason explains why the change is critical.
+    Step 9: Navigate to Resources. Click the Cloudflare DNS zone. Confirm the snapshot history shows two snapshots. Click the most recent snapshot. Confirm the full DNS record list renders as a table. Click View Diff. Confirm the diff shows all three changes.
+    Step 10: Repeat step 5 with no DNS changes. Click Sync Now. Confirm no new changes appear in the timeline. Confirm no new snapshot was written in the resource history.
+
+Test Criteria
+
+    All ten demo steps complete without errors.
+    The three manual DNS changes are detected and classified with the correct risk levels.
+    The change detail view shows the correct before and after values for each change type.
+    The resource history view shows exactly two snapshots after two syncs with changes.
+    A sync with no DNS changes produces no new rows in either the snapshots or changes tables.
+
+Definition of Done
+
+A solo engineer can execute the demo script from start to finish in under fifteen minutes and produce the correct result every time. The demo proves the product is real: it connects to a live production system, detects real configuration changes, classifies them correctly, and surfaces them in a clear and useful interface. Everything that comes after the MVP is an extension of this foundation.
+
+
+BUILD ORDER SUMMARY
+
+Milestone 1: Repository Setup
+Milestone 2: Docker Setup
+Milestone 3: FastAPI Backend Setup
+Milestone 4: PostgreSQL and SQLAlchemy Models
+Milestone 5: Alembic Migrations
+Milestone 6: Cloudflare Connector
+Milestone 7: Manual Sync Endpoint
+Milestone 8: Snapshot Service
+Milestone 9: Diff Service
+Milestone 10: Risk Classification Service
+Milestone 11: Changes API
+Milestone 12: Next.js Frontend Setup
+Milestone 13: Dashboard Page
+Milestone 14: Integrations Page
+Milestone 15: Change Timeline Page
+Milestone 16: Resource History Page
+Milestone 17: Basic Testing
+Milestone 18: MVP Demo Script
+
+Do not skip milestones. Do not combine milestones. Each milestone has a definition of done that must be satisfied before the next begins. The MVP is complete when all eighteen milestones are done and the demo script runs cleanly from start to finish.
