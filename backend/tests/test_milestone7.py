@@ -260,7 +260,7 @@ def test_list_integrations_empty_for_new_user(client: TestClient) -> None:
 # 4. POST /syncs
 # ─────────────────────────────────────────────────────────────────────────────
 
-@patch("app.routers.syncs.sync_integration")
+@patch("app.workers.sync_task.sync_integration")
 def test_create_sync_returns_pending_sync_run(
     mock_task, client: TestClient, db_session, test_user
 ) -> None:
@@ -280,7 +280,7 @@ def test_create_sync_returns_pending_sync_run(
     mock_task.delay.assert_called_once()
 
 
-@patch("app.routers.syncs.sync_integration")
+@patch("app.workers.sync_task.sync_integration")
 def test_create_sync_enqueues_correct_args(
     mock_task, client: TestClient, db_session, test_user
 ) -> None:
@@ -337,13 +337,13 @@ def test_get_sync_run_unknown_id_returns_404(client: TestClient) -> None:
 # 6. Celery task — lifecycle test
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_sync_task_transitions_to_completed(
-    db_session, test_user, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """sync_integration task runs to completion and updates SyncRun status."""
-    # Skip the artificial delay so the test doesn't take 2 s
-    monkeypatch.setattr("app.workers.sync_task.time.sleep", lambda _: None)
+def test_sync_task_transitions_to_completed(db_session, test_user) -> None:
+    """sync_integration task runs to completion and updates SyncRun status.
 
+    The integration helper in this file does not create a Resource row, so the
+    resource loop in the task is empty and snapshot_count stays 0.  The test
+    validates the full pending → running → completed lifecycle and DB updates.
+    """
     integration = _make_integration(db_session, test_user)
     sync_run = _make_sync_run(db_session, test_user, integration)
     assert sync_run.status == "pending"
@@ -366,12 +366,8 @@ def test_sync_task_transitions_to_completed(
     assert result["status"] == "completed"
 
 
-def test_sync_task_marks_failed_on_bad_integration(
-    db_session, test_user, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_sync_task_marks_failed_on_bad_integration(db_session, test_user) -> None:
     """If the integration is missing, the task marks the SyncRun as failed."""
-    monkeypatch.setattr("app.workers.sync_task.time.sleep", lambda _: None)
-
     # Create a SyncRun that references a non-existent integration
     nonexistent_integration_id = str(uuid.uuid4())
     integration = _make_integration(db_session, test_user)

@@ -14,6 +14,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
+from app.connectors.cloudflare import CloudflareConnector
+from app.core.encryption import decrypt_credentials
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -57,10 +59,10 @@ def sync_integration(
         - Sets ``Integration.last_synced_at`` on success.
         - Sets ``Resource.last_snapshot_at`` when a new snapshot was stored.
     """
-    # Local imports: pulled in at task execution time to guarantee fresh
-    # DB connections per invocation and to avoid module-load circular imports.
-    from app.connectors.cloudflare import CloudflareConnector
-    from app.core.encryption import decrypt_credentials
+    # DB-related imports are local so the task module stays importable without
+    # a database connection (useful for Celery worker startup and unit tests).
+    # CloudflareConnector and decrypt_credentials live at module level so they
+    # can be patched cleanly in tests via app.workers.sync_task.*.
     from app.database import SessionLocal
     from app.models.integration import Integration
     from app.models.resource import Resource

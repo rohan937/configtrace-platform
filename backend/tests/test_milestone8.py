@@ -9,10 +9,7 @@ Cloudflare API calls are always mocked — no live network calls are made.
 
 from __future__ import annotations
 
-import uuid
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from app.models.integration import Integration
 from app.models.resource import Resource
@@ -304,7 +301,7 @@ def test_get_latest_snapshot_returns_none_for_new_resource(db_session, test_user
 
 @patch("app.workers.sync_task.CloudflareConnector")
 def test_sync_task_stores_snapshot_on_first_run(
-    mock_connector_cls, db_session, test_user, monkeypatch: pytest.MonkeyPatch
+    mock_connector_cls, db_session, test_user
 ) -> None:
     """First sync: new snapshot created, SyncRun completed with snapshot_count=1."""
     records = [_dns_record("rec-001"), _dns_record("rec-002")]
