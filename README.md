@@ -110,6 +110,69 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
+## Dev seed data (Milestone 12+)
+
+To populate realistic sample data for frontend development without a real Cloudflare
+account, run the dev seed script after starting the stack:
+
+```bash
+# Start the stack first (API + DB must be running)
+docker compose up --build
+
+# In a second terminal, run migrations if you haven't already
+docker compose exec api alembic upgrade head
+
+# Seed sample data for the dev user
+docker compose exec api python scripts/seed_dev_data.py
+```
+
+The script creates:
+- **1 Cloudflare integration** (`Production Cloudflare Zone [seed]`, status: active)
+- **1 DNS zone resource** (`example.com`)
+- **3 snapshots** spanning the last 3 days showing a realistic change history
+- **5 changes** covering all four risk levels (critical, high ×2, medium, low)
+
+The seed data belongs to the same dev user automatically returned by the API in
+dev mode (`dev@configtrace.local`), so all read endpoints return it immediately:
+
+```bash
+# All changes (should return 5 rows)
+curl http://localhost:8000/changes | python3 -m json.tool
+
+# All resources (should return 1 row)
+curl http://localhost:8000/resources | python3 -m json.tool
+
+# Only critical changes
+curl "http://localhost:8000/changes?risk_level=critical" | python3 -m json.tool
+
+# Snapshots for the resource
+RESOURCE_ID=$(curl -s http://localhost:8000/resources | python3 -m json.tool | grep '"id"' | head -1 | awk -F'"' '{print $4}')
+curl "http://localhost:8000/resources/${RESOURCE_ID}/snapshots" | python3 -m json.tool
+```
+
+**Verify directly in the database:**
+```bash
+# All changes with risk levels (newest first)
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "select change_type, record_identifier, field_path, risk_level from changes order by created_at desc;"
+
+# All resources
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "select display_name, provider_resource_type, last_snapshot_at from resources;"
+
+# Snapshot count
+docker compose exec db psql -U configtrace -d configtrace -c \
+  "select count(*) as snapshots from snapshots;"
+```
+
+**Reset / re-seed** (the script is idempotent — safe to run multiple times):
+```bash
+docker compose exec api python scripts/seed_dev_data.py
+```
+
+Each run deletes the previous seed data and recreates it cleanly.  No duplicate
+rows accumulate.
+
 ## Project layout
 
 ```
@@ -125,6 +188,7 @@ npm run dev          # http://localhost:3000
 │   │   ├── schemas/          Pydantic request/response schemas
 │   │   ├── workers/          Celery tasks
 │   │   └── middleware/       Auth and request middleware
+│   ├── scripts/              Dev-only tooling (seed_dev_data.py)
 │   ├── alembic/              Database migrations (added in Milestone 5)
 │   ├── requirements.txt
 │   └── Dockerfile
