@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import health
+from app.routers.integrations import router as integrations_router
+from app.routers.syncs import router as syncs_router
 
 app = FastAPI(
     title="ConfigTrace API",
@@ -25,6 +27,8 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router, prefix="/health", tags=["health"])
+app.include_router(integrations_router)   # prefix="/integrations"
+app.include_router(syncs_router)          # prefix="/syncs"
 
 
 # ── Root ──────────────────────────────────────────────────────────────────────

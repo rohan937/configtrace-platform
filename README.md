@@ -227,6 +227,79 @@ list[CloudflareDNSRecord]   ← stored verbatim in Snapshot.state (JSONB)
 Each `CloudflareDNSRecord` dict contains: `record_id`, `record_type`, `name`,
 `content`, `ttl`, `proxied`, `priority`, `comment`, `modified_on`.
 
+## Integration and sync API (Milestone 7)
+
+**Dev mode** — Clerk auth is not required yet.  All endpoints automatically
+create a dev user on first request (using `dev@configtrace.local`).
+
+### Create a Cloudflare integration
+
+```bash
+# The API validates the token against Cloudflare before saving anything.
+curl -s -X POST http://localhost:8000/integrations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "cloudflare",
+    "display_name": "My Production Zone",
+    "api_token": "<your_cf_api_token>",
+    "zone_id": "<your_cf_zone_id>"
+  }' | jq .
+# → {"id": "...", "provider": "cloudflare", "display_name": "My Production Zone",
+#    "status": "active", "last_synced_at": null, "created_at": "..."}
+# Credentials are never returned.
+```
+
+### List integrations
+
+```bash
+curl -s http://localhost:8000/integrations | jq .
+# → {"integrations": [...], "total": 1}
+```
+
+### Trigger a manual sync
+
+```bash
+INTEGRATION_ID="<uuid from POST /integrations>"
+
+curl -s -X POST http://localhost:8000/syncs \
+  -H "Content-Type: application/json" \
+  -d "{\"integration_id\": \"${INTEGRATION_ID}\"}" | jq .
+# → {"id": "...", "status": "pending", "triggered_by": "manual", ...}
+```
+
+### Poll sync status
+
+```bash
+SYNC_RUN_ID="<id from POST /syncs>"
+
+curl -s http://localhost:8000/syncs/${SYNC_RUN_ID} | jq .
+# Poll until "status" is "completed" or "failed"
+# → {"id": "...", "status": "completed", "snapshot_count": 0, "change_count": 0, ...}
+```
+
+> **Note:** `snapshot_count` and `change_count` are `0` in Milestone 7 — the
+> Celery task is a placeholder.  Milestone 8 (snapshot service) wires in real
+> connector calls.
+
+### Start the Celery worker
+
+The Celery worker is required for sync tasks to execute.  It is not started
+by `docker compose up` by default.
+
+```bash
+# Start worker alongside the other services:
+docker compose --profile celery up --build
+
+# Or, in a second terminal against a running stack:
+docker compose run --rm worker
+```
+
+### Run the test suite
+
+```bash
+docker compose run --rm api pytest tests/ -v
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -236,7 +309,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 3: FastAPI backend setup (partial — health endpoint + CORS; Clerk auth deferred)
 - [x] Milestone 4: PostgreSQL and SQLAlchemy models
 - [x] Milestone 5: Alembic migrations
-- [x] Milestone 6: Cloudflare connector ← **you are here**
+- [x] Milestone 6: Cloudflare connector
+- [x] Milestone 7: Manual sync endpoint ← **you are here**
 - [ ] Milestone 7: Manual sync endpoint
 - [ ] Milestone 8: Snapshot service
 - [ ] Milestone 9: Diff service

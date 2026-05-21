@@ -10,6 +10,8 @@ celery_app = Celery(
     "configtrace",
     broker=REDIS_URL,
     backend=REDIS_URL,
+    # Explicit task discovery — avoids autodiscover scanning the whole package.
+    include=["app.workers.sync_task"],
 )
 
 celery_app.conf.update(
