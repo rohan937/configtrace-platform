@@ -779,6 +779,87 @@ npm run build
 # ✓ Compiled successfully — 7 routes, 0 TypeScript errors
 ```
 
+## Cloudflare Integration Setup (Milestone 14)
+
+Milestone 14 makes the Integrations page fully operational: connect a
+Cloudflare account from the UI, trigger manual syncs, and watch live sync
+status without leaving the page.
+
+### What it adds
+
+- **Integration creation form** — inline Cloudflare connection form with Display
+  Name, API Token (masked), and Zone ID fields.  Credentials are validated
+  against the live Cloudflare API server-side before anything is saved.
+- **Sync Now with polling** — clicking Sync Now triggers a Celery task and polls
+  `GET /syncs/{id}` every 2 seconds until the run reaches a terminal state
+  (`completed` or `failed`), then shows snapshot and change counts inline.
+- **List refresh** — the integrations list refreshes automatically after a
+  successful connection or after any sync completes.
+- **Credential hygiene** — the API token is sent to the backend once over HTTPS,
+  cleared from React state on success, never logged, never stored in
+  localStorage or sessionStorage, and never returned by any API response.
+
+### How to connect a Cloudflare integration from the UI
+
+1. Start the full stack with the Celery worker:
+
+```bash
+docker compose --profile celery up --build
+docker compose exec api alembic upgrade head
+```
+
+2. Open http://localhost:3000/integrations
+
+3. Click **Add New Integration**. Fill in:
+
+   | Field | Value |
+   |---|---|
+   | Display Name | Any label, e.g. `Production Zone` |
+   | Cloudflare API Token | A restricted token with **Zone.DNS:Read** permission |
+   | Zone ID | The 32-character hex Zone ID from the Cloudflare dashboard |
+
+4. Click **Connect Cloudflare**.  The backend validates the token against the
+   Cloudflare API.  Invalid tokens are rejected with a clear error; valid
+   credentials are encrypted (AES-256-GCM) and stored.  The token is never
+   returned in any response.
+
+5. After the integration appears in the list, click **Sync Now**. The button
+   shows `Syncing…` while the Celery worker fetches DNS records, stores a
+   snapshot, and runs the diff and risk pipeline.  On completion the result
+   shows inline: `Sync complete — 1 snapshot, 0 changes detected.`
+
+### Minimum Cloudflare API token permissions
+
+Create a restricted API token at https://dash.cloudflare.com/profile/api-tokens:
+
+- **Zone → DNS → Read** (required)
+- Scope: the specific zone you want to monitor
+
+The token does not need write access.  ConfigTrace only reads DNS records.
+
+### Verify via backend APIs
+
+```bash
+# Confirm the integration was created
+curl http://localhost:8000/integrations | python3 -m json.tool
+# → { "integrations": [{ "id": "...", "provider": "cloudflare", ... }], "total": 1 }
+
+# Confirm resources were discovered (zone appears after first sync)
+curl http://localhost:8000/resources | python3 -m json.tool
+
+# Confirm changes were recorded (after a second sync with DNS changes)
+curl http://localhost:8000/changes | python3 -m json.tool
+
+# Filter to only critical changes
+curl "http://localhost:8000/changes?risk_level=critical" | python3 -m json.tool
+```
+
+### What's not implemented yet
+
+- Change detail page (Milestone 15+ scope)
+- Resource history page (Milestone 16 scope)
+- Scheduled sync (post-MVP)
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -795,8 +876,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 10: Risk classification service
 - [x] Milestone 11: Changes API and Resources API
 - [x] Milestone 12: Next.js frontend setup
-- [x] Milestone 13: Frontend Dashboard Data Rendering ← **you are here**
-- [ ] Milestone 14: Integrations page
+- [x] Milestone 13: Frontend Dashboard Data Rendering
+- [x] Milestone 14: Cloudflare Integration Setup UI ← **you are here**
 - [ ] Milestone 15: Change timeline page
 - [ ] Milestone 16: Resource history page
 - [ ] Milestone 17: Basic testing

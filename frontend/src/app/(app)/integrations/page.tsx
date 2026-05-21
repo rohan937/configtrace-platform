@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Integration } from "@/types";
 import { getIntegrations } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import IntegrationList from "@/components/integrations/IntegrationList";
+import CloudflareIntegrationForm from "@/components/integrations/CloudflareIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 
@@ -13,46 +14,106 @@ export default function IntegrationsPage() {
   const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const fetchIntegrations = useCallback(() => {
+    setError(null);
 
     getIntegrations()
       .then((data) => {
-        if (!cancelled) {
-          setIntegrations(data.integrations);
-          setTotal(data.total);
-        }
+        setIntegrations(data.integrations);
+        setTotal(data.total);
       })
       .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load integrations.");
-        }
+        setError(err instanceof Error ? err.message : "Failed to load integrations.");
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       });
-
-    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    fetchIntegrations();
+  }, [fetchIntegrations]);
+
+  function handleCreated() {
+    // Hide the form and refresh the list.
+    setShowForm(false);
+    fetchIntegrations();
+  }
 
   return (
     <>
       <PageHeader
         title="Integrations"
-        description="Manage connected DNS providers and trigger syncs."
+        description="Connect DNS providers, trigger manual syncs, and monitor sync status."
       />
 
       <div className="px-6 py-6">
+        {/* ── Connect form (toggle) ─────────────────────────────────────── */}
+        {!showForm ? (
+          <div className="mb-6">
+            <button
+              onClick={() => setShowForm(true)}
+              style={{
+                background: "#4f80f7",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "6px",
+                padding: "8px 16px",
+                fontSize: "13px",
+                fontWeight: 500,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Add New Integration
+            </button>
+          </div>
+        ) : (
+          <CloudflareIntegrationForm
+            onCreated={handleCreated}
+            onCancel={() => setShowForm(false)}
+          />
+        )}
+
+        {/* ── Integration count ─────────────────────────────────────────── */}
         {!loading && !error && total > 0 && (
           <p className="mb-4" style={{ fontSize: "13px", color: "#8b90a0" }}>
-            {total} integration{total === 1 ? "" : "s"} configured
+            {total} integration{total === 1 ? "" : "s"} connected
           </p>
         )}
 
+        {/* ── Content ───────────────────────────────────────────────────── */}
         {loading && <LoadingState />}
-        {!loading && error && <ErrorState message={error} />}
-        {!loading && !error && <IntegrationList integrations={integrations} />}
+        {!loading && error && (
+          <div>
+            <ErrorState message={error} />
+            <div className="flex justify-center mt-4">
+              <button
+                onClick={fetchIntegrations}
+                style={{
+                  background: "transparent",
+                  border: "1px solid #4f80f7",
+                  color: "#4f80f7",
+                  borderRadius: "6px",
+                  padding: "6px 14px",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+        {!loading && !error && (
+          <IntegrationList
+            integrations={integrations}
+            onSyncComplete={fetchIntegrations}
+          />
+        )}
       </div>
     </>
   );

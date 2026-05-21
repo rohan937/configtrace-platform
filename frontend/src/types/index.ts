@@ -83,6 +83,15 @@ export interface SnapshotListItem {
 
 export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
 
+/** Request body for POST /integrations. */
+export interface IntegrationCreateRequest {
+  provider: "cloudflare";
+  display_name: string;
+  /** Sent to backend once; never stored in frontend state after submission. */
+  api_token: string;
+  zone_id: string;
+}
+
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */
 export interface Integration {
   id: string;

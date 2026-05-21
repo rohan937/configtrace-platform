@@ -9,6 +9,8 @@
 import type {
   ChangeDetail,
   ChangeListItem,
+  Integration,
+  IntegrationCreateRequest,
   IntegrationListResponse,
   PaginatedResponse,
   ResourceDetail,
@@ -120,6 +122,23 @@ export async function getResourceChanges(
 
 export async function getIntegrations(): Promise<IntegrationListResponse> {
   return apiFetch("/integrations");
+}
+
+/**
+ * Create a new integration.
+ *
+ * The payload includes a plaintext api_token that is sent to the backend
+ * once and encrypted server-side before storage.  The token is never
+ * returned in any response and must not be stored in frontend state after
+ * this call returns.
+ */
+export async function createIntegration(
+  payload: IntegrationCreateRequest,
+): Promise<Integration> {
+  return apiFetch("/integrations", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 // ── Syncs ─────────────────────────────────────────────────────────────────────
