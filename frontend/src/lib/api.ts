@@ -9,7 +9,7 @@
 import type {
   ChangeDetail,
   ChangeListItem,
-  Integration,
+  IntegrationListResponse,
   PaginatedResponse,
   ResourceDetail,
   ResourceListItem,
@@ -118,7 +118,7 @@ export async function getResourceChanges(
 
 // ── Integrations ──────────────────────────────────────────────────────────────
 
-export async function getIntegrations(): Promise<PaginatedResponse<Integration>> {
+export async function getIntegrations(): Promise<IntegrationListResponse> {
   return apiFetch("/integrations");
 }
 

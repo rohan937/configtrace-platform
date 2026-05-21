@@ -729,6 +729,56 @@ npm run build
 All 7 routes (`/`, `/_not-found`, `/dashboard`, `/timeline`, `/integrations`,
 `/resources`, `/settings`) generate as static pages with no API calls on load.
 
+## Frontend data rendering (Milestone 13)
+
+Milestone 13 replaces all placeholder pages with real data fetched from the
+backend API.  Every data-fetching page is a client component that loads its
+data in a `useEffect` hook and shows a `LoadingState` while the request is
+in flight, an `ErrorState` on failure, or the real content on success.
+
+### Pages updated
+
+| Route | Data fetched | Behaviour |
+|---|---|---|
+| `/dashboard` | `GET /changes?page_size=10`, `GET /resources?page_size=100` | Summary bar with 4 stats + recent change list |
+| `/timeline` | `GET /changes` (paginated, 50/page) | Full change history with prev/next pagination |
+| `/resources` | `GET /resources` | Table of all monitored resources |
+| `/integrations` | `GET /integrations` | List with per-row **Sync Now** button |
+
+### New components
+
+| File | Purpose |
+|---|---|
+| `src/lib/utils.ts` | `formatRelativeTime`, `formatDate`, `formatDateTime`, `formatValue`, `formatValueChange`, `changeTypeLabel` |
+| `src/components/common/LoadingState.tsx` | Centered "Loading…" text |
+| `src/components/common/ErrorState.tsx` | Centered error message in red |
+| `src/components/common/StatBlock.tsx` | Large number + small label for summary bar |
+| `src/components/changes/ChangeRow.tsx` | Single change row: timestamp · record · type · field · risk badge |
+| `src/components/changes/ChangeList.tsx` | Bordered table of change rows with column header |
+| `src/components/resources/ResourceList.tsx` | Table of resources: name · type · last snapshot · status |
+| `src/components/integrations/IntegrationList.tsx` | Table with per-row **Sync Now** button and inline feedback |
+
+### Type corrections
+
+The following mismatches between frontend types and actual backend schemas were
+fixed in `src/types/index.ts`:
+
+| Type | Fix |
+|---|---|
+| `Integration` | Removed `user_id` and `updated_at` (not returned by backend) |
+| `IntegrationListResponse` | Added — backend returns `{ integrations: [...], total: N }`, not paginated `items` |
+| `SyncRun.finished_at` → `completed_at` | Renamed to match `SyncRunResponse` |
+| `SyncRun.status` | Changed `"success"` → `"completed"` to match backend |
+| `SyncRun` | Added `user_id`, `triggered_by`, `change_count`, `snapshot_count` |
+
+### Build
+
+```bash
+cd frontend
+npm run build
+# ✓ Compiled successfully — 7 routes, 0 TypeScript errors
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -744,8 +794,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 9: Diff service
 - [x] Milestone 10: Risk classification service
 - [x] Milestone 11: Changes API and Resources API
-- [x] Milestone 12: Next.js frontend setup ← **you are here**
-- [ ] Milestone 13: Dashboard page
+- [x] Milestone 12: Next.js frontend setup
+- [x] Milestone 13: Frontend Dashboard Data Rendering ← **you are here**
 - [ ] Milestone 14: Integrations page
 - [ ] Milestone 15: Change timeline page
 - [ ] Milestone 16: Resource history page

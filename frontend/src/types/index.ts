@@ -83,27 +83,37 @@ export interface SnapshotListItem {
 
 export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
 
+/** Matches backend IntegrationResponse schema (no user_id, no updated_at). */
 export interface Integration {
   id: string;
-  user_id: string;
   provider: string;
   display_name: string;
   status: IntegrationStatus;
   last_synced_at: string | null;
   created_at: string;
-  updated_at: string;
+}
+
+/** Matches backend IntegrationListResponse (uses "integrations" key, not "items"). */
+export interface IntegrationListResponse {
+  integrations: Integration[];
+  total: number;
 }
 
 // ── Sync runs ─────────────────────────────────────────────────────────────────
 
-export type SyncRunStatus = "pending" | "running" | "success" | "failed";
+/** Matches backend SyncRunResponse schema. */
+export type SyncRunStatus = "pending" | "running" | "completed" | "failed";
 
 export interface SyncRun {
   id: string;
   integration_id: string;
+  user_id: string;
   status: SyncRunStatus;
+  triggered_by: string;
   started_at: string | null;
-  finished_at: string | null;
+  completed_at: string | null;
+  change_count: number | null;
+  snapshot_count: number | null;
   error_message: string | null;
   created_at: string;
 }
