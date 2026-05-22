@@ -10,14 +10,19 @@ This document describes how to deploy ConfigTrace to production at
 `render.yaml` in the repo root declares the two Render services that make up
 the backend:
 
-| Service | Type | Start command |
+| Service | Type | `dockerCommand` |
 |---|---|---|
 | `configtrace-api` | Web service | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
 | `configtrace-worker` | Background worker | `celery -A app.workers.celery_app worker --loglevel=info` |
 
 Both services use the same `backend/Dockerfile`.  The API service overrides the
-Dockerfile `CMD` via `startCommand` so Render's router can inject `$PORT` at
+Dockerfile `CMD` via `dockerCommand` so Render's router can inject `$PORT` at
 runtime (the Dockerfile hardcodes `8000` for local Docker use).
+
+> **Note:** `dockerCommand` is the correct Blueprint field for Docker runtime
+> services.  `startCommand` is only valid for native runtimes (Node, Python,
+> etc.) and will cause a Blueprint validation error if used with
+> `runtime: docker`.
 
 ### How Render picks up render.yaml
 

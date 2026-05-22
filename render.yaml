@@ -20,10 +20,11 @@ services:
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
-    # Render injects $PORT at runtime. This overrides the Dockerfile CMD which
-    # hardcodes port 8000 — necessary because Render's router expects the app
-    # to bind the port it advertises.
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # Render injects $PORT at runtime. dockerCommand overrides the Dockerfile CMD
+    # which hardcodes port 8000 — necessary because Render's router expects the
+    # app to bind the port it advertises.
+    # Note: startCommand is for native runtimes only; Docker runtime uses dockerCommand.
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     # Migrations run before each new deploy. Alembic upgrade head is idempotent
     # (a no-op if the schema is already current).
@@ -50,13 +51,13 @@ services:
 
   # ── Celery worker ────────────────────────────────────────────────────────────
   # Processes sync tasks enqueued by POST /syncs.
-  # Shares the same Docker image as the API; only the start command differs.
+  # Shares the same Docker image as the API; only the dockerCommand differs.
   - type: worker
     name: configtrace-worker
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile
-    startCommand: celery -A app.workers.celery_app worker --loglevel=info
+    dockerCommand: celery -A app.workers.celery_app worker --loglevel=info
     envVars:
       - key: ENVIRONMENT
         value: production
