@@ -1,8 +1,9 @@
 # render.yaml — ConfigTrace infrastructure-as-code for Render
 #
-# Defines two services:
+# Defines three services:
 #   1. configtrace-api    — FastAPI web service (Docker, Render-injected $PORT)
 #   2. configtrace-worker — Celery background worker (Docker)
+#   3. configtrace-beat   — Celery Beat scheduler (Docker, M23)
 #
 # External dependencies created separately in your provider dashboards:
 #   PostgreSQL  →  Neon, Supabase, or Render Postgres
@@ -81,5 +82,44 @@ services:
         sync: false
       # Worker doesn't verify JWTs at runtime; setting CLERK_JWKS_URL keeps
       # the image surface identical to the API and avoids drift.
+      - key: CLERK_JWKS_URL
+        sync: false
+
+  # ── Celery Beat scheduler (Milestone 23) ────────────────────────────────────
+  # Fires the ``enqueue_scheduled_syncs`` task at minute 0 of every hour.
+  # The task itself is tiny — it sends a Redis message that the worker picks
+  # up.  Beat does NOT spawn prefork worker children and does NOT execute
+  # sync work itself, so a small Starter plan is plenty.
+  #
+  # Steady-state memory: ~50-80 MB.  Beat is single-process by design.
+  - type: worker
+    name: configtrace-beat
+    runtime: docker
+    plan: starter
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerCommand: celery -A app.workers.celery_app beat --loglevel=info
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+
+      # Beat reads only Redis (broker) at runtime; it never opens a DB
+      # connection.  The DB-touching work happens inside the
+      # ``enqueue_scheduled_syncs`` task, which runs on configtrace-worker.
+      # We still set DATABASE_URL here so pydantic-settings doesn't fail
+      # at import time (the Settings class declares DATABASE_URL as required).
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      # Match the worker service's env surface for parity, even though Beat
+      # never verifies JWTs.  Avoids subtle drift if a future code path lands
+      # in the beat process's import graph.
+      - key: CLERK_SECRET_KEY
+        sync: false
       - key: CLERK_JWKS_URL
         sync: false

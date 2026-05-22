@@ -108,11 +108,23 @@ export default function IntegrationsPage() {
           />
         )}
 
-        {/* ── Integration count ─────────────────────────────────────────── */}
+        {/* ── Integration count + scheduled-sync notice ─────────────────── */}
+        {/* The hourly-sync hint appears only when at least one integration
+            exists — for empty-state users the larger MVP intro panel above
+            already covers the relevant context. */}
         {!loading && !error && total > 0 && (
-          <p className="mb-4" style={{ fontSize: "13px", color: "#8b90a0" }}>
-            {total} integration{total === 1 ? "" : "s"} connected
-          </p>
+          <div
+            className="mb-4 flex flex-wrap items-center"
+            style={{ gap: "10px", fontSize: "13px", color: "#8b90a0" }}
+          >
+            <span>
+              {total} integration{total === 1 ? "" : "s"} connected
+            </span>
+            <span style={{ color: "#3a3d4a" }}>·</span>
+            <span title="Beat fires at minute 0 of every hour">
+              Automatic hourly sync enabled. You can still run Sync Now anytime.
+            </span>
+          </div>
         )}
 
         {/* ── Content ───────────────────────────────────────────────────── */}

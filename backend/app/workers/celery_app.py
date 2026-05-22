@@ -1,6 +1,7 @@
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 # Read broker URL from the environment.  Defaults allow the module to be
 # imported outside Docker (e.g. during unit tests) without crashing.
@@ -11,7 +12,12 @@ celery_app = Celery(
     broker=REDIS_URL,
     backend=REDIS_URL,
     # Explicit task discovery — avoids autodiscover scanning the whole package.
-    include=["app.workers.sync_task"],
+    # ``scheduled_tasks`` is imported alongside ``sync_task`` so the task name
+    # ``enqueue_scheduled_syncs`` resolves on both worker and beat processes.
+    include=[
+        "app.workers.sync_task",
+        "app.workers.scheduled_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -32,6 +38,11 @@ celery_app.conf.update(
     # syncs are infrequent and short, so serialising them is fine.  When we
     # need parallel execution (multi-tenant, scheduled syncs) we'll move to a
     # larger Render plan and raise concurrency at that time.
+    #
+    # NOTE (M23): these settings apply only to the worker process.  The
+    # separate ``configtrace-beat`` service runs ``celery beat``, which does
+    # not spawn prefork children — it idles between schedule ticks at
+    # ~50-80 MB resident.
     worker_concurrency=1,
     # Prefetch=1 means each child reserves exactly one task at a time instead
     # of buffering 4 tasks ahead (Celery's default ``worker_prefetch_multiplier
@@ -42,4 +53,19 @@ celery_app.conf.update(
     # httpx client caches).  At our current sync rate this triggers at most
     # once a day.
     worker_max_tasks_per_child=50,
+    # ── Periodic schedule (Milestone 23) ────────────────────────────────────────
+    # Beat fires ``enqueue_scheduled_syncs`` at minute 0 of every hour.  That
+    # task is short (a single DB query + N small queue messages) and runs on
+    # the worker — beat itself never touches the database.
+    #
+    # ``crontab(minute=0)`` is preferred over ``timedelta(hours=1)`` so syncs
+    # land at predictable wall-clock times regardless of when beat last
+    # restarted.  After a deploy that bounces beat, the next tick is still
+    # the next top-of-the-hour rather than ~60 min after restart.
+    beat_schedule={
+        "enqueue-scheduled-syncs-hourly": {
+            "task": "enqueue_scheduled_syncs",
+            "schedule": crontab(minute=0),
+        },
+    },
 )

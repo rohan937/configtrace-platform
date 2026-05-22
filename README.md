@@ -1620,6 +1620,158 @@ Render → configtrace-worker → Metrics → Memory
 
 ---
 
+## Scheduled Syncs (Milestone 23)
+
+Milestone 23 turns ConfigTrace into a real monitoring product. Until now,
+sync was strictly manual — you had to click **Sync Now** every time you
+wanted to check for DNS drift. M23 adds an automatic hourly sync for every
+active Cloudflare integration. Manual **Sync Now** continues to work exactly
+as before.
+
+### How it works
+
+```
+Celery Beat (configtrace-beat)
+    └── fires task `enqueue_scheduled_syncs` at minute 0 of every hour
+            └── runs on the existing worker
+                    ├── lists active Cloudflare integrations
+                    ├── for each: if no pending/running sync exists,
+                    │             creates SyncRun(triggered_by="scheduled")
+                    │             and enqueues sync_integration.delay(...)
+                    └── the same sync_integration task that handles manual
+                        syncs processes the queue serially (worker_concurrency=1)
+```
+
+### Behavioural rules
+
+| Rule | Implementation |
+|---|---|
+| Cadence | `crontab(minute=0)` — runs at the top of every hour, predictable across deploys |
+| Scope | All `provider='cloudflare'` AND `status='active'` integrations |
+| Duplicate prevention | Skips any integration that already has a SyncRun in `pending` or `running` |
+| User isolation | `SyncRun.user_id` is always taken from `integration.user_id`; never from a request header or external input |
+| Worker ownership guard | The M21 `integration.user_id != UUID(user_id)` check still runs on every task — scheduled syncs go through the same gate as manual ones |
+| Manual Sync Now | Untouched. `POST /syncs` still creates SyncRuns with `triggered_by='manual'` |
+
+### Manual vs scheduled sync — at a glance
+
+| | Manual | Scheduled |
+|---|---|---|
+| Trigger | User clicks "Sync Now" on `/integrations` | Celery Beat at minute 0 every hour |
+| Entry point | `POST /syncs` → `sync_service.create_sync_run(triggered_by="manual")` | Celery task `enqueue_scheduled_syncs` → `create_scheduled_syncs_for_active_integrations(db)` |
+| Pipeline | `sync_integration` worker task | `sync_integration` worker task (same code path) |
+| `SyncRun.triggered_by` | `"manual"` | `"scheduled"` |
+| Cadence | On demand | Hourly |
+| Available in MVP | ✅ | ✅ |
+
+### Local development — running Celery Beat
+
+Beat is part of the `celery` profile in `docker-compose.yml`. To run the
+full stack locally including the scheduler:
+
+```bash
+docker compose --profile celery up --build
+```
+
+Once running you should see:
+- `configtrace-api-1`
+- `configtrace-worker-1`
+- `configtrace-beat-1`
+- `configtrace-db-1`
+- `configtrace-redis-1`
+
+The beat container logs `Scheduler: Sending due task ...` at the top of
+every hour. To force a manual fire without waiting (useful when developing):
+
+```bash
+docker compose exec worker python -c \
+  "from app.workers.scheduled_tasks import enqueue_scheduled_syncs; \
+   print(enqueue_scheduled_syncs.apply().get())"
+# Returns: {"integrations_seen": N, "enqueued": N, "skipped_in_flight": 0, "errors": 0}
+```
+
+### Production deployment — Render
+
+A **new Render Background Worker service** is added:
+
+| Service | Type | Plan | Command |
+|---|---|---|---|
+| `configtrace-beat` | Background Worker | Starter | `celery -A app.workers.celery_app beat --loglevel=info` |
+
+When you push the M23 commit, Render will detect the new service in
+`render.yaml` and prompt you to set its environment variables.
+
+**Env vars to set on `configtrace-beat` (Render dashboard):**
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | Same as `configtrace-api` and `configtrace-worker` |
+| `REDIS_URL` | Same as `configtrace-api` and `configtrace-worker` (must be the same Redis instance — beat uses it as the broker) |
+| `SECRET_KEY` | Same as the other services |
+| `ENCRYPTION_KEY` | Same as the other services |
+| `CLERK_SECRET_KEY` | Same as the other services (parity only — beat never verifies JWTs) |
+| `CLERK_JWKS_URL` | Same as the other services (parity only) |
+
+`ENVIRONMENT=production` is set in `render.yaml` itself — no manual entry needed.
+
+The beat service does not have a public URL (it's a worker, not a web
+service). You verify it from Render → `configtrace-beat` → Logs.
+
+**Expected memory:** ~50-80 MB steady state. Beat does not spawn worker
+children; it just idles between schedule ticks. Starter plan is plenty.
+
+### Production verification checklist
+
+Run this after the M23 deploy:
+
+**Auth (regression check)**
+
+- [ ] Open `https://app.configtrace.org/dashboard` signed out → redirected to `/sign-in`
+- [ ] Sign in → dashboard loads
+- [ ] `curl https://api.configtrace.org/integrations` (no auth) → HTTP 401
+
+**Manual sync (regression check — must still work)**
+
+- [ ] Create or reuse a Cloudflare integration on `/integrations`
+- [ ] Click **Sync Now** → "Baseline created. 0 changes is expected on the first sync…" (or the relevant follow-up message)
+- [ ] `/timeline` reflects the result correctly
+
+**Scheduled sync (the new behaviour)**
+
+- [ ] Render → `configtrace-beat` → Logs: `celery beat v... ready` on first deploy
+- [ ] Render → `configtrace-beat` → Logs at the top of the next hour: `Scheduler: Sending due task enqueue-scheduled-syncs-hourly`
+- [ ] Render → `configtrace-worker` → Logs at the same time:
+      `enqueue_scheduled_syncs started` → `enqueue_scheduled_syncs completed seen=N enqueued=N skipped_in_flight=0 errors=0`
+- [ ] Render → `configtrace-worker` → Logs immediately after: `sync_integration started`, then `sync_integration completed`
+- [ ] DB or `/timeline`: a new SyncRun row exists with `triggered_by='scheduled'`
+- [ ] If a DNS record was added/modified/removed since the previous sync, the change appears in `/timeline` and `/changes/{id}` renders correctly
+- [ ] No duplicate scheduled SyncRun is created if the previous one is still pending/running (verifiable via DB query or by clicking Sync Now mid-hour and checking that the next hour's beat tick skips with `skipped_in_flight=1`)
+
+**Force-fire (useful for the first deploy if you don't want to wait up to 60 min):**
+
+```bash
+# Render → configtrace-worker → Shell
+python -c \
+  "from app.workers.scheduled_tasks import enqueue_scheduled_syncs; \
+   print(enqueue_scheduled_syncs.apply().get())"
+```
+
+This invokes the task in-process on the worker — no Redis roundtrip — and
+prints the result counts immediately.
+
+**Memory regression check (preserve M22 ceiling)**
+
+- [ ] Render → `configtrace-worker` → Metrics: steady-state still ~150-200 MB; peak during sync still under 250 MB
+- [ ] Render → `configtrace-beat` → Metrics: stays ~50-80 MB, no upward drift
+- [ ] No `Instance failed: Ran out of memory` events on any service since the M23 deploy
+
+**User isolation (M21 regression check)**
+
+- [ ] In a second signed-in account, after one hourly tick: no scheduled SyncRuns from user 1's integration are visible to user 2
+- [ ] User 2's own integration (if any) gets its own scheduled SyncRun with `user_id` equal to user 2
+
+---
+
 Production now enforces Clerk JWT authentication on every protected route.
 Each authenticated user only ever sees their own integrations, resources,
 snapshots, and changes — see the Milestone 21 section below for the full
@@ -1653,3 +1805,4 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 20: Production deployment — all services live, smoke test passed
 - [x] Milestone 21: Authentication and User Isolation — Clerk JWTs, production fail-closed, multi-user data scoping
 - [x] Milestone 22: Production launch hardening — dashboard state fix, baseline messaging, Cloudflare onboarding polish, smoke-test checklist
+- [x] Milestone 23: Scheduled syncs — hourly Celery Beat, `triggered_by="scheduled"`, duplicate prevention, separate `configtrace-beat` Render service

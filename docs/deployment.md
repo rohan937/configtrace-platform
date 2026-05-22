@@ -39,17 +39,26 @@ verified end-to-end in production.
 
 ## render.yaml — Render infrastructure-as-code
 
-`render.yaml` in the repo root declares the two Render services that make up
-the backend:
+`render.yaml` in the repo root declares the three Render services that make
+up the backend:
 
 | Service | Type | Plan | `dockerCommand` |
 |---|---|---|---|
 | `configtrace-api` | Web service | Starter | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
 | `configtrace-worker` | Background worker | Starter | `celery -A app.workers.celery_app worker --loglevel=info` |
+| `configtrace-beat` | Background worker | Starter | `celery -A app.workers.celery_app beat --loglevel=info` |
 
-Both services use the same `backend/Dockerfile`.  The API service overrides the
-Dockerfile `CMD` via `dockerCommand` so Render's router can inject `$PORT` at
-runtime (the Dockerfile hardcodes `8000` for local Docker use).
+All three services use the same `backend/Dockerfile`.  The API service
+overrides the Dockerfile `CMD` via `dockerCommand` so Render's router can
+inject `$PORT` at runtime (the Dockerfile hardcodes `8000` for local Docker
+use).  The worker and beat services use the same image but run different
+Celery roles.
+
+> **`configtrace-beat` was added in Milestone 23.**  It fires the
+> `enqueue_scheduled_syncs` task at minute 0 of every hour.  Beat does not
+> execute sync work itself — it sends a Redis message that the worker
+> picks up.  See the "Scheduled Syncs (Milestone 23)" section of the
+> README for the full pipeline.
 
 > **Note:** `dockerCommand` is the correct Blueprint field for Docker runtime
 > services.  `startCommand` is only valid for native runtimes (Node, Python,
@@ -58,13 +67,19 @@ runtime (the Dockerfile hardcodes `8000` for local Docker use).
 
 ### Service plan and cost
 
-Both services run on the **Render Starter** plan (`plan: starter`).
+All three services run on the **Render Starter** plan (`plan: starter`).
 
 | Service | Plan | Cost |
 |---|---|---|
 | `configtrace-api` | Starter | ~$7 / month |
 | `configtrace-worker` | Starter | ~$7 / month |
-| **Total** | | **~$14 / month** |
+| `configtrace-beat` | Starter | ~$7 / month |
+| **Total** | | **~$21 / month** |
+
+`configtrace-beat` is a separate Background Worker (rather than running
+`--beat` inside `configtrace-worker`) so beat's failure domain is isolated
+from the worker's. If the worker container is recycled by Render mid-sync,
+the schedule keeps ticking. If beat crashes, in-flight syncs still complete.
 
 Starter is used instead of Free for the production MVP because:
 
