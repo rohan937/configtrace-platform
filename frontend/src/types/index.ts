@@ -9,11 +9,23 @@ export interface PaginatedResponse<T> {
 
 // ── DNS record (snapshot state element) ───────────────────────────────────────
 
+/**
+ * Shape of a DNS record as returned by the Cloudflare connector.
+ * All named fields are optional because the exact set varies by record type;
+ * the index signature allows arbitrary additional fields from the backend.
+ */
 export interface DnsRecord {
-  name: string;
-  type: string;
-  ttl: number;
-  value: string;
+  /** DNS record type, e.g. "A", "CNAME", "MX". */
+  record_type?: string;
+  name?: string;
+  /** Resolved content / value of the record. */
+  content?: string;
+  ttl?: number;
+  proxied?: boolean | null;
+  priority?: number | null;
+  comment?: string | null;
+  record_id?: string;
+  modified_on?: string | null;
   [key: string]: unknown;
 }
 
@@ -73,7 +85,7 @@ export interface SnapshotListItem {
   resource_id: string;
   integration_id: string;
   content_hash: string;
-  triggered_by: string | null;
+  triggered_by: string;
   sync_run_id: string | null;
   state: DnsRecord[];
   created_at: string;

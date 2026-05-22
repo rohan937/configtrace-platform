@@ -119,6 +119,24 @@ export function changeTypeLabel(changeType: string): string {
   }
 }
 
+// ── ID / hash helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Returns the first 8 characters of a UUID for compact display.
+ * e.g. "3cb3e46a-…" → "3cb3e46a"
+ */
+export function shortId(id: string): string {
+  return id.slice(0, 8);
+}
+
+/**
+ * Returns the first 10 characters of a snapshot content_hash.
+ * e.g. "sha256:abcdef…" → "sha256:abc" (or first 10 of a bare hex hash)
+ */
+export function formatSnapshotHash(hash: string): string {
+  return hash.slice(0, 10);
+}
+
 // ── Time range helpers ────────────────────────────────────────────────────────
 
 /**

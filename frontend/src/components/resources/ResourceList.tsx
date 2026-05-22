@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ResourceListItem } from "@/types";
 import EmptyState from "@/components/common/EmptyState";
 import { formatRelativeTime } from "@/lib/utils";
@@ -39,10 +40,11 @@ export default function ResourceList({ resources }: ResourceListProps) {
       </div>
 
       {resources.map((resource) => (
-        <div
+        <Link
           key={resource.id}
-          className="flex items-center gap-4 px-4 py-3 hover:bg-surface3 cursor-default"
-          style={{ borderBottom: "1px solid #2a2d38" }}
+          href={`/resources/${resource.id}`}
+          className="flex items-center gap-4 px-4 py-3 hover:bg-surface3 cursor-pointer"
+          style={{ borderBottom: "1px solid #2a2d38", textDecoration: "none", display: "flex" }}
         >
           {/* Name + provider ID */}
           <div className="flex flex-col gap-0.5 flex-1 min-w-0">
@@ -91,7 +93,7 @@ export default function ResourceList({ resources }: ResourceListProps) {
           >
             {resource.is_active ? "Active" : "Inactive"}
           </span>
-        </div>
+        </Link>
       ))}
     </div>
   );

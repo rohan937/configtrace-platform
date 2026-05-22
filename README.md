@@ -856,8 +856,7 @@ curl "http://localhost:8000/changes?risk_level=critical" | python3 -m json.tool
 
 ### What's not implemented yet
 
-- Change detail page (Milestone 16 scope)
-- Resource history page (Milestone 16 scope)
+- Change detail page (post-MVP)
 - Scheduled sync (post-MVP)
 
 ## Change Timeline (Milestone 15)
@@ -919,6 +918,67 @@ filter parameters: `risk_level`, `change_type`, `since`, `until`, `page`,
 `page_size`. The frontend generates ISO 8601 `since` timestamps client-side
 from the selected time range.
 
+## Resource History (Milestone 16)
+
+Milestone 16 makes every resource in the Resources list clickable, leading to
+a detail page that shows the full snapshot history and lets you inspect the
+exact DNS state at any point in time, plus a feed of every change recorded
+for that resource.
+
+### What it adds
+
+- **Clickable resource rows** — each row in `/resources` is now a `<Link>`
+  to `/resources/{id}`. Cursor changes to pointer on hover.
+- **Resource detail page** (`/resources/[resourceId]`) with:
+  - **Header** — display name or provider resource ID as the page title,
+    provider resource type as the subtitle.
+  - **Metadata bar** — Type, provider ID, Active/Inactive status, last
+    snapshot time, total snapshot count, total change count.
+  - **Snapshot history panel** (left column, 240 px) — all snapshots newest
+    first, each showing relative timestamp (exact UTC on hover), first 10 chars
+    of the content hash, and the `triggered_by` label. Clicking a row selects
+    it and updates the DNS state panel.
+  - **DNS state panel** (right column, flex) — renders the DNS records from
+    the selected snapshot as a table with columns: Type, Name, Content, TTL,
+    Proxied, Priority, Comment. Booleans display as Yes / No; null as —.
+    Proxied = Yes is highlighted in amber. Long values truncate with ellipsis
+    and expose the full value in a native tooltip.
+  - **Changes feed** — reuses `<ChangeList>` showing all changes for this
+    resource, newest first.
+- **New utility helpers** — `shortId(id)` (first 8 chars) and
+  `formatSnapshotHash(hash)` (first 10 chars) added to `lib/utils.ts`.
+- **Fixed `DnsRecord` type** — fields updated to match actual Cloudflare
+  connector output: `record_type`, `content`, `proxied`, `priority`,
+  `comment`, `record_id`, `modified_on` (all optional; index signature kept).
+- **Fixed `SnapshotListItem.triggered_by`** — aligned with backend schema
+  (`string`, not `string | null`).
+
+### How to use
+
+1. Open http://localhost:3000/resources — rows are now clickable links.
+2. Click any resource to open its detail page.
+3. The newest snapshot is pre-selected; its DNS records appear in the right
+   panel immediately.
+4. Click an older snapshot in the left list to compare DNS state at that point
+   in time.
+5. Scroll down to see all changes recorded for this resource.
+
+### Verify with seed data
+
+```bash
+# Seed data first if not already done
+docker compose exec api python scripts/seed_dev_data.py
+
+# Open resources list
+open http://localhost:3000/resources
+
+# Backend API equivalents
+curl "http://localhost:8000/resources" | python3 -m json.tool
+curl "http://localhost:8000/resources/{id}" | python3 -m json.tool
+curl "http://localhost:8000/resources/{id}/snapshots" | python3 -m json.tool
+curl "http://localhost:8000/resources/{id}/changes" | python3 -m json.tool
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -937,7 +997,7 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 12: Next.js frontend setup
 - [x] Milestone 13: Frontend Dashboard Data Rendering
 - [x] Milestone 14: Cloudflare Integration Setup UI
-- [x] Milestone 15: Change Timeline Page ← **you are here**
-- [ ] Milestone 16: Resource history page
+- [x] Milestone 15: Change Timeline Page
+- [x] Milestone 16: Resource History Page ← **you are here**
 - [ ] Milestone 17: Basic testing
 - [ ] Milestone 18: MVP demo script
