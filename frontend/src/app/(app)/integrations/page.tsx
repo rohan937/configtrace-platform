@@ -52,6 +52,35 @@ export default function IntegrationsPage() {
       />
 
       <div className="px-6 py-6">
+        {/* ── First-time onboarding note ────────────────────────────────── */}
+        {/* Only shown when the user has zero integrations connected. Gives
+            them the bare-minimum mental model before they click Add. */}
+        {!loading && !error && total === 0 && !showForm && (
+          <div
+            className="mb-6"
+            style={{
+              background: "#13151a",
+              border: "1px solid #2a2d38",
+              borderRadius: "6px",
+              padding: "16px 20px",
+              fontSize: "13px",
+              color: "#8b90a0",
+              lineHeight: 1.6,
+            }}
+          >
+            <p style={{ color: "#e8eaf0", marginBottom: "6px", fontWeight: 500 }}>
+              ConfigTrace MVP — Cloudflare DNS
+            </p>
+            <p style={{ margin: 0 }}>
+              The current MVP tracks Cloudflare DNS zones. You&apos;ll need a
+              scoped Cloudflare API token with Zone DNS Read access and the Zone
+              ID from your domain&apos;s Overview page. The token is encrypted
+              before storage. The first sync creates a baseline; later syncs
+              detect changes against it.
+            </p>
+          </div>
+        )}
+
         {/* ── Connect form (toggle) ─────────────────────────────────────── */}
         {!showForm ? (
           <div className="mb-6">

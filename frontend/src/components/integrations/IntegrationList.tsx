@@ -96,10 +96,31 @@ export default function IntegrationList({
           if (run.status === "completed") {
             const snaps = run.snapshot_count ?? 0;
             const changes = run.change_count ?? 0;
-            const msg =
-              snaps === 0
-                ? "Sync complete — no new changes detected."
-                : `Sync complete — ${snaps} snapshot${snaps === 1 ? "" : "s"}, ${changes} change${changes === 1 ? "" : "s"} detected.`;
+
+            // Three distinct outcomes the user needs to understand:
+            //
+            //  1. snaps>0, changes=0  → first sync ever for this integration.
+            //     A baseline snapshot was written; there's no previous snapshot
+            //     to diff against so 0 changes is the correct, expected result.
+            //
+            //  2. snaps=0, changes=0  → identical state since the previous sync.
+            //     Hash dedup skipped the snapshot write entirely.
+            //
+            //  3. changes>0           → real differences detected.
+            //
+            // Spelling these out in the success line avoids the common
+            // first-time-user confusion "I ran a sync and ConfigTrace found
+            // nothing — is it broken?".
+            let msg: string;
+            if (changes > 0) {
+              msg = `Sync complete — ${changes} change${changes === 1 ? "" : "s"} detected.`;
+            } else if (snaps > 0) {
+              msg =
+                "Baseline created. 0 changes is expected on the first sync — " +
+                "future syncs will detect any differences from this baseline.";
+            } else {
+              msg = "No changes since last sync — DNS state is unchanged.";
+            }
 
             if (mountedRef.current) {
               setRowState(integrationId, { polling: false, result: msg, error: null });

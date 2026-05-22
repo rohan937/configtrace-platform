@@ -8,7 +8,7 @@ export default function ErrorState({
   return (
     <div
       className="flex items-center justify-center py-16 text-sm"
-      style={{ color: "#e05252" }}
+      style={{ color: "#e84040" }}
     >
       Error: {message}
     </div>

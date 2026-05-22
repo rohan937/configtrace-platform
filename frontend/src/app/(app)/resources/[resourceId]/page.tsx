@@ -509,7 +509,7 @@ export default function ResourceDetailPage() {
           <ChangeList
             changes={changes}
             emptyTitle="No changes recorded yet."
-            emptyDescription="Changes will appear here after multiple syncs are run."
+            emptyDescription="The baseline is in place. Any DNS records that differ on the next sync will appear here, with risk classification and old/new values."
           />
         </div>
       </div>

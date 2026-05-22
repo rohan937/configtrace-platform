@@ -115,13 +115,25 @@ export default function DashboardPage() {
   const lastChange = changes[0] ?? null;
 
   // ── Empty-state logic ─────────────────────────────────────────────────────
+  //
+  // The integration_service creates a Resource row inline with the Integration,
+  // so `resources.length > 0` is true the moment the user connects Cloudflare —
+  // BEFORE any sync runs.  We therefore key the "baseline captured" state on
+  // last_snapshot_at, which is only set after the first successful sync writes
+  // a Snapshot row.  Resources still in their pre-sync state (no snapshot yet)
+  // fall into the "noSnapshots" branch, which tells the user to run the first
+  // sync to create a baseline.
 
   const ready = !loading && !error;
+  const hasAnySnapshot = resources.some((r) => r.last_snapshot_at !== null);
+
   const noIntegrations = ready && integrations.length === 0;
-  // Integration connected but no resources yet → first sync hasn't run
-  const noResources = ready && integrations.length > 0 && resources.length === 0;
-  // Resources exist (baseline snapshot taken) but no changes yet
-  const baselineOnly = ready && resources.length > 0 && totalChanges === 0;
+  // Integration exists but no snapshot has been written yet — first sync pending
+  const noSnapshots =
+    ready && integrations.length > 0 && !hasAnySnapshot;
+  // Snapshot(s) exist but no changes detected — the normal post-baseline state
+  const baselineOnly =
+    ready && hasAnySnapshot && totalChanges === 0;
   // Normal data state
   const hasChanges = ready && totalChanges > 0;
 
@@ -220,17 +232,17 @@ export default function DashboardPage() {
 
         {noIntegrations && (
           <NextStepGuide
-            title="No integrations connected."
-            body="Connect a Cloudflare zone to start monitoring DNS configuration changes. ConfigTrace will snapshot your DNS zone on each sync and highlight what changed."
+            title="Connect Cloudflare to start tracking DNS changes."
+            body="ConfigTrace snapshots your DNS zone on each sync and highlights what changed between snapshots. Connecting takes a scoped API token and a Zone ID."
             actionLabel="Connect Cloudflare"
             actionHref="/integrations"
           />
         )}
 
-        {noResources && (
+        {noSnapshots && (
           <NextStepGuide
-            title="Integration connected — run your first sync."
-            body="Your Cloudflare integration is ready. Click Sync Now to take a baseline snapshot of your DNS zone. Future syncs will compare against this baseline and surface any changes here."
+            title="Run your first sync to create a baseline."
+            body="Your Cloudflare integration is connected. The first sync stores a baseline snapshot of your DNS zone — no changes are detected on that run because there is nothing to compare against yet. Subsequent syncs compare against the baseline and surface any differences here."
             actionLabel="Go to Integrations"
             actionHref="/integrations"
           />
@@ -238,8 +250,8 @@ export default function DashboardPage() {
 
         {baselineOnly && (
           <NextStepGuide
-            title="Baseline captured."
-            body="ConfigTrace has your current DNS state. Make a change in Cloudflare — add, remove, or modify a record — then click Sync Now. Detected changes will appear here with a risk classification."
+            title="Baseline is active — no changes yet."
+            body="ConfigTrace has your current DNS state on record. Future DNS changes will appear here after the next sync. To test the loop now, add or modify a record in Cloudflare, then click Sync Now on the Integrations page."
             actionLabel="Run another sync"
             actionHref="/integrations"
           />

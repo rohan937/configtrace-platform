@@ -132,7 +132,7 @@ export default function CloudflareIntegrationForm({
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="e.g. Production Cloudflare Zone"
+              placeholder="e.g. Production Cloudflare"
               disabled={submitting}
               style={{
                 ...INPUT_STYLE,
@@ -146,6 +146,11 @@ export default function CloudflareIntegrationForm({
                 e.currentTarget.style.borderColor = "#2a2d38";
               }}
             />
+            <p style={HELPER_STYLE}>
+              A label for this connection. Shown in the integrations list — pick
+              something you&apos;ll recognise later, e.g. &ldquo;Production
+              Cloudflare&rdquo;.
+            </p>
           </div>
 
           {/* API token — type=password to prevent shoulder-surfing */}

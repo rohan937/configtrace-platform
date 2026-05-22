@@ -349,7 +349,7 @@ export default function TimelinePage() {
             emptyDescription={
               hasFilters
                 ? "Try clearing the filters or expanding the time range."
-                : "Connect Cloudflare and run your first sync to start tracking configuration changes."
+                : "Changes appear here after the second sync onwards — the first sync stores a baseline, and later syncs detect any DNS records that differ from it. Connect a Cloudflare integration to get started."
             }
           />
         )}

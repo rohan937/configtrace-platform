@@ -1472,6 +1472,154 @@ be for Clerk's management API in a future milestone).
 
 ---
 
+## Production Launch Hardening (Milestone 22)
+
+Milestone 22 polishes the existing Cloudflare DNS MVP loop so a real first user
+can onboard cleanly. No new providers, no new auth, no new product features —
+small, high-value clarity fixes to the screens a first-time user will actually
+hit.
+
+### What it adds
+
+- **Dashboard state-machine fix.** Previously the dashboard claimed
+  "Baseline captured" the moment a Cloudflare integration was connected,
+  *before* any sync had run. The `Resource` row is created inline with the
+  integration, so `resources.length > 0` was true pre-sync. The state machine
+  now keys baseline detection on `resource.last_snapshot_at`, introducing a
+  new "Run your first sync" state between "No integrations" and "Baseline
+  captured."
+- **Sync success message distinguishes three outcomes.** After a sync the
+  IntegrationList row now shows one of:
+  - `Baseline created. 0 changes is expected on the first sync — future syncs
+    will detect any differences from this baseline.` (snapshot_count > 0,
+    change_count = 0 — only happens on the first sync of an integration)
+  - `No changes since last sync — DNS state is unchanged.` (snapshot_count = 0,
+    hash dedup skipped the snapshot write)
+  - `Sync complete — N change(s) detected.` (change_count > 0)
+- **Cloudflare form Display Name helper.** The Display Name field now has a
+  one-line helper explaining what the label is used for.
+- **Integrations page onboarding context.** When a user has zero integrations,
+  the page shows a one-paragraph note above the "Add New Integration" button:
+  what ConfigTrace tracks, what credentials are needed, where to find them,
+  and how the first sync works.
+- **Timeline empty-state copy.** Explains that changes appear from the second
+  sync onwards — first sync stores a baseline, later syncs detect diffs.
+- **Resource detail no-changes copy.** Clearer "baseline is in place" language
+  on the per-resource changes list.
+- **ErrorState colour alignment.** Now uses the design-system critical colour
+  (`#e84040`) instead of the off-spec `#e05252` it had drifted to.
+
+### Current production user journey (post-M22)
+
+1. User visits `https://app.configtrace.org`
+2. Middleware redirects unauthenticated request to `/sign-in`
+3. User signs in with Clerk
+4. User lands on `/dashboard` — sees the "Connect Cloudflare to start tracking
+   DNS changes" guide with a CTA to `/integrations`
+5. On `/integrations` the user sees the MVP context note + "Add New Integration"
+6. User submits Cloudflare API token + Zone ID. The backend validates against
+   the live Cloudflare API before writing anything, encrypts the credentials,
+   and creates the `Integration` + `Resource` rows
+7. Back on `/integrations`, the user clicks **Sync Now**
+8. The worker fetches DNS records, writes the baseline snapshot, and reports
+   "Baseline created. 0 changes is expected on the first sync…"
+9. Dashboard now shows "Baseline is active — no changes yet" with the
+   suggestion to test the loop by changing a DNS record in Cloudflare
+10. User makes a DNS change in Cloudflare (e.g. adds a TXT record)
+11. User clicks **Sync Now** again → "Sync complete — 1 change detected."
+12. `/timeline` shows the change with risk badge and value diff
+13. Clicking the row opens `/changes/{id}` with full before/after, risk reason,
+    and snapshot context
+
+### Production smoke test checklist
+
+Run this checklist after every backend or frontend deploy:
+
+**Auth**
+
+- [ ] Open `https://app.configtrace.org/dashboard` signed out → redirected to
+      `/sign-in`
+- [ ] Sign in → dashboard loads
+- [ ] `curl https://api.configtrace.org/integrations` (no auth header) → HTTP 401
+- [ ] `curl https://api.configtrace.org/health` → HTTP 200 (public)
+- [ ] `curl https://api.configtrace.org/health/db` → HTTP 200 with
+      `database: connected`
+
+**Cloudflare end-to-end loop**
+
+- [ ] `/dashboard` shows the "Connect Cloudflare" guide (no integrations)
+- [ ] Create a Cloudflare integration via `/integrations` (Zone DNS Read token)
+- [ ] `/dashboard` now shows "Run your first sync to create a baseline"
+- [ ] Click **Sync Now** → row shows "Baseline created. 0 changes is expected
+      on the first sync…"
+- [ ] `/dashboard` shows "Baseline is active — no changes yet"
+- [ ] In Cloudflare, add a TXT record: `_m22-test.<yourdomain>` value `hello`
+- [ ] Click **Sync Now** again → "Sync complete — 1 change detected."
+- [ ] `/timeline` shows one row with the correct record identifier and risk
+- [ ] Click the row → `/changes/{id}` renders Before/After diff + risk reason
+- [ ] *(Optional)* Modify the TXT value to `hello2` → third sync should detect
+      one `modified` change
+- [ ] *(Optional)* Delete the TXT record → fourth sync should detect one
+      `removed` change
+
+**Worker stability**
+
+- [ ] Render → `configtrace-worker` → Events: no
+      `Instance failed: Ran out of memory` events since commit `99e16e7`
+- [ ] Render → Metrics: steady-state memory ≈ 150-200 MB; peak during sync
+      stays comfortably under 512 MB
+- [ ] Worker logs show `sync_integration started` /
+      `sync_integration completed` lines per sync
+
+**User isolation**
+
+- [ ] Sign in as a second test user (incognito window)
+- [ ] `/dashboard` is empty for the second user — no integrations, resources,
+      changes from user 1 visible
+- [ ] Try to load `https://app.configtrace.org/changes/{user-1-change-uuid}`
+      directly → "Change not found" error
+
+### Useful production URLs
+
+| Surface | URL |
+|---|---|
+| Dashboard | `https://app.configtrace.org/dashboard` |
+| Integrations | `https://app.configtrace.org/integrations` |
+| Timeline | `https://app.configtrace.org/timeline` |
+| Resources | `https://app.configtrace.org/resources` |
+| API liveness | `https://api.configtrace.org/health` |
+| API DB | `https://api.configtrace.org/health/db` |
+| API protected (expect 401) | `https://api.configtrace.org/integrations` |
+
+### Useful local development URLs
+
+| Surface | URL |
+|---|---|
+| Dashboard | `http://localhost:3000/dashboard` |
+| Integrations | `http://localhost:3000/integrations` |
+| Timeline | `http://localhost:3000/timeline` |
+| API liveness | `http://localhost:8000/health` |
+| API DB | `http://localhost:8000/health/db` |
+| API integrations (dev-mode auth) | `http://localhost:8000/integrations` |
+
+### Worker memory verification (post-99e16e7)
+
+```bash
+# Render → configtrace-worker → Shell
+ps -ef | grep -E "celery|^UID" | grep -v grep
+# Expected: exactly two celery rows — one master + one prefork child
+# Before fix: nine rows (master + 8 children)
+```
+
+```text
+Render → configtrace-worker → Metrics → Memory
+# Expected steady-state:    ~150-200 MB
+# Expected peak during sync: < 250 MB
+# Plan limit:                512 MB
+```
+
+---
+
 Production now enforces Clerk JWT authentication on every protected route.
 Each authenticated user only ever sees their own integrations, resources,
 snapshots, and changes — see the Milestone 21 section below for the full
@@ -1504,3 +1652,4 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 19: Production Deployment Preparation
 - [x] Milestone 20: Production deployment — all services live, smoke test passed
 - [x] Milestone 21: Authentication and User Isolation — Clerk JWTs, production fail-closed, multi-user data scoping
+- [x] Milestone 22: Production launch hardening — dashboard state fix, baseline messaging, Cloudflare onboarding polish, smoke-test checklist
