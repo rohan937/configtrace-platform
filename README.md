@@ -210,7 +210,9 @@ rows accumulate.
 │   └── MVPBuildPlan.txt
 │
 ├── docker-compose.yml        Full local environment (added in Milestone 2)
+├── render.yaml               Render infrastructure-as-code (API + Celery worker)
 ├── .env.example              All required environment variables, documented
+├── .env.production.example   Production-specific template (fill in, never commit)
 └── .gitignore
 ```
 
@@ -1287,10 +1289,17 @@ Milestone 19 makes ConfigTrace safe and configurable for deployment to
   copy must never be committed.
 - **`.gitignore` hardening** — `.env.production` and `.env.staging` are now
   explicitly ignored alongside the existing `.env` and `.env.local` patterns.
+- **`render.yaml`** — Render infrastructure-as-code declaring the API web
+  service and Celery background worker. Both use `backend/Dockerfile`; the API
+  start command overrides the Dockerfile `CMD` with `$PORT` so Render can
+  inject the port at runtime. Migrations run automatically as a
+  `preDeployCommand` before each deploy. Secrets are declared `sync: false`
+  — set them in the Render dashboard, never in this file.
 - **`docs/deployment.md`** — detailed production deployment guide covering:
-  domain layout, recommended infrastructure, required env vars, secret
-  generation commands, step-by-step deployment order, Cloudflare SSL
-  settings, CORS verification, and local development after this milestone.
+  domain layout, recommended infrastructure, how `render.yaml` works, required
+  env vars, secret generation commands, step-by-step deployment order,
+  Cloudflare SSL settings, CORS verification, and local development after this
+  milestone.
 - **`GET /`** now includes `"environment"` in the response so it's easy to
   confirm which environment a running API instance belongs to.
 
@@ -1338,4 +1347,5 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 16: Resource History Page
 - [x] Milestone 17: Change Detail Page
 - [x] Milestone 18: MVP Demo Polish
-- [x] Milestone 19: Production Deployment Preparation ← **you are here**
+- [x] Milestone 19: Production Deployment Preparation
+- [x] Milestone 20: render.yaml and Render deployment configuration ← **you are here**

@@ -5,6 +5,60 @@ This document describes how to deploy ConfigTrace to production at
 
 ---
 
+## render.yaml — Render infrastructure-as-code
+
+`render.yaml` in the repo root declares the two Render services that make up
+the backend:
+
+| Service | Type | Start command |
+|---|---|---|
+| `configtrace-api` | Web service | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| `configtrace-worker` | Background worker | `celery -A app.workers.celery_app worker --loglevel=info` |
+
+Both services use the same `backend/Dockerfile`.  The API service overrides the
+Dockerfile `CMD` via `startCommand` so Render's router can inject `$PORT` at
+runtime (the Dockerfile hardcodes `8000` for local Docker use).
+
+### How Render picks up render.yaml
+
+1. Connect your GitHub repository to Render (Dashboard → New → Blueprint).
+2. Render detects `render.yaml` at the repo root and creates both services
+   automatically.
+3. On the first deploy, Render prompts for every `sync: false` envVar — paste
+   in the secret values from your secrets manager.
+4. Subsequent `git push` triggers a redeploy of both services.
+
+### Pre-deploy migrations
+
+`render.yaml` sets `preDeployCommand: alembic upgrade head` on the API
+service.  Render runs this inside the container before routing traffic to the
+new deploy.  It is safe to run on every deploy — Alembic skips already-applied
+migrations.
+
+### Secrets
+
+`render.yaml` never contains secret values.  All sensitive variables
+(`DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ENCRYPTION_KEY`,
+`CLERK_SECRET_KEY`) are declared with `sync: false`.  Set them in the Render
+dashboard (service → Environment) or via the Render CLI:
+
+```bash
+render env set DATABASE_URL="postgresql://..." --service configtrace-api
+```
+
+Only non-secret values (`ENVIRONMENT=production`,
+`BACKEND_CORS_ORIGINS=https://app.configtrace.org,...`) are committed in
+`render.yaml`.
+
+### Redis and PostgreSQL
+
+Redis and PostgreSQL are **not** declared in `render.yaml` — they are
+provisioned separately (Upstash / Neon / Render Postgres) and their connection
+strings are pasted into the environment variables above.  This avoids Render
+creating a second redundant database on every Blueprint re-sync.
+
+---
+
 ## Domain layout
 
 | Subdomain | Purpose | Hosted on |

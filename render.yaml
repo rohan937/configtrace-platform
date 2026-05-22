@@ -1,0 +1,74 @@
+# render.yaml — ConfigTrace infrastructure-as-code for Render
+#
+# Defines two services:
+#   1. configtrace-api    — FastAPI web service (Docker, Render-injected $PORT)
+#   2. configtrace-worker — Celery background worker (Docker)
+#
+# External dependencies created separately in your provider dashboards:
+#   PostgreSQL  →  Neon, Supabase, or Render Postgres
+#   Redis       →  Upstash or Render Redis
+#
+# After first deploy, set all envVars marked "sync: false" in the Render
+# dashboard (service → Environment tab) or via the Render CLI.
+#
+# Full deployment guide: docs/deployment.md
+
+services:
+  # ── Backend API ──────────────────────────────────────────────────────────────
+  - type: web
+    name: configtrace-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    # Render injects $PORT at runtime. This overrides the Dockerfile CMD which
+    # hardcodes port 8000 — necessary because Render's router expects the app
+    # to bind the port it advertises.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    # Migrations run before each new deploy. Alembic upgrade head is idempotent
+    # (a no-op if the schema is already current).
+    preDeployCommand: alembic upgrade head
+    envVars:
+      # Non-secret values set here — safe to commit.
+      - key: ENVIRONMENT
+        value: production
+      - key: BACKEND_CORS_ORIGINS
+        value: https://app.configtrace.org,https://configtrace.org
+
+      # Secrets — set these in the Render dashboard, never in this file.
+      # sync: false means Render will prompt for the value on first deploy.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+
+  # ── Celery worker ────────────────────────────────────────────────────────────
+  # Processes sync tasks enqueued by POST /syncs.
+  # Shares the same Docker image as the API; only the start command differs.
+  - type: worker
+    name: configtrace-worker
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    startCommand: celery -A app.workers.celery_app worker --loglevel=info
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+
+      # Must match the API service — worker reads the same DB and Redis.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
