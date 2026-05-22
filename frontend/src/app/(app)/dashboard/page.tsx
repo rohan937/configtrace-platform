@@ -12,6 +12,135 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/utils";
 
+// ── Onboarding panel ──────────────────────────────────────────────────────────
+// Full three-step checklist shown when the user has zero integrations.
+// Steps are numbered and colour-coded: active step is white, pending are dimmed.
+
+interface OnboardingStep {
+  num: number;
+  label: string;
+  body: string;
+  done?: boolean;
+}
+
+function OnboardingPanel({
+  steps,
+  actionLabel,
+  actionHref,
+  note,
+}: {
+  steps: OnboardingStep[];
+  actionLabel: string;
+  actionHref: string;
+  note?: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "#13151a",
+        border: "1px solid #2a2d38",
+        borderRadius: "6px",
+        padding: "28px 28px 24px",
+      }}
+    >
+      <p
+        style={{
+          margin: "0 0 20px",
+          fontSize: "15px",
+          fontWeight: 600,
+          color: "#e8eaf0",
+          lineHeight: 1.4,
+        }}
+      >
+        Start monitoring your first configuration surface.
+      </p>
+
+      {/* Steps */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginBottom: "24px" }}>
+        {steps.map((step) => (
+          <div key={step.num} style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+            {/* Step indicator */}
+            <div
+              style={{
+                flexShrink: 0,
+                width: "22px",
+                height: "22px",
+                borderRadius: "50%",
+                background: step.done ? "#4f80f7" : "#1e2030",
+                border: step.done ? "none" : "1px solid #3a3d4a",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: step.done ? "#ffffff" : "#565b6e",
+                marginTop: "1px",
+              }}
+            >
+              {step.done ? "✓" : step.num}
+            </div>
+
+            {/* Step text */}
+            <div>
+              <p
+                style={{
+                  margin: "0 0 2px",
+                  fontSize: "13px",
+                  fontWeight: 500,
+                  color: step.done ? "#8b90a0" : "#e8eaf0",
+                }}
+              >
+                {step.label}
+              </p>
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: "12px",
+                  color: "#565b6e",
+                  lineHeight: 1.6,
+                }}
+              >
+                {step.body}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* CTA */}
+      <Link
+        href={actionHref}
+        style={{
+          display: "inline-block",
+          background: "#4f80f7",
+          color: "#ffffff",
+          textDecoration: "none",
+          borderRadius: "6px",
+          padding: "8px 18px",
+          fontSize: "13px",
+          fontWeight: 500,
+        }}
+      >
+        {actionLabel}
+      </Link>
+
+      {/* Note */}
+      {note && (
+        <p
+          style={{
+            margin: "16px 0 0",
+            fontSize: "12px",
+            color: "#565b6e",
+            lineHeight: 1.6,
+          }}
+        >
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Inline guide component ────────────────────────────────────────────────────
 // Used for contextual empty states that tell the user exactly what to do next.
 
@@ -231,28 +360,61 @@ export default function DashboardPage() {
         {!loading && error && <ErrorState message={error} />}
 
         {noIntegrations && (
-          <NextStepGuide
-            title="Connect Cloudflare to start tracking DNS changes."
-            body="ConfigTrace snapshots your DNS zone on each sync and highlights what changed between snapshots. Connecting takes a scoped API token and a Zone ID."
-            actionLabel="Connect Cloudflare"
+          <OnboardingPanel
+            steps={[
+              {
+                num: 1,
+                label: "Connect Cloudflare",
+                body: "Add a scoped API token and Zone ID — ConfigTrace only needs Zone DNS Read access.",
+              },
+              {
+                num: 2,
+                label: "Create a baseline",
+                body: "The first sync snapshots your current DNS state. Nothing is flagged as changed on this run — it establishes the comparison point.",
+              },
+              {
+                num: 3,
+                label: "Track changes hourly",
+                body: "ConfigTrace syncs every hour and shows exactly what DNS records changed and how risky each change is.",
+              },
+            ]}
+            actionLabel="Connect Cloudflare →"
             actionHref="/integrations"
+            note="High-risk and critical DNS changes are emailed to the integration owner automatically."
           />
         )}
 
         {noSnapshots && (
-          <NextStepGuide
-            title="Run your first sync to create a baseline."
-            body="Your Cloudflare integration is connected. The first sync stores a baseline snapshot of your DNS zone — no changes are detected on that run because there is nothing to compare against yet. Subsequent syncs compare against the baseline and surface any differences here."
-            actionLabel="Go to Integrations"
+          <OnboardingPanel
+            steps={[
+              {
+                num: 1,
+                label: "Connect Cloudflare",
+                body: "Integration connected.",
+                done: true,
+              },
+              {
+                num: 2,
+                label: "Create a baseline",
+                body: "Run your first sync to snapshot current DNS state. No changes are detected on this run — it's the starting point.",
+              },
+              {
+                num: 3,
+                label: "Track changes hourly",
+                body: "ConfigTrace syncs every hour and surfaces DNS changes automatically.",
+              },
+            ]}
+            actionLabel="Go to Integrations →"
             actionHref="/integrations"
+            note="Syncs also run automatically every hour once your baseline is in place."
           />
         )}
 
         {baselineOnly && (
           <NextStepGuide
-            title="Baseline is active — no changes yet."
-            body="ConfigTrace has your current DNS state on record. Future DNS changes will appear here after the next sync. To test the loop now, add or modify a record in Cloudflare, then click Sync Now on the Integrations page."
-            actionLabel="Run another sync"
+            title="Baseline active — ConfigTrace is monitoring your DNS."
+            body="Your current DNS state is on record. Changes will appear here on the next sync. To test the loop now, modify a DNS record in Cloudflare, then click Sync Now on the Integrations page."
+            actionLabel="Go to Integrations"
             actionHref="/integrations"
           />
         )}

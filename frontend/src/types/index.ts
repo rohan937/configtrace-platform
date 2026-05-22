@@ -112,6 +112,8 @@ export interface Integration {
   status: IntegrationStatus;
   last_synced_at: string | null;
   created_at: string;
+  /** Number of Resource rows attached to this integration (always ≥ 1 after creation). */
+  resource_count: number;
 }
 
 /** Matches backend IntegrationListResponse (uses "integrations" key, not "items"). */

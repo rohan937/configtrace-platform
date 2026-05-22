@@ -66,6 +66,18 @@ class Integration(BaseMixin, Base):
         cascade="all, delete-orphan",
     )
 
+    # ── Computed helpers ─────────────────────────────────────────────────────
+    # These are exposed via Pydantic ``from_attributes=True`` — the schema
+    # declares the matching field and Pydantic calls ``getattr`` on the ORM
+    # object, which resolves to the property.  The ``resources`` relationship
+    # uses ``lazy="selectin"`` so it is always loaded alongside the parent row
+    # — no extra query is issued here.
+
+    @property
+    def resource_count(self) -> int:
+        """Number of Resource rows attached to this integration."""
+        return len(self.resources)
+
     def __repr__(self) -> str:
         return (
             f"<Integration id={self.id} provider={self.provider!r}"

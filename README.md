@@ -1948,3 +1948,5 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 21: Authentication and User Isolation — Clerk JWTs, production fail-closed, multi-user data scoping
 - [x] Milestone 22: Production launch hardening — dashboard state fix, baseline messaging, Cloudflare onboarding polish, smoke-test checklist
 - [x] Milestone 23: Scheduled syncs — hourly Celery Beat, `triggered_by="scheduled"`, duplicate prevention, separate `configtrace-beat` Render service
+- [x] Milestone 24: High-risk email alerts — Resend digest per sync, per-change idempotency via `alerts` table, Clerk Backend API email resolution, backfill script
+- [x] Milestone 25: Production onboarding and Cloudflare MVP polish — 3-step checklist dashboard, setup guide with credential instructions, per-integration status metadata, timeline copy polish, alert-level explanations, `resource_count` on integration API

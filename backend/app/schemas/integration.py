@@ -51,6 +51,10 @@ class IntegrationResponse(BaseModel):
     status: str
     last_synced_at: Optional[datetime]
     created_at: datetime
+    # Populated from the ``Integration.resource_count`` property.  The
+    # ``resources`` relationship is loaded eagerly (selectin) so this incurs
+    # no additional query.
+    resource_count: int = 0
 
     model_config = {"from_attributes": True}
 

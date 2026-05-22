@@ -302,14 +302,21 @@ export default function TimelinePage() {
           </FilterRow>
         </div>
 
-        {/* ── Result count ────────────────────────────────────────────── */}
+        {/* ── Result count + alert policy note ───────────────────────── */}
         {!loading && !error && (
-          <p
-            className="mb-3"
-            style={{ fontSize: "12px", color: "#565b6e" }}
-          >
-            {total === 0 ? null : `${total} change${total === 1 ? "" : "s"} total`}
-          </p>
+          <div className="flex items-center justify-between mb-3">
+            <p style={{ fontSize: "12px", color: "#565b6e", margin: 0 }}>
+              {total === 0 ? null : `${total} change${total === 1 ? "" : "s"} total`}
+            </p>
+            {total > 0 && (
+              <p
+                style={{ fontSize: "11px", color: "#3a3d4a", margin: 0 }}
+                title="Low and medium changes are recorded but do not trigger email alerts"
+              >
+                Email alerts: high-risk and critical only
+              </p>
+            )}
+          </div>
         )}
 
         {/* ── Content ─────────────────────────────────────────────────── */}
@@ -349,7 +356,7 @@ export default function TimelinePage() {
             emptyDescription={
               hasFilters
                 ? "Try clearing the filters or expanding the time range."
-                : "Changes appear here after the second sync onwards — the first sync stores a baseline, and later syncs detect any DNS records that differ from it. Connect a Cloudflare integration to get started."
+                : "The first sync creates a baseline — no changes are recorded on that run because there's nothing to compare against yet. Changes appear here from the second sync onwards whenever DNS records differ from the baseline."
             }
           />
         )}

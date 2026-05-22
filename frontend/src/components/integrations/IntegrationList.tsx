@@ -116,8 +116,8 @@ export default function IntegrationList({
               msg = `Sync complete — ${changes} change${changes === 1 ? "" : "s"} detected.`;
             } else if (snaps > 0) {
               msg =
-                "Baseline created. 0 changes is expected on the first sync — " +
-                "future syncs will detect any differences from this baseline.";
+                "Baseline created. No changes detected yet — future syncs compare against this snapshot. " +
+                "High-risk changes are emailed automatically.";
             } else {
               msg = "No changes since last sync — DNS state is unchanged.";
             }
@@ -254,6 +254,29 @@ export default function IntegrationList({
                   {state.polling ? "Syncing…" : "Sync Now"}
                 </button>
               </div>
+            </div>
+
+            {/* Metadata strip — always visible under the main row */}
+            <div
+              className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-3"
+              style={{ fontSize: "11px", color: "#565b6e" }}
+            >
+              <span>
+                Hourly sync:{" "}
+                <span style={{ color: "#3ccf7e" }}>Active</span>
+              </span>
+              <span style={{ color: "#2a2d38" }}>·</span>
+              <span>
+                Email alerts:{" "}
+                <span style={{ color: "#8b90a0" }}>High-risk changes</span>
+              </span>
+              <span style={{ color: "#2a2d38" }}>·</span>
+              <span>
+                Resources monitored:{" "}
+                <span style={{ color: "#8b90a0" }}>
+                  {integration.resource_count}
+                </span>
+              </span>
             </div>
 
             {/* Feedback row — shown after terminal state */}

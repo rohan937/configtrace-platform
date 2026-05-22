@@ -52,9 +52,9 @@ export default function IntegrationsPage() {
       />
 
       <div className="px-6 py-6">
-        {/* ── First-time onboarding note ────────────────────────────────── */}
-        {/* Only shown when the user has zero integrations connected. Gives
-            them the bare-minimum mental model before they click Add. */}
+        {/* ── First-time setup guide ────────────────────────────────────── */}
+        {/* Shown before the user connects their first integration. Gives them
+            everything they need to gather credentials without leaving the page. */}
         {!loading && !error && total === 0 && !showForm && (
           <div
             className="mb-6"
@@ -62,21 +62,126 @@ export default function IntegrationsPage() {
               background: "#13151a",
               border: "1px solid #2a2d38",
               borderRadius: "6px",
-              padding: "16px 20px",
-              fontSize: "13px",
-              color: "#8b90a0",
-              lineHeight: 1.6,
+              padding: "20px 24px",
             }}
           >
-            <p style={{ color: "#e8eaf0", marginBottom: "6px", fontWeight: 500 }}>
-              ConfigTrace MVP — Cloudflare DNS
+            <p
+              style={{
+                margin: "0 0 14px",
+                fontSize: "13px",
+                fontWeight: 600,
+                color: "#e8eaf0",
+              }}
+            >
+              How to connect Cloudflare DNS
             </p>
-            <p style={{ margin: 0 }}>
-              The current MVP tracks Cloudflare DNS zones. You&apos;ll need a
-              scoped Cloudflare API token with Zone DNS Read access and the Zone
-              ID from your domain&apos;s Overview page. The token is encrypted
-              before storage. The first sync creates a baseline; later syncs
-              detect changes against it.
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {/* Step 1 */}
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "50%",
+                    background: "#1e2030",
+                    border: "1px solid #3a3d4a",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "10px",
+                    color: "#565b6e",
+                    fontWeight: 700,
+                    marginTop: "1px",
+                  }}
+                >
+                  1
+                </span>
+                <p style={{ margin: 0, fontSize: "12px", color: "#8b90a0", lineHeight: 1.6 }}>
+                  <span style={{ color: "#e8eaf0" }}>Create a scoped API token.</span>
+                  {" "}In the Cloudflare dashboard → My Profile → API Tokens → Create Token.
+                  Use the{" "}
+                  <span style={{ fontFamily: "monospace", color: "#b0b5c4" }}>
+                    Edit zone DNS
+                  </span>{" "}
+                  template, then restrict permissions to{" "}
+                  <span style={{ fontFamily: "monospace", color: "#b0b5c4" }}>
+                    Zone → DNS → Read
+                  </span>{" "}
+                  and scope it to a specific zone only.
+                </p>
+              </div>
+
+              {/* Step 2 */}
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "50%",
+                    background: "#1e2030",
+                    border: "1px solid #3a3d4a",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "10px",
+                    color: "#565b6e",
+                    fontWeight: 700,
+                    marginTop: "1px",
+                  }}
+                >
+                  2
+                </span>
+                <p style={{ margin: 0, fontSize: "12px", color: "#8b90a0", lineHeight: 1.6 }}>
+                  <span style={{ color: "#e8eaf0" }}>Find your Zone ID.</span>
+                  {" "}Cloudflare dashboard → select your domain → Overview page →
+                  scroll to the right sidebar. It&apos;s a 32-character hex string.
+                </p>
+              </div>
+
+              {/* Step 3 */}
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+                <span
+                  style={{
+                    flexShrink: 0,
+                    width: "18px",
+                    height: "18px",
+                    borderRadius: "50%",
+                    background: "#1e2030",
+                    border: "1px solid #3a3d4a",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "10px",
+                    color: "#565b6e",
+                    fontWeight: 700,
+                    marginTop: "1px",
+                  }}
+                >
+                  3
+                </span>
+                <p style={{ margin: 0, fontSize: "12px", color: "#8b90a0", lineHeight: 1.6 }}>
+                  <span style={{ color: "#e8eaf0" }}>Connect below.</span>
+                  {" "}Paste both into the form. ConfigTrace validates the token
+                  against the live Cloudflare API before saving — if it lacks the
+                  right permissions, you&apos;ll see an error before anything is stored.
+                </p>
+              </div>
+            </div>
+
+            {/* Safety note */}
+            <p
+              style={{
+                margin: "14px 0 0",
+                fontSize: "11px",
+                color: "#3a3d4a",
+                lineHeight: 1.6,
+              }}
+            >
+              Your token is encrypted before storage and never returned in any API response.
+              ConfigTrace only requests read-only access — it cannot modify your DNS records.
             </p>
           </div>
         )}
@@ -110,23 +215,22 @@ export default function IntegrationsPage() {
 
         {/* ── Integration count + scheduled-sync notice ─────────────────── */}
         {/* The hourly-sync hint appears only when at least one integration
-            exists — for empty-state users the larger MVP intro panel above
-            already covers the relevant context. */}
+            exists — for empty-state users the setup guide above covers context. */}
         {!loading && !error && total > 0 && (
           <div
             className="mb-4 flex flex-wrap items-center"
-            style={{ gap: "10px", fontSize: "13px", color: "#8b90a0" }}
+            style={{ gap: "10px", fontSize: "12px", color: "#8b90a0" }}
           >
             <span>
               {total} integration{total === 1 ? "" : "s"} connected
             </span>
             <span style={{ color: "#3a3d4a" }}>·</span>
-            <span title="Beat fires at minute 0 of every hour">
-              Automatic hourly sync enabled. You can still run Sync Now anytime.
+            <span title="Celery Beat fires at minute 0 of every UTC hour">
+              Hourly sync: active
             </span>
             <span style={{ color: "#3a3d4a" }}>·</span>
-            <span title="High and critical DNS changes are emailed to the integration owner — see Milestone 24 in the docs">
-              High and critical changes are emailed to the integration owner.
+            <span style={{ color: "#565b6e" }} title="Requires RESEND_API_KEY and ALERTS_FROM_EMAIL configured in Render">
+              Email alerts: high-risk and critical changes only
             </span>
           </div>
         )}
