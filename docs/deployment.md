@@ -10,10 +10,10 @@ This document describes how to deploy ConfigTrace to production at
 `render.yaml` in the repo root declares the two Render services that make up
 the backend:
 
-| Service | Type | `dockerCommand` |
-|---|---|---|
-| `configtrace-api` | Web service | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
-| `configtrace-worker` | Background worker | `celery -A app.workers.celery_app worker --loglevel=info` |
+| Service | Type | Plan | `dockerCommand` |
+|---|---|---|---|
+| `configtrace-api` | Web service | Starter | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| `configtrace-worker` | Background worker | Starter | `celery -A app.workers.celery_app worker --loglevel=info` |
 
 Both services use the same `backend/Dockerfile`.  The API service overrides the
 Dockerfile `CMD` via `dockerCommand` so Render's router can inject `$PORT` at
@@ -23,6 +23,29 @@ runtime (the Dockerfile hardcodes `8000` for local Docker use).
 > services.  `startCommand` is only valid for native runtimes (Node, Python,
 > etc.) and will cause a Blueprint validation error if used with
 > `runtime: docker`.
+
+### Service plan and cost
+
+Both services run on the **Render Starter** plan (`plan: starter`).
+
+| Service | Plan | Cost |
+|---|---|---|
+| `configtrace-api` | Starter | ~$7 / month |
+| `configtrace-worker` | Starter | ~$7 / month |
+| **Total** | | **~$14 / month** |
+
+Starter is used instead of Free for the production MVP because:
+
+- **No cold starts** — Free-tier web services sleep after inactivity; Starter
+  instances stay warm so the API responds immediately.
+- **Reliable worker** — Free-tier background workers can be suspended; on
+  Starter the Celery worker runs continuously so every sync task completes.
+- **`preDeployCommand` support** — Render only runs `preDeployCommand` on paid
+  plans (Starter and above). This is what triggers `alembic upgrade head`
+  automatically before each deploy, eliminating the need for manual migration
+  steps.
+- **Better demo experience** — a production MVP should respond without a
+  multi-second wake-up delay on the first request.
 
 ### How Render picks up render.yaml
 
@@ -178,10 +201,15 @@ If your platform uses a Procfile or start command, use the same command.
 
 ### 5. Run database migrations
 
-**Run migrations before serving any production traffic.**
+**If using the Render Blueprint (`render.yaml`)** — migrations run
+automatically.  `preDeployCommand: alembic upgrade head` is set on the
+`configtrace-api` service and executes inside the container before Render
+routes traffic to each new deploy.  No manual step is required.
+
+**If deploying manually** (Railway, Fly.io, or without the Blueprint):
 
 ```bash
-# On Render/Railway — run as a one-off job or pre-deploy command:
+# Run as a one-off job or pre-deploy command:
 alembic upgrade head
 
 # Via Docker:
@@ -272,8 +300,8 @@ Start it alongside the API (as a separate process/container):
 celery -A app.workers.celery_app worker --loglevel=info
 ```
 
-On Render, this is a separate "Background Worker" service pointing to the
-same Docker image with a different start command.
+On Render, this is a separate "Background Worker" service (`configtrace-worker`)
+pointing to the same Docker image with a different `dockerCommand`.
 
 Celery Beat (scheduled syncs) is not active in the MVP — the `beat` container
 in `docker-compose.yml` exists as a placeholder for a future milestone.
