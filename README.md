@@ -1325,6 +1325,59 @@ Full deployment guide: [`docs/deployment.md`](docs/deployment.md)
 
 ---
 
+## Production Deployment (Milestone 20)
+
+Milestone 20 completed the initial production deployment and verified the full
+MVP core loop end-to-end in production.
+
+### Live production URLs
+
+| URL | Service |
+|---|---|
+| `https://app.configtrace.org` | Frontend (Vercel) |
+| `https://api.configtrace.org` | Backend API (Render) |
+| `https://configtrace.org` | Marketing / landing page (GitHub Pages) |
+
+### What happened
+
+- **`render.yaml`** — Render Blueprint deployed `configtrace-api` (FastAPI) and
+  `configtrace-worker` (Celery) to Render Starter.  Alembic migrations ran
+  automatically via `preDeployCommand: alembic upgrade head`.
+- **Neon** — Production PostgreSQL provisioned.  `/health/db` confirmed
+  `database: connected`.
+- **Render Key Value (Oregon)** — Production Redis provisioned in the **same
+  region** as the API and worker.  A cross-region Redis instance was the root
+  cause of an initial sync failure; see `docs/deployment.md` for details.
+- **Vercel** — Frontend deployed with Framework Preset: Next.js, Root Directory:
+  `frontend/`, and `NEXT_PUBLIC_API_BASE_URL=https://api.configtrace.org`.
+- **Cloudflare** — DNS CNAMEs set (`app` → Vercel, `api` → Render).  SSL/TLS
+  Full (strict) working on both subdomains.
+- **Production smoke test passed** — Cloudflare integration created, first sync
+  produced a baseline snapshot, second sync after a test TXT record addition
+  detected 1 low-risk added change in the timeline.
+
+### Deployment issues encountered and fixed
+
+Three non-trivial issues were diagnosed and resolved during deployment:
+
+1. **Render `startCommand` → `dockerCommand`** — Blueprint rejected
+   `startCommand` on Docker-runtime services; fixed in `render.yaml`.
+2. **Vercel "No Output Directory"** — Framework Preset must be set to Next.js
+   (not "Other"); Root Directory must be `frontend/`.
+3. **Render Redis region mismatch** — Internal Redis URLs only resolve within
+   the same Render region.  Creating a new Key Value instance in the same
+   region as the API and worker fixed sync failures.
+
+Full notes: [`docs/deployment.md`](docs/deployment.md)
+
+### Current auth state — private use only
+
+The backend runs in **dev mode** (no Clerk JWT validation).  All API requests
+share a single internal dev user.  Do **not** share the app URL publicly and do
+**not** set a real `CLERK_SECRET_KEY` until Milestone 21 is complete.
+
+---
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -1348,4 +1401,5 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 17: Change Detail Page
 - [x] Milestone 18: MVP Demo Polish
 - [x] Milestone 19: Production Deployment Preparation
-- [x] Milestone 20: render.yaml and Render deployment configuration ← **you are here**
+- [x] Milestone 20: Production deployment — all services live, smoke test passed
+- [ ] Milestone 21: Authentication and User Isolation ← **next**

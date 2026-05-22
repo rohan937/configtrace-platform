@@ -5,6 +5,38 @@ This document describes how to deploy ConfigTrace to production at
 
 ---
 
+## Current production status
+
+**Production deployment is complete.**  All services are live and the core MVP
+loop (connect integration → sync → detect changes → display in UI) has been
+verified end-to-end in production.
+
+| Service | URL / host | Status |
+|---|---|---|
+| Marketing / landing page | `https://configtrace.org` | ✅ Live (GitHub Pages) |
+| Next.js frontend | `https://app.configtrace.org` | ✅ Live (Vercel) |
+| FastAPI backend | `https://api.configtrace.org` | ✅ Live (Render Starter) |
+| PostgreSQL | Neon | ✅ Connected |
+| Redis / Celery broker | Render Key Value, Oregon | ✅ Running |
+| DNS + SSL | Cloudflare | ✅ HTTPS on both subdomains |
+
+**Production smoke test passed:**
+
+- `GET https://api.configtrace.org` → `{"service":"ConfigTrace API","version":"0.1.0","status":"ok","environment":"production"}`
+- `GET https://api.configtrace.org/health` → `{"status":"ok",...}`
+- `GET https://api.configtrace.org/health/db` → `{"status":"ok","database":"connected",...}`
+- `https://app.configtrace.org/dashboard` loads successfully
+- Cloudflare integration created; first sync → "1 snapshot, 0 changes detected" (baseline)
+- Second sync after adding test TXT record → 1 added low-risk TXT change detected in timeline
+
+> **⚠️ Auth state — private use only.**  The backend runs in dev mode (no
+> Clerk JWT validation).  All API requests share a single internal dev user.
+> Do **not** share the app URL publicly.  Do **not** set a real
+> `CLERK_SECRET_KEY` until Milestone 21 — a real key causes every protected
+> route to return HTTP 501.  See [Auth state — private MVP only](#auth-state--private-mvp-only).
+
+---
+
 ## render.yaml — Render infrastructure-as-code
 
 `render.yaml` in the repo root declares the two Render services that make up
@@ -91,24 +123,28 @@ creating a second redundant database on every Blueprint re-sync.
 
 | Subdomain | Purpose | Hosted on |
 |---|---|---|
-| `configtrace.org` | Marketing site | Vercel / static |
-| `www.configtrace.org` | Marketing site (redirect) | Vercel / static |
+| `configtrace.org` | Marketing / landing page | GitHub Pages (separate static repo) |
+| `www.configtrace.org` | Marketing / landing page | GitHub Pages (redirect) |
 | `app.configtrace.org` | Next.js frontend app | Vercel |
-| `api.configtrace.org` | FastAPI backend | Render / Railway / Fly.io |
+| `api.configtrace.org` | FastAPI backend | Render |
 
 DNS and SSL are managed through Cloudflare (appropriate for a DNS-monitoring product).
+
+> **Note:** `configtrace.org` / `www.configtrace.org` are hosted in a separate
+> GitHub repository from the platform repo (`rohan937/configtrace-platform`).
+> Do not confuse the two repos.
 
 ---
 
 ## Recommended infrastructure
 
-| Component | Recommended provider |
-|---|---|
-| Frontend | Vercel |
-| Backend API | Render, Railway, or Fly.io |
-| PostgreSQL | Neon, Supabase, or Render Postgres |
-| Redis | Upstash or Render Redis |
-| DNS + SSL | Cloudflare |
+| Component | Recommended provider | Currently in use |
+|---|---|---|
+| Frontend | Vercel | ✅ Vercel |
+| Backend API | Render, Railway, or Fly.io | ✅ Render (Docker, Starter plan) |
+| PostgreSQL | Neon, Supabase, or Render Postgres | ✅ Neon |
+| Redis | Upstash or Render Key Value | ✅ Render Key Value (same region as API — see note below) |
+| DNS + SSL | Cloudflare | ✅ Cloudflare |
 
 ---
 
@@ -186,6 +222,20 @@ connection string — it becomes `DATABASE_URL`.
 
 Create a Redis instance. Note the connection string — it becomes `REDIS_URL`.
 
+> **⚠️ Region must match the API and worker (Render Key Value only).**
+> Render's internal Redis hostnames are only resolvable within the same private
+> network.  If your `configtrace-api` and `configtrace-worker` services are in
+> Oregon, your Render Key Value instance **must** also be in Oregon.
+>
+> A cross-region Redis instance causes `POST /syncs` to fail with:
+> `kombu.exceptions.OperationalError: Error -2 connecting to red-xxxxx:6379. Name or service not known.`
+>
+> Render blocks external traffic to Key Value instances by default, so using the
+> external URL as a workaround is not straightforward.  The reliable fix is
+> same-region provisioning.  If you hit this error: delete the Redis instance,
+> recreate it in the correct region, update `REDIS_URL` in both the API and
+> worker environment settings, and redeploy both services.
+
 ### 4. Deploy the backend
 
 Set all required backend environment variables in your hosting platform's
@@ -232,12 +282,18 @@ If `/health/db` returns 503, the DATABASE_URL is wrong or migrations have not ru
 
 In your Vercel project:
 
+- Set **Framework Preset** → `Next.js` (this is required — do not leave it as "Other")
+- Set **Root Directory** → `frontend/`
+- Do **not** manually override the Output Directory — Next.js preset handles `.next/` automatically
 - Set `NEXT_PUBLIC_API_BASE_URL=https://api.configtrace.org`
-- Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...`
-- Set the root directory to `frontend/`
-- Framework preset: Next.js
+- Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...` (leave as placeholder until Milestone 21)
 
 Vercel automatically runs `npm run build` and serves `npm run start`.
+
+> **Common error — "No Output Directory named public found":**  If Vercel shows
+> this error after a successful build, the Framework Preset is wrong (e.g. set
+> to "Other" instead of "Next.js").  Set the preset to Next.js and redeploy.
+> Do not add a manual Output Directory override.
 
 ### 8. Add DNS records
 
@@ -245,10 +301,22 @@ In Cloudflare, add CNAME records pointing to your hosting platforms:
 
 ```
 app.configtrace.org  →  CNAME  →  cname.vercel-dns.com
-api.configtrace.org  →  CNAME  →  your-service.onrender.com  (or equivalent)
+api.configtrace.org  →  CNAME  →  configtrace-api.onrender.com
 ```
 
-Enable Cloudflare proxying (orange cloud) for both.
+**Cloudflare proxy settings:**
+
+- `api.configtrace.org` — enable Cloudflare proxy (orange cloud).  Render
+  provides a valid TLS certificate so Full (strict) SSL mode works.
+- `app.configtrace.org` — Vercel may require this record to be **DNS only
+  (grey cloud / proxy disabled)** during its domain verification step.  Once
+  Vercel accepts the domain, you can re-enable the proxy if desired, but
+  DNS-only works fine for production and avoids certificate conflicts.
+
+> **Vercel domain verification warning:** Vercel may display a "DNS Change
+> Recommended" notice even after the domain works correctly.  As long as
+> `https://app.configtrace.org` loads the frontend, the warning can be
+> disregarded.
 
 ### 9. Verify CORS
 
@@ -263,7 +331,150 @@ exactly matches the frontend origin (no trailing slash, correct scheme).
 1. Open `https://app.configtrace.org/integrations`
 2. Connect your Cloudflare zone
 3. Click **Sync Now** → verify a baseline snapshot is created
+   - Expected result: "Sync complete — 1 snapshot, 0 changes detected."
+   - This is the baseline.  Zero changes on a first sync is correct.
 4. Open `https://app.configtrace.org/dashboard`
+5. Make a safe, reversible DNS change in Cloudflare (e.g. add a TXT record)
+6. Click **Sync Now** again → expect "1 snapshot, 1 change detected."
+7. Open `https://app.configtrace.org/timeline` → change row appears with the
+   correct type, record identifier, and risk level
+
+---
+
+## Deployment issues encountered
+
+The following issues were encountered during the initial production deployment.
+They are documented here so future deploys avoid repeating them.
+
+### Issue 1 — Render Blueprint: `startCommand` rejected for Docker runtime
+
+**Symptom:** Blueprint apply fails immediately with:
+
+```
+services[0] docker runtime must not have startCommand
+services[1] docker runtime must not have startCommand
+```
+
+**Cause:** `startCommand` is only valid for Render's native runtimes (Node,
+Python, etc.).  For `runtime: docker`, the command that overrides the
+Dockerfile `CMD` must be specified as `dockerCommand`.
+
+**Fix:** Replaced `startCommand` with `dockerCommand` in `render.yaml` for
+both services.  The Blueprint now applies without error.
+
+---
+
+### Issue 2 — Vercel: "No Output Directory named public found"
+
+**Symptom:** The Vercel build log shows a successful `npm run build`, but the
+deploy step fails with:
+
+```
+No Output Directory named "public" found after the Build completed.
+```
+
+**Cause:** The Framework Preset was not set to `Next.js`.  Without it, Vercel
+looked for a `public/` directory instead of Next.js's `.next/` output.
+
+**Fix:** In Vercel project settings, set:
+- **Framework Preset:** `Next.js`
+- **Root Directory:** `frontend/`
+- No manual Output Directory override
+
+The deploy succeeded on the next attempt.
+
+---
+
+### Issue 3 — Render Redis region mismatch (POST /syncs → 500)
+
+**Symptom:** Integration creation succeeds, but clicking Sync Now returns
+Internal Server Error.  Render API logs show:
+
+```
+kombu.exceptions.OperationalError: Error -2 connecting to red-xxxxx:6379. Name or service not known.
+```
+
+**Cause:** The Render Key Value (Redis) instance was created in Ohio; the API
+and worker services were deployed in Oregon.  Render's internal Redis hostnames
+(`red-xxxxx.render.com`) only resolve within the same region's private network.
+Using the external Redis URL was not viable because Render blocks external
+traffic to Key Value instances by default.
+
+**Fix:** Created a new Render Key Value instance (`configtrace-redis-prod`) in
+the same region as `configtrace-api` and `configtrace-worker` (Oregon).
+Updated `REDIS_URL` in both services' environment settings and redeployed.
+Sync completed successfully after that.
+
+---
+
+## Production smoke test checklist
+
+Run these checks after the initial deployment and after any infrastructure
+change.
+
+### API health
+
+```bash
+# Root — confirms the service is live and in production mode
+curl https://api.configtrace.org
+# → {"service":"ConfigTrace API","version":"0.1.0","status":"ok","environment":"production"}
+
+# Liveness
+curl https://api.configtrace.org/health
+# → {"status":"ok","timestamp":"...","version":"0.1.0"}
+
+# Database connectivity (503 means DATABASE_URL is wrong or migrations haven't run)
+curl https://api.configtrace.org/health/db
+# → {"status":"ok","database":"connected","timestamp":"..."}
+```
+
+### Frontend pages
+
+- [ ] `https://app.configtrace.org/dashboard` — loads, no console errors
+- [ ] `https://app.configtrace.org/integrations` — loads, no console errors
+- [ ] `https://app.configtrace.org/timeline` — loads, no console errors
+- [ ] `https://app.configtrace.org/resources` — loads, no console errors
+
+### End-to-end sync test
+
+- [ ] Create a Cloudflare integration from `https://app.configtrace.org/integrations`
+- [ ] Click **Sync Now** → "Sync complete — 1 snapshot, 0 changes detected." (baseline)
+- [ ] Add a safe Cloudflare DNS record (e.g., TXT `_test` with any content)
+- [ ] Click **Sync Now** again → "1 snapshot, 1 change detected."
+- [ ] `https://app.configtrace.org/timeline` — change row appears with correct risk level
+- [ ] Click the change row → change detail page shows record info and risk explanation
+- [ ] *(Optional)* Delete the test record and sync again — deletion appears as its own change
+
+---
+
+## Auth state — private MVP only
+
+**The production backend currently runs in dev mode** — no Clerk JWT validation
+is active.
+
+How dev mode works:
+
+- `backend/app/core/auth.py` checks whether `CLERK_SECRET_KEY` is absent or
+  matches a placeholder pattern.  If so, every API request automatically
+  resolves to a shared internal user (`dev@configtrace.local`).
+- There is **no user isolation**.  Anyone who can reach `api.configtrace.org`
+  can create integrations, trigger syncs, and read all data as the same dev user.
+- If a real `sk_live_...` Clerk secret is set **before** Milestone 21 implements
+  JWT validation, every protected route returns **HTTP 501** and the app stops
+  working entirely.
+
+**Rules until Milestone 21 is shipped:**
+
+| What | Rule |
+|---|---|
+| `CLERK_SECRET_KEY` in Render | Must remain unset or placeholder — never `sk_live_...` |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in Vercel | Must remain placeholder — never `pk_live_...` |
+| Sharing the app URL | Do **not** share publicly — no user isolation exists yet |
+| Production data | Safe for private solo use only |
+
+This is acceptable for a **private MVP** where a single person accesses the
+production app.  Milestone 21 will implement Clerk JWT validation on the backend
+and add the sign-in flow and `Authorization` header injection on the frontend.
 
 ---
 
