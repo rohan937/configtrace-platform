@@ -1262,6 +1262,60 @@ Run through this list before every demo or handoff:
 
 ---
 
+## Production Deployment Preparation (Milestone 19)
+
+Milestone 19 makes ConfigTrace safe and configurable for deployment to
+`app.configtrace.org` and `api.configtrace.org`.
+
+### What it adds
+
+- **`ENVIRONMENT` variable** — new field in `backend/app/config.py`.
+  Defaults to `"development"` so production is never reached accidentally.
+  Setting `ENVIRONMENT=production` is an explicit, deliberate act.
+- **Environment-driven CORS** — `backend/app/main.py` now reads allowed
+  origins from `BACKEND_CORS_ORIGINS` (comma-separated, parsed by
+  `settings.cors_origins`). Local default is `http://localhost:3000` and
+  `:3001`. Production value:
+  `https://app.configtrace.org,https://configtrace.org`.
+- **Seed script production guard** — `seed_dev_data.py` checks
+  `ENVIRONMENT` before any database import and exits with a clear error if
+  `ENVIRONMENT=production` is set. Locally it behaves identically to before.
+- **Updated `.env.example`** — adds `ENVIRONMENT` and `BACKEND_CORS_ORIGINS`
+  with explanatory comments for every variable.
+- **New `.env.production.example`** — a production-specific template showing
+  the exact shape of production values. Committed to the repo; the filled-in
+  copy must never be committed.
+- **`.gitignore` hardening** — `.env.production` and `.env.staging` are now
+  explicitly ignored alongside the existing `.env` and `.env.local` patterns.
+- **`docs/deployment.md`** — detailed production deployment guide covering:
+  domain layout, recommended infrastructure, required env vars, secret
+  generation commands, step-by-step deployment order, Cloudflare SSL
+  settings, CORS verification, and local development after this milestone.
+- **`GET /`** now includes `"environment"` in the response so it's easy to
+  confirm which environment a running API instance belongs to.
+
+### What did not change
+
+- Local Docker Compose workflow is identical.
+- The Dockerfile already ran without `--reload` by default; docker-compose
+  overrides it for development. No change needed.
+- `frontend/package.json` already had `"start": "next start"`. No change.
+- `frontend/src/lib/api.ts` already reads `NEXT_PUBLIC_API_BASE_URL`. No
+  change.
+- `GET /health` and `GET /health/db` already existed and are unchanged.
+
+### Target domain layout
+
+| Subdomain | Purpose |
+|---|---|
+| `configtrace.org` | Marketing site |
+| `app.configtrace.org` | Next.js frontend |
+| `api.configtrace.org` | FastAPI backend |
+
+Full deployment guide: [`docs/deployment.md`](docs/deployment.md)
+
+---
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -1283,4 +1337,5 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 15: Change Timeline Page
 - [x] Milestone 16: Resource History Page
 - [x] Milestone 17: Change Detail Page
-- [x] Milestone 18: MVP Demo Polish ← **you are here**
+- [x] Milestone 18: MVP Demo Polish
+- [x] Milestone 19: Production Deployment Preparation ← **you are here**

@@ -1,6 +1,8 @@
-# Environment
+# Environment — templates (.example) are committed; filled-in files are not
 .env
 .env.local
+.env.production
+.env.staging
 .env.*.local
 
 # Python

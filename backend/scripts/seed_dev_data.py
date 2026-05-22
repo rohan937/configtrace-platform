@@ -32,6 +32,27 @@ import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
+# ── Production safety guard ───────────────────────────────────────────────────
+# Check as early as possible — before any database imports — so that the guard
+# fires even if the database connection would fail.
+_ENVIRONMENT = os.environ.get("ENVIRONMENT", "development").lower()
+if _ENVIRONMENT == "production":
+    print("=" * 60)
+    print("ERROR: seed_dev_data.py refused to run.")
+    print()
+    print("  ENVIRONMENT=production was detected.")
+    print()
+    print("  This script is for LOCAL DEVELOPMENT ONLY.")
+    print("  It deletes and recreates data for the dev user.")
+    print("  Running it against a production database would")
+    print("  destroy real user data.")
+    print()
+    print("  If you genuinely need to run this locally while")
+    print("  ENVIRONMENT is set, unset it first:")
+    print("    unset ENVIRONMENT && python scripts/seed_dev_data.py")
+    print("=" * 60)
+    sys.exit(1)
+
 # ── Path setup ───────────────────────────────────────────────────────────────
 # Allow running from the /backend directory or from the project root.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

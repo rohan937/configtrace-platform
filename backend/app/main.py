@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.routers import health
 from app.routers.changes import router as changes_router
 from app.routers.integrations import router as integrations_router
@@ -13,15 +14,18 @@ app = FastAPI(
     description="Configuration change intelligence for production systems.",
 )
 
-# ── CORS ─────────────────────────────────────────────────────────────────────
-# Allow the Next.js dev server to call the API from the browser.
-# Tighten origins for staging / production deployments.
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# Origins are driven by the BACKEND_CORS_ORIGINS environment variable (a
+# comma-separated list).  Locally this defaults to the Next.js dev server.
+# In production, set it to the exact frontend origin(s):
+#
+#   BACKEND_CORS_ORIGINS=https://app.configtrace.org,https://configtrace.org
+#
+# Never use the wildcard "*" in production with allow_credentials=True —
+# browsers reject credentialled wildcard CORS.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,4 +42,9 @@ app.include_router(resources_router)      # prefix="/resources"
 # ── Root ──────────────────────────────────────────────────────────────────────
 @app.get("/", tags=["root"])
 def root() -> dict:
-    return {"service": "ConfigTrace API", "version": "0.1.0", "status": "ok"}
+    return {
+        "service": "ConfigTrace API",
+        "version": "0.1.0",
+        "status": "ok",
+        "environment": settings.ENVIRONMENT,
+    }
