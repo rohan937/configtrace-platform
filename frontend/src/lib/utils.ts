@@ -18,15 +18,15 @@ export function formatRelativeTime(isoString: string): string {
   if (diffSec < 60) return "just now";
   if (diffSec < 3600) {
     const m = Math.floor(diffSec / 60);
-    return `${m} ${m === 1 ? "minute" : "minutes"} ago`;
+    return `${m}m ago`;
   }
   if (diffSec < 86400) {
     const h = Math.floor(diffSec / 3600);
-    return `${h} ${h === 1 ? "hour" : "hours"} ago`;
+    return `${h}h ago`;
   }
   if (diffSec < 30 * 86400) {
     const d = Math.floor(diffSec / 86400);
-    return `${d} ${d === 1 ? "day" : "days"} ago`;
+    return `${d}d ago`;
   }
   return formatDate(isoString);
 }
@@ -43,36 +43,61 @@ export function formatDate(isoString: string): string {
 }
 
 /**
- * Returns a datetime string, e.g. "Jan 15, 2025, 14:32 UTC".
+ * Returns a full UTC datetime string suitable for a tooltip or detail view,
+ * e.g. "2026-05-19 14:32:07 UTC".
  */
-export function formatDateTime(isoString: string): string {
-  return (
-    new Date(isoString).toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "UTC",
-      timeZoneName: "short",
-    })
-  );
+export function formatAbsoluteTime(isoString: string): string {
+  const d = new Date(isoString);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return [
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`,
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`,
+    "UTC",
+  ].join(" ");
 }
 
 // ── Values ────────────────────────────────────────────────────────────────────
 
 /**
- * Serialise an arbitrary field value for display.  Objects/arrays are
- * pretty-printed as compact JSON; primitives are shown as-is.
+ * Serialise a change field value for display in the timeline.
+ *
+ * Rules (applied in order):
+ * 1. null / undefined → "—"
+ * 2. boolean → "true" / "false"
+ * 3. number → string representation
+ * 4. string → as-is
+ * 5. DNS record object (has "content" field) → extract the content value
+ * 6. array → "N records"
+ * 7. any other object → compact JSON, truncated to 60 chars
  */
 export function formatValue(value: unknown): string {
   if (value === null || value === undefined) return "—";
-  if (typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return value;
+
+  if (Array.isArray(value)) {
+    return `${value.length} record${value.length === 1 ? "" : "s"}`;
+  }
+
+  if (typeof value === "object") {
+    const rec = value as Record<string, unknown>;
+
+    // DNS record object — show the meaningful content/value field.
+    if ("content" in rec && rec.content !== undefined && rec.content !== null) {
+      return String(rec.content);
+    }
+
+    // Fallback: compact JSON, capped at 60 characters to avoid huge blobs.
+    const json = JSON.stringify(value);
+    return json.length > 60 ? `${json.slice(0, 60)}…` : json;
+  }
+
   return String(value);
 }
 
 /**
- * Produce a short "prev → new" diff label for a change row.
+ * Produce a short "prev → new" diff label.
  * Both values are formatted via formatValue.
  */
 export function formatValueChange(prev: unknown, next: unknown): string {
@@ -91,5 +116,25 @@ export function changeTypeLabel(changeType: string): string {
       return "Modified";
     default:
       return changeType;
+  }
+}
+
+// ── Time range helpers ────────────────────────────────────────────────────────
+
+/**
+ * Convert a time-range token to an ISO 8601 "since" query parameter.
+ * Returns undefined for "all" (no time filter).
+ */
+export function timeRangeToSince(range: string): string | undefined {
+  const now = Date.now();
+  switch (range) {
+    case "24h":
+      return new Date(now - 24 * 60 * 60 * 1000).toISOString();
+    case "7d":
+      return new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+    case "30d":
+      return new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+    default:
+      return undefined;
   }
 }

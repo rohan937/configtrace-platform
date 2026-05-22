@@ -856,9 +856,68 @@ curl "http://localhost:8000/changes?risk_level=critical" | python3 -m json.tool
 
 ### What's not implemented yet
 
-- Change detail page (Milestone 15+ scope)
+- Change detail page (Milestone 16 scope)
 - Resource history page (Milestone 16 scope)
 - Scheduled sync (post-MVP)
+
+## Change Timeline (Milestone 15)
+
+Milestone 15 turns `/timeline` into an operational change investigation
+surface with filter controls, load-more pagination, and improved change
+value display.
+
+### What it adds
+
+- **Filter controls** — three pill-bar rows above the list:
+  - **Risk** — All / Critical / High / Medium / Low / Unknown
+  - **Type** — All / Added / Removed / Modified
+  - **Since** — All time / Last 24h / Last 7 days / Last 30 days
+- **Load More** — replaces previous/next paging. Clicking appends the next
+  page (20 rows) to the existing list. Shows `"Showing N of M"` count and
+  `"Load more (R remaining)"` label.
+- **Improved empty states** — separate messages for "no data at all" vs
+  "no results for active filters", each with a clear call to action.
+- **Improved ChangeRow** — better secondary line per change type:
+  - Added: `→ {content of new record}`
+  - Removed: `{content of old record} → removed`
+  - Modified: `{prev field value} → {new field value}`
+  - Risk reason always shown in italic below the value line.
+- **Exact timestamp on hover** — each relative timestamp shows the full
+  UTC datetime in a native tooltip.
+
+### How to use the timeline
+
+1. Open http://localhost:3000/timeline
+2. Click a risk pill to filter (e.g. **Critical** shows only critical changes)
+3. Change the time range to **Last 24h** to focus on recent activity
+4. Scroll down and click **Load more** to see older results
+
+### Verify with seed data or Cloudflare
+
+```bash
+# Seed realistic sample data first (creates 5 changes across all risk levels)
+docker compose exec api python scripts/seed_dev_data.py
+
+# Then open the frontend
+open http://localhost:3000/timeline
+
+# Filter to critical only  
+open "http://localhost:3000/timeline"  # use Risk → Critical pill in the UI
+
+# Backend API equivalents
+curl "http://localhost:8000/changes?risk_level=critical" | python3 -m json.tool
+curl "http://localhost:8000/changes?change_type=modified" | python3 -m json.tool
+curl "http://localhost:8000/changes?risk_level=high&change_type=modified" | python3 -m json.tool
+curl "http://localhost:8000/changes?since=2026-05-20T00:00:00Z" | python3 -m json.tool
+curl "http://localhost:8000/changes?page=1&page_size=20" | python3 -m json.tool
+```
+
+### Backend compatibility
+
+No backend changes were required. `GET /changes` already supports all
+filter parameters: `risk_level`, `change_type`, `since`, `until`, `page`,
+`page_size`. The frontend generates ISO 8601 `since` timestamps client-side
+from the selected time range.
 
 ## Build milestones
 
@@ -877,8 +936,8 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 11: Changes API and Resources API
 - [x] Milestone 12: Next.js frontend setup
 - [x] Milestone 13: Frontend Dashboard Data Rendering
-- [x] Milestone 14: Cloudflare Integration Setup UI ← **you are here**
-- [ ] Milestone 15: Change timeline page
+- [x] Milestone 14: Cloudflare Integration Setup UI
+- [x] Milestone 15: Change Timeline Page ← **you are here**
 - [ ] Milestone 16: Resource history page
 - [ ] Milestone 17: Basic testing
 - [ ] Milestone 18: MVP demo script
