@@ -81,6 +81,7 @@ def sync_integration(
     from app.database import SessionLocal
     from app.models.integration import Integration
     from app.models.resource import Resource
+    from app.services.alert_service import dispatch_alerts_for_sync
     from app.services.diff_service import compute_diff, store_changes
     from app.services.risk_service import classify_changes as apply_risk_classification
     from app.services.snapshot_service import get_latest_snapshot, store_snapshot
@@ -156,6 +157,11 @@ def sync_integration(
         # ── Fetch, snapshot, and diff each resource ──────────────────────────
         snapshot_count = 0
         change_count = 0
+        # Accumulate Change rows from every resource so we can dispatch one
+        # digest alert email at the end of the sync (M24).  Per-resource
+        # alert dispatch would split a single zone reconfiguration into
+        # multiple emails — undesirable noise.
+        all_changes_this_sync: list = []
 
         for resource in resources:
             # Select the correct connector based on provider.
@@ -207,6 +213,7 @@ def sync_integration(
                         )
                         apply_risk_classification(changes, db)
                         change_count += len(changes)
+                        all_changes_this_sync.extend(changes)
                         logger.info(
                             "sync_integration: %d change(s) detected  resource_id=%s",
                             len(changes),
@@ -230,6 +237,50 @@ def sync_integration(
         # everything together here so the writes are atomic per sync run.
         integration.last_synced_at = datetime.now(timezone.utc)
         db.commit()
+
+        # ── Dispatch high/critical email alerts (M24) ────────────────────────
+        # Runs AFTER commit so a never-reached email path can't leave us with
+        # Change rows but no Alert audit trail (and the converse: an Alert row
+        # for a Change that was rolled back).
+        #
+        # dispatch_alerts_for_sync is hardened to never raise: provider
+        # failures, missing config, and placeholder recipients are all caught
+        # internally and logged.  We still wrap in try/except as a final guard
+        # against future refactors that might forget that contract.
+        if all_changes_this_sync:
+            try:
+                alert_result = dispatch_alerts_for_sync(
+                    changes=all_changes_this_sync,
+                    integration=integration,
+                    sync_run_id=_sync_run_uuid,
+                    db=db,
+                )
+                db.commit()
+                logger.info(
+                    "sync_integration: alert dispatch  sync_run_id=%s  "
+                    "eligible=%d already_alerted=%d sent=%d recorded=%d failed=%d",
+                    sync_run_id,
+                    alert_result["eligible"],
+                    alert_result["already_alerted"],
+                    alert_result["sent"],
+                    alert_result["recorded"],
+                    alert_result["failed"],
+                )
+            except Exception:
+                # Defence in depth: alert dispatch must never fail the sync.
+                logger.exception(
+                    "sync_integration: alert dispatch raised unexpectedly  "
+                    "sync_run_id=%s",
+                    sync_run_id,
+                )
+                # Roll back any partial alert writes; the DNS sync itself
+                # already committed above.
+                try:
+                    db.rollback()
+                except Exception:
+                    logger.exception(
+                        "sync_integration: rollback after alert failure also failed"
+                    )
 
         # ── Mark completed ───────────────────────────────────────────────────
         mark_sync_completed(

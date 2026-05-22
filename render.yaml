@@ -55,6 +55,19 @@ services:
       - key: CLERK_JWKS_URL
         sync: false
 
+      # ── Milestone 24 — High-risk email alerts ──────────────────────────────
+      # The API service does NOT send alert emails; the worker does.  These
+      # are declared here purely to keep the env surface consistent across
+      # services (so a future code path that adds API-side email sending
+      # doesn't fail at import time).
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERTS_FROM_EMAIL
+        sync: false
+      # Used to build deep links in alert email bodies.  Safe to commit.
+      - key: APP_BASE_URL
+        value: https://app.configtrace.org
+
   # ── Celery worker ────────────────────────────────────────────────────────────
   # Processes sync tasks enqueued by POST /syncs.
   # Shares the same Docker image as the API; only the dockerCommand differs.
@@ -84,6 +97,19 @@ services:
       # the image surface identical to the API and avoids drift.
       - key: CLERK_JWKS_URL
         sync: false
+
+      # ── Milestone 24 — High-risk email alerts ──────────────────────────────
+      # These ARE used at runtime by configtrace-worker — when a sync detects
+      # a high or critical change, the worker POSTs to Resend with this key.
+      # Missing values cause alert dispatch to log a warning and skip sending;
+      # the DNS sync itself still completes.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERTS_FROM_EMAIL
+        sync: false
+      # Used to build deep links in alert email bodies.  Safe to commit.
+      - key: APP_BASE_URL
+        value: https://app.configtrace.org
 
   # ── Celery Beat scheduler (Milestone 23) ────────────────────────────────────
   # Fires the ``enqueue_scheduled_syncs`` task at minute 0 of every hour.
@@ -123,3 +149,14 @@ services:
         sync: false
       - key: CLERK_JWKS_URL
         sync: false
+
+      # ── Milestone 24 — declared for env-surface parity only ───────────────
+      # Beat does not send alert emails (it only dispatches the
+      # ``enqueue_scheduled_syncs`` task into Redis).  We declare these so
+      # ``app.config.Settings`` validates identically on every service.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: ALERTS_FROM_EMAIL
+        sync: false
+      - key: APP_BASE_URL
+        value: https://app.configtrace.org

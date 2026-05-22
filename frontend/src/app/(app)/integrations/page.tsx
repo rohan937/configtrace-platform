@@ -124,6 +124,10 @@ export default function IntegrationsPage() {
             <span title="Beat fires at minute 0 of every hour">
               Automatic hourly sync enabled. You can still run Sync Now anytime.
             </span>
+            <span style={{ color: "#3a3d4a" }}>·</span>
+            <span title="High and critical DNS changes are emailed to the integration owner — see Milestone 24 in the docs">
+              High and critical changes are emailed to the integration owner.
+            </span>
           </div>
         )}
 

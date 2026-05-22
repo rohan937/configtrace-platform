@@ -44,6 +44,23 @@ class Settings(BaseSettings):
     # base64-encoded 32-byte AES-GCM key.
     ENCRYPTION_KEY: Optional[str] = None
 
+    # ── Required for Milestone 24 (high-risk email alerts) ──────────────────
+    # Resend API key.  Used by the worker to send email alerts when a sync
+    # detects a high- or critical-risk change.  When unset, alert dispatch
+    # logs a clear warning and skips sending — the sync itself still succeeds.
+    # Obtain from https://resend.com → API Keys.
+    RESEND_API_KEY: Optional[str] = None
+
+    # "From" address on alert emails.  Must be on a verified Resend domain.
+    # Example: ConfigTrace Alerts <alerts@configtrace.org>
+    # When unset, alert dispatch skips sending.
+    ALERTS_FROM_EMAIL: Optional[str] = None
+
+    # Base URL of the ConfigTrace frontend, used to build deep links into
+    # the change detail page (e.g. https://app.configtrace.org/changes/<id>).
+    # The default is fine for production; override locally for dev/staging.
+    APP_BASE_URL: str = "https://app.configtrace.org"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         # Ignore extra env vars passed by Docker Compose (POSTGRES_*, etc.)
@@ -73,6 +90,22 @@ class Settings(BaseSettings):
             return False
         placeholders = ("replace-with", "CHANGE_ME", "your-clerk")
         return not any(p in url for p in placeholders)
+
+    @property
+    def is_email_alerting_configured(self) -> bool:
+        """Return True when both Resend API key and From address are set.
+
+        Treats placeholder values from the example .env files as "not
+        configured" so copying .env.example never accidentally tries to send
+        from an unverified domain.
+        """
+        if not self.RESEND_API_KEY or not self.ALERTS_FROM_EMAIL:
+            return False
+        placeholders = ("replace-with", "CHANGE_ME", "your-resend")
+        return not any(
+            p in (self.RESEND_API_KEY or "") or p in (self.ALERTS_FROM_EMAIL or "")
+            for p in placeholders
+        )
 
     @property
     def cors_origins(self) -> list[str]:

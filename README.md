@@ -1779,6 +1779,107 @@ behaviour matrix.
 
 ---
 
+## High-Risk Email Alerts (Milestone 24)
+
+When a sync detects a Cloudflare DNS change with `risk_level` of `high` or
+`critical`, `configtrace-worker` sends a single digest email per sync to the
+integration's owner.  Low- and medium-risk changes are intentionally not
+emailed — they would create noise without adding signal.
+
+### What triggers an alert
+
+Any sync (manual *or* scheduled) that produces one or more Change rows with
+`risk_level in {"high", "critical"}` after risk classification.  The
+dispatcher runs **after** the DNS sync has committed, so every alerted
+change has a stable UUID and is already visible in `/timeline` and
+`/changes/{id}`.  The email body includes a deep link of the form
+`https://app.configtrace.org/changes/{change_id}`.
+
+Subject line uses `Critical` when at least one critical change is in the
+batch, otherwise `High-risk`:
+
+    [ConfigTrace] Critical DNS change detected for example.com
+    [ConfigTrace] High-risk DNS changes detected for example.com
+
+### What does NOT trigger an alert
+
+- `risk_level == "low"` or `risk_level == "medium"` changes.
+- A baseline sync (no Change rows produced — nothing to diff).
+- A sync that runs but detects zero changes.
+- A repeat dispatch of the same Change (see idempotency below).
+- A change on an integration whose owner has a placeholder email
+  (`...@clerk.user`) — fix by updating Clerk's session template to
+  include the `email` claim.
+
+### How duplicate prevention works
+
+Each dispatched email writes one row per Change into the `alerts` table
+(`channel = 'email'`, `change_id = <change.id>`).  Before dispatching, the
+service runs:
+
+```sql
+SELECT 1 FROM alerts WHERE change_id = :id AND channel = 'email' LIMIT 1;
+```
+
+If a row exists (either `status='delivered'` or `status='failed'`), the
+change is skipped.  This means:
+
+- A Celery retry of the same sync task **never** sends a second email.
+- Clicking Sync Now twice in quick succession **never** sends a second email
+  for the same change.
+- An operator can force a re-send by `DELETE`ing the row.
+
+### What if the email provider fails
+
+`dispatch_alerts_for_sync` catches every exception from the email service
+and:
+
+- Writes Alert rows with `status='failed'` and the exception message in
+  `error_message` so the audit trail is complete.
+- Returns normally — **the DNS sync itself stays `completed`** because
+  email failures must not turn a successful sync into a failed one.
+- The "failed" row also blocks future re-attempts (same idempotency check).
+  This is intentional: it prevents a Resend outage from converting into a
+  thundering retry storm.
+
+### Production verification checklist
+
+1. [ ] Create / sign in as a real Clerk user at https://app.configtrace.org.
+2. [ ] Connect a Cloudflare zone with a scoped read-only token.
+3. [ ] Run a baseline sync — confirm timeline shows "no changes".
+4. [ ] Add a low-risk change in Cloudflare (e.g. edit a TXT comment).
+5. [ ] Trigger Sync Now — confirm the change appears in `/timeline` at
+       `risk_level=low` and **no email arrives**.
+6. [ ] Add a high/critical change (e.g. change a CNAME target on a
+       non-production subdomain, or delete a non-production MX record
+       which is classified `critical`).
+7. [ ] Trigger Sync Now — within seconds the alert email arrives.
+8. [ ] Open the link in the email body — should land on
+       `https://app.configtrace.org/changes/<uuid>` and render the
+       full diff and risk reason.
+9. [ ] Confirm `/timeline` and `/changes/{id}` still work normally.
+10. [ ] Render → `configtrace-worker` → Logs: search for
+        `alerts: digest sent` — should correspond to the email.
+11. [ ] Trigger Sync Now again immediately — no second email arrives;
+        logs show `alerts: all N eligible change(s) already alerted`.
+12. [ ] Render → `configtrace-worker` → Metrics: steady-state still
+        ~150-200 MB; peak during sync still under 250 MB (M22 ceiling
+        preserved — alert dispatch is one small HTTPS POST, no memory cliff).
+
+### Required env vars (on `configtrace-worker`)
+
+| Variable | Required | Notes |
+|---|---|---|
+| `RESEND_API_KEY` | Yes for alerts | https://resend.com → API Keys |
+| `ALERTS_FROM_EMAIL` | Yes for alerts | Must be on a Resend-verified domain |
+| `APP_BASE_URL` | Optional (defaults to `https://app.configtrace.org`) | Used to build `/changes/{id}` deep links in the email body |
+
+The same three vars are declared on `configtrace-api` and `configtrace-beat`
+for env-surface parity, but only `configtrace-worker` actually sends.
+See `docs/deployment.md` for the full Resend setup walkthrough.
+
+---
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:

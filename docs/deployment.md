@@ -191,6 +191,9 @@ Do not paste certificate private keys into frontend environment variables.
 | `CLERK_JWKS_URL` | **Required after Milestone 21.**  JWKS endpoint Clerk publishes its RS256 public keys at.  Missing → HTTP 503 on every protected route. |
 | `CLERK_SECRET_KEY` | Clerk backend secret key (`sk_live_...`). Reserved for the future Clerk management API — not used by JWT verification. |
 | `BACKEND_CORS_ORIGINS` | `https://app.configtrace.org,https://configtrace.org` |
+| `RESEND_API_KEY` | **Milestone 24.** Resend API key.  Used by `configtrace-worker` to send high/critical-risk DNS change alert emails.  Missing → the dispatcher logs a warning and skips sending; the DNS sync itself still completes.  Obtain from https://resend.com → API Keys. |
+| `ALERTS_FROM_EMAIL` | **Milestone 24.** "From" address on alert emails — must be on a verified Resend domain.  Example: `ConfigTrace Alerts <alerts@configtrace.org>` |
+| `APP_BASE_URL` | **Milestone 24.** Base URL of the frontend, used to build `/changes/{id}` deep links in alert email bodies.  Defaults to `https://app.configtrace.org`. |
 
 ### Frontend (set in Vercel project settings)
 
@@ -620,3 +623,96 @@ The `.env` file (copied from `.env.example`) should have:
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...` (required since M21 —
   use a free Clerk dev application; the backend still runs in dev-mode auth
   unless you ALSO set `CLERK_JWKS_URL`)
+
+---
+
+## High-risk email alerts (Milestone 24)
+
+When a sync detects a Cloudflare DNS change with `risk_level` of `high` or
+`critical`, `configtrace-worker` sends a single digest email per sync to the
+integration's owner.  Low- and medium-risk changes are intentionally not
+emailed — they would create noise without adding signal.
+
+### Which services need the env vars
+
+| Variable | `configtrace-api` | `configtrace-worker` | `configtrace-beat` |
+|---|---|---|---|
+| `RESEND_API_KEY`     | declared (parity) | **runtime** | declared (parity) |
+| `ALERTS_FROM_EMAIL`  | declared (parity) | **runtime** | declared (parity) |
+| `APP_BASE_URL`       | declared (parity) | **runtime** | declared (parity) |
+
+Only `configtrace-worker` actually calls Resend at runtime.  The vars are
+declared on the other two services so that `app.config.Settings` validates
+identically across the cluster (avoids subtle drift if a future code path
+calls the email service from the API process).
+
+### Setting up Resend
+
+1. Sign up at https://resend.com.
+2. Verify a domain (the **From** address on alert emails must be on a
+   verified domain).  DNS records will be provided by Resend — add them to
+   Cloudflare and wait for verification.
+3. Create an API key at https://resend.com/api-keys.
+4. In the Render dashboard:
+   - Open **configtrace-worker → Environment**
+   - Set `RESEND_API_KEY` to the new key
+   - Set `ALERTS_FROM_EMAIL` to a valid `Display Name <addr@verified.domain>`
+   - Repeat on **configtrace-api** and **configtrace-beat** (same values)
+5. Trigger a redeploy of `configtrace-worker` so it picks up the env vars.
+
+### What `APP_BASE_URL` does
+
+Used to build deep links in the email body, e.g.:
+
+    View change:  https://app.configtrace.org/changes/<uuid>
+
+For production, leave the default (`https://app.configtrace.org`).
+Override locally if you're testing alert emails against a staging frontend.
+
+### Verifying alerts in production
+
+1. Sign in to https://app.configtrace.org and connect a Cloudflare zone.
+2. Run a baseline sync (creates Snapshot #1, no changes detected).
+3. In Cloudflare, make a **low**-risk change (edit a TXT comment).
+4. Trigger Sync Now in the app — confirm a Change row appears in the
+   timeline at `risk_level=low` and **no email arrives**.
+5. In Cloudflare, make a **high or critical** change.  Easy options:
+   - Change a CNAME's target on a non-production subdomain.
+   - Delete a non-production MX record (classified `critical`).
+6. Trigger Sync Now — within seconds an email titled
+   `[ConfigTrace] Critical DNS change detected for <integration>` (or
+   `High-risk DNS change`) arrives at the user's address.
+7. Open the link in the email body — should land on the change detail
+   page.
+8. Trigger Sync Now again immediately — no second email arrives.  The
+   `alerts.change_id` idempotency check suppresses re-sends.
+
+### Logs to grep in Render
+
+```
+# Successful alert dispatch
+alerts: digest sent  sync_run_id=...  recipient=...  change_count=N
+
+# Idempotency suppression
+alerts: all N eligible change(s) already alerted
+
+# Missing config (warning, not error — sync still succeeds)
+alerts: email alerting not configured — skipping N change(s)
+
+# Provider failure (error, but sync still completes)
+alerts: email send failed  sync_run_id=...  error=...
+```
+
+### Failure semantics
+
+- **Provider down / 5xx** → Alert row inserted with `status='failed'`,
+  `error_message` populated.  The DNS sync itself still commits and is
+  marked `completed`.  The Alert row's existence blocks future re-attempts
+  for the same change (delete the row to retry; future syncs that produce
+  *new* high/critical changes are unaffected).
+- **`RESEND_API_KEY` unset** → Single warning logged per sync; no Alert
+  rows written; future syncs that surface the same changes will try again
+  once the key is set.
+- **Recipient email looks like a placeholder** (`@clerk.user`) → Same as
+  above: warning logged, no Alert rows.  Fix by updating Clerk's session
+  template to include the `email` claim.
