@@ -979,6 +979,78 @@ curl "http://localhost:8000/resources/{id}/snapshots" | python3 -m json.tool
 curl "http://localhost:8000/resources/{id}/changes" | python3 -m json.tool
 ```
 
+## Change Detail Page (Milestone 17)
+
+Milestone 17 makes every change in the system fully inspectable. Clicking any
+change row — from the Timeline, Dashboard, or a Resource detail page — opens
+`/changes/{change_id}` which shows the full change context without requiring a
+second API call.
+
+### What it adds
+
+- **Clickable change rows** — `ChangeRow` is now a `<Link>` to
+  `/changes/{id}`. Works from `/dashboard`, `/timeline`, and
+  `/resources/{resourceId}`. The hover style and column layout are preserved.
+- **Change detail page** (`/changes/[changeId]`):
+  - **Change header** — `record_identifier` in monospace with risk badge;
+    change type, field path, relative + absolute timestamp, and the resource
+    and integration IDs as muted debug metadata.
+  - **Risk explanation panel** — risk badge with the `risk_reason` string
+    shown in prose. Tinted background matches the risk level (red-ish for
+    critical, amber for medium, etc.). A "Context" block below surfaces any
+    provider/record metadata from `provider_metadata` (record type, name,
+    content, zone, etc.).
+  - **Field-level diff panel**:
+    - *Modified* — "Before" block (faint red tint) and "After" block (faint
+      green tint), each in monospace with a label. For multi-line JSON values
+      the block wraps; for simple scalars it stays compact.
+    - *Added* — "Record Added" label in green; the full DNS record rendered via
+      `DnsRecordView` (key-value rows, not raw JSON).
+    - *Removed* — "Record Removed" label in red; the full DNS record via
+      `DnsRecordView`.
+  - **Snapshot context** — two timestamp cards (Before / After snapshot) with
+    relative time (exact UTC on hover) and the first 10 chars of the snapshot
+    UUID. For *modified* changes the page additionally shows the matched DNS
+    record from each snapshot side-by-side.
+  - **Raw change data** — collapsed `<details>` section that exposes
+    `prev_value`, `new_value`, and `provider_metadata` as formatted JSON for
+    debugging. Hidden by default; never dominates the view.
+- **New `DnsRecordView` component** —
+  `frontend/src/components/changes/DnsRecordView.tsx`. Renders a single DNS
+  record as labelled key-value rows (Type, Name, Content, TTL, Proxied,
+  Priority, Comment). Accepts a `tint` prop (`"add"` / `"remove"` /
+  `"neutral"`) for the before/after context.
+- **`formatDiffValue` utility** — like `formatValue` but returns full
+  pretty-printed JSON for objects instead of the 60-char truncation. Used in
+  the diff panel where engineers need to read the complete value.
+
+### No backend changes required
+
+`GET /changes/{change_id}` already returns everything needed:
+- All list-view fields (`change_type`, `field_path`, `prev_value`,
+  `new_value`, `risk_level`, `risk_reason`, `provider_metadata`, ...)
+- Snapshot IDs, timestamps, and full `state` arrays (so no second request is
+  needed to render the snapshot context).
+
+### How to use
+
+1. Open http://localhost:3000/timeline
+2. Click any change row → opens `/changes/{id}`
+3. Read the risk explanation, inspect the before/after diff
+4. Expand "Raw change data" for full JSON if needed
+
+```bash
+# Seed data
+docker compose exec api python scripts/seed_dev_data.py
+
+# List changes
+open http://localhost:3000/timeline
+
+# Direct API access
+curl "http://localhost:8000/changes" | python3 -m json.tool
+curl "http://localhost:8000/changes/{change_id}" | python3 -m json.tool
+```
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -998,6 +1070,6 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 13: Frontend Dashboard Data Rendering
 - [x] Milestone 14: Cloudflare Integration Setup UI
 - [x] Milestone 15: Change Timeline Page
-- [x] Milestone 16: Resource History Page ← **you are here**
-- [ ] Milestone 17: Basic testing
+- [x] Milestone 16: Resource History Page
+- [x] Milestone 17: Change Detail Page ← **you are here**
 - [ ] Milestone 18: MVP demo script

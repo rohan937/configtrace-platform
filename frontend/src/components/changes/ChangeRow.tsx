@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ChangeListItem } from "@/types";
 import RiskBadge from "@/components/common/RiskBadge";
 import {
@@ -56,9 +57,16 @@ export default function ChangeRow({ change }: ChangeRowProps) {
   const showSecondary = Boolean(valLine || change.risk_reason);
 
   return (
-    <div
-      className="flex flex-col px-4 py-2.5 hover:bg-surface3 cursor-default"
-      style={{ borderBottom: "1px solid #2a2d38", gap: "3px" }}
+    <Link
+      href={`/changes/${change.id}`}
+      className="flex flex-col px-4 py-2.5 hover:bg-surface3"
+      style={{
+        borderBottom: "1px solid #2a2d38",
+        gap: "3px",
+        textDecoration: "none",
+        display: "flex",
+        cursor: "pointer",
+      }}
     >
       {/* ── Main row ───────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 min-w-0">
@@ -137,6 +145,6 @@ export default function ChangeRow({ change }: ChangeRowProps) {
           )}
         </div>
       )}
-    </div>
+    </Link>
   );
 }

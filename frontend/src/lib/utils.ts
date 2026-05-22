@@ -104,6 +104,31 @@ export function formatValueChange(prev: unknown, next: unknown): string {
   return `${formatValue(prev)} → ${formatValue(next)}`;
 }
 
+/**
+ * Format a change field value for full display in a diff panel.
+ *
+ * Unlike formatValue (which truncates objects to 60 chars), this variant
+ * returns pretty-printed JSON for objects so engineers can read the full
+ * record. Scalars and DNS record "content" fields are returned as plain text.
+ */
+export function formatDiffValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return value;
+
+  if (typeof value === "object") {
+    const rec = value as Record<string, unknown>;
+    // For DNS record objects, surface the content field directly.
+    if ("content" in rec && rec.content !== null && rec.content !== undefined) {
+      return String(rec.content);
+    }
+    return JSON.stringify(value, null, 2);
+  }
+
+  return String(value);
+}
+
 // ── Change type labels ────────────────────────────────────────────────────────
 
 export function changeTypeLabel(changeType: string): string {
