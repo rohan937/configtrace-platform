@@ -669,6 +669,66 @@ Used to build deep links in the email body, e.g.:
 For production, leave the default (`https://app.configtrace.org`).
 Override locally if you're testing alert emails against a staging frontend.
 
+### User email resolution (M24 follow-up)
+
+The alert dispatcher only sends to **real** addresses — anything stored
+in `users.email` ending in `@clerk.user` is treated as a placeholder
+and skipped (you'll see this in worker logs as
+`alerts: skipping dispatch — no deliverable recipient`).
+
+A user lands on the placeholder when **both** of these are true:
+
+1. Clerk's session JWT template did not include the `email` claim.
+2. Clerk's Backend API couldn't be reached (no `CLERK_SECRET_KEY`, or
+   `api.clerk.com` was unreachable when the user signed in).
+
+The backend now resolves emails in this order:
+
+```
+JWT "email" claim  →  Clerk Backend API GET /v1/users/{id}  →  placeholder
+```
+
+So a fully-configured production deployment (which already has
+`CLERK_SECRET_KEY` from M21) heals existing placeholder rows
+automatically on the user's next authenticated request.
+
+If you want to populate emails *now* for users who haven't signed in
+since the M24 follow-up deployed, run the backfill script once:
+
+```bash
+# Local (Docker Compose):
+docker compose exec api python scripts/backfill_user_emails.py
+
+# Production (Render → configtrace-api → Shell):
+python scripts/backfill_user_emails.py
+```
+
+Output looks like:
+
+```
+INFO  backfill_user_emails: Found 4 user(s) with placeholder emails. Backfilling…
+INFO  backfill_user_emails:   upgraded  user.id=... clerk_id=user_2abc... user_2abc...@clerk.user → alice@example.com
+INFO  backfill_user_emails:   upgraded  user.id=... clerk_id=user_2def... user_2def...@clerk.user → bob@example.com
+INFO  backfill_user_emails: Backfill complete.  total=4  updated=4  failed=0
+```
+
+The script is idempotent — re-running it never touches rows that
+already have a real email.  A non-zero exit code signals one or more
+placeholders could not be resolved (typically: Clerk deleted the user,
+or `CLERK_SECRET_KEY` is unset).
+
+**Alternative (no script):** configure Clerk's session JWT template to
+include the email claim directly:
+
+1. Clerk dashboard → JWT Templates → choose the template ConfigTrace uses.
+2. Add `"email": "{{user.primary_email_address}}"` to the claims block.
+3. Save.  Existing sessions need to refresh; new sessions immediately
+   include the claim.
+
+Either path works.  The Backend API fallback is the safer default
+because it doesn't depend on dashboard configuration — it requires
+nothing beyond the `CLERK_SECRET_KEY` you set for M21.
+
 ### Verifying alerts in production
 
 1. Sign in to https://app.configtrace.org and connect a Cloudflare zone.

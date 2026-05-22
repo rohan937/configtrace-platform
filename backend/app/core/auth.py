@@ -236,13 +236,57 @@ def _verify_token(token: str) -> dict[str, Any]:
 
 # ── User upsert from Clerk claims ─────────────────────────────────────────────
 
+_PLACEHOLDER_EMAIL_SUFFIX = "@clerk.user"
+
+
+def _resolve_email(
+    clerk_id: str,
+    email_claim: Optional[str],
+) -> Optional[str]:
+    """Return a real email for *clerk_id*, preferring the JWT claim.
+
+    Resolution order:
+        1. The ``email`` (or ``email_address``) JWT claim, if Clerk's
+           session template was customised to include it.
+        2. Clerk Backend API ``GET /v1/users/{clerk_id}``, which always
+           returns the primary email when configured (see
+           :mod:`app.services.clerk_service`).
+        3. ``None`` — caller falls back to a placeholder for new users,
+           or leaves the existing email untouched for upgrades.
+
+    The Backend API call is the self-healing path that makes this work
+    even when the session template has not been configured.  It costs at
+    most one HTTPS request per user (and only while ``users.email`` is
+    still a placeholder — once a real value lands, the caller never
+    invokes this function for that user again).
+    """
+    if email_claim:
+        return email_claim
+    # Local import to avoid a module-load cycle if anything in
+    # clerk_service ever needs to import from this module.
+    from app.services import clerk_service
+
+    return clerk_service.fetch_user_email(clerk_id)
+
+
 def _get_or_create_clerk_user(claims: dict[str, Any], db: Session) -> User:
     """Look up or create the local ``User`` row matching the Clerk subject.
 
     The Clerk ``sub`` claim (always present) is stored as ``users.clerk_id``.
-    Email is taken from the ``email`` claim if Clerk's session template
-    includes it; otherwise a deterministic placeholder is used and replaced
-    on the next request that has the claim.
+    Email resolution prefers the JWT ``email`` claim (when Clerk's session
+    template provides it) and falls back to Clerk's Backend API for users
+    whose session template doesn't include the email.  When both fail —
+    e.g. ``CLERK_SECRET_KEY`` unset or Clerk Backend API down — a
+    deterministic ``<clerk_id>@clerk.user`` placeholder is written and
+    re-attempted on the next request.
+
+    Email policy
+        * **Real → real:**  Never overwritten by claim or Backend API.
+          Once a user has a real address (or one they edited themselves),
+          we never touch it from this code path.
+        * **Placeholder → real:**  Upgraded automatically on any request
+          that successfully resolves a real address.
+        * **None of the above:**  Placeholder remains; no error.
     """
     clerk_id = claims.get("sub")
     if not clerk_id:
@@ -261,9 +305,24 @@ def _get_or_create_clerk_user(claims: dict[str, Any], db: Session) -> User:
     user = db.query(User).filter(User.clerk_id == clerk_id).first()
 
     if user is None:
+        # New user: try claim → Clerk Backend API → placeholder.
+        resolved_email = _resolve_email(clerk_id, email_claim)
+        if resolved_email:
+            logger.info(
+                "auth: created user with resolved email  clerk_id=%s  "
+                "via=%s",
+                clerk_id,
+                "claim" if email_claim else "clerk_backend_api",
+            )
+        else:
+            logger.warning(
+                "auth: created user with placeholder email — JWT had no email "
+                "claim AND Clerk Backend API lookup failed  clerk_id=%s",
+                clerk_id,
+            )
         user = User(
             clerk_id=clerk_id,
-            email=email_claim or f"{clerk_id}@clerk.user",
+            email=resolved_email or f"{clerk_id}{_PLACEHOLDER_EMAIL_SUFFIX}",
             display_name=name_claim or "ConfigTrace User",
         )
         db.add(user)
@@ -271,13 +330,23 @@ def _get_or_create_clerk_user(claims: dict[str, Any], db: Session) -> User:
         db.refresh(user)
         return user
 
-    # Best-effort sync if Clerk's session template starts returning email/name
-    # for an existing user — only fill placeholders, never overwrite a
-    # user-edited value with claim data.
+    # Existing user — best-effort placeholder upgrade.  We only ever
+    # change ``user.email`` when the stored value is still a placeholder
+    # AND we found a real address (claim or Backend API).  A real address
+    # is never overwritten from this path, even if the JWT claim differs
+    # (the user may have edited it manually in a future settings UI).
     dirty = False
-    if email_claim and user.email.endswith("@clerk.user") and user.email != email_claim:
-        user.email = email_claim
-        dirty = True
+    if user.email.endswith(_PLACEHOLDER_EMAIL_SUFFIX):
+        new_email = _resolve_email(clerk_id, email_claim)
+        if new_email and new_email != user.email:
+            logger.info(
+                "auth: upgraded placeholder email for existing user  "
+                "clerk_id=%s  via=%s",
+                clerk_id,
+                "claim" if email_claim else "clerk_backend_api",
+            )
+            user.email = new_email
+            dirty = True
     if (
         name_claim
         and user.display_name in (None, "", "ConfigTrace User")

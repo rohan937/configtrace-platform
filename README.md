@@ -1878,6 +1878,47 @@ The same three vars are declared on `configtrace-api` and `configtrace-beat`
 for env-surface parity, but only `configtrace-worker` actually sends.
 See `docs/deployment.md` for the full Resend setup walkthrough.
 
+### User email resolution (M24 follow-up)
+
+`users.email` powers the alert recipient.  Clerk's default JWT session
+template does **not** include the email claim, so before this follow-up
+every user landed on a `<clerk_id>@clerk.user` placeholder and alert
+dispatch was skipped with
+`alerts: skipping dispatch — no deliverable recipient`.
+
+The backend now resolves emails in this order on every authenticated
+request:
+
+```
+JWT "email" claim  →  Clerk Backend API GET /v1/users/{id}  →  placeholder
+```
+
+The Backend API call uses the existing `CLERK_SECRET_KEY` (already set
+in production for M21).  Once a real email lands in `users.email`, the
+auth path stops calling Clerk for that user — at most one API call per
+user, only while the placeholder is still present.
+
+**Backfilling existing users.**  Users who haven't signed in since the
+follow-up deployed still have placeholders.  Fix them in bulk with:
+
+```bash
+# Local:
+docker compose exec api python scripts/backfill_user_emails.py
+
+# Production (Render → configtrace-api → Shell):
+python scripts/backfill_user_emails.py
+```
+
+The script is idempotent — re-runs never touch rows that already have
+a real email.  Exit code is `0` when everything resolved, `1` when one
+or more rows couldn't be resolved (typically: Clerk deleted the user,
+or `CLERK_SECRET_KEY` is unset).
+
+**Alternative path** (no script needed): configure Clerk's JWT template
+to include the email claim directly — see `docs/deployment.md` for
+exact steps.  Either approach works; the Backend API fallback is the
+default because it requires no dashboard configuration.
+
 ---
 
 ## Build milestones
