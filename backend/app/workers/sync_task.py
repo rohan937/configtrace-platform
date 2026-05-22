@@ -111,6 +111,20 @@ def sync_integration(
                 f"Integration {integration_id!r} not found in the database."
             )
 
+        # ── Defensive ownership check (Milestone 21) ─────────────────────────
+        # The API route already verifies that the requesting user owns this
+        # integration before enqueuing the task.  This is a belt-and-braces
+        # guard against task-queue argument tampering, replays from old runs,
+        # or a future code path that constructs sync_integration arguments
+        # without re-checking ownership.  Refuse to sync rather than read
+        # one user's data into another user's snapshots.
+        _user_uuid = uuid.UUID(user_id)
+        if integration.user_id != _user_uuid:
+            raise ValueError(
+                f"Worker user_id mismatch: integration {integration_id} is owned "
+                f"by a different user than {user_id}. Refusing to sync."
+            )
+
         logger.info(
             "sync_integration running  provider=%s  display_name=%r",
             integration.provider,

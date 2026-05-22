@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import type { ResourceListItem } from "@/types";
 import { getResources } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
@@ -13,28 +14,31 @@ export default function ResourcesPage() {
   const [total, setTotal] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
+    if (!isLoaded) return;
     let cancelled = false;
 
-    getResources({ page_size: 100 })
-      .then((data) => {
+    (async () => {
+      try {
+        const token = await getToken();
+        const data = await getResources({ page_size: 100 }, token);
         if (!cancelled) {
           setResources(data.items);
           setTotal(data.total);
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load resources.");
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
 
     return () => { cancelled = true; };
-  }, []);
+  }, [isLoaded, getToken]);
 
   return (
     <>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import StatusBadge from "@/components/common/StatusBadge";
 import { formatRelativeTime } from "@/lib/utils";
@@ -34,6 +35,7 @@ export default function IntegrationList({
 }: IntegrationListProps) {
   const [syncStates, setSyncStates] = useState<Record<string, SyncRowState>>({});
   const mountedRef = useRef(true);
+  const { getToken } = useAuth();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -69,7 +71,8 @@ export default function IntegrationList({
     let syncRunId: string;
 
     try {
-      const run = await triggerSync(integrationId);
+      const token = await getToken();
+      const run = await triggerSync(integrationId, token);
       syncRunId = run.id;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to start sync.";
@@ -87,7 +90,8 @@ export default function IntegrationList({
         polls++;
 
         try {
-          const run = await getSyncStatus(syncRunId);
+          const token = await getToken();
+          const run = await getSyncStatus(syncRunId, token);
 
           if (run.status === "completed") {
             const snaps = run.snapshot_count ?? 0;

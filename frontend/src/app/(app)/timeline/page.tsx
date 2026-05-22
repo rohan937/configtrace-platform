@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useEffect } from "react";
+import { useAuth } from "@clerk/nextjs";
 import type { ChangeListItem } from "@/types";
 import type { GetChangesParams } from "@/lib/api";
 import { getChanges } from "@/lib/api";
@@ -151,6 +152,7 @@ export default function TimelinePage() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { getToken, isLoaded } = useAuth();
 
   // Generation counter prevents stale async responses from overwriting state.
   const genRef = useRef(0);
@@ -164,7 +166,7 @@ export default function TimelinePage() {
     return params;
   }
 
-  function doFetch(f: Filters, p: number, mode: "replace" | "append") {
+  async function doFetch(f: Filters, p: number, mode: "replace" | "append") {
     genRef.current += 1;
     const gen = genRef.current;
 
@@ -175,32 +177,30 @@ export default function TimelinePage() {
       setError(null);
     }
 
-    getChanges(buildParams(f, p))
-      .then((data) => {
-        if (gen !== genRef.current) return;
-        setChanges((prev) =>
-          mode === "append" ? [...prev, ...data.items] : data.items,
-        );
-        setTotal(data.total);
-      })
-      .catch((err) => {
-        if (gen !== genRef.current) return;
-        setError(
-          err instanceof Error ? err.message : "Failed to load changes.",
-        );
-      })
-      .finally(() => {
-        if (gen !== genRef.current) return;
-        setLoading(false);
-        setLoadingMore(false);
-      });
+    try {
+      const token = await getToken();
+      const data = await getChanges(buildParams(f, p), token);
+      if (gen !== genRef.current) return;
+      setChanges((prev) =>
+        mode === "append" ? [...prev, ...data.items] : data.items,
+      );
+      setTotal(data.total);
+    } catch (err) {
+      if (gen !== genRef.current) return;
+      setError(err instanceof Error ? err.message : "Failed to load changes.");
+    } finally {
+      if (gen !== genRef.current) return;
+      setLoading(false);
+      setLoadingMore(false);
+    }
   }
 
-  // Initial load on mount.
+  // Initial load — wait for Clerk to load so getToken() returns a real token.
   useEffect(() => {
+    if (!isLoaded) return;
     doFetch(DEFAULT_FILTERS, 1, "replace");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isLoaded]);
 
   // Apply a new filter value — resets to page 1 and replaces results.
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {

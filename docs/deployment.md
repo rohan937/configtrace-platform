@@ -29,11 +29,11 @@ verified end-to-end in production.
 - Cloudflare integration created; first sync → "1 snapshot, 0 changes detected" (baseline)
 - Second sync after adding test TXT record → 1 added low-risk TXT change detected in timeline
 
-> **⚠️ Auth state — private use only.**  The backend runs in dev mode (no
-> Clerk JWT validation).  All API requests share a single internal dev user.
-> Do **not** share the app URL publicly.  Do **not** set a real
-> `CLERK_SECRET_KEY` until Milestone 21 — a real key causes every protected
-> route to return HTTP 501.  See [Auth state — private MVP only](#auth-state--private-mvp-only).
+> **Auth state — multi-user (Milestone 21 shipped).**
+> Production now enforces Clerk JWT verification on every protected route via
+> the JWKS endpoint set in `CLERK_JWKS_URL`.  Missing or placeholder JWKS in
+> production causes every route to return HTTP 503; missing/invalid tokens
+> return 401.  See [Authentication setup (Milestone 21)](#authentication-setup-milestone-21).
 
 ---
 
@@ -173,7 +173,8 @@ Do not paste certificate private keys into frontend environment variables.
 | `REDIS_URL` | Redis connection string |
 | `SECRET_KEY` | 64-char hex random string (`openssl rand -hex 32`) |
 | `ENCRYPTION_KEY` | base64-encoded 32-byte AES-GCM key |
-| `CLERK_SECRET_KEY` | Clerk backend secret key (`sk_live_...`) |
+| `CLERK_JWKS_URL` | **Required after Milestone 21.**  JWKS endpoint Clerk publishes its RS256 public keys at.  Missing → HTTP 503 on every protected route. |
+| `CLERK_SECRET_KEY` | Clerk backend secret key (`sk_live_...`). Reserved for the future Clerk management API — not used by JWT verification. |
 | `BACKEND_CORS_ORIGINS` | `https://app.configtrace.org,https://configtrace.org` |
 
 ### Frontend (set in Vercel project settings)
@@ -181,7 +182,7 @@ Do not paste certificate private keys into frontend environment variables.
 | Variable | Description |
 |---|---|
 | `NEXT_PUBLIC_API_BASE_URL` | `https://api.configtrace.org` |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk frontend public key (`pk_live_...`) |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | **Required after Milestone 21.**  Clerk frontend publishable key (`pk_live_...`).  Missing → Clerk throws during initialization and the app fails to render. |
 
 ---
 
@@ -286,7 +287,9 @@ In your Vercel project:
 - Set **Root Directory** → `frontend/`
 - Do **not** manually override the Output Directory — Next.js preset handles `.next/` automatically
 - Set `NEXT_PUBLIC_API_BASE_URL=https://api.configtrace.org`
-- Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...` (leave as placeholder until Milestone 21)
+- Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...` (**required** since
+  Milestone 21 — the build will succeed without it but the app crashes on
+  load because `<ClerkProvider>` throws during initialization)
 
 Vercel automatically runs `npm run build` and serves `npm run start`.
 
@@ -447,34 +450,77 @@ curl https://api.configtrace.org/health/db
 
 ---
 
-## Auth state — private MVP only
+## Authentication setup (Milestone 21)
 
-**The production backend currently runs in dev mode** — no Clerk JWT validation
-is active.
+Production now enforces Clerk JWT verification.  Every protected route on
+`api.configtrace.org` requires a valid `Authorization: Bearer <token>` header
+issued by Clerk; missing or invalid tokens return HTTP 401.
 
-How dev mode works:
+### How the backend verifies tokens
 
-- `backend/app/core/auth.py` checks whether `CLERK_SECRET_KEY` is absent or
-  matches a placeholder pattern.  If so, every API request automatically
-  resolves to a shared internal user (`dev@configtrace.local`).
-- There is **no user isolation**.  Anyone who can reach `api.configtrace.org`
-  can create integrations, trigger syncs, and read all data as the same dev user.
-- If a real `sk_live_...` Clerk secret is set **before** Milestone 21 implements
-  JWT validation, every protected route returns **HTTP 501** and the app stops
-  working entirely.
+`backend/app/core/auth.py`:
 
-**Rules until Milestone 21 is shipped:**
+1. On startup the auth module reserves a process-local cache for Clerk's
+   JWKS.  No network call yet.
+2. On the first authenticated request it fetches `CLERK_JWKS_URL`
+   (`.well-known/jwks.json`), caches the keys for 5 minutes, and verifies the
+   incoming JWT's RS256 signature locally.
+3. If a token's `kid` is not in the cache, the JWKS is force-refreshed once.
+   This handles Clerk key rotation transparently.
+4. If the JWKS endpoint is unreachable on cold start (no cached keys), every
+   protected route returns **HTTP 503**.  Once a JWKS is cached, transient
+   fetch failures fall back to the stale cache for up to 1 hour before 503.
+5. Valid tokens are mapped to a local `User` row via the `sub` claim.  The
+   user is created on first sign-in; existing users are looked up by
+   `clerk_id`.
 
-| What | Rule |
+### Production fail-closed guarantee
+
+If `ENVIRONMENT=production` but `CLERK_JWKS_URL` is missing or still a
+placeholder, every protected route returns **HTTP 503** before any token
+parsing.  The dev-mode branch is unreachable in production regardless of
+other env vars or request headers.  There is no override.
+
+### Configuring Clerk
+
+1. In Clerk → API Keys, find your application's JWKS URL.  It looks like:
+   ```
+   https://<your-frontend-api>.clerk.accounts.dev/.well-known/jwks.json
+   ```
+   (For a production Clerk instance, the host is your custom Clerk frontend
+   API domain rather than `clerk.accounts.dev`.)
+
+2. Set the following env vars on **both** Render services
+   (`configtrace-api` and `configtrace-worker`):
+   - `CLERK_JWKS_URL` — the JWKS URL from step 1
+   - `CLERK_SECRET_KEY` — your Clerk `sk_live_...` (reserved for future use)
+
+3. Set the publishable key on Vercel:
+   - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` — your Clerk `pk_live_...`
+
+4. In Clerk → Domains, add `app.configtrace.org` (and `configtrace.org` if
+   you want sign-in to also work from the marketing domain).
+
+### Local development requirements after M21
+
+| Layer | Requirement |
 |---|---|
-| `CLERK_SECRET_KEY` in Render | Must remain unset or placeholder — never `sk_live_...` |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in Vercel | Must remain placeholder — never `pk_live_...` |
-| Sharing the app URL | Do **not** share publicly — no user isolation exists yet |
-| Production data | Safe for private solo use only |
+| Backend (local) | **No Clerk needed.**  With `ENVIRONMENT=development` (default) and no `CLERK_JWKS_URL`, the backend keeps the existing dev-mode auth: auto-creates `dev@configtrace.local`, accepts `X-Dev-User-Email` for multi-user simulation. |
+| Frontend (local) | **Clerk required.**  `@clerk/nextjs` throws during initialization if `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` is missing.  Create a free Clerk **development** application (~2 min at [dashboard.clerk.com](https://dashboard.clerk.com)) and copy the `pk_test_...` value into your local `.env`. |
 
-This is acceptable for a **private MVP** where a single person accesses the
-production app.  Milestone 21 will implement Clerk JWT validation on the backend
-and add the sign-in flow and `Authorization` header injection on the frontend.
+To exercise the real JWT path locally (catches token-threading bugs), set
+both the frontend publishable key AND the backend `CLERK_JWKS_URL` — the
+backend then verifies tokens for real instead of falling back to dev mode.
+
+### Failure modes — what to check first
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Every API route returns 503 | `CLERK_JWKS_URL` missing or contains `replace-with` / `CHANGE_ME` | Set the real JWKS URL in Render env vars and redeploy. |
+| Every API route returns 401 even when signed in | Frontend not sending `Authorization` header, or wrong Clerk instance | Verify `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` matches the backend's `CLERK_JWKS_URL` (same Clerk app). |
+| Frontend crashes immediately on load | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` not set in Vercel | Add it to the Vercel project's environment, redeploy. |
+| Sign-in redirects loop | Clerk → Domains doesn't include `app.configtrace.org` | Add the production frontend origin to Clerk's allowed domains. |
+| User signs in but sees no data | Pre-M21 data belongs to the old dev user | Re-create your Cloudflare integration in the authenticated session (no automatic reassignment). |
 
 ---
 
@@ -556,3 +602,6 @@ The `.env` file (copied from `.env.example`) should have:
 - `ENVIRONMENT=development` (or omit it — development is the default)
 - `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`
 - `BACKEND_CORS_ORIGINS=http://localhost:3000,http://localhost:3001`
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...` (required since M21 —
+  use a free Clerk dev application; the backend still runs in dev-mode auth
+  unless you ALSO set `CLERK_JWKS_URL`)

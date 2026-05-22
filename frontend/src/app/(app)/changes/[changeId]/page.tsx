@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useAuth } from "@clerk/nextjs";
 import type { ChangeDetail, DnsRecord } from "@/types";
 import { getChange } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
@@ -575,24 +576,30 @@ export default function ChangeDetailPage() {
   const [change,  setChange]  = useState<ChangeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
+  const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
-    if (!changeId) return;
+    if (!changeId || !isLoaded) return;
     let cancelled = false;
 
     setLoading(true);
     setError(null);
 
-    getChange(changeId)
-      .then((data) => { if (!cancelled) setChange(data); })
-      .catch((err) => {
+    (async () => {
+      try {
+        const token = await getToken();
+        const data = await getChange(changeId, token);
+        if (!cancelled) setChange(data);
+      } catch (err) {
         if (!cancelled)
           setError(err instanceof Error ? err.message : "Failed to load change.");
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
 
     return () => { cancelled = true; };
-  }, [changeId]);
+  }, [changeId, isLoaded, getToken]);
 
   // ── Loading ────────────────────────────────────────────────────────────
 

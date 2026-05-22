@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import { getIntegrations } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
@@ -15,26 +16,27 @@ export default function IntegrationsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const { getToken, isLoaded } = useAuth();
 
-  const fetchIntegrations = useCallback(() => {
+  const fetchIntegrations = useCallback(async () => {
     setError(null);
 
-    getIntegrations()
-      .then((data) => {
-        setIntegrations(data.integrations);
-        setTotal(data.total);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : "Failed to load integrations.");
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, []);
+    try {
+      const token = await getToken();
+      const data = await getIntegrations(token);
+      setIntegrations(data.integrations);
+      setTotal(data.total);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load integrations.");
+    } finally {
+      setLoading(false);
+    }
+  }, [getToken]);
 
   useEffect(() => {
+    if (!isLoaded) return;
     fetchIntegrations();
-  }, [fetchIntegrations]);
+  }, [isLoaded, fetchIntegrations]);
 
   function handleCreated() {
     // Hide the form and refresh the list.

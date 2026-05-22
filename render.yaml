@@ -49,6 +49,10 @@ services:
         sync: false
       - key: CLERK_SECRET_KEY
         sync: false
+      # Milestone 21 — JWKS endpoint used to verify Clerk JWTs.  Missing or
+      # placeholder values cause every protected route to return HTTP 503.
+      - key: CLERK_JWKS_URL
+        sync: false
 
   # ── Celery worker ────────────────────────────────────────────────────────────
   # Processes sync tasks enqueued by POST /syncs.
@@ -74,4 +78,8 @@ services:
       - key: ENCRYPTION_KEY
         sync: false
       - key: CLERK_SECRET_KEY
+        sync: false
+      # Worker doesn't verify JWTs at runtime; setting CLERK_JWKS_URL keeps
+      # the image surface identical to the API and avoids drift.
+      - key: CLERK_JWKS_URL
         sync: false

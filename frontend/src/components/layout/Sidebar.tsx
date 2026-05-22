@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { UserButton } from "@clerk/nextjs";
 
 interface NavItem {
   label: string;
@@ -68,8 +69,19 @@ export default function Sidebar() {
         </ul>
       </nav>
 
-      {/* Footer */}
-      <div className="px-6 py-4 border-t border-border">
+      {/* Footer — UserButton + version */}
+      <div
+        className="px-6 py-4 border-t border-border flex items-center justify-between"
+        style={{ gap: "12px" }}
+      >
+        <UserButton
+          afterSignOutUrl="/sign-in"
+          appearance={{
+            elements: {
+              avatarBox: { width: 28, height: 28 },
+            },
+          }}
+        />
         <p className="text-textTertiary text-xs">v0.1.0</p>
       </div>
     </aside>

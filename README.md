@@ -1370,11 +1370,112 @@ Three non-trivial issues were diagnosed and resolved during deployment:
 
 Full notes: [`docs/deployment.md`](docs/deployment.md)
 
-### Current auth state — private use only
+---
 
-The backend runs in **dev mode** (no Clerk JWT validation).  All API requests
-share a single internal dev user.  Do **not** share the app URL publicly and do
-**not** set a real `CLERK_SECRET_KEY` until Milestone 21 is complete.
+## Authentication and User Isolation (Milestone 21)
+
+Milestone 21 replaces the placeholder dev-mode auth with real Clerk JWT
+verification on the backend and a Clerk-hosted sign-in / sign-up flow on the
+frontend.  Every protected route now scopes data to the authenticated user.
+
+### What it adds
+
+- **Clerk JWKS verification (backend)** — `backend/app/core/auth.py` rewritten
+  to verify RS256 JWTs locally against Clerk's JWKS endpoint.  No Clerk SDK
+  required; uses the existing `python-jose` and `httpx` dependencies.  The
+  JWKS is cached for 5 minutes; a token with an unknown `kid` forces a refresh
+  to handle key rotation.  Stale cache is used as a fallback for up to 1 hour
+  on transient JWKS fetch failures.
+- **Production fail-closed guarantee** — when `ENVIRONMENT=production` and
+  `CLERK_JWKS_URL` is missing or a placeholder, every protected route returns
+  **HTTP 503** before any token parsing.  The dev-mode branch is unreachable
+  in production regardless of other env vars or headers.
+- **Local dev-mode preserved** — when `ENVIRONMENT != production` AND
+  `CLERK_JWKS_URL` is not set, the backend behaves exactly as before:
+  auto-creates `dev@configtrace.local`, accepts the `X-Dev-User-Email` header
+  override.  No Clerk account needed to run the backend locally.
+- **Worker ownership guard** — `backend/app/workers/sync_task.py` now verifies
+  that `integration.user_id` matches the `user_id` task argument before
+  fetching any data.  Refuses to run on mismatch with a clear `ValueError`,
+  even if the API path was somehow bypassed.
+- **Frontend Clerk integration** — `@clerk/nextjs` v6.10.x added.
+  `<ClerkProvider>` wraps the root layout; `middleware.ts` protects every
+  route except `/sign-in/*`, `/sign-up/*`, and static assets.  Sign-in and
+  sign-up are handled by Clerk's hosted components at
+  `/sign-in/[[...sign-in]]` and `/sign-up/[[...sign-up]]`.  A `<UserButton>`
+  in the sidebar footer surfaces account/sign-out actions.
+- **Token-aware API client** — every function in `frontend/src/lib/api.ts`
+  accepts an optional `token` parameter and sends it as
+  `Authorization: Bearer <token>`.  Pages call `useAuth().getToken()` in
+  effects before each fetch; sub-components (`IntegrationList`,
+  `CloudflareIntegrationForm`) call it directly.
+- **Backend test suite for M21** — `backend/tests/test_milestone21.py` covers
+  production fail-closed, missing/malformed/expired/invalid-key tokens,
+  valid-token user upsert, JWKS cache reuse, dev-mode preservation, and the
+  worker ownership guard.  All 14 tests pass; the full backend suite is 165
+  tests, also passing.
+
+### Local development setup after M21
+
+Local **backend** still works without any Clerk env vars — dev mode is
+unchanged.  Local **frontend** requires a Clerk development application:
+
+1. Create a free dev application at [dashboard.clerk.com](https://dashboard.clerk.com)
+2. Copy the `pk_test_...` value into your `.env`:
+
+   ```
+   NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+   ```
+
+3. (Optional) If you want to test the production auth path locally, also set:
+
+   ```
+   CLERK_JWKS_URL=https://<your-dev-frontend-api>.clerk.accounts.dev/.well-known/jwks.json
+   ```
+
+   With both set, the backend verifies the JWT for real instead of falling
+   back to dev-mode auth — useful for catching token-threading bugs.
+
+### Environment variables added
+
+| Variable | Required where | Description |
+|---|---|---|
+| `CLERK_JWKS_URL` | Production backend | JWKS endpoint Clerk publishes its RS256 public keys at.  Missing in production → HTTP 503 on every route. |
+| `CLERK_ISSUER` | Optional | If set, the JWT `iss` claim must match exactly. |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Frontend (local + prod) | Required for `<ClerkProvider>` to initialize.  Missing → app fails to render. |
+
+`CLERK_SECRET_KEY` is **not** used by the M21 verification path (it would
+be for Clerk's management API in a future milestone).
+
+### Behaviour matrix
+
+| Environment | `CLERK_JWKS_URL` set? | Result |
+|---|---|---|
+| `development` | No | Dev mode — auto-creates `dev@configtrace.local`. |
+| `development` | Yes | Real JWT verification; requires Authorization header. |
+| `production` | No | **503** on every protected route. |
+| `production` | Yes | Real JWT verification; **401** on missing/invalid/expired token. |
+
+### Production roll-out steps
+
+1. In Clerk → API Keys, copy:
+   - the **JWKS URL** → set as `CLERK_JWKS_URL` on both Render services
+   - the **publishable key** → set as `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in Vercel
+2. Add the production frontend origin(s) to Clerk → Domains
+   (`app.configtrace.org`).
+3. Deploy backend then frontend.  Smoke test:
+   - `curl https://api.configtrace.org/integrations` → 401 (unauthenticated)
+   - Sign in at `https://app.configtrace.org/sign-in` → integrations page loads
+4. Re-create your Cloudflare integration in the new authenticated session.
+   The pre-existing integration created under the old dev user is now
+   invisible (intentional — no automatic reassignment).
+
+---
+
+Production now enforces Clerk JWT authentication on every protected route.
+Each authenticated user only ever sees their own integrations, resources,
+snapshots, and changes — see the Milestone 21 section below for the full
+behaviour matrix.
 
 ---
 
@@ -1402,4 +1503,4 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 18: MVP Demo Polish
 - [x] Milestone 19: Production Deployment Preparation
 - [x] Milestone 20: Production deployment — all services live, smoke test passed
-- [ ] Milestone 21: Authentication and User Isolation ← **next**
+- [x] Milestone 21: Authentication and User Isolation — Clerk JWTs, production fail-closed, multi-user data scoping

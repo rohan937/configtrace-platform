@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useAuth } from "@clerk/nextjs";
 import type { ChangeListItem, Integration, ResourceListItem } from "@/types";
 import { getChanges, getIntegrations, getResources } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
@@ -69,16 +70,19 @@ export default function DashboardPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
+    if (!isLoaded) return;
     let cancelled = false;
 
     async function load() {
       try {
+        const token = await getToken();
         const [changesData, resourcesData, integrationsData] = await Promise.all([
-          getChanges({ page_size: 20 }),
-          getResources({ page_size: 100 }),
-          getIntegrations(),
+          getChanges({ page_size: 20 }, token),
+          getResources({ page_size: 100 }, token),
+          getIntegrations(token),
         ]);
         if (!cancelled) {
           setChanges(changesData.items);
@@ -100,7 +104,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isLoaded, getToken]);
 
   // ── Derived stats ─────────────────────────────────────────────────────────
 

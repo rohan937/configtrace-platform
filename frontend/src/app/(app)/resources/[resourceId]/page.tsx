@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useAuth } from "@clerk/nextjs";
 import type { ResourceDetail, SnapshotListItem, ChangeListItem, DnsRecord } from "@/types";
 import { getResource, getResourceSnapshots, getResourceChanges } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
@@ -252,20 +253,23 @@ export default function ResourceDetailPage() {
   const [selectedSnapshot, setSelectedSnapshot] = useState<SnapshotListItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
-    if (!resourceId) return;
+    if (!resourceId || !isLoaded) return;
     let cancelled = false;
 
     setLoading(true);
     setError(null);
 
-    Promise.all([
-      getResource(resourceId),
-      getResourceSnapshots(resourceId, { page_size: 50 }),
-      getResourceChanges(resourceId, { page_size: 50 }),
-    ])
-      .then(([res, snaps, chgs]) => {
+    (async () => {
+      try {
+        const token = await getToken();
+        const [res, snaps, chgs] = await Promise.all([
+          getResource(resourceId, token),
+          getResourceSnapshots(resourceId, { page_size: 50 }, token),
+          getResourceChanges(resourceId, { page_size: 50 }, token),
+        ]);
         if (cancelled) return;
         setResource(res);
         setSnapshots(snaps.items);
@@ -274,19 +278,18 @@ export default function ResourceDetailPage() {
         if (snaps.items.length > 0) {
           setSelectedSnapshot(snaps.items[0]);
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load resource.");
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [resourceId]);
+  }, [resourceId, isLoaded, getToken]);
 
   // ── Loading / error ──────────────────────────────────────────────────────
 

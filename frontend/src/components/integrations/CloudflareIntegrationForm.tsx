@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 import { createIntegration } from "@/lib/api";
 
 interface CloudflareIntegrationFormProps {
@@ -54,6 +55,7 @@ export default function CloudflareIntegrationForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const { getToken } = useAuth();
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -68,12 +70,16 @@ export default function CloudflareIntegrationForm({
     setSubmitting(true);
 
     try {
-      await createIntegration({
-        provider: "cloudflare",
-        display_name: displayName.trim(),
-        api_token: apiToken,   // sent once; cleared below
-        zone_id: zoneId.trim(),
-      });
+      const token = await getToken();
+      await createIntegration(
+        {
+          provider: "cloudflare",
+          display_name: displayName.trim(),
+          api_token: apiToken,   // sent once; cleared below
+          zone_id: zoneId.trim(),
+        },
+        token,
+      );
 
       // Clear the sensitive field immediately — do not keep it in state.
       setApiToken("");
