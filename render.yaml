@@ -18,6 +18,7 @@ services:
   - type: web
     name: configtrace-api
     runtime: docker
+    plan: free
     rootDir: backend
     dockerfilePath: ./Dockerfile
     # Render injects $PORT at runtime. dockerCommand overrides the Dockerfile CMD
@@ -55,6 +56,7 @@ services:
   - type: worker
     name: configtrace-worker
     runtime: docker
+    plan: free
     rootDir: backend
     dockerfilePath: ./Dockerfile
     dockerCommand: celery -A app.workers.celery_app worker --loglevel=info
