@@ -43,6 +43,15 @@ function valueDisplay(change: ChangeListItem): string | null {
   }
 }
 
+// ── Risk-level left edge indicator ───────────────────────────────────────────
+// An inset box-shadow paints a 2px left stripe for alarming risk levels
+// without touching the padding or layout — it sits inside the border-box.
+
+const RISK_LEFT_SHADOW: Partial<Record<string, string>> = {
+  critical: "inset 2px 0 0 #e84040",
+  high:     "inset 2px 0 0 #f5632a",
+};
+
 /**
  * A single flat row in a change list.
  *
@@ -51,10 +60,14 @@ function valueDisplay(change: ChangeListItem): string | null {
  *
  * Secondary line (when present):
  *   [value diff in monospace] · [risk_reason in italic]
+ *
+ * Critical and High rows show a 2px coloured left edge via inset box-shadow
+ * so scanners can spot alarming changes without reading the badge.
  */
 export default function ChangeRow({ change }: ChangeRowProps) {
   const valLine = valueDisplay(change);
   const showSecondary = Boolean(valLine || change.risk_reason);
+  const leftShadow = RISK_LEFT_SHADOW[change.risk_level] ?? "none";
 
   return (
     <Link
@@ -66,6 +79,7 @@ export default function ChangeRow({ change }: ChangeRowProps) {
         textDecoration: "none",
         display: "flex",
         cursor: "pointer",
+        boxShadow: leftShadow,
       }}
     >
       {/* ── Main row ───────────────────────────────────────────────── */}

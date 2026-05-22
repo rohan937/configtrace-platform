@@ -1051,6 +1051,217 @@ curl "http://localhost:8000/changes" | python3 -m json.tool
 curl "http://localhost:8000/changes/{change_id}" | python3 -m json.tool
 ```
 
+## MVP Demo Polish (Milestone 18)
+
+Milestone 18 makes ConfigTrace demo-ready: the dashboard is now aware of
+where you are in the setup flow, the integration form tells you exactly which
+Cloudflare permissions to grant, and every list surface highlights alarming
+changes at a glance.
+
+### What it adds
+
+- **Dashboard empty-state intelligence** — the dashboard now fetches
+  integrations, resources, and changes in parallel and shows a contextual
+  next-step prompt at each stage of the setup flow:
+  - *No integrations* → "Connect a Cloudflare zone to start monitoring…"
+  - *Integration exists, no resources yet* → "Run your first sync to create
+    a baseline…"
+  - *Baseline exists, no changes yet* → "Make a DNS change in Cloudflare,
+    then sync again…"
+  - *Changes exist* → the normal ChangeList, with a "View all N →" link to
+    the full Timeline.
+- **Dashboard stat improvements** — "Changes detected" now shows the total
+  from the API (`data.total`), not just the count of the loaded page.
+  Critical and High stats render in their risk colours when non-zero.
+  "Last change" time appears in the stat bar once any changes exist.
+- **Integration form — required permissions block** — a compact inline box
+  below the API token field lists the exact Cloudflare permission scopes
+  needed (`Zone → DNS → Read`, `Zone → Zone → Read`, specific zone scope).
+  The Zone ID field now explains where to find it (domain Overview sidebar).
+- **Risk-level row indicator** — Critical and High change rows across the
+  Dashboard, Timeline, and Resource detail page now show a 2 px coloured
+  left edge (red for critical, orange-red for high) via inset `box-shadow`.
+  Layout and padding are unaffected; the indicator is purely additive.
+- **`StatBlock` `valueColor` prop** — allows individual stats to render their
+  value in a custom colour without duplicating the component.
+- **`.gitignore` hardening** — added `*.db` catch-all alongside the existing
+  `backend/test.db` entry so stray SQLite test databases are never staged.
+
+---
+
+## MVP Demo Runbook
+
+Use this runbook to walk through the full ConfigTrace demo end-to-end, from
+a clean start to inspecting a detected DNS change.
+
+### A. Start the backend stack
+
+```bash
+# Start API + Postgres + Redis + Celery worker
+docker compose --profile celery up --build
+
+# In a separate terminal — run database migrations
+docker compose exec api alembic upgrade head
+```
+
+Verify the stack is healthy:
+
+```bash
+curl http://localhost:8000/health
+# → {"status":"ok","timestamp":"...","version":"0.1.0"}
+
+curl http://localhost:8000/health/db
+# → {"status":"ok","database":"connected","timestamp":"..."}
+```
+
+### B. Start the frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+# → http://localhost:3000
+```
+
+### C. (Optional) Load seed data for instant demo content
+
+```bash
+docker compose exec api python scripts/seed_dev_data.py
+```
+
+This creates one Cloudflare integration (with fake credentials), one DNS zone
+resource (`example.com`), three historical snapshots, and five changes across
+all risk levels — enough to demonstrate every UI surface without needing a
+real Cloudflare account.
+
+```bash
+# Confirm seed data is visible
+curl http://localhost:8000/changes | python3 -m json.tool
+curl http://localhost:8000/resources | python3 -m json.tool
+```
+
+### D. Real Cloudflare end-to-end flow
+
+**Step 1 — Create a Cloudflare API token**
+
+1. Log in to [dash.cloudflare.com](https://dash.cloudflare.com)
+2. Go to **My Profile → API Tokens → Create Token**
+3. Use **Create Custom Token**
+4. Add these permission rows:
+   - `Zone` → `DNS` → `Read`
+   - `Zone` → `Zone` → `Read`
+5. Under **Zone Resources**, select **Specific zone** → pick your domain
+6. Click **Continue to summary** → **Create Token**
+7. Copy the token — you will not see it again
+
+**Step 2 — Find your Zone ID**
+
+1. In the Cloudflare dashboard, select your domain
+2. On the **Overview** page, scroll to the right sidebar
+3. Copy the **Zone ID** (32-character hex string)
+
+**Step 3 — Connect in ConfigTrace**
+
+1. Open http://localhost:3000/integrations
+2. Click **Add New Integration**
+3. Fill in:
+   - Display Name: e.g. `Production Zone`
+   - API Token: paste from Step 1
+   - Zone ID: paste from Step 2
+4. Click **Connect Cloudflare**
+
+**Step 4 — Take a baseline snapshot**
+
+1. On the Integrations page, click **Sync Now** for your new integration
+2. Wait for "Sync complete — N snapshots, 0 changes detected."
+   *(First sync always shows 0 changes — this is the baseline)*
+3. Open http://localhost:3000/resources to confirm the zone appeared
+
+**Step 5 — Make a DNS change in Cloudflare**
+
+Make a safe, reversible change such as:
+- Add a new TXT record (e.g. `_test.yourdomain.com`)
+- Change the TTL on an existing A record
+- Add a comment to any record
+
+**Step 6 — Sync again**
+
+1. Return to http://localhost:3000/integrations
+2. Click **Sync Now** again
+3. Wait for "Sync complete — N snapshots, M changes detected."
+4. Open http://localhost:3000/dashboard — the change appears in the stat bar
+   and the Recent Changes list
+
+**Step 7 — Inspect the change**
+
+| URL | What you see |
+|---|---|
+| http://localhost:3000/timeline | All changes, filterable by risk / type / time |
+| http://localhost:3000/changes/{id} | Full change detail: risk explanation, before/after diff, snapshot context |
+| http://localhost:3000/resources | All monitored zones — click to open resource history |
+| http://localhost:3000/resources/{id} | Snapshot history + DNS state table + resource-specific changes |
+
+**Step 8 — Revert and re-sync (optional)**
+
+Undo the Cloudflare change, then run Sync Now a third time to see the
+reversion appear as its own change row in the timeline.
+
+### E. Useful API checks during a demo
+
+```bash
+# Health
+curl http://localhost:8000/health
+curl http://localhost:8000/health/db
+
+# Data
+curl http://localhost:8000/integrations | python3 -m json.tool
+curl http://localhost:8000/resources | python3 -m json.tool
+curl http://localhost:8000/changes | python3 -m json.tool
+curl "http://localhost:8000/changes?risk_level=critical" | python3 -m json.tool
+curl "http://localhost:8000/changes?risk_level=high" | python3 -m json.tool
+
+# Detail (replace {id} with real UUID from the above)
+curl http://localhost:8000/changes/{id} | python3 -m json.tool
+curl http://localhost:8000/resources/{id}/snapshots | python3 -m json.tool
+```
+
+### F. Files that must never be committed
+
+| Path | Why |
+|---|---|
+| `.env` | Contains real credentials and secrets |
+| `backend/test.db` / `*.db` | SQLite test artefact, not production data |
+| `node_modules/` | Rebuilt by `npm install` |
+| `frontend/.next/` | Built by `npm run build` |
+| `backend/.venv/` | Rebuilt by `pip install` |
+
+All of the above are covered by `.gitignore`. Run `git status` before every
+commit to confirm no secrets or build artefacts are staged.
+
+---
+
+## MVP Demo Checklist
+
+Run through this list before every demo or handoff:
+
+- [ ] `npm run build` passes with zero TypeScript errors
+- [ ] `curl http://localhost:8000/health` returns `{"status":"ok",...}`
+- [ ] `curl http://localhost:8000/health/db` returns `{"status":"ok","database":"connected",...}`
+- [ ] Dashboard empty state shows "Connect Cloudflare" when no integrations exist
+- [ ] Cloudflare integration can be created via the form
+- [ ] First sync completes and shows "0 changes detected" (baseline)
+- [ ] Dashboard empty state updates to "Baseline captured" after first sync
+- [ ] A DNS change in Cloudflare is detected on the second sync
+- [ ] Dashboard stat bar shows the correct change count and risk counts
+- [ ] Timeline shows the change with the correct risk badge and row indicator
+- [ ] Clicking a change row opens `/changes/{id}` with full detail
+- [ ] Change detail shows Before/After diff (modified) or record table (added/removed)
+- [ ] Resource list shows the zone; clicking it opens the resource detail page
+- [ ] Resource detail shows snapshot history and DNS state table
+- [ ] No `.env`, `*.db`, or credential files are staged (`git status` is clean)
+
+---
+
 ## Build milestones
 
 The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/MVPBuildPlan.txt). Current status:
@@ -1071,5 +1282,5 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 14: Cloudflare Integration Setup UI
 - [x] Milestone 15: Change Timeline Page
 - [x] Milestone 16: Resource History Page
-- [x] Milestone 17: Change Detail Page ← **you are here**
-- [ ] Milestone 18: MVP demo script
+- [x] Milestone 17: Change Detail Page
+- [x] Milestone 18: MVP Demo Polish ← **you are here**

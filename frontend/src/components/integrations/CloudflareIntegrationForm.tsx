@@ -152,7 +152,7 @@ export default function CloudflareIntegrationForm({
               type="password"
               value={apiToken}
               onChange={(e) => setApiToken(e.target.value)}
-              placeholder="Your Cloudflare API token"
+              placeholder="Cloudflare API token"
               disabled={submitting}
               autoComplete="new-password"
               style={{
@@ -168,9 +168,31 @@ export default function CloudflareIntegrationForm({
               }}
             />
             <p style={HELPER_STYLE}>
-              Use a restricted Cloudflare API token with DNS read access.
-              Credentials are encrypted by the backend and never shown again.
+              Use a restricted API token, not your Global API Key. Credentials are
+              encrypted server-side and never shown again.
             </p>
+            {/* Required permissions block */}
+            <div
+              style={{
+                marginTop: "8px",
+                background: "#13151a",
+                border: "1px solid #2a2d38",
+                borderRadius: "4px",
+                padding: "8px 12px",
+                fontSize: "11px",
+                color: "#565b6e",
+                lineHeight: 1.7,
+              }}
+            >
+              <span style={{ color: "#8b90a0", display: "block", marginBottom: "2px" }}>
+                Required token permissions:
+              </span>
+              <span style={{ fontFamily: "monospace" }}>Zone → DNS → Read</span>
+              <br />
+              <span style={{ fontFamily: "monospace" }}>Zone → Zone → Read</span>
+              <br />
+              <span style={{ color: "#3a3d4a" }}>Scope: Specific zone only</span>
+            </div>
           </div>
 
           {/* Zone ID */}
@@ -183,7 +205,7 @@ export default function CloudflareIntegrationForm({
               type="text"
               value={zoneId}
               onChange={(e) => setZoneId(e.target.value)}
-              placeholder="32-character hex Zone ID from the Cloudflare dashboard"
+              placeholder="32-character hex Zone ID"
               disabled={submitting}
               style={{
                 ...INPUT_STYLE,
@@ -197,6 +219,10 @@ export default function CloudflareIntegrationForm({
                 e.currentTarget.style.borderColor = "#2a2d38";
               }}
             />
+            <p style={HELPER_STYLE}>
+              Found in the Cloudflare dashboard → select your domain → Overview
+              page → Zone ID (right sidebar).
+            </p>
           </div>
 
           {/* Inline error */}
