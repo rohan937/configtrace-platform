@@ -31,6 +31,11 @@ function ProviderBadge({ resourceType }: { resourceType: string }) {
     color = "#b0b5c4";
     bg = "rgba(176,181,196,0.08)";
     border = "#2a2d38";
+  } else if (type === "stripe_account") {
+    label = "Stripe";
+    color = "#8b90a0";
+    bg = "rgba(99,91,255,0.10)";
+    border = "rgba(99,91,255,0.25)";
   }
 
   if (!label) return null;

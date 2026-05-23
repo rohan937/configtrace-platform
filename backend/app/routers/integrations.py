@@ -18,6 +18,7 @@ Supported providers
 -------------------
 ``cloudflare``  — Credentials: ``api_token`` + ``zone_id``
 ``github``      — Credentials: ``github_token`` + ``repo_owner`` + ``repo_name``
+``stripe``      — Credentials: ``stripe_api_key``
 """
 
 from __future__ import annotations
@@ -103,6 +104,11 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
     Cloudflare:  ``{"api_token": str, "zone_id": str}``
     GitHub:      ``{"github_token": str, "repo_owner": str, "repo_name": str}``
     Vercel:      ``{"vercel_token": str, "vercel_project_id": str}``
+    Stripe:      ``{"stripe_api_key": str}``
+
+    SECURITY (Stripe): ``stripe_api_key`` is passed to the connector for
+    validation and to the encryption layer for storage.  It is NEVER logged,
+    NEVER returned to the frontend, and NEVER stored in plaintext.
     """
     if body.provider == "cloudflare":
         return {
@@ -119,6 +125,11 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
         return {
             "vercel_token":      body.vercel_token,
             "vercel_project_id": body.vercel_project_id,
+        }
+    elif body.provider == "stripe":
+        # SECURITY: stripe_api_key is never logged here or in the service.
+        return {
+            "stripe_api_key": body.stripe_api_key,
         }
     return {}
 
@@ -451,6 +462,13 @@ def reconnect_integration(
                 detail="vercel_token is required for Vercel integrations.",
             )
         new_token = body.vercel_token
+    elif integration.provider == "stripe":
+        if not body.stripe_api_key:
+            raise HTTPException(
+                status_code=422,
+                detail="stripe_api_key is required for Stripe integrations.",
+            )
+        new_token = body.stripe_api_key
     else:
         raise HTTPException(
             status_code=400,

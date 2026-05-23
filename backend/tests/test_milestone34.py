@@ -350,8 +350,16 @@ class TestSettingsValidation:
         assert resp.status_code == 422
 
     def test_invalid_provider_filter_rejected(self, client: TestClient) -> None:
-        resp = client.patch("/settings", json={"default_provider_filter": "stripe"})
+        # "aws" is not a valid provider — should be rejected.
+        # Note: "stripe" was added as a valid provider filter in M35.
+        resp = client.patch("/settings", json={"default_provider_filter": "aws"})
         assert resp.status_code == 422
+
+    def test_stripe_provider_filter_accepted(self, client: TestClient) -> None:
+        """M35: 'stripe' is now a valid provider filter value."""
+        resp = client.patch("/settings", json={"default_provider_filter": "stripe"})
+        assert resp.status_code == 200
+        assert resp.json()["default_provider_filter"] == "stripe"
 
     def test_invalid_interval_120_rejected(self, client: TestClient) -> None:
         resp = client.patch("/settings", json={"default_sync_interval_minutes": 120})

@@ -11,10 +11,11 @@ import CloudflareIntegrationForm from "@/components/integrations/CloudflareInteg
 import GitHubIntegrationForm from "@/components/integrations/GitHubIntegrationForm";
 import GitHubAppConnectCard from "@/components/integrations/GitHubAppConnectCard";
 import VercelIntegrationForm from "@/components/integrations/VercelIntegrationForm";
+import StripeIntegrationForm from "@/components/integrations/StripeIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 
-type Provider = "cloudflare" | "github" | "vercel";
+type Provider = "cloudflare" | "github" | "vercel" | "stripe";
 // GitHub sub-modes: "app" = recommended GitHub App flow, "pat" = advanced PAT flow
 type GitHubMode = "app" | "pat";
 
@@ -116,7 +117,7 @@ export default function IntegrationsPage() {
     <>
       <PageHeader
         title="Integrations"
-        description="Connect Cloudflare and GitHub, trigger syncs, and monitor configuration drift."
+        description="Connect Cloudflare, GitHub, Vercel, and Stripe — trigger syncs and monitor configuration drift."
       />
 
       <div className="px-6 py-6">
@@ -135,7 +136,7 @@ export default function IntegrationsPage() {
           >
             {/* Provider tabs */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "18px" }}>
-              {(["cloudflare", "github", "vercel"] as Provider[]).map((p) => (
+              {(["cloudflare", "github", "vercel", "stripe"] as Provider[]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setSelectedProvider(p)}
@@ -154,7 +155,7 @@ export default function IntegrationsPage() {
                     borderColor: selectedProvider === p ? "rgba(79,128,247,0.35)" : "#2a2d38",
                   }}
                 >
-                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : "Vercel"}
+                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : p === "vercel" ? "Vercel" : "Stripe"}
                 </button>
               ))}
             </div>
@@ -247,6 +248,39 @@ export default function IntegrationsPage() {
                 </p>
               </>
             )}
+
+            {/* Stripe guide */}
+            {selectedProvider === "stripe" && (
+              <>
+                <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+                  How to connect a Stripe account
+                </p>
+                <SetupSteps steps={[
+                  {
+                    heading: "Create a restricted API key.",
+                    body: <>dashboard.stripe.com → Developers → API keys → Create restricted key.
+                      Grant read-only access to: <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Account</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Webhook endpoints</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Payment method configurations</code>,{" "}
+                      and <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Payment method domains</code>.</>,
+                  },
+                  {
+                    heading: "Copy the key.",
+                    body: <>The key starts with <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>rk_live_</code> or <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>rk_test_</code>.
+                      Copy it — it won&apos;t be shown in full again after creation.</>,
+                  },
+                  {
+                    heading: "Connect below.",
+                    body: <>Paste the key into the form. ConfigTrace validates access against your Stripe account before saving.</>,
+                  },
+                ]} />
+                <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+                  Your key is encrypted before storage and never returned in any API response.
+                  ConfigTrace uses read-only access — it never accesses customer data, payment history,
+                  or webhook signing secrets.
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -301,6 +335,22 @@ export default function IntegrationsPage() {
             >
               Add Vercel Integration
             </button>
+            <button
+              onClick={() => { setSelectedProvider("stripe"); setShowForm(true); }}
+              style={{
+                background: "#1e2030",
+                color: "#b0b5c4",
+                border: "1px solid #3a3d4a",
+                borderRadius: "6px",
+                padding: "8px 16px",
+                fontSize: "13px",
+                fontWeight: 500,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Add Stripe Integration
+            </button>
           </div>
         ) : selectedProvider === "cloudflare" ? (
           <CloudflareIntegrationForm
@@ -309,6 +359,11 @@ export default function IntegrationsPage() {
           />
         ) : selectedProvider === "vercel" ? (
           <VercelIntegrationForm
+            onCreated={handleCreated}
+            onCancel={() => setShowForm(false)}
+          />
+        ) : selectedProvider === "stripe" ? (
+          <StripeIntegrationForm
             onCreated={handleCreated}
             onCancel={() => setShowForm(false)}
           />

@@ -20,7 +20,7 @@ const PAGE_SIZE = 20;
 // ── Filter state type ─────────────────────────────────────────────────────────
 
 interface Filters {
-  provider: string;        // "all" | "cloudflare" | "github" | "vercel"
+  provider: string;        // "all" | "cloudflare" | "github" | "vercel" | "stripe"
   integrationId: string;   // "all" | <uuid>
   riskLevel: string;       // "all" | "critical" | "high" | "medium" | "low"
   changeType: string;      // "all" | "added" | "removed" | "modified"
@@ -323,6 +323,7 @@ function TimelineContent() {
             <FilterPill label="Cloudflare" active={filters.provider === "cloudflare"} onClick={() => setFilter("provider", "cloudflare")} />
             <FilterPill label="GitHub" active={filters.provider === "github"} onClick={() => setFilter("provider", "github")} />
             <FilterPill label="Vercel" active={filters.provider === "vercel"} onClick={() => setFilter("provider", "vercel")} />
+            <FilterPill label="Stripe" active={filters.provider === "stripe"} onClick={() => setFilter("provider", "stripe")} />
           </FilterRow>
 
           {/* Integration */}

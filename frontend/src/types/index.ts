@@ -103,9 +103,10 @@ export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
  * Cloudflare: api_token + zone_id (required)
  * GitHub:     github_token + repo_owner + repo_name (required)
  * Vercel:     vercel_token + vercel_project_id (required)
+ * Stripe:     stripe_api_key (required)
  */
 export interface IntegrationCreateRequest {
-  provider: "cloudflare" | "github" | "vercel";
+  provider: "cloudflare" | "github" | "vercel" | "stripe";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -121,6 +122,13 @@ export interface IntegrationCreateRequest {
   vercel_token?: string;
   /** Vercel project ID (prj_xxx) or slug; sent once. */
   vercel_project_id?: string;
+  // ── Stripe fields ──────────────────────────────────────────────────────────
+  /**
+   * Stripe restricted API key (rk_live_... or rk_test_...).
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  stripe_api_key?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */
@@ -315,7 +323,7 @@ export interface DashboardSummary {
 
 export type AlertRiskThreshold = "critical_only" | "high_and_critical" | "medium_and_above";
 export type TimelineRange = "24h" | "7d" | "30d" | "all";
-export type ProviderFilter = "all" | "cloudflare" | "github" | "vercel";
+export type ProviderFilter = "all" | "cloudflare" | "github" | "vercel" | "stripe";
 
 export interface UserSettings {
   // Alert policy

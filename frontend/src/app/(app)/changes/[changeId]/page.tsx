@@ -260,13 +260,14 @@ function AddedRemovedPanel({
 
 // ── Provider-aware helpers ────────────────────────────────────────────────────
 
-/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" */
+/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" | "Stripe account configuration" */
 function getProviderLabel(change: ChangeDetail): string {
   const rt = (
     (change.provider_metadata?.record_type as string | undefined) ?? ""
   ).toLowerCase();
   if (rt.startsWith("github_")) return "GitHub repo configuration";
   if (rt.startsWith("vercel_")) return "Vercel project configuration";
+  if (rt.startsWith("stripe_")) return "Stripe account configuration";
   if (change.provider_metadata?.record_type) return "Cloudflare DNS";
   return "Cloudflare DNS";
 }
@@ -349,6 +350,51 @@ function getChangeSummary(change: ChangeDetail): string {
   }
   if (rt.startsWith("vercel_")) {
     return `A Vercel configuration record changed (${rt}).`;
+  }
+
+  // Stripe
+  if (rt === "stripe_account_settings") {
+    if (fp === "charges_enabled" && nv === false) return "Charges were disabled on this Stripe account.";
+    if (fp === "charges_enabled") return "Stripe charges enabled status changed.";
+    if (fp === "payouts_enabled" && nv === false) return "Payouts were disabled on this Stripe account.";
+    if (fp === "payouts_enabled") return "Stripe payouts enabled status changed.";
+    if (fp === "payout_schedule_interval") return `The Stripe payout schedule changed to ${String(nv)}.`;
+    if (fp === "default_currency") return `The Stripe account default currency changed to ${String(nv)}.`;
+    if (fp === "business_name") return `The Stripe account business name changed to ${String(nv)}.`;
+    if (fp === "display_name") return `The Stripe dashboard display name changed to ${String(nv)}.`;
+    if (fp === "support_email") return "The Stripe account support email changed.";
+    if (fp === "branding_primary_color") return `The Stripe branding primary color changed to ${String(nv)}.`;
+    return "A Stripe account setting changed.";
+  }
+  if (rt === "stripe_webhook_endpoint") {
+    if (change.change_type === "removed") return `A Stripe webhook endpoint was deleted.`;
+    if (change.change_type === "added")   return `A new Stripe webhook endpoint was added.`;
+    if (fp === "url") return "The Stripe webhook delivery URL changed.";
+    if (fp === "status" && nv === "disabled") return "A Stripe webhook endpoint was disabled.";
+    if (fp === "status") return "A Stripe webhook endpoint was re-enabled.";
+    if (fp === "enabled_events") return "The event types subscribed to by a Stripe webhook changed.";
+    if (fp === "api_version") return `The Stripe webhook API version changed to ${String(nv)}.`;
+    return "A Stripe webhook setting changed.";
+  }
+  if (rt === "stripe_payment_method_configuration") {
+    if (change.change_type === "removed") return "A Stripe payment method configuration was removed.";
+    if (change.change_type === "added")   return "A new Stripe payment method configuration was added.";
+    if (fp === "enabled_payment_methods") return "The set of enabled payment methods in a Stripe configuration changed.";
+    if (fp === "is_default") return "The default Stripe payment method configuration changed.";
+    return "A Stripe payment method configuration changed.";
+  }
+  if (rt === "stripe_payment_method_domain") {
+    if (change.change_type === "removed") return "A Stripe payment method domain was removed.";
+    if (change.change_type === "added")   return "A new Stripe payment method domain was added.";
+    if (fp === "apple_pay_enabled" && nv === false) return "Apple Pay was disabled for a Stripe payment method domain.";
+    if (fp === "apple_pay_enabled") return "Apple Pay was enabled for a Stripe payment method domain.";
+    if (fp === "google_pay_enabled" && nv === false) return "Google Pay was disabled for a Stripe payment method domain.";
+    if (fp === "google_pay_enabled") return "Google Pay was enabled for a Stripe payment method domain.";
+    if (fp === "enabled" && nv === false) return "A Stripe payment method domain was disabled.";
+    return "A Stripe payment method domain setting changed.";
+  }
+  if (rt.startsWith("stripe_")) {
+    return `A Stripe configuration record changed (${rt}).`;
   }
 
   // Cloudflare DNS
@@ -483,6 +529,64 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Review the Vercel project settings in the Vercel dashboard.",
       "Verify recent deployments are functioning correctly.",
       "Restore the previous setting if this was accidental.",
+    ];
+  }
+
+  // Stripe
+  if (rt === "stripe_webhook_endpoint") {
+    const fp3 = change.field_path ?? "";
+    if (fp3 === "url") {
+      return [
+        "Confirm the webhook URL change was intentional.",
+        "Verify the new endpoint URL is under your control.",
+        "Check the Stripe Dashboard → Developers → Webhooks.",
+        "Test that events are being delivered to the new URL.",
+        "Restore the previous URL immediately if this was unauthorized.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the webhook deletion was intentional.",
+        "Verify that no services rely on events from this endpoint.",
+        "Re-add the endpoint in the Stripe Dashboard if this was accidental.",
+        "Check Stripe event delivery logs for missed events.",
+      ];
+    }
+    return [
+      "Confirm the webhook change was intentional.",
+      "Verify the delivery URL and subscribed events are correct.",
+      "Check the Stripe Dashboard → Developers → Webhooks.",
+      "Test that events are being received by the correct endpoint.",
+    ];
+  }
+  if (rt === "stripe_account_settings") {
+    if (change.field_path === "charges_enabled" || change.field_path === "payouts_enabled") {
+      return [
+        "Confirm this change was intentional — this is a service-impacting event.",
+        "Check your Stripe Dashboard → Account → Business settings for alerts.",
+        "Contact Stripe support if this was triggered unexpectedly.",
+        "Verify that payment flows and payouts are operational.",
+      ];
+    }
+    return [
+      "Confirm the Stripe account setting change was intentional.",
+      "Review your Stripe Dashboard → Account → Business settings.",
+      "Verify that checkout and payout flows still function correctly.",
+    ];
+  }
+  if (rt === "stripe_payment_method_domain") {
+    return [
+      "Confirm the payment method domain change was intentional.",
+      "Verify Apple Pay and Google Pay still work on your checkout pages.",
+      "Check the Stripe Dashboard → Settings → Payment methods → Domains.",
+      "Re-add the domain if it was accidentally removed.",
+    ];
+  }
+  if (rt.startsWith("stripe_")) {
+    return [
+      "Confirm the Stripe configuration change was intentional.",
+      "Review your Stripe Dashboard for related settings.",
+      "Verify that checkout and payment flows still function correctly.",
     ];
   }
 
@@ -916,6 +1020,7 @@ export default function ChangeDetailPage() {
   const checks        = getSuggestedChecks(change);
   const isGitHub      = providerLabel === "GitHub repo configuration";
   const isVercel      = providerLabel === "Vercel project configuration";
+  const isStripe      = providerLabel === "Stripe account configuration";
 
   return (
     <>
@@ -1091,15 +1196,15 @@ export default function ChangeDetailPage() {
             {change.change_type === "modified"
               ? "What changed"
               : change.change_type === "added"
-              ? (isGitHub || isVercel) ? "Configuration added" : "DNS record added"
-              : (isGitHub || isVercel) ? "Configuration removed" : "DNS record removed"}
+              ? (isGitHub || isVercel || isStripe) ? "Configuration added" : "DNS record added"
+              : (isGitHub || isVercel || isStripe) ? "Configuration removed" : "DNS record removed"}
           </SectionLabel>
 
           <Panel>
             {change.change_type === "modified" ? (
               <ModifiedDiffPanel change={change} />
             ) : (
-              <AddedRemovedPanel change={change} isGitHub={isGitHub || isVercel} />
+              <AddedRemovedPanel change={change} isGitHub={isGitHub || isVercel || isStripe} />
             )}
           </Panel>
         </div>

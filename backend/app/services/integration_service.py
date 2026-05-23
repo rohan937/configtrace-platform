@@ -16,6 +16,11 @@ Supported providers
 ``vercel``
     Creates one Resource of type ``vercel_project`` (keyed by Project ID).
     Enforces uniqueness: a given user cannot connect the same project ID twice.
+``stripe``
+    Creates one Resource of type ``stripe_account`` (keyed by Stripe account ID).
+    Enforces uniqueness: a given user cannot connect the same Stripe account twice.
+    The ``stripe_api_key`` is encrypted and never returned.  Customer PII, payment
+    data, and webhook signing secrets are NEVER fetched or stored.
 """
 
 from __future__ import annotations
@@ -55,7 +60,8 @@ def create_integration(
 
     Args:
         user_id:                UUID of the authenticated user.
-        provider:               ``"cloudflare"``, ``"github"``, or ``"vercel"``.
+        provider:               ``"cloudflare"``, ``"github"``, ``"vercel"``,
+                                or ``"stripe"``.
         display_name:           User-supplied label shown in the integrations list.
         credentials:            Provider-specific dict — see module docstring.
         scheduled_sync_enabled: Whether to enable scheduled sync immediately.
@@ -71,7 +77,7 @@ def create_integration(
         The newly persisted ``Integration`` object.
 
     Raises:
-        ValueError:           Unsupported provider, or duplicate GitHub repo.
+        ValueError:           Unsupported provider, or duplicate resource.
         AuthenticationError:  Provider returns 401/403.
         ConnectorError:       Provider returns another API error.
         NetworkError:         Transport-level failure reaching the provider.
@@ -104,10 +110,19 @@ def create_integration(
             sync_interval_minutes=sync_interval_minutes,
             db=db,
         )
+    elif provider == "stripe":
+        return _create_stripe_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
-            "Supported values: 'cloudflare', 'github', 'vercel'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe'."
         )
 
 
@@ -303,6 +318,87 @@ def _create_vercel_integration(
     db.add(resource)
 
     # ── 6. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_stripe_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Stripe integration + account resource.
+
+    Uniqueness enforcement: a given user cannot connect the same Stripe
+    account ID twice.  Different users connecting the same account is allowed
+    (multi-team support).
+
+    SECURITY:
+    - ``stripe_api_key`` is never logged, never returned, and is only used
+      transiently during validation before being passed to the encryption layer.
+    - Customer PII, payment data, and webhook signing secrets are NEVER fetched.
+    """
+    from app.connectors.stripe import StripeConnector
+
+    # ── 1. Validate credentials against the live API ─────────────────────────
+    # This also fetches the account ID (via /v1/account) which we use as the
+    # stable resource identifier.
+    connector = StripeConnector()
+    connector.validate_credentials(credentials)
+
+    # ── 2. Fetch the account ID for the resource identifier ──────────────────
+    # SECURITY: do not log the API key.
+    account_data = connector._get(credentials, "/v1/account")
+    account_id: str = account_data.get("id", "")
+
+    # ── 3. Duplicate-account check (same user, same Stripe account) ──────────
+    existing = (
+        db.query(Resource)
+        .filter(
+            Resource.user_id == user_id,
+            Resource.provider_resource_type == "stripe_account",
+            Resource.provider_resource_id == account_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        raise ValueError("This Stripe account is already connected.")
+
+    # ── 4. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 5. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="stripe",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+    )
+    db.add(integration)
+    db.flush()  # Populate integration.id before the Resource FK reference
+
+    # ── 6. Create Resource row for the Stripe account ─────────────────────────
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="stripe_account",
+        provider_resource_id=account_id,
+        display_name=f"{display_name} ({account_id})",
+        resource_metadata={"stripe_account_id": account_id},
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 7. Commit ─────────────────────────────────────────────────────────────
     db.commit()
     db.refresh(integration)
     return integration
@@ -522,6 +618,13 @@ def reconnect_credentials(
             "vercel_project_id": existing_creds["vercel_project_id"],
         }
         VercelConnector().validate_credentials(new_creds)
+
+    elif integration.provider == "stripe":
+        from app.connectors.stripe import StripeConnector
+        new_creds = {
+            "stripe_api_key": new_token,
+        }
+        StripeConnector().validate_credentials(new_creds)
 
     else:
         raise ValueError(

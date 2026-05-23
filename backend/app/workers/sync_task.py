@@ -235,6 +235,12 @@ def sync_integration(
 
                 connector = VercelConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "stripe":
+                # SECURITY: credentials["stripe_api_key"] is NEVER logged.
+                from app.connectors.stripe import StripeConnector
+
+                connector = StripeConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

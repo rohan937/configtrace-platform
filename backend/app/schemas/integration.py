@@ -13,6 +13,8 @@ Supported providers
     Credentials: ``github_token`` + ``repo_owner`` + ``repo_name``.
 ``vercel``
     Credentials: ``vercel_token`` + ``vercel_project_id``.
+``stripe``
+    Credentials: ``stripe_api_key``.
 
 Provider-specific fields are made optional at the Pydantic level and
 cross-validated by ``validate_provider_fields`` to produce clear error
@@ -39,11 +41,11 @@ class IntegrationCreateRequest(BaseModel):
     is present for the chosen provider.
     """
 
-    provider: Literal["cloudflare", "github", "vercel"] = Field(
+    provider: Literal["cloudflare", "github", "vercel", "stripe"] = Field(
         ...,
         description=(
             "Provider identifier. "
-            "Supported values: 'cloudflare', 'github', 'vercel'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe'."
         ),
     )
     display_name: str = Field(
@@ -121,6 +123,19 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Stripe fields ─────────────────────────────────────────────────────────
+    stripe_api_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Stripe restricted API key with read-only permissions. "
+            "Create at dashboard.stripe.com → Developers → API keys → "
+            "Create restricted key. "
+            "Required when provider='stripe'. "
+            "Stored encrypted — never returned in API responses."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_provider_fields(self) -> "IntegrationCreateRequest":
         """Ensure the correct credential fields are present for the provider."""
@@ -154,6 +169,11 @@ class IntegrationCreateRequest(BaseModel):
             if not self.vercel_project_id:
                 raise ValueError(
                     "vercel_project_id is required for Vercel integrations."
+                )
+        elif self.provider == "stripe":
+            if not self.stripe_api_key:
+                raise ValueError(
+                    "stripe_api_key is required for Stripe integrations."
                 )
         return self
 
@@ -246,6 +266,13 @@ class IntegrationReconnectRequest(BaseModel):
         min_length=1,
         description=(
             "New Vercel personal access token. Required for Vercel integrations."
+        ),
+    )
+    stripe_api_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Stripe restricted API key. Required for Stripe integrations."
         ),
     )
 

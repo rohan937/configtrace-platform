@@ -83,6 +83,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.vercel import classify_vercel_change
         return classify_vercel_change(change)
 
+    if record_type.startswith("stripe_"):
+        from app.services.risk_rules.stripe import classify_stripe_change
+        return classify_stripe_change(change)
+
     return classify_dns_change(change)
 
 

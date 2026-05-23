@@ -230,6 +230,15 @@ def _classify_auth(
                 "Reconnect this integration with a new token."
             ),
         )
+    if provider == "stripe":
+        return FailureClassification(
+            category="authentication",
+            error_code="stripe_key_revoked",
+            recommended_action=(
+                "Your Stripe API key was revoked or expired. "
+                "Reconnect this integration with a new restricted API key."
+            ),
+        )
     # Unknown provider
     return FailureClassification(
         category="authentication",
@@ -273,6 +282,15 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "Verify the Project ID is correct."
                 ),
             )
+        if provider == "stripe":
+            return FailureClassification(
+                category="resource_missing",
+                error_code="stripe_account_not_found",
+                recommended_action=(
+                    "The Stripe account resource was not found. "
+                    "Verify the API key has access to this account."
+                ),
+            )
         return FailureClassification(
             category="resource_missing",
             error_code="resource_not_found",
@@ -289,6 +307,8 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
             code = "cloudflare_api_unavailable"
         elif provider == "vercel":
             code = "vercel_api_unavailable"
+        elif provider == "stripe":
+            code = "stripe_api_unavailable"
         else:
             code = "provider_unavailable"
         return FailureClassification(

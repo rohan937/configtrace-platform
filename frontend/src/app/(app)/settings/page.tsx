@@ -559,6 +559,7 @@ export default function SettingsPage() {
                     { value: "cloudflare", label: "Cloudflare" },
                     { value: "github",     label: "GitHub" },
                     { value: "vercel",     label: "Vercel" },
+                    { value: "stripe",     label: "Stripe" },
                   ]}
                 />
               </div>

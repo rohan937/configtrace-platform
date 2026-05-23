@@ -185,6 +185,62 @@ _GITHUB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+
+# ── Stripe-specific tracked fields ────────────────────────────────────────────
+
+#: Per-record-type tracked field tuples for Stripe records.
+#: Only the fields listed here are compared field-by-field in compute_diff.
+#: Volatile metadata (file IDs that change on branding uploads, etc.) is
+#: included only where changes are meaningful.
+_STRIPE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "stripe_account_settings": (
+        # Operational flags — highest priority
+        "charges_enabled",
+        "payouts_enabled",
+        # Payout schedule
+        "payout_schedule_interval",
+        "payout_schedule_delay_days",
+        # Capabilities / payment methods
+        "enabled_payment_methods",
+        # Currency
+        "default_currency",
+        # Business profile
+        "business_name",
+        "support_email",
+        "support_url",
+        "business_url",
+        # Branding
+        "branding_icon",
+        "branding_logo",
+        "branding_primary_color",
+        # Dashboard
+        "display_name",
+        # Platform
+        "controller_type",
+    ),
+    "stripe_webhook_endpoint": (
+        "url",
+        "status",
+        "enabled_events",
+        "api_version",
+        "description",
+        # SECURITY: signing secret is intentionally NOT listed here
+    ),
+    "stripe_payment_method_configuration": (
+        "config_name",
+        "is_default",
+        "enabled_payment_methods",
+    ),
+    "stripe_payment_method_domain": (
+        "enabled",
+        "apple_pay_enabled",
+        "google_pay_enabled",
+        "link_enabled",
+        "domain_name",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -192,6 +248,10 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     * Record types starting with ``"github_"`` look up in
       ``_GITHUB_TRACKED_FIELDS_BY_TYPE`` — unknown sub-types return ``()``
       (empty) so they never generate spurious modifications.
+    * Record types starting with ``"vercel_"`` look up in
+      ``_VERCEL_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"stripe_"`` look up in
+      ``_STRIPE_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -205,6 +265,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _GITHUB_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("vercel_"):
         return _VERCEL_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("stripe_"):
+        return _STRIPE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     return _TRACKED_FIELDS
 
 
