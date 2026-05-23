@@ -102,9 +102,10 @@ export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
  *
  * Cloudflare: api_token + zone_id (required)
  * GitHub:     github_token + repo_owner + repo_name (required)
+ * Vercel:     vercel_token + vercel_project_id (required)
  */
 export interface IntegrationCreateRequest {
-  provider: "cloudflare" | "github";
+  provider: "cloudflare" | "github" | "vercel";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -115,6 +116,11 @@ export interface IntegrationCreateRequest {
   github_token?: string;
   repo_owner?: string;
   repo_name?: string;
+  // ── Vercel fields ──────────────────────────────────────────────────────────
+  /** Vercel personal access token; sent once; never stored after submission. */
+  vercel_token?: string;
+  /** Vercel project ID (prj_xxx) or slug; sent once. */
+  vercel_project_id?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

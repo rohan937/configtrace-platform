@@ -13,6 +13,9 @@ Supported providers
     Enforces uniqueness: a given authenticated user cannot connect the same
     ``{owner}/{repo}`` twice.  Different users connecting the same repo is
     permitted (no cross-user uniqueness check).
+``vercel``
+    Creates one Resource of type ``vercel_project`` (keyed by Project ID).
+    Enforces uniqueness: a given user cannot connect the same project ID twice.
 """
 
 from __future__ import annotations
@@ -79,10 +82,17 @@ def create_integration(
             credentials=credentials,
             db=db,
         )
+    elif provider == "vercel":
+        return _create_vercel_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
-            "Supported values: 'cloudflare', 'github'."
+            "Supported values: 'cloudflare', 'github', 'vercel'."
         )
 
 
@@ -191,6 +201,76 @@ def _create_github_integration(
         provider_resource_id=slug,
         display_name=f"{display_name} ({slug})",
         resource_metadata={"repo_owner": owner, "repo_name": repo_name},
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 6. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_vercel_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    db: Session,
+) -> Integration:
+    """Create a Vercel integration + project resource.
+
+    Uniqueness enforcement: a given user cannot connect the same
+    ``vercel_project_id`` twice.  Different users connecting the same project
+    is allowed.
+
+    SECURITY: ``vercel_token`` is never logged, never returned, and is only
+    used transiently during validation before being passed to the encryption
+    layer.
+    """
+    from app.connectors.vercel import VercelConnector
+
+    project_id: str = credentials["vercel_project_id"]
+
+    # ── 1. Duplicate-project check (same user, same project) ─────────────────
+    existing = (
+        db.query(Resource)
+        .filter(
+            Resource.user_id == user_id,
+            Resource.provider_resource_type == "vercel_project",
+            Resource.provider_resource_id == project_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        raise ValueError("This Vercel project is already connected.")
+
+    # ── 2. Validate credentials against the live API ─────────────────────────
+    VercelConnector().validate_credentials(credentials)
+
+    # ── 3. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 4. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="vercel",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+    )
+    db.add(integration)
+    db.flush()  # Populate integration.id before the Resource FK reference
+
+    # ── 5. Create Resource row for the project ────────────────────────────────
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="vercel_project",
+        provider_resource_id=project_id,
+        display_name=f"{display_name} ({project_id})",
+        resource_metadata={"vercel_project_id": project_id},
         is_active=True,
     )
     db.add(resource)
@@ -407,6 +487,14 @@ def reconnect_credentials(
             "repo_name": existing_creds["repo_name"],
         }
         GitHubConnector().validate_credentials(new_creds)
+
+    elif integration.provider == "vercel":
+        from app.connectors.vercel import VercelConnector
+        new_creds = {
+            "vercel_token":      new_token,
+            "vercel_project_id": existing_creds["vercel_project_id"],
+        }
+        VercelConnector().validate_credentials(new_creds)
 
     else:
         raise ValueError(

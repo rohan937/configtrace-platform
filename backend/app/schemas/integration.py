@@ -11,6 +11,8 @@ Supported providers
     Credentials: ``api_token`` + ``zone_id``.
 ``github``
     Credentials: ``github_token`` + ``repo_owner`` + ``repo_name``.
+``vercel``
+    Credentials: ``vercel_token`` + ``vercel_project_id``.
 
 Provider-specific fields are made optional at the Pydantic level and
 cross-validated by ``validate_provider_fields`` to produce clear error
@@ -37,11 +39,11 @@ class IntegrationCreateRequest(BaseModel):
     is present for the chosen provider.
     """
 
-    provider: Literal["cloudflare", "github"] = Field(
+    provider: Literal["cloudflare", "github", "vercel"] = Field(
         ...,
         description=(
             "Provider identifier. "
-            "Supported values: 'cloudflare', 'github'."
+            "Supported values: 'cloudflare', 'github', 'vercel'."
         ),
     )
     display_name: str = Field(
@@ -98,6 +100,27 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Vercel fields ─────────────────────────────────────────────────────────
+    vercel_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Vercel personal access token with read access to the project. "
+            "Generated at vercel.com → Settings → Tokens. "
+            "Required when provider='vercel'. "
+            "Stored encrypted — never returned in API responses."
+        ),
+    )
+    vercel_project_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Vercel project ID (prj_xxx) or project slug name. "
+            "Found at vercel.com → <project> → Settings → General → Project ID. "
+            "Required when provider='vercel'."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_provider_fields(self) -> "IntegrationCreateRequest":
         """Ensure the correct credential fields are present for the provider."""
@@ -122,6 +145,15 @@ class IntegrationCreateRequest(BaseModel):
             if not self.repo_name:
                 raise ValueError(
                     "repo_name is required for GitHub integrations."
+                )
+        elif self.provider == "vercel":
+            if not self.vercel_token:
+                raise ValueError(
+                    "vercel_token is required for Vercel integrations."
+                )
+            if not self.vercel_project_id:
+                raise ValueError(
+                    "vercel_project_id is required for Vercel integrations."
                 )
         return self
 
@@ -207,6 +239,13 @@ class IntegrationReconnectRequest(BaseModel):
         min_length=1,
         description=(
             "New GitHub Personal Access Token. Required for GitHub integrations."
+        ),
+    )
+    vercel_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Vercel personal access token. Required for Vercel integrations."
         ),
     )
 

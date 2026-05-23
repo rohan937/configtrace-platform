@@ -230,6 +230,11 @@ def sync_integration(
 
                 connector = GitHubConnector()
                 records = connector.fetch(effective_credentials)
+            elif integration.provider == "vercel":
+                from app.connectors.vercel import VercelConnector
+
+                connector = VercelConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

@@ -17,6 +17,8 @@ Design decisions
 * Provider dispatch is via ``provider_metadata["record_type"]`` prefix:
   - Record types starting with ``"github_"`` → GitHub rule set
     (``app.services.risk_rules.github``).
+  - Record types starting with ``"vercel_"`` → Vercel rule set
+    (``app.services.risk_rules.vercel``).
   - All other records → Cloudflare DNS rule set
     (``app.services.risk_rules.cloudflare_dns``).
   This approach works without a DB lookup: the record type is embedded in
@@ -76,6 +78,10 @@ def classify_change(change: Change) -> tuple[str, str]:
     if record_type.startswith("github_"):
         from app.services.risk_rules.github import classify_github_change
         return classify_github_change(change)
+
+    if record_type.startswith("vercel_"):
+        from app.services.risk_rules.vercel import classify_vercel_change
+        return classify_vercel_change(change)
 
     return classify_dns_change(change)
 

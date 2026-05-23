@@ -86,6 +86,52 @@ _GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
     "github_deploy_key",
 })
 
+# ── Vercel-specific tracked fields ───────────────────────────────────────────
+
+#: Per-record-type tracked field tuples for Vercel records.
+#: Only the fields listed here are compared field-by-field in compute_diff.
+#: Provider-managed timestamps (``created_at``) are intentionally excluded
+#: except for ``updated_at`` on env vars (a change signals secret rotation).
+_VERCEL_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "vercel_project": (
+        # Identity
+        "name",               # project rename
+        # Build pipeline (supply-chain / deployment critical)
+        "build_command",      # custom build command
+        "install_command",    # custom install command
+        "root_directory",     # monorepo source root (build-breaking if wrong)
+        "output_directory",   # where the build writes output
+        # Runtime
+        "framework",          # framework preset (changes routing + build strategy)
+        "node_version",       # Node.js runtime version
+        # Git connection
+        "git_repository",     # connected repository (owner/repo)
+        "git_branch",         # production branch (e.g. "main")
+        # Deployment protection
+        "sso_protection",     # None = disabled; "all" = SSO-gated
+        "password_protection", # None = disabled; "all" = password-gated
+    ),
+    "vercel_env_var": (
+        # key/name change is unusual but meaningful (env var renamed)
+        "key",
+        # type change (encrypted → plain is a security downgrade)
+        "env_type",
+        # target change (promoted to / demoted from production)
+        "target",
+        # git_branch scope change
+        "git_branch",
+        # updated_at change signals a value rotation — tracked intentionally
+        # SECURITY: only the timestamp is stored, never the new value
+        "updated_at",
+        # NOTE: "value" is intentionally NOT listed here (M33 security constraint)
+    ),
+    "vercel_domain": (
+        "verified",    # domain verification status
+        "redirect",    # redirect target (None = no redirect)
+        "git_branch",  # branch-specific domain scope
+    ),
+}
+
 #: Per-record-type tracked field tuples for GitHub records.
 #: Only the fields listed here are compared field-by-field in compute_diff.
 #: Provider-managed timestamps (e.g. ``created_at``) are intentionally excluded.
@@ -157,6 +203,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     rt = record.get("record_type", "")
     if isinstance(rt, str) and rt.startswith("github_"):
         return _GITHUB_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("vercel_"):
+        return _VERCEL_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     return _TRACKED_FIELDS
 
 

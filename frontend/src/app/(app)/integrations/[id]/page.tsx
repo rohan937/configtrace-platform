@@ -53,6 +53,14 @@ const GITHUB_MONITORED_CATEGORIES = [
   "Actions permissions",
 ];
 
+// ── Vercel monitored categories (static — same for all Vercel integrations) ──
+
+const VERCEL_MONITORED_CATEGORIES = [
+  "Project settings (framework, build config, Node.js version)",
+  "Environment variable names and target environments (values never stored)",
+  "Custom domains and verification status",
+];
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatInterval(minutes: number | null): string {
@@ -615,6 +623,64 @@ function ProviderOverview({
     );
   }
 
+  if (integration.provider === "vercel") {
+    const projectId = resource?.provider_resource_id ?? "—";
+    return (
+      <Panel title="Vercel overview">
+        <MetaRow
+          label="Project ID"
+          value={
+            <code style={{ fontSize: "11px", color: "#8b90a0", fontFamily: "monospace" }}>
+              {projectId}
+            </code>
+          }
+        />
+        <MetaRow
+          label="Last snapshot"
+          value={
+            resource?.last_snapshot_at ? (
+              <span title={formatAbsoluteTime(resource.last_snapshot_at)}>
+                {formatRelativeTime(resource.last_snapshot_at)}
+              </span>
+            ) : (
+              <span style={{ color: "#565b6e" }}>Never</span>
+            )
+          }
+        />
+        <div style={{ marginTop: "8px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginBottom: "6px",
+            }}
+          >
+            Monitored categories
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {VERCEL_MONITORED_CATEGORIES.map((cat) => (
+              <li
+                key={cat}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  padding: "2px 0",
+                  paddingLeft: "12px",
+                  position: "relative",
+                }}
+              >
+                <span style={{ position: "absolute", left: 0, color: "#3a3d4a" }}>·</span>
+                {cat}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Panel>
+    );
+  }
+
   return (
     <Panel title="Provider overview">
       <p style={{ fontSize: "12px", color: "#565b6e", margin: 0 }}>
@@ -861,6 +927,8 @@ export default function IntegrationDetailPage() {
       ? "Cloudflare DNS"
       : integration.provider === "github"
       ? "GitHub repository"
+      : integration.provider === "vercel"
+      ? "Vercel project"
       : integration.provider;
 
   const failedRuns = syncRuns.filter((r) => r.status === "failed");

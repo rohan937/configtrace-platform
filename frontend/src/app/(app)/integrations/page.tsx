@@ -10,10 +10,11 @@ import IntegrationList from "@/components/integrations/IntegrationList";
 import CloudflareIntegrationForm from "@/components/integrations/CloudflareIntegrationForm";
 import GitHubIntegrationForm from "@/components/integrations/GitHubIntegrationForm";
 import GitHubAppConnectCard from "@/components/integrations/GitHubAppConnectCard";
+import VercelIntegrationForm from "@/components/integrations/VercelIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 
-type Provider = "cloudflare" | "github";
+type Provider = "cloudflare" | "github" | "vercel";
 // GitHub sub-modes: "app" = recommended GitHub App flow, "pat" = advanced PAT flow
 type GitHubMode = "app" | "pat";
 
@@ -134,7 +135,7 @@ export default function IntegrationsPage() {
           >
             {/* Provider tabs */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "18px" }}>
-              {(["cloudflare", "github"] as Provider[]).map((p) => (
+              {(["cloudflare", "github", "vercel"] as Provider[]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setSelectedProvider(p)}
@@ -153,7 +154,7 @@ export default function IntegrationsPage() {
                     borderColor: selectedProvider === p ? "rgba(79,128,247,0.35)" : "#2a2d38",
                   }}
                 >
-                  {p === "cloudflare" ? "Cloudflare" : "GitHub"}
+                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : "Vercel"}
                 </button>
               ))}
             </div>
@@ -219,12 +220,39 @@ export default function IntegrationsPage() {
                 </p>
               </>
             )}
+
+            {/* Vercel guide */}
+            {selectedProvider === "vercel" && (
+              <>
+                <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+                  How to connect a Vercel project
+                </p>
+                <SetupSteps steps={[
+                  {
+                    heading: "Create a Vercel API token.",
+                    body: <>vercel.com → Settings → Tokens → Create. Give it a descriptive name and set an expiry. Copy the token — it won&apos;t be shown again.</>,
+                  },
+                  {
+                    heading: "Find your Project ID.",
+                    body: <>vercel.com → select your project → Settings → General → Project ID. It looks like <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>prj_xxxxxxxxxxxx</code>.</>,
+                  },
+                  {
+                    heading: "Connect below.",
+                    body: <>Paste both into the form. ConfigTrace validates the token before saving. Environment variable values are never stored — only key names and targets.</>,
+                  },
+                ]} />
+                <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+                  Your token is encrypted before storage and never returned in any API response.
+                  ConfigTrace uses read-only access — it cannot modify your project or deployments.
+                </p>
+              </>
+            )}
           </div>
         )}
 
         {/* ── Connect form (toggle) ─────────────────────────────────────── */}
         {!showForm ? (
-          <div className="mb-6" style={{ display: "flex", gap: "8px" }}>
+          <div className="mb-6" style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button
               onClick={() => { setSelectedProvider("cloudflare"); setShowForm(true); }}
               style={{
@@ -257,9 +285,30 @@ export default function IntegrationsPage() {
             >
               Add GitHub Integration
             </button>
+            <button
+              onClick={() => { setSelectedProvider("vercel"); setShowForm(true); }}
+              style={{
+                background: "#1e2030",
+                color: "#b0b5c4",
+                border: "1px solid #3a3d4a",
+                borderRadius: "6px",
+                padding: "8px 16px",
+                fontSize: "13px",
+                fontWeight: 500,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Add Vercel Integration
+            </button>
           </div>
         ) : selectedProvider === "cloudflare" ? (
           <CloudflareIntegrationForm
+            onCreated={handleCreated}
+            onCancel={() => setShowForm(false)}
+          />
+        ) : selectedProvider === "vercel" ? (
+          <VercelIntegrationForm
             onCreated={handleCreated}
             onCancel={() => setShowForm(false)}
           />

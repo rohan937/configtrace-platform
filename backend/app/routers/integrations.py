@@ -101,6 +101,7 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
 
     Cloudflare:  ``{"api_token": str, "zone_id": str}``
     GitHub:      ``{"github_token": str, "repo_owner": str, "repo_name": str}``
+    Vercel:      ``{"vercel_token": str, "vercel_project_id": str}``
     """
     if body.provider == "cloudflare":
         return {
@@ -112,6 +113,11 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "github_token": body.github_token,
             "repo_owner":   body.repo_owner,
             "repo_name":    body.repo_name,
+        }
+    elif body.provider == "vercel":
+        return {
+            "vercel_token":      body.vercel_token,
+            "vercel_project_id": body.vercel_project_id,
         }
     return {}
 
@@ -431,6 +437,13 @@ def reconnect_integration(
                 detail="github_token is required for GitHub integrations.",
             )
         new_token = body.github_token
+    elif integration.provider == "vercel":
+        if not body.vercel_token:
+            raise HTTPException(
+                status_code=422,
+                detail="vercel_token is required for Vercel integrations.",
+            )
+        new_token = body.vercel_token
     else:
         raise HTTPException(
             status_code=400,

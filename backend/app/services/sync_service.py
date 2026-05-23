@@ -180,7 +180,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     integrations = (
         db.query(Integration)
         .filter(
-            Integration.provider.in_(("cloudflare", "github")),
+            Integration.provider.in_(("cloudflare", "github", "vercel")),
             Integration.status == "active",
         )
         .all()

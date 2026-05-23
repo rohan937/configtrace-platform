@@ -298,6 +298,7 @@ export async function deleteIntegration(
 export interface IntegrationReconnectRequest {
   api_token?: string;
   github_token?: string;
+  vercel_token?: string;
 }
 
 export async function reconnectIntegration(

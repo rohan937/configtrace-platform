@@ -36,6 +36,8 @@ GitHub App:
   github_app_uninstalled, github_repo_not_found, github_api_unavailable
 Cloudflare:
   cloudflare_token_revoked, cloudflare_zone_not_found, cloudflare_api_unavailable
+Vercel:
+  vercel_token_revoked, vercel_project_not_found, vercel_api_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -219,6 +221,15 @@ def _classify_auth(
                 "Reconnect this integration with a new token."
             ),
         )
+    if provider == "vercel":
+        return FailureClassification(
+            category="authentication",
+            error_code="vercel_token_revoked",
+            recommended_action=(
+                "Your Vercel API token was revoked or expired. "
+                "Reconnect this integration with a new token."
+            ),
+        )
     # Unknown provider
     return FailureClassification(
         category="authentication",
@@ -253,6 +264,15 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "Verify the Zone ID is correct."
                 ),
             )
+        if provider == "vercel":
+            return FailureClassification(
+                category="resource_missing",
+                error_code="vercel_project_not_found",
+                recommended_action=(
+                    "The Vercel project was not found. "
+                    "Verify the Project ID is correct."
+                ),
+            )
         return FailureClassification(
             category="resource_missing",
             error_code="resource_not_found",
@@ -267,6 +287,8 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
             code = "github_api_unavailable"
         elif provider == "cloudflare":
             code = "cloudflare_api_unavailable"
+        elif provider == "vercel":
+            code = "vercel_api_unavailable"
         else:
             code = "provider_unavailable"
         return FailureClassification(
