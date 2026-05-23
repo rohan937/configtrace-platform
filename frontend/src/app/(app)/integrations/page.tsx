@@ -110,7 +110,7 @@ export default function IntegrationsPage() {
     <>
       <PageHeader
         title="Integrations"
-        description="Connect DNS providers, trigger manual syncs, and monitor sync status."
+        description="Connect Cloudflare and GitHub, trigger syncs, and monitor configuration drift."
       />
 
       <div className="px-6 py-6">

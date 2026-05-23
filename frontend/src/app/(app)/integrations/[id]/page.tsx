@@ -31,6 +31,7 @@ import { patchIntegration } from "@/lib/api";
 import {
   formatRelativeTime,
   formatAbsoluteTime,
+  formatResourceType,
 } from "@/lib/utils";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -485,7 +486,7 @@ function ProviderOverview({
           label="Resource type"
           value={
             <span style={{ color: "#8b90a0" }}>
-              {resource?.provider_resource_type ?? "cloudflare_dns_zone"}
+              {formatResourceType(resource?.provider_resource_type ?? "cloudflare_dns_zone")}
             </span>
           }
         />
@@ -501,7 +502,7 @@ function ProviderOverview({
             )
           }
         />
-        <MetaRow label="Monitoring" value={<span style={{ color: "#8b90a0" }}>DNS records (all types)</span>} />
+        <MetaRow label="Monitoring" value={<span style={{ color: "#8b90a0" }}>All DNS record types (A, AAAA, CNAME, MX, TXT, …)</span>} />
       </Panel>
     );
   }

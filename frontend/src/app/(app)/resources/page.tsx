@@ -44,7 +44,7 @@ export default function ResourcesPage() {
     <>
       <PageHeader
         title="Resources"
-        description="All monitored DNS zones and records across your integrations."
+        description="Cloudflare zones, GitHub repositories, and other configuration surfaces monitored by ConfigTrace."
       />
 
       <div className="px-6 py-6">

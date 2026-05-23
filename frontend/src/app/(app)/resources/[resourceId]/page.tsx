@@ -14,6 +14,7 @@ import {
   formatRelativeTime,
   formatAbsoluteTime,
   formatSnapshotHash,
+  formatResourceType,
   shortId,
 } from "@/lib/utils";
 
@@ -35,7 +36,7 @@ function DnsTable({ records }: DnsTableProps) {
   if (records.length === 0) {
     return (
       <p style={{ fontSize: "13px", color: "#565b6e", fontStyle: "italic" }}>
-        No DNS records in this snapshot.
+        No records in this snapshot.
       </p>
     );
   }
@@ -329,7 +330,7 @@ export default function ResourceDetailPage() {
     <>
       <PageHeader
         title={title}
-        description={`${resource.provider_resource_type} · ${resource.provider_resource_id}`}
+        description={`${formatResourceType(resource.provider_resource_type)} · ${resource.provider_resource_id}`}
       />
 
       <div className="px-6 pb-10" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -356,7 +357,7 @@ export default function ResourceDetailPage() {
             color: "#8b90a0",
           }}
         >
-          <MetaBadge label="Type" value={resource.provider_resource_type} mono />
+          <MetaBadge label="Type" value={formatResourceType(resource.provider_resource_type)} />
           <MetaDivider />
           <MetaBadge label="ID" value={resource.provider_resource_id} mono />
           <MetaDivider />
@@ -443,7 +444,7 @@ export default function ResourceDetailPage() {
               ))}
             </div>
 
-            {/* Right — DNS state for selected snapshot */}
+            {/* Right — snapshot state for selected snapshot */}
             <div style={{ overflowX: "auto" }}>
               {/* Panel header */}
               <div
@@ -461,7 +462,11 @@ export default function ResourceDetailPage() {
                   gap: "8px",
                 }}
               >
-                <span>DNS State</span>
+                <span>
+                  {resource.provider_resource_type === "cloudflare_dns_zone"
+                    ? "DNS State"
+                    : "Snapshot State"}
+                </span>
                 {selectedSnapshot && (
                   <span
                     style={{ fontFamily: "monospace", color: "#3a3d4a", fontSize: "11px" }}
@@ -485,7 +490,7 @@ export default function ResourceDetailPage() {
                     fontStyle: "italic",
                   }}
                 >
-                  Select a snapshot to view its DNS state.
+                  Select a snapshot to view its state.
                 </p>
               )}
             </div>
@@ -509,7 +514,7 @@ export default function ResourceDetailPage() {
           <ChangeList
             changes={changes}
             emptyTitle="No changes recorded yet."
-            emptyDescription="The baseline is in place. Any DNS records that differ on the next sync will appear here, with risk classification and old/new values."
+            emptyDescription="The baseline is in place. Any configuration changes detected on the next sync will appear here, with risk classification and old/new values."
           />
         </div>
       </div>

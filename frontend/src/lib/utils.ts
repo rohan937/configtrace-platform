@@ -162,6 +162,27 @@ export function formatSnapshotHash(hash: string): string {
   return hash.slice(0, 10);
 }
 
+// ── Resource type labels ──────────────────────────────────────────────────────
+
+/**
+ * Convert an internal provider_resource_type to a user-friendly label.
+ *
+ * Examples:
+ *   "cloudflare_dns_zone" → "Cloudflare DNS zone"
+ *   "github_repo"         → "GitHub repository"
+ *   "some_unknown_type"   → "Some unknown type"
+ */
+export function formatResourceType(rawType: string): string {
+  switch (rawType.toLowerCase()) {
+    case "cloudflare_dns_zone":
+      return "Cloudflare DNS zone";
+    case "github_repo":
+      return "GitHub repository";
+    default:
+      return rawType.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  }
+}
+
 // ── Time range helpers ────────────────────────────────────────────────────────
 
 /**
