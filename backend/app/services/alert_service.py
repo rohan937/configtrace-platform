@@ -56,13 +56,28 @@ from app.services.email_service import EmailNotConfigured, EmailSendError
 
 logger = logging.getLogger(__name__)
 
-# Risk levels that trigger alerts.  ``low`` and ``medium`` are intentionally
-# excluded — they would create noise without adding signal.
-_ALERTABLE_LEVELS = frozenset({"high", "critical"})
+# The channel string written to ``alerts.channel`` for email dispatch.
 
 # The channel string written to ``alerts.channel`` for email dispatch.
 # Kept as a constant so the idempotency query and the insert agree.
 _EMAIL_CHANNEL = "email"
+
+# Risk-level sets per alert threshold value.  Computed once at call time from
+# the user's persisted ``alert_risk_threshold`` setting.  The fallback
+# ("high_and_critical") matches the previous hardcoded _ALERTABLE_LEVELS.
+def _alertable_levels_for_threshold(threshold: str) -> frozenset:
+    """Return the set of risk-level strings that trigger alerts for *threshold*.
+
+    Allowed threshold values (validated at PATCH /settings):
+      ``critical_only``      → {"critical"}
+      ``high_and_critical``  → {"high", "critical"}  (default)
+      ``medium_and_above``   → {"medium", "high", "critical"}
+    """
+    if threshold == "critical_only":
+        return frozenset({"critical"})
+    elif threshold == "medium_and_above":
+        return frozenset({"medium", "high", "critical"})
+    return frozenset({"high", "critical"})  # "high_and_critical" (default)
 
 # Email addresses ending in this suffix are placeholders generated when
 # Clerk's session template doesn't include the email claim.  Sending to them
@@ -114,7 +129,23 @@ def dispatch_alerts_for_sync(
     }
 
     # ── Filter to alertable risk levels ───────────────────────────────────
-    alertable = [c for c in changes if c.risk_level in _ALERTABLE_LEVELS]
+    # Load the user's alert threshold from settings (creates defaults if absent).
+    from app.services.settings_service import get_or_create_settings  # local import avoids circular
+    try:
+        user_settings = get_or_create_settings(integration.user_id, db)
+        alertable_levels = _alertable_levels_for_threshold(user_settings.alert_risk_threshold)
+    except Exception:
+        # Settings read failure must never block alert dispatch.  Fall back to
+        # the conservative default so the user doesn't miss critical alerts.
+        logger.exception(
+            "alerts: could not read user settings — falling back to high_and_critical  "
+            "user_id=%s  sync_run_id=%s",
+            integration.user_id,
+            sync_run_id,
+        )
+        alertable_levels = frozenset({"high", "critical"})
+
+    alertable = [c for c in changes if c.risk_level in alertable_levels]
     result["eligible"] = len(alertable)
     if not alertable:
         return result

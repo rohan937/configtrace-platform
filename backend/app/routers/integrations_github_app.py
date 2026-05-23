@@ -36,6 +36,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.integration import IntegrationResponse
 from app.services import integration_service
+from app.services.settings_service import get_or_create_settings
 
 router = APIRouter(
     prefix="/integrations/github/app",
@@ -367,11 +368,14 @@ def complete_github_app_install(
         "repo_owner":      body.repo_owner,
         "repo_name":       body.repo_name,
     }
+    user_settings = get_or_create_settings(current_user.id, db)
     try:
         integration = integration_service.create_github_app_integration(
             user_id=current_user.id,
             display_name=body.display_name,
             credentials=credentials,
+            scheduled_sync_enabled=user_settings.default_sync_enabled,
+            sync_interval_minutes=user_settings.default_sync_interval_minutes,
             db=db,
         )
     except ValueError as exc:

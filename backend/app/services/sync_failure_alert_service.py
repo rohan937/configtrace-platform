@@ -99,13 +99,40 @@ def _attempt_alert(
     db: Session,
 ) -> bool:
     """Inner dispatch — allowed to raise (caller wraps in try/except)."""
+    # ── Load user settings (creates defaults if absent) ───────────────────────
+    # Fall back to hardcoded constants on read failure so a settings DB error
+    # never silently suppresses failure alerts.
+    from app.services.settings_service import get_or_create_settings  # local to avoid circular
+    try:
+        user_settings = get_or_create_settings(integration.user_id, db)
+        alerts_enabled     = user_settings.sync_failure_alerts_enabled
+        failure_threshold  = user_settings.sync_failure_threshold
+        cooldown_seconds   = user_settings.sync_failure_cooldown_hours * 3600
+    except Exception:
+        logger.exception(
+            "sync_failure_alert: could not read user settings — using defaults  "
+            "integration_id=%s",
+            integration.id,
+        )
+        alerts_enabled    = True
+        failure_threshold = NEEDS_ATTENTION_THRESHOLD
+        cooldown_seconds  = FAILURE_ALERT_COOLDOWN_SECONDS
+
+    # ── Check enabled ─────────────────────────────────────────────────────────
+    if not alerts_enabled:
+        logger.info(
+            "sync_failure_alert: disabled by user settings  integration_id=%s",
+            integration.id,
+        )
+        return False
+
     # ── Check threshold ───────────────────────────────────────────────────────
-    if consecutive_count < NEEDS_ATTENTION_THRESHOLD:
+    if consecutive_count < failure_threshold:
         logger.debug(
             "sync_failure_alert: skipped — consecutive_count=%d < threshold=%d  "
             "integration_id=%s",
             consecutive_count,
-            NEEDS_ATTENTION_THRESHOLD,
+            failure_threshold,
             integration.id,
         )
         return False
@@ -114,7 +141,7 @@ def _attempt_alert(
     now = datetime.now(timezone.utc)
     if integration.last_failure_alert_sent_at is not None:
         elapsed = (now - integration.last_failure_alert_sent_at).total_seconds()
-        if elapsed < FAILURE_ALERT_COOLDOWN_SECONDS:
+        if elapsed < cooldown_seconds:
             logger.info(
                 "sync_failure_alert: suppressed — cooldown active  "
                 "integration_id=%s  elapsed_hours=%.1f",

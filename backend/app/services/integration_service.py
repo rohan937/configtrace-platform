@@ -37,6 +37,8 @@ def create_integration(
     provider: str,
     display_name: str,
     credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
     db: Session,
 ) -> Integration:
     """Create a new integration after validating and encrypting credentials.
@@ -52,11 +54,18 @@ def create_integration(
     6. Commit and return the refreshed ``Integration`` ORM object.
 
     Args:
-        user_id:      UUID of the authenticated user.
-        provider:     ``"cloudflare"`` or ``"github"``.
-        display_name: User-supplied label shown in the integrations list.
-        credentials:  Provider-specific dict — see module docstring.
-        db:           Active SQLAlchemy session.
+        user_id:                UUID of the authenticated user.
+        provider:               ``"cloudflare"``, ``"github"``, or ``"vercel"``.
+        display_name:           User-supplied label shown in the integrations list.
+        credentials:            Provider-specific dict — see module docstring.
+        scheduled_sync_enabled: Whether to enable scheduled sync immediately.
+                                Defaults to False.  Callers pass the user's
+                                ``default_sync_enabled`` setting so the new
+                                integration inherits the user's preference.
+        sync_interval_minutes:  Sync cadence for this integration (minutes).
+                                None means the scheduler uses 60 min fallback.
+                                Callers pass the user's ``default_sync_interval_minutes``.
+        db:                     Active SQLAlchemy session.
 
     Returns:
         The newly persisted ``Integration`` object.
@@ -73,6 +82,8 @@ def create_integration(
             user_id=user_id,
             display_name=display_name,
             credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
             db=db,
         )
     elif provider == "github":
@@ -80,6 +91,8 @@ def create_integration(
             user_id=user_id,
             display_name=display_name,
             credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
             db=db,
         )
     elif provider == "vercel":
@@ -87,6 +100,8 @@ def create_integration(
             user_id=user_id,
             display_name=display_name,
             credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
             db=db,
         )
     else:
@@ -103,6 +118,8 @@ def _create_cloudflare_integration(
     user_id: uuid.UUID,
     display_name: str,
     credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
     db: Session,
 ) -> Integration:
     """Create a Cloudflare integration + DNS-zone resource."""
@@ -120,6 +137,8 @@ def _create_cloudflare_integration(
         encrypted_credentials=ciphertext,
         credential_iv=iv,
         status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference
@@ -148,6 +167,8 @@ def _create_github_integration(
     user_id: uuid.UUID,
     display_name: str,
     credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
     db: Session,
 ) -> Integration:
     """Create a GitHub integration + repository resource.
@@ -189,6 +210,8 @@ def _create_github_integration(
         encrypted_credentials=ciphertext,
         credential_iv=iv,
         status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference
@@ -216,6 +239,8 @@ def _create_vercel_integration(
     user_id: uuid.UUID,
     display_name: str,
     credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
     db: Session,
 ) -> Integration:
     """Create a Vercel integration + project resource.
@@ -259,6 +284,8 @@ def _create_vercel_integration(
         encrypted_credentials=ciphertext,
         credential_iv=iv,
         status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference
@@ -520,6 +547,8 @@ def create_github_app_integration(
     user_id: uuid.UUID,
     display_name: str,
     credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
     db: Session,
 ) -> Integration:
     """Create a GitHub App integration + repository resource.
@@ -571,6 +600,8 @@ def create_github_app_integration(
         encrypted_credentials=ciphertext,
         credential_iv=iv,
         status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference

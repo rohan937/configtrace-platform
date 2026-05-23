@@ -4,9 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import health
 from app.routers.changes import router as changes_router
+from app.routers.dashboard import router as dashboard_router
 from app.routers.integrations import router as integrations_router
 from app.routers.integrations_github_app import router as github_app_router
 from app.routers.resources import router as resources_router
+from app.routers.settings import router as settings_router
 from app.routers.syncs import router as syncs_router
 
 app = FastAPI(
@@ -34,6 +36,8 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router, prefix="/health", tags=["health"])
+app.include_router(dashboard_router)      # prefix="/dashboard"           (M34)
+app.include_router(settings_router)       # prefix="/settings"            (M34)
 app.include_router(github_app_router)     # prefix="/integrations/github/app" (M31)
 app.include_router(integrations_router)   # prefix="/integrations"
 app.include_router(syncs_router)          # prefix="/syncs"

@@ -12,6 +12,7 @@ from app.models.sync_run import SyncRun  # noqa: F401
 from app.models.snapshot import Snapshot  # noqa: F401
 from app.models.change import Change  # noqa: F401
 from app.models.alert import Alert  # noqa: F401
+from app.models.user_settings import UserSettings  # noqa: F401
 
 __all__ = [
     "Base",
@@ -22,4 +23,5 @@ __all__ = [
     "Snapshot",
     "Change",
     "Alert",
+    "UserSettings",
 ]

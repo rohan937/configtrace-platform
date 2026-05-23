@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import type { ChangeListItem, Integration } from "@/types";
 import type { GetChangesParams } from "@/lib/api";
-import { getChanges, getIntegrations } from "@/lib/api";
+import { getChanges, getIntegrations, getSettings } from "@/lib/api";
 import { timeRangeToSince } from "@/lib/utils";
 import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import PageHeader from "@/components/common/PageHeader";
@@ -150,21 +150,44 @@ function TimelineContent() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [integrationsList, setIntegrationsList] = useState<Integration[]>([]);
+  // Gate the first data fetch until user settings have been resolved so we
+  // apply the correct default filters before making the API call.
+  const [settingsReady, setSettingsReady] = useState(false);
 
   const { getToken, isLoaded } = useAuth();
   const genRef = useRef(0);
 
-  // ── Fetch integrations for the integration-filter dropdown ───────────────
+  // ── Fetch settings + integrations on mount ───────────────────────────────
+  // Settings fetch applies default_timeline_range / default_provider_filter
+  // when those keys are not already set via URL params (URL always wins).
+  // Both fetches are non-fatal — failures are ignored.
   useEffect(() => {
     if (!isLoaded) return;
     (async () => {
-      try {
-        const token = await getToken();
-        const data = await getIntegrations(token);
-        setIntegrationsList(data.integrations);
-      } catch {
-        // Non-fatal — integration filter just won't populate
+      const token = await getToken();
+
+      // Run both in parallel; neither blocks the other.
+      const [settingsResult, integrationsResult] = await Promise.allSettled([
+        getSettings(token),
+        getIntegrations(token),
+      ]);
+
+      // Apply settings defaults only for filter keys that have no URL param.
+      if (settingsResult.status === "fulfilled") {
+        const s = settingsResult.value;
+        setFilters((prev) => ({
+          ...prev,
+          timeRange: searchParams.has("time_range") ? prev.timeRange : s.default_timeline_range,
+          provider:  searchParams.has("provider")   ? prev.provider   : s.default_provider_filter,
+        }));
       }
+
+      if (integrationsResult.status === "fulfilled") {
+        setIntegrationsList(integrationsResult.value.integrations);
+      }
+
+      // Always mark settings as ready — on failure we just keep URL/default filters.
+      setSettingsReady(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded]);
@@ -215,12 +238,13 @@ function TimelineContent() {
     [getToken]
   );
 
-  // Initial load
+  // Initial load — wait until settings have been resolved so the first fetch
+  // uses the correct defaults (not hardcoded "all" for every filter).
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!settingsReady) return;
     doFetch(filters, 1, "replace");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoaded]);
+  }, [settingsReady]);
 
   // Polling — 60s background refresh of page-1 with current filters.
   // Does NOT reset pagination (previously-loaded pages stay visible).
@@ -234,7 +258,7 @@ function TimelineContent() {
   const { refresh: manualRefresh, lastUpdatedAt } = usePollingRefresh({
     callback: pollCallback,
     intervalMs: 60_000,
-    enabled: !loading && error === null && isLoaded,
+    enabled: !loading && error === null && settingsReady,
   });
 
   // ── Filter change — resets page, updates URL ─────────────────────────────

@@ -234,3 +234,102 @@ export interface SyncRunListResponse {
   /** Total number of pages. */
   total_pages: number;
 }
+
+// ── Dashboard summary (M34) ───────────────────────────────────────────────────
+
+export interface IntegrationHealthCounts {
+  total: number;
+  active: number;
+  paused: number;
+  needs_attention: number;
+  failed_last_24h: number;
+  with_consecutive_failures: number;
+}
+
+export interface ResourceCounts {
+  total: number;
+  active: number;
+}
+
+export interface ChangeActivityCounts {
+  total: number;
+  last_24h: number;
+  last_7d: number;
+  high_critical_last_7d: number;
+  last_change_at: string | null;
+}
+
+export interface RiskDistribution {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface ProviderStats {
+  provider: string;
+  integration_count: number;
+  resource_count: number;
+  change_count_7d: number;
+}
+
+export interface DashboardRecentChange {
+  id: string;
+  integration_id: string;
+  resource_id: string;
+  integration_name: string | null;
+  provider: string | null;
+  record_identifier: string;
+  change_type: string;
+  risk_level: string;
+  field_path: string | null;
+  created_at: string;
+}
+
+export interface DashboardRecentFailedSync {
+  integration_id: string;
+  integration_name: string;
+  provider: string;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+  failure_category: string | null;
+  error_code: string | null;
+  recommended_action: string | null;
+  consecutive_failure_count: number;
+  needs_attention: boolean;
+  last_failure_at: string | null;
+}
+
+export interface DashboardSummary {
+  integration_health: IntegrationHealthCounts;
+  resource_counts: ResourceCounts;
+  change_activity: ChangeActivityCounts;
+  risk_distribution: RiskDistribution;
+  provider_distribution: ProviderStats[];
+  recent_high_critical_changes: DashboardRecentChange[];
+  recent_failed_syncs: DashboardRecentFailedSync[];
+  last_updated_at: string;
+}
+
+// ── User settings (M34) ───────────────────────────────────────────────────────
+
+export type AlertRiskThreshold = "critical_only" | "high_and_critical" | "medium_and_above";
+export type TimelineRange = "24h" | "7d" | "30d" | "all";
+export type ProviderFilter = "all" | "cloudflare" | "github" | "vercel";
+
+export interface UserSettings {
+  // Alert policy
+  alert_risk_threshold: AlertRiskThreshold;
+  sync_failure_alerts_enabled: boolean;
+  sync_failure_threshold: 2 | 3 | 5;
+  sync_failure_cooldown_hours: 6 | 12 | 24;
+  // Sync defaults (new integrations only)
+  default_sync_enabled: boolean;
+  default_sync_interval_minutes: 5 | 10 | 15 | 30 | 60;
+  default_change_alerts_enabled: boolean;
+  // UI preferences
+  default_timeline_range: TimelineRange;
+  default_provider_filter: ProviderFilter;
+}
+
+export type UserSettingsUpdateRequest = Partial<UserSettings>;

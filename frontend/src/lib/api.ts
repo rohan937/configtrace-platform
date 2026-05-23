@@ -22,6 +22,7 @@
 import type {
   ChangeDetail,
   ChangeListItem,
+  DashboardSummary,
   GitHubAppCompleteRequest,
   GitHubAppInstallUrlResponse,
   GitHubInstallationReposResponse,
@@ -34,6 +35,8 @@ import type {
   SnapshotListItem,
   SyncRun,
   SyncRunListResponse,
+  UserSettings,
+  UserSettingsUpdateRequest,
 } from "@/types";
 
 const BASE_URL =
@@ -390,4 +393,49 @@ export async function getSyncStatus(
   token?: string | null,
 ): Promise<SyncRun> {
   return apiFetch(`/syncs/${syncRunId}`, { token });
+}
+
+// ── Dashboard (M34) ───────────────────────────────────────────────────────────
+
+/**
+ * Fetch the full dashboard summary for the authenticated user.
+ *
+ * Returns integration health, resource counts, change activity, risk
+ * distribution, provider distribution, recent high/critical changes,
+ * and recent failed syncs.
+ */
+export async function getDashboardSummary(
+  token?: string | null,
+): Promise<DashboardSummary> {
+  return apiFetch("/dashboard/summary", { token });
+}
+
+// ── Settings (M34) ───────────────────────────────────────────────────────────
+
+/**
+ * Fetch the authenticated user's settings.
+ *
+ * Always returns HTTP 200 — defaults are created on first access.
+ */
+export async function getSettings(
+  token?: string | null,
+): Promise<UserSettings> {
+  return apiFetch("/settings", { token });
+}
+
+/**
+ * Update one or more settings fields.
+ *
+ * Only provided (non-undefined) fields are written.
+ * Returns the updated settings.
+ */
+export async function patchSettings(
+  data: UserSettingsUpdateRequest,
+  token?: string | null,
+): Promise<UserSettings> {
+  return apiFetch("/settings", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
 }
