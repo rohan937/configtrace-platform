@@ -36,6 +36,11 @@ function ProviderBadge({ resourceType }: { resourceType: string }) {
     color = "#8b90a0";
     bg = "rgba(99,91,255,0.10)";
     border = "rgba(99,91,255,0.25)";
+  } else if (type === "aws_account") {
+    label = "AWS";
+    color = "#f5a623";
+    bg = "rgba(245,166,35,0.10)";
+    border = "rgba(245,166,35,0.25)";
   }
 
   if (!label) return null;

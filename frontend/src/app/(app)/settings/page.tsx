@@ -560,6 +560,7 @@ export default function SettingsPage() {
                     { value: "github",     label: "GitHub" },
                     { value: "vercel",     label: "Vercel" },
                     { value: "stripe",     label: "Stripe" },
+                    { value: "aws",        label: "AWS" },
                   ]}
                 />
               </div>

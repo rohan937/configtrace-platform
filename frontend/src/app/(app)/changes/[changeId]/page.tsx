@@ -260,7 +260,7 @@ function AddedRemovedPanel({
 
 // ── Provider-aware helpers ────────────────────────────────────────────────────
 
-/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" | "Stripe account configuration" */
+/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" | "Stripe account configuration" | "AWS account configuration" */
 function getProviderLabel(change: ChangeDetail): string {
   const rt = (
     (change.provider_metadata?.record_type as string | undefined) ?? ""
@@ -268,6 +268,7 @@ function getProviderLabel(change: ChangeDetail): string {
   if (rt.startsWith("github_")) return "GitHub repo configuration";
   if (rt.startsWith("vercel_")) return "Vercel project configuration";
   if (rt.startsWith("stripe_")) return "Stripe account configuration";
+  if (rt.startsWith("aws_"))    return "AWS account configuration";
   if (change.provider_metadata?.record_type) return "Cloudflare DNS";
   return "Cloudflare DNS";
 }
@@ -395,6 +396,34 @@ function getChangeSummary(change: ChangeDetail): string {
   }
   if (rt.startsWith("stripe_")) {
     return `A Stripe configuration record changed (${rt}).`;
+  }
+
+  // AWS
+  if (rt === "aws_account_identity") {
+    if (change.change_type === "added")   return "AWS account identity was established for this integration.";
+    if (change.change_type === "removed") return "The AWS account identity record was removed from monitoring.";
+    if (fp === "principal_arn")           return "The AWS IAM principal (ARN) used by this integration changed.";
+    if (fp === "account_id")              return "The AWS account ID changed — this integration may now point at a different account.";
+    if (fp === "principal_type")          return `The AWS principal type changed to ${String(nv)}.`;
+    if (fp === "selected_regions")        return "The set of monitored AWS regions changed.";
+    if (fp === "default_region")          return `The default AWS region changed to ${String(nv)}.`;
+    return "An AWS account identity setting changed.";
+  }
+  if (rt === "aws_region") {
+    const regionId = change.record_identifier;
+    if (change.change_type === "removed") return `AWS region ${regionId} was removed from monitoring.`;
+    if (change.change_type === "added")   return `AWS region ${regionId} was added to monitoring.`;
+    if (fp === "opt_in_status")           return `The opt-in status for AWS region ${regionId} changed.`;
+    if (fp === "enabled")                 return `AWS region ${regionId} enabled status changed.`;
+    return `AWS region ${regionId} metadata changed.`;
+  }
+  if (rt === "aws_service_inventory") {
+    if (fp === "selected_regions") return "The set of AWS monitoring regions changed in the service inventory.";
+    if (fp === "enabled_surfaces") return "The set of actively monitored AWS surfaces changed.";
+    return "The AWS service inventory record was updated.";
+  }
+  if (rt.startsWith("aws_")) {
+    return `An AWS configuration record changed (${rt}).`;
   }
 
   // Cloudflare DNS
@@ -587,6 +616,54 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the Stripe configuration change was intentional.",
       "Review your Stripe Dashboard for related settings.",
       "Verify that checkout and payment flows still function correctly.",
+    ];
+  }
+
+  // AWS
+  if (rt === "aws_account_identity") {
+    const fp4 = change.field_path ?? "";
+    if (fp4 === "principal_arn") {
+      return [
+        "Confirm the IAM principal change was intentional.",
+        "Verify the new ARN belongs to the expected read-only IAM user or role.",
+        "Check AWS CloudTrail for recent IAM key creation or rotation events.",
+        "If unauthorized, rotate or disable the new credentials immediately.",
+        "Review IAM access logs to confirm no write actions occurred.",
+      ];
+    }
+    if (fp4 === "account_id") {
+      return [
+        "Confirm this change was intentional — the integration may point at a different AWS account.",
+        "Verify the connected IAM credentials belong to the expected account.",
+        "Check for accidental key substitution during credential rotation.",
+        "Re-connect with the correct credentials if this was unintentional.",
+      ];
+    }
+    return [
+      "Confirm the AWS account identity change was intentional.",
+      "Verify the IAM credentials belong to the expected read-only user or role.",
+      "Check AWS CloudTrail for recent account-level activity.",
+    ];
+  }
+  if (rt === "aws_region") {
+    const regionId2 = change.record_identifier;
+    if (change.change_type === "removed") {
+      return [
+        `Confirm that AWS region ${regionId2} was intentionally removed from monitoring.`,
+        "Verify no important resources exist in this region that should still be tracked.",
+        "Update the integration's selected regions if removal was accidental.",
+      ];
+    }
+    return [
+      "Confirm the AWS region monitoring change was intentional.",
+      "Verify the new region list reflects your intended infrastructure footprint.",
+    ];
+  }
+  if (rt.startsWith("aws_")) {
+    return [
+      "Confirm the AWS configuration change was intentional.",
+      "Review the AWS IAM Console to verify credentials and permissions are correct.",
+      "Check AWS CloudTrail for recent activity.",
     ];
   }
 

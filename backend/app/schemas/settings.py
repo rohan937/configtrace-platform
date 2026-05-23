@@ -22,7 +22,7 @@ ALLOWED_SYNC_FAILURE_THRESHOLDS = frozenset({2, 3, 5})
 ALLOWED_SYNC_FAILURE_COOLDOWN_HOURS = frozenset({6, 12, 24})
 ALLOWED_SYNC_INTERVAL_MINUTES = frozenset({5, 10, 15, 30, 60})
 ALLOWED_TIMELINE_RANGES = frozenset({"24h", "7d", "30d", "all"})
-ALLOWED_PROVIDER_FILTERS = frozenset({"all", "cloudflare", "github", "vercel", "stripe"})
+ALLOWED_PROVIDER_FILTERS = frozenset({"all", "cloudflare", "github", "vercel", "stripe", "aws"})
 
 
 # ── Response schema ───────────────────────────────────────────────────────────

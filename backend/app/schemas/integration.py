@@ -41,11 +41,11 @@ class IntegrationCreateRequest(BaseModel):
     is present for the chosen provider.
     """
 
-    provider: Literal["cloudflare", "github", "vercel", "stripe"] = Field(
+    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws"] = Field(
         ...,
         description=(
             "Provider identifier. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws'."
         ),
     )
     display_name: str = Field(
@@ -136,6 +136,42 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── AWS fields ────────────────────────────────────────────────────────────
+    aws_access_key_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "AWS IAM access key ID (starts with AKIA or ASIA). "
+            "Required when provider='aws'. "
+            "Stored encrypted — never returned in API responses. "
+            "Use a dedicated read-only IAM user for ConfigTrace."
+        ),
+    )
+    aws_secret_access_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "AWS IAM secret access key. "
+            "Required when provider='aws'. "
+            "Stored encrypted — never returned in API responses. "
+            "SECURITY: never logged or returned to the frontend."
+        ),
+    )
+    aws_default_region: Optional[str] = Field(
+        None,
+        description=(
+            "Default AWS region for API calls (e.g. 'us-east-1'). "
+            "Optional when provider='aws' — defaults to 'us-east-1' if not set."
+        ),
+    )
+    aws_selected_regions: Optional[list[str]] = Field(
+        None,
+        description=(
+            "List of AWS regions to monitor (e.g. ['us-east-1', 'eu-west-1']). "
+            "Optional when provider='aws' — defaults to [aws_default_region] if not set."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_provider_fields(self) -> "IntegrationCreateRequest":
         """Ensure the correct credential fields are present for the provider."""
@@ -174,6 +210,15 @@ class IntegrationCreateRequest(BaseModel):
             if not self.stripe_api_key:
                 raise ValueError(
                     "stripe_api_key is required for Stripe integrations."
+                )
+        elif self.provider == "aws":
+            if not self.aws_access_key_id:
+                raise ValueError(
+                    "aws_access_key_id is required for AWS integrations."
+                )
+            if not self.aws_secret_access_key:
+                raise ValueError(
+                    "aws_secret_access_key is required for AWS integrations."
                 )
         return self
 
@@ -273,6 +318,20 @@ class IntegrationReconnectRequest(BaseModel):
         min_length=1,
         description=(
             "New Stripe restricted API key. Required for Stripe integrations."
+        ),
+    )
+    aws_access_key_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New AWS access key ID. Required for AWS integrations."
+        ),
+    )
+    aws_secret_access_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New AWS secret access key. Required for AWS integrations."
         ),
     )
 

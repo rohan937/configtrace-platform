@@ -1158,14 +1158,16 @@ class TestStripeIntegrationCreation:
             mock_create.assert_called_once()
 
     def test_create_integration_unsupported_provider_still_raises(self):
-        """Regression: unsupported providers still raise ValueError."""
+        """Regression: unsupported providers still raise ValueError.
+        Note: 'aws' is now valid (added in M36); use 'gcp' instead.
+        """
         from app.services.integration_service import create_integration
         db = MagicMock()
         with pytest.raises(ValueError, match="Unsupported provider"):
             create_integration(
                 user_id=uuid.uuid4(),
-                provider="aws",
-                display_name="AWS",
+                provider="gcp",
+                display_name="GCP",
                 credentials={},
                 db=db,
             )

@@ -241,6 +241,31 @@ _STRIPE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# ── AWS-specific tracked fields ───────────────────────────────────────────────
+
+_AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "aws_account_identity": (
+        "account_id",
+        "principal_arn",
+        "principal_type",
+        "partition",
+        "default_region",
+        "selected_regions",
+    ),
+    "aws_region": (
+        "opt_in_status",
+        "enabled",
+        "source",
+    ),
+    "aws_service_inventory": (
+        "selected_regions",
+        "enabled_surfaces",
+        # NOTE: future_surfaces is intentionally NOT tracked — adding future
+        # surfaces to the placeholder list should not generate change events.
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -267,6 +292,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _VERCEL_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("stripe_"):
         return _STRIPE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("aws_"):
+        return _AWS_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     return _TRACKED_FIELDS
 
 

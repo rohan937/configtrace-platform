@@ -12,10 +12,11 @@ import GitHubIntegrationForm from "@/components/integrations/GitHubIntegrationFo
 import GitHubAppConnectCard from "@/components/integrations/GitHubAppConnectCard";
 import VercelIntegrationForm from "@/components/integrations/VercelIntegrationForm";
 import StripeIntegrationForm from "@/components/integrations/StripeIntegrationForm";
+import AWSIntegrationForm from "@/components/integrations/AWSIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 
-type Provider = "cloudflare" | "github" | "vercel" | "stripe";
+type Provider = "cloudflare" | "github" | "vercel" | "stripe" | "aws";
 // GitHub sub-modes: "app" = recommended GitHub App flow, "pat" = advanced PAT flow
 type GitHubMode = "app" | "pat";
 
@@ -117,7 +118,7 @@ export default function IntegrationsPage() {
     <>
       <PageHeader
         title="Integrations"
-        description="Connect Cloudflare, GitHub, Vercel, and Stripe — trigger syncs and monitor configuration drift."
+        description="Connect Cloudflare, GitHub, Vercel, Stripe, and AWS — trigger syncs and monitor configuration drift."
       />
 
       <div className="px-6 py-6">
@@ -136,7 +137,7 @@ export default function IntegrationsPage() {
           >
             {/* Provider tabs */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "18px" }}>
-              {(["cloudflare", "github", "vercel", "stripe"] as Provider[]).map((p) => (
+              {(["cloudflare", "github", "vercel", "stripe", "aws"] as Provider[]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setSelectedProvider(p)}
@@ -155,7 +156,7 @@ export default function IntegrationsPage() {
                     borderColor: selectedProvider === p ? "rgba(79,128,247,0.35)" : "#2a2d38",
                   }}
                 >
-                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : p === "vercel" ? "Vercel" : "Stripe"}
+                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : p === "vercel" ? "Vercel" : p === "stripe" ? "Stripe" : "AWS"}
                 </button>
               ))}
             </div>
@@ -281,6 +282,45 @@ export default function IntegrationsPage() {
                 </p>
               </>
             )}
+
+            {/* AWS guide */}
+            {selectedProvider === "aws" && (
+              <>
+                <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+                  How to connect an AWS account
+                </p>
+                <SetupSteps steps={[
+                  {
+                    heading: "Create a dedicated IAM user for ConfigTrace.",
+                    body: <>AWS Console → IAM → Users → Create user. Name it something like{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>configtrace-readonly</code>.
+                      Do not grant console access — programmatic access only.</>,
+                  },
+                  {
+                    heading: "Attach a read-only inline policy.",
+                    body: <>Grant only the minimum required permissions:{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>sts:GetCallerIdentity</code> (required) and{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>ec2:DescribeRegions</code> (optional).
+                      ConfigTrace skips region discovery gracefully if the second permission is absent.</>,
+                  },
+                  {
+                    heading: "Create an access key.",
+                    body: <>IAM → select the user → Security credentials → Create access key → Application running outside AWS.
+                      Copy the Access Key ID and Secret Access Key — the secret is shown only once.</>,
+                  },
+                  {
+                    heading: "Connect below.",
+                    body: <>Paste both credentials, choose your default region, and select the regions to monitor.
+                      ConfigTrace validates via STS before saving.</>,
+                  },
+                ]} />
+                <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+                  Credentials are encrypted before storage and never returned in any API response.
+                  ConfigTrace uses read-only access only — it never modifies, deletes, or creates
+                  any AWS resource, and never accesses billing, customer, or secret data.
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -351,6 +391,22 @@ export default function IntegrationsPage() {
             >
               Add Stripe Integration
             </button>
+            <button
+              onClick={() => { setSelectedProvider("aws"); setShowForm(true); }}
+              style={{
+                background: "#1e2030",
+                color: "#b0b5c4",
+                border: "1px solid #3a3d4a",
+                borderRadius: "6px",
+                padding: "8px 16px",
+                fontSize: "13px",
+                fontWeight: 500,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Add AWS Integration
+            </button>
           </div>
         ) : selectedProvider === "cloudflare" ? (
           <CloudflareIntegrationForm
@@ -364,6 +420,11 @@ export default function IntegrationsPage() {
           />
         ) : selectedProvider === "stripe" ? (
           <StripeIntegrationForm
+            onCreated={handleCreated}
+            onCancel={() => setShowForm(false)}
+          />
+        ) : selectedProvider === "aws" ? (
+          <AWSIntegrationForm
             onCreated={handleCreated}
             onCancel={() => setShowForm(false)}
           />

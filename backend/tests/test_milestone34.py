@@ -350,9 +350,10 @@ class TestSettingsValidation:
         assert resp.status_code == 422
 
     def test_invalid_provider_filter_rejected(self, client: TestClient) -> None:
-        # "aws" is not a valid provider — should be rejected.
-        # Note: "stripe" was added as a valid provider filter in M35.
-        resp = client.patch("/settings", json={"default_provider_filter": "aws"})
+        # "gcp" is not a valid provider — should be rejected.
+        # Note: "stripe" was added as a valid provider filter in M35,
+        # and "aws" was added as a valid provider filter in M36.
+        resp = client.patch("/settings", json={"default_provider_filter": "gcp"})
         assert resp.status_code == 422
 
     def test_stripe_provider_filter_accepted(self, client: TestClient) -> None:

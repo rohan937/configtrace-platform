@@ -131,6 +131,14 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
         return {
             "stripe_api_key": body.stripe_api_key,
         }
+    elif body.provider == "aws":
+        # SECURITY: aws_secret_access_key is never logged here or in the service.
+        return {
+            "aws_access_key_id":     body.aws_access_key_id,
+            "aws_secret_access_key": body.aws_secret_access_key,
+            "aws_default_region":    body.aws_default_region or "us-east-1",
+            "aws_selected_regions":  body.aws_selected_regions or [body.aws_default_region or "us-east-1"],
+        }
     return {}
 
 
@@ -469,6 +477,43 @@ def reconnect_integration(
                 detail="stripe_api_key is required for Stripe integrations.",
             )
         new_token = body.stripe_api_key
+    elif integration.provider == "aws":
+        if not body.aws_access_key_id:
+            raise HTTPException(
+                status_code=422,
+                detail="aws_access_key_id is required for AWS integrations.",
+            )
+        if not body.aws_secret_access_key:
+            raise HTTPException(
+                status_code=422,
+                detail="aws_secret_access_key is required for AWS integrations.",
+            )
+        try:
+            integration = integration_service.reconnect_credentials_aws(
+                integration_id=integration_id,
+                user_id=current_user.id,
+                new_access_key_id=body.aws_access_key_id,
+                new_secret_access_key=body.aws_secret_access_key,
+                db=db,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Authentication failed: {exc}",
+            ) from exc
+        except ConnectorError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider validation error: {exc}",
+            ) from exc
+        except NetworkError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach AWS: {exc}",
+            ) from exc
+        return _build_response(integration, db)
     else:
         raise HTTPException(
             status_code=400,

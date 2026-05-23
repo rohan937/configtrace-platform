@@ -104,9 +104,11 @@ export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
  * GitHub:     github_token + repo_owner + repo_name (required)
  * Vercel:     vercel_token + vercel_project_id (required)
  * Stripe:     stripe_api_key (required)
+ * AWS:        aws_access_key_id + aws_secret_access_key + aws_default_region (required)
+ *             aws_selected_regions (optional, defaults to [aws_default_region])
  */
 export interface IntegrationCreateRequest {
-  provider: "cloudflare" | "github" | "vercel" | "stripe";
+  provider: "cloudflare" | "github" | "vercel" | "stripe" | "aws";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -129,6 +131,24 @@ export interface IntegrationCreateRequest {
    * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
    */
   stripe_api_key?: string;
+  // ── AWS fields ─────────────────────────────────────────────────────────────
+  /**
+   * AWS IAM access key ID (AKIA...).
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   * Partially redacted in logs (first 4 chars only).
+   */
+  aws_access_key_id?: string;
+  /**
+   * AWS IAM secret access key.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never logged or returned by backend under any circumstances.
+   */
+  aws_secret_access_key?: string;
+  /** Primary region for STS and EC2 calls (e.g. "us-east-1"). */
+  aws_default_region?: string;
+  /** Regions to actively monitor. Defaults to [aws_default_region] if omitted. */
+  aws_selected_regions?: string[];
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */
@@ -323,7 +343,7 @@ export interface DashboardSummary {
 
 export type AlertRiskThreshold = "critical_only" | "high_and_critical" | "medium_and_above";
 export type TimelineRange = "24h" | "7d" | "30d" | "all";
-export type ProviderFilter = "all" | "cloudflare" | "github" | "vercel" | "stripe";
+export type ProviderFilter = "all" | "cloudflare" | "github" | "vercel" | "stripe" | "aws";
 
 export interface UserSettings {
   // Alert policy

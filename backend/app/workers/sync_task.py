@@ -241,6 +241,12 @@ def sync_integration(
 
                 connector = StripeConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "aws":
+                # SECURITY: aws credentials are never logged.
+                from app.connectors.aws import AWSConnector
+
+                connector = AWSConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

@@ -38,6 +38,10 @@ Cloudflare:
   cloudflare_token_revoked, cloudflare_zone_not_found, cloudflare_api_unavailable
 Vercel:
   vercel_token_revoked, vercel_project_not_found, vercel_api_unavailable
+Stripe:
+  stripe_key_revoked, stripe_permissions_insufficient, stripe_account_not_found, stripe_api_unavailable
+AWS:
+  aws_credentials_invalid, aws_access_denied, aws_resource_not_found, aws_api_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -239,6 +243,16 @@ def _classify_auth(
                 "Reconnect this integration with a new restricted API key."
             ),
         )
+    if provider == "aws":
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_credentials_invalid",
+            recommended_action=(
+                "The AWS access key ID or secret access key is invalid or has been revoked. "
+                "Verify the credentials in the AWS IAM console and reconnect this integration "
+                "with a valid read-only key."
+            ),
+        )
     # Unknown provider
     return FailureClassification(
         category="authentication",
@@ -259,6 +273,16 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
     # monitored resource.  This is treated as an authentication/permission issue
     # rather than a transient error, so the user must take action.
     if status == 403:
+        if provider == "aws":
+            return FailureClassification(
+                category="authentication",
+                error_code="aws_access_denied",
+                recommended_action=(
+                    "The AWS IAM credentials do not have permission to call the required "
+                    "read-only APIs (sts:GetCallerIdentity). Create a dedicated read-only "
+                    "IAM user or role for ConfigTrace and reconnect this integration."
+                ),
+            )
         if provider == "stripe":
             return FailureClassification(
                 category="authentication",
@@ -310,6 +334,15 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "Verify the API key has access to this account."
                 ),
             )
+        if provider == "aws":
+            return FailureClassification(
+                category="resource_missing",
+                error_code="aws_resource_not_found",
+                recommended_action=(
+                    "The AWS resource was not found. "
+                    "Verify the AWS account and region configuration."
+                ),
+            )
         return FailureClassification(
             category="resource_missing",
             error_code="resource_not_found",
@@ -328,6 +361,8 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
             code = "vercel_api_unavailable"
         elif provider == "stripe":
             code = "stripe_api_unavailable"
+        elif provider == "aws":
+            code = "aws_api_unavailable"
         else:
             code = "provider_unavailable"
         return FailureClassification(

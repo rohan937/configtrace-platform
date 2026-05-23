@@ -87,6 +87,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.stripe import classify_stripe_change
         return classify_stripe_change(change)
 
+    if record_type.startswith("aws_"):
+        from app.services.risk_rules.aws import classify_aws_change
+        return classify_aws_change(change)
+
     return classify_dns_change(change)
 
 

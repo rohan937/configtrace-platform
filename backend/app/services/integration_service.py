@@ -21,6 +21,11 @@ Supported providers
     Enforces uniqueness: a given user cannot connect the same Stripe account twice.
     The ``stripe_api_key`` is encrypted and never returned.  Customer PII, payment
     data, and webhook signing secrets are NEVER fetched or stored.
+``aws``
+    Creates one Resource of type ``aws_account`` (keyed by AWS account ID).
+    Enforces uniqueness: a given user cannot connect the same AWS account twice.
+    AWS credentials are encrypted and never returned.  No AWS resource data
+    beyond account identity is fetched or stored.
 """
 
 from __future__ import annotations
@@ -61,7 +66,7 @@ def create_integration(
     Args:
         user_id:                UUID of the authenticated user.
         provider:               ``"cloudflare"``, ``"github"``, ``"vercel"``,
-                                or ``"stripe"``.
+                                ``"stripe"``, or ``"aws"``.
         display_name:           User-supplied label shown in the integrations list.
         credentials:            Provider-specific dict — see module docstring.
         scheduled_sync_enabled: Whether to enable scheduled sync immediately.
@@ -119,10 +124,19 @@ def create_integration(
             sync_interval_minutes=sync_interval_minutes,
             db=db,
         )
+    elif provider == "aws":
+        return _create_aws_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws'."
         )
 
 
@@ -413,6 +427,91 @@ def _create_stripe_integration(
     return integration
 
 
+def _create_aws_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    db: Session,
+) -> Integration:
+    """Create an AWS integration + account resource.
+
+    Uniqueness enforcement: a given user cannot connect the same AWS
+    account ID twice. Different users connecting the same account is allowed.
+
+    SECURITY:
+    - aws_access_key_id is never logged in full.
+    - aws_secret_access_key is never logged, never returned.
+    - Only account-level inventory is fetched — no resource or customer data.
+    """
+    from app.connectors.aws import AWSConnector
+
+    connector = AWSConnector()
+
+    # ── 1. Validate credentials ───────────────────────────────────────────────
+    connector.validate_credentials(credentials)
+
+    # ── 2. Get stable account ID ──────────────────────────────────────────────
+    # SECURITY: do not log the full access key ID.
+    account_id = connector.get_account_id(credentials)
+
+    # ── 3. Duplicate-account check ────────────────────────────────────────────
+    existing = (
+        db.query(Resource)
+        .filter(
+            Resource.user_id == user_id,
+            Resource.provider_resource_type == "aws_account",
+            Resource.provider_resource_id == account_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        raise ValueError("This AWS account is already connected.")
+
+    # ── 4. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 5. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="aws",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 6. Create Resource row ────────────────────────────────────────────────
+    selected_regions = credentials.get("aws_selected_regions") or [
+        credentials.get("aws_default_region", "us-east-1")
+    ]
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="aws_account",
+        provider_resource_id=account_id,
+        display_name=f"{display_name} ({account_id})",
+        resource_metadata={
+            "aws_account_id":   account_id,
+            "default_region":   credentials.get("aws_default_region", "us-east-1"),
+            "selected_regions": selected_regions,
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 7. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
 def get_integrations(*, user_id: uuid.UUID, db: Session) -> list[Integration]:
     """Return all non-deleted integrations for *user_id*, newest first.
 
@@ -646,6 +745,73 @@ def reconnect_credentials(
     integration.credential_iv = iv
 
     # Clear error status if the credential update resolves a previous failure.
+    if integration.status == "error":
+        integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_aws(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_access_key_id: str,
+    new_secret_access_key: str,
+    db: Session,
+) -> Integration:
+    """Replace AWS credentials for an existing AWS integration.
+
+    Design note — credential rotation only
+    ----------------------------------------
+    This function intentionally rotates the access key pair
+    (``aws_access_key_id`` + ``aws_secret_access_key``) and nothing else.
+    The existing ``aws_default_region`` and ``aws_selected_regions`` are
+    read from the currently-stored (decrypted) credentials and carried
+    forward unchanged into the new encrypted blob.
+
+    Changing region configuration is a separate concern and should be
+    handled by a future dedicated settings / update endpoint, not by the
+    reconnect flow.  Keeping reconnect narrowly scoped to key rotation
+    avoids ambiguity about whether a reconnect request also silently
+    updates monitoring scope.
+
+    SECURITY: new_secret_access_key is never logged or returned.
+    """
+    from app.connectors.aws import AWSConnector
+    from app.core.encryption import decrypt_credentials, encrypt_credentials
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # Decrypt existing creds to preserve region configuration.
+    existing_creds = decrypt_credentials(
+        integration.encrypted_credentials,
+        integration.credential_iv,
+    )
+
+    # Build new credentials with the same region settings.
+    new_creds = {
+        "aws_access_key_id":     new_access_key_id,
+        "aws_secret_access_key": new_secret_access_key,
+        "aws_default_region":    existing_creds.get("aws_default_region", "us-east-1"),
+        "aws_selected_regions":  existing_creds.get("aws_selected_regions", []),
+    }
+
+    # Validate new credentials before saving.
+    AWSConnector().validate_credentials(new_creds)
+
+    # Encrypt and store.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
     if integration.status == "error":
         integration.status = "active"
 
