@@ -278,22 +278,12 @@ def _resolve_recipient(integration: Integration, db: Session) -> str | None:
     return email
 
 
-# Human-readable labels per provider.
-#
-# Subject labels (short form):
-#   "DNS" for Cloudflare → "[ConfigTrace] Critical DNS change detected for …"
-#   "GitHub config" for GitHub → "[ConfigTrace] High-risk GitHub config changes …"
-#
-# Body labels (full form):
-#   "Cloudflare DNS" → "Provider:     Cloudflare DNS"
-#   "GitHub"         → "Provider:     GitHub"
-_PROVIDER_SUBJECT_LABELS: dict[str, str] = {
-    "cloudflare": "DNS",
-    "github":     "GitHub config",
-}
+# Human-readable provider labels used in email bodies.
+#   "Cloudflare DNS" → "Provider:    Cloudflare DNS"
+#   "GitHub repo configuration" → "Provider:    GitHub repo configuration"
 _PROVIDER_BODY_LABELS: dict[str, str] = {
     "cloudflare": "Cloudflare DNS",
-    "github":     "GitHub",
+    "github":     "GitHub repo configuration",
 }
 
 
@@ -304,79 +294,118 @@ def _compose_digest(
 ) -> tuple[str, str]:
     """Return (subject, body) for the alert digest email.
 
-    Subject form:
-        [ConfigTrace] Critical DNS change detected for <display_name>
-        [ConfigTrace] High-risk GitHub config changes detected for <display_name>
+    Subject forms (single change):
+        [ConfigTrace] High-risk DNS change: CNAME exx.configtrace.org target changed
+        [ConfigTrace] Critical GitHub change: repository visibility changed
+
+    Subject forms (multiple changes):
+        [ConfigTrace] 2 critical DNS changes detected
+        [ConfigTrace] 3 high-risk GitHub configuration changes detected
 
     If there are multiple changes with mixed risk, the highest level wins
-    in the subject ("Critical" beats "High").  The body lists each change
-    in detail with a deep link to the change detail page.
+    in the subject ("critical" beats "high-risk").  The body lists each
+    change with: summary, what changed, why it matters, suggested checks,
+    detected time, and a deep link to the change detail page.
     """
+    from app.services.change_explainer import explain_change
+
     has_critical = any(c.risk_level == "critical" for c in changes)
-    level_label = "Critical" if has_critical else "High-risk"
-    plural = "change" if len(changes) == 1 else "changes"
+    provider     = integration.provider
+    body_label   = _PROVIDER_BODY_LABELS.get(provider, provider)
+    base_url     = settings.APP_BASE_URL.rstrip("/")
+    n            = len(changes)
 
-    provider = integration.provider
-    subject_label = _PROVIDER_SUBJECT_LABELS.get(provider, provider)
-    body_label = _PROVIDER_BODY_LABELS.get(provider, provider)
+    # ── Build per-change explanations ─────────────────────────────────────
+    explanations = [explain_change(c) for c in changes]
 
-    subject = (
-        f"[ConfigTrace] {level_label} {subject_label} {plural} detected "
-        f"for {integration.display_name}"
-    )
+    # ── Subject ───────────────────────────────────────────────────────────
+    if n == 1:
+        exp         = explanations[0]
+        risk_label  = "Critical" if has_critical else "High-risk"
+        if provider == "cloudflare":
+            subject = f"[ConfigTrace] {risk_label} DNS change: {exp.subject_fragment}"
+        elif provider == "github":
+            subject = f"[ConfigTrace] {risk_label} GitHub change: {exp.subject_fragment}"
+        else:
+            subject = f"[ConfigTrace] {risk_label} configuration change: {exp.subject_fragment}"
+    else:
+        risk_label = "critical" if has_critical else "high-risk"
+        if provider == "cloudflare":
+            subject = f"[ConfigTrace] {n} {risk_label} DNS changes detected"
+        elif provider == "github":
+            subject = f"[ConfigTrace] {n} {risk_label} GitHub configuration changes detected"
+        else:
+            subject = f"[ConfigTrace] {n} {risk_label} configuration changes detected"
 
-    base_url = settings.APP_BASE_URL.rstrip("/")
+    # ── Body header ───────────────────────────────────────────────────────
     lines: list[str] = []
-    lines.append(f"ConfigTrace detected {len(changes)} {plural} that may affect production.")
+
+    if n == 1:
+        exp        = explanations[0]
+        risk_upper = (changes[0].risk_level or "unknown").upper()
+        lines.append(f"{risk_upper} RISK: {exp.summary}")
+    else:
+        risk_cap = "Critical" if has_critical else "High-risk"
+        lines.append(
+            f"{risk_cap} configuration changes detected in {integration.display_name}"
+        )
+
     lines.append("")
-    lines.append(f"Provider:     {body_label}")
-    lines.append(f"Integration:  {integration.display_name}")
+    lines.append(f"Provider:    {body_label}")
+    lines.append(f"Integration: {integration.display_name}")
     lines.append("")
     lines.append("─" * 60)
 
-    for idx, change in enumerate(changes, start=1):
+    # ── Per-change blocks ─────────────────────────────────────────────────
+    for idx, (change, exp) in enumerate(zip(changes, explanations), start=1):
+        risk_upper = (change.risk_level or "unknown").upper()
         lines.append("")
-        lines.append(f"Change {idx} of {len(changes)} — risk: {change.risk_level.upper()}")
-        lines.append(f"  Record:       {change.record_identifier}")
-        lines.append(f"  Change type:  {change.change_type}")
-        if change.field_path:
-            lines.append(f"  Field:        {change.field_path}")
-        old_val = _format_value(change.prev_value)
-        new_val = _format_value(change.new_value)
-        if old_val is not None:
-            lines.append(f"  Old value:    {old_val}")
-        if new_val is not None:
-            lines.append(f"  New value:    {new_val}")
-        if change.risk_reason:
-            lines.append(f"  Why:          {change.risk_reason}")
-        lines.append(f"  Detected at:  {change.created_at.isoformat()}")
-        lines.append(f"  View change:  {base_url}/changes/{change.id}")
 
+        if n > 1:
+            lines.append(f"Change {idx} of {n} — {risk_upper}")
+            lines.append(exp.summary)
+            lines.append("")
+
+        lines.append("What changed:")
+        lines.append(f"  {exp.what_changed}")
+        lines.append("")
+
+        lines.append("Why this matters:")
+        lines.append(f"  {exp.why_it_matters}")
+        lines.append("")
+
+        if exp.suggested_checks:
+            lines.append("Suggested checks:")
+            for check in exp.suggested_checks:
+                lines.append(f"  • {check}")
+            lines.append("")
+
+        lines.append(f"Detected:         {_format_timestamp(change.created_at)}")
+        lines.append(f"View full change: {base_url}/changes/{change.id}")
+
+        if idx < n:
+            lines.append("")
+            lines.append("─" * 60)
+
+    # ── Footer ────────────────────────────────────────────────────────────
     lines.append("")
     lines.append("─" * 60)
     lines.append("")
     lines.append("You are receiving this email because you are the owner of the")
-    lines.append("ConfigTrace integration above.  Low- and medium-risk changes are")
+    lines.append("ConfigTrace integration above. Low- and medium-risk changes are")
     lines.append("not emailed — review them in the timeline at:")
     lines.append(f"  {base_url}")
 
     return subject, "\n".join(lines)
 
 
-def _format_value(value) -> str | None:
-    """Render a JSONB value for the email body.
-
-    Returns ``None`` when the value is ``None`` (so the calling code can
-    omit the line entirely for ``added``/``removed`` half-pairs).
-    """
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    # Short JSON-ish representation for dicts / lists / scalars.
+def _format_timestamp(dt: object) -> str:
+    """Format a datetime object as a clean UTC string for email bodies."""
+    if dt is None:
+        return "unknown"
     try:
-        import json
-
-        return json.dumps(value, separators=(", ", ": "), default=str)
-    except (TypeError, ValueError):
-        return repr(value)
+        if hasattr(dt, "strftime"):
+            return dt.strftime("%Y-%m-%d %H:%M UTC")  # type: ignore[union-attr]
+    except Exception:
+        pass
+    return str(dt)

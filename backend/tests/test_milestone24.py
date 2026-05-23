@@ -282,7 +282,8 @@ def test_high_risk_change_sends_email(
     sent = email_recorder[0]
     assert sent["to"] == test_user.email
     assert "High-risk" in sent["subject"]
-    assert integration.display_name in sent["subject"]
+    # M28: integration display_name moved to body (subject now uses record/change details)
+    assert integration.display_name in sent["body"]
 
     alert = (
         db_session.query(Alert)
@@ -338,8 +339,9 @@ def test_mixed_high_and_critical_subject_says_critical(
     db_session.commit()
 
     assert len(email_recorder) == 1
-    assert "Critical" in email_recorder[0]["subject"]
-    assert "2 changes" in email_recorder[0]["body"] or "2 change" in email_recorder[0]["body"]
+    # M28: multi-change subject uses lowercase "critical"; body uses "Change X of N" format
+    assert "critical" in email_recorder[0]["subject"].lower()
+    assert "Change 1 of 2" in email_recorder[0]["body"] or "Change 2 of 2" in email_recorder[0]["body"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

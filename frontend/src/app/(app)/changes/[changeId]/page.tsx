@@ -200,11 +200,19 @@ function ModifiedDiffPanel({ change }: { change: ChangeDetail }) {
 
 // ── Diff panel — added / removed ──────────────────────────────────────────────
 
-function AddedRemovedPanel({ change }: { change: ChangeDetail }) {
+function AddedRemovedPanel({
+  change,
+  isGitHub = false,
+}: {
+  change: ChangeDetail;
+  isGitHub?: boolean;
+}) {
   const isAdded   = change.change_type === "added";
   const record    = isAdded ? change.new_value : change.prev_value;
   const tint      = isAdded ? "add" : "remove";
-  const label     = isAdded ? "Record Added" : "Record Removed";
+  const label     = isAdded
+    ? isGitHub ? "Configuration Added" : "DNS Record Added"
+    : isGitHub ? "Configuration Removed" : "DNS Record Removed";
   const labelColor = isAdded ? "#3ccf7e" : "#e84040";
 
   const isDnsRecord =
@@ -248,6 +256,158 @@ function AddedRemovedPanel({ change }: { change: ChangeDetail }) {
       )}
     </div>
   );
+}
+
+// ── Provider-aware helpers ────────────────────────────────────────────────────
+
+/** "Cloudflare DNS" | "GitHub repo configuration" | "Unknown" */
+function getProviderLabel(change: ChangeDetail): string {
+  const rt = (
+    (change.provider_metadata?.record_type as string | undefined) ?? ""
+  ).toLowerCase();
+  if (rt.startsWith("github_")) return "GitHub repo configuration";
+  if (change.provider_metadata?.record_type) return "Cloudflare DNS";
+  return "Cloudflare DNS";
+}
+
+/** One-sentence description of what happened. */
+function getChangeSummary(change: ChangeDetail): string {
+  const rt = (
+    (change.provider_metadata?.record_type as string | undefined) ?? ""
+  ).toLowerCase();
+  const rn = (change.provider_metadata?.record_name as string | undefined) ?? "";
+  const fp = change.field_path ?? "";
+  const nv = change.new_value;
+  const pv = change.prev_value;
+
+  // GitHub
+  if (rt === "github_actions_secret") {
+    const label = rn ? `The Actions secret ${rn}` : "An Actions secret";
+    if (change.change_type === "removed") return `${label} was deleted.`;
+    if (change.change_type === "added")   return `A new Actions secret${rn ? ` ${rn}` : ""} was added.`;
+    return `${label} was rotated.`;
+  }
+  if (rt === "github_branch_protection") {
+    if (change.change_type === "removed") return "A branch protection rule was deleted.";
+    if (change.change_type === "added")   return "A branch protection rule was added.";
+    return `A branch protection setting changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "github_repo_settings") {
+    if (fp === "visibility") return `Repository visibility changed to ${String(nv)}.`;
+    if (fp === "default_branch") return `The default branch changed from ${String(pv)} to ${String(nv)}.`;
+    if (fp === "archived") return "The repository was archived.";
+    return `A repository setting changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "github_webhook") {
+    if (change.change_type === "removed") return "A repository webhook was deleted.";
+    if (change.change_type === "added")   return "A new repository webhook was added.";
+    if (fp === "url") return "The webhook delivery URL changed.";
+    return "A webhook setting changed.";
+  }
+  if (rt === "github_deploy_key") {
+    if (change.change_type === "removed") return "A deploy key was removed.";
+    if (change.change_type === "added") {
+      const rec = typeof nv === "object" && nv !== null ? nv as Record<string, unknown> : {};
+      const access = rec.read_only === false ? "write-enabled" : "read-only";
+      return `A ${access} deploy key was added.`;
+    }
+    return "A deploy key was modified.";
+  }
+  if (rt.startsWith("github_")) {
+    return `A GitHub configuration record changed (${rt}).`;
+  }
+
+  // Cloudflare DNS
+  const recordLabel = rn
+    ? `${(change.provider_metadata?.record_type as string | undefined) ?? ""} ${rn}`.trim()
+    : change.record_identifier;
+
+  if (change.change_type === "removed") return `${recordLabel} was removed from Cloudflare DNS.`;
+  if (change.change_type === "added")   return `${recordLabel} was added to Cloudflare DNS.`;
+  if (fp === "content") {
+    const recType = ((change.provider_metadata?.record_type as string | undefined) ?? "").toUpperCase();
+    if (recType === "CNAME") return `The CNAME target for ${rn || change.record_identifier} changed.`;
+    if (recType === "A" || recType === "AAAA") return `The IP address for ${rn || change.record_identifier} changed.`;
+  }
+  return `${recordLabel} was modified.`;
+}
+
+/** Suggested next steps for high/critical changes. Returns [] for low/medium. */
+function getSuggestedChecks(change: ChangeDetail): string[] {
+  const riskKey = (change.risk_level ?? "").toLowerCase();
+  if (riskKey !== "high" && riskKey !== "critical") return [];
+
+  const rt = (
+    (change.provider_metadata?.record_type as string | undefined) ?? ""
+  ).toLowerCase();
+
+  if (rt === "github_actions_secret") {
+    return [
+      "Confirm the rotation was intentional.",
+      "Verify workflows or deployments using this secret still pass.",
+      "Check GitHub audit logs for who made the change.",
+      "Roll back or update dependent services if needed.",
+    ];
+  }
+  if (rt === "github_webhook") {
+    return [
+      "Confirm the change was intentional.",
+      "Verify the webhook endpoint is under your control.",
+      "Check GitHub audit logs for who made the change.",
+      "Test that events are being received by the correct endpoint.",
+      "Restore the previous URL if this was accidental.",
+    ];
+  }
+  if (rt === "github_branch_protection") {
+    return [
+      "Confirm the change was intentional.",
+      "Review branch protection rules in GitHub repository settings.",
+      "Check GitHub audit logs for who made the change.",
+      "Verify that CI/CD gates and merge requirements are still in place.",
+      "Re-enable protection if this was accidental.",
+    ];
+  }
+  if (rt === "github_repo_settings") {
+    return [
+      "Confirm this change was intentional.",
+      "Review whether sensitive data or proprietary code may be exposed.",
+      "Check GitHub audit logs for who made the change.",
+      "Change visibility back to private if this was accidental.",
+    ];
+  }
+  if (rt.startsWith("github_")) {
+    return [
+      "Confirm the change was intentional.",
+      "Review GitHub repository settings.",
+      "Check GitHub audit logs for who made the change.",
+      "Verify workflows and deployments still pass.",
+      "Restore the previous setting if this was accidental.",
+    ];
+  }
+
+  // Cloudflare DNS
+  const recordType = ((change.provider_metadata?.record_type as string | undefined) ?? "").toUpperCase();
+  const recordName = ((change.provider_metadata?.record_name as string | undefined) ?? "").toLowerCase();
+  const isEmailAuth =
+    (recordType === "MX") ||
+    (recordType === "TXT" && ["_dmarc", "_domainkey", "spf"].some((kw) => recordName.includes(kw)));
+
+  if (isEmailAuth) {
+    return [
+      "Confirm this change was intentional.",
+      "Test email delivery to verify SPF, DKIM, and DMARC are still valid.",
+      "Verify your email provider's DNS configuration is intact.",
+      "Check Cloudflare audit logs for who made the change.",
+      "Restore the record if this was accidental.",
+    ];
+  }
+  return [
+    "Confirm this change was intentional.",
+    "Test the affected hostname (dig, nslookup, or browser).",
+    "Verify the new target or IP address is correct.",
+    "Check Cloudflare audit logs for who made the change.",
+    "Roll back the DNS record if this was accidental.",
+  ];
 }
 
 // ── Provider metadata context ─────────────────────────────────────────────────
@@ -647,9 +807,13 @@ export default function ChangeDetailPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
-  const riskKey    = (change.risk_level ?? "unknown").toLowerCase();
-  const riskBg     = RISK_PANEL_BG[riskKey]     ?? RISK_PANEL_BG.unknown;
-  const riskBorder = RISK_PANEL_BORDER[riskKey] ?? RISK_PANEL_BORDER.unknown;
+  const riskKey       = (change.risk_level ?? "unknown").toLowerCase();
+  const riskBg        = RISK_PANEL_BG[riskKey]     ?? RISK_PANEL_BG.unknown;
+  const riskBorder    = RISK_PANEL_BORDER[riskKey] ?? RISK_PANEL_BORDER.unknown;
+  const providerLabel = getProviderLabel(change);
+  const summary       = getChangeSummary(change);
+  const checks        = getSuggestedChecks(change);
+  const isGitHub      = providerLabel === "GitHub repo configuration";
 
   return (
     <>
@@ -690,6 +854,24 @@ export default function ChangeDetailPage() {
             </div>
           </div>
 
+          {/* Provider label pill */}
+          <div style={{ marginBottom: "10px" }}>
+            <span
+              style={{
+                display: "inline-block",
+                fontSize: "11px",
+                color: "#8b90a0",
+                background: "#1c1e26",
+                border: "1px solid #2a2d38",
+                borderRadius: "4px",
+                padding: "2px 8px",
+                letterSpacing: "0.03em",
+              }}
+            >
+              {providerLabel}
+            </span>
+          </div>
+
           {/* Metadata rows */}
           <MetaRow label="Change type">
             <span
@@ -719,25 +901,27 @@ export default function ChangeDetailPage() {
               </span>
             </span>
           </MetaRow>
+        </Panel>
 
-          <MetaRow label="Resource ID">
-            <span className="font-mono" style={{ color: "#565b6e", fontSize: "11px" }}>
-              {change.resource_id}
-            </span>
-          </MetaRow>
-
-          <MetaRow label="Integration">
-            <span className="font-mono" style={{ color: "#565b6e", fontSize: "11px" }}>
-              {change.integration_id}
-            </span>
-          </MetaRow>
+        {/* ── Summary card ────────────────────────────────────────────── */}
+        <Panel>
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#b0b5c4",
+              lineHeight: 1.6,
+              margin: 0,
+            }}
+          >
+            {summary}
+          </p>
         </Panel>
 
         {/* ── Risk explanation ────────────────────────────────────────── */}
         <div>
           <SectionLabel>Risk explanation</SectionLabel>
           <Panel bg={riskBg} border={riskBorder}>
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-3" style={{ marginBottom: checks.length > 0 ? "14px" : "0" }}>
               <div style={{ flexShrink: 0, paddingTop: "2px" }}>
                 <RiskBadge level={change.risk_level} />
               </div>
@@ -753,6 +937,48 @@ export default function ChangeDetailPage() {
               </p>
             </div>
 
+            {/* Suggested checks for high/critical */}
+            {checks.length > 0 && (
+              <div
+                style={{
+                  borderTop: `1px solid ${riskBorder}`,
+                  paddingTop: "12px",
+                  marginTop: "4px",
+                }}
+              >
+                <p
+                  style={{
+                    fontSize: "11px",
+                    color: "#565b6e",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.06em",
+                    marginBottom: "8px",
+                    fontWeight: 500,
+                  }}
+                >
+                  Suggested checks
+                </p>
+                <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                  {checks.map((check, i) => (
+                    <li
+                      key={i}
+                      style={{
+                        fontSize: "13px",
+                        color: "#8b90a0",
+                        lineHeight: 1.6,
+                        display: "flex",
+                        gap: "8px",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      <span style={{ flexShrink: 0, color: "#565b6e" }}>•</span>
+                      <span>{check}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <ProviderMetaRows metadata={change.provider_metadata} />
           </Panel>
         </div>
@@ -761,17 +987,17 @@ export default function ChangeDetailPage() {
         <div>
           <SectionLabel>
             {change.change_type === "modified"
-              ? "Field change"
+              ? "What changed"
               : change.change_type === "added"
-              ? "Added record"
-              : "Removed record"}
+              ? isGitHub ? "Configuration added" : "DNS record added"
+              : isGitHub ? "Configuration removed" : "DNS record removed"}
           </SectionLabel>
 
           <Panel>
             {change.change_type === "modified" ? (
               <ModifiedDiffPanel change={change} />
             ) : (
-              <AddedRemovedPanel change={change} />
+              <AddedRemovedPanel change={change} isGitHub={isGitHub} />
             )}
           </Panel>
         </div>
@@ -783,6 +1009,71 @@ export default function ChangeDetailPage() {
             <SnapshotContextPanel change={change} />
           </div>
         )}
+
+        {/* ── Technical details (collapsed) ────────────────────────────── */}
+        <div>
+          <details
+            style={{
+              border: "1px solid #2a2d38",
+              borderRadius: "6px",
+              overflow: "hidden",
+            }}
+          >
+            <summary
+              style={{
+                padding: "10px 14px",
+                fontSize: "12px",
+                color: "#565b6e",
+                cursor: "pointer",
+                userSelect: "none",
+                background: "#13151a",
+                listStyle: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              <span>▶</span>
+              <span>Technical details</span>
+            </summary>
+            <div style={{ background: "#0e0f11", padding: "14px 16px" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                {[
+                  { label: "Change ID",       value: String(change.id) },
+                  { label: "Resource ID",     value: change.resource_id },
+                  { label: "Integration ID",  value: change.integration_id },
+                  ...(change.prev_snapshot_id
+                    ? [{ label: "Before snapshot", value: change.prev_snapshot_id }]
+                    : []),
+                  ...(change.new_snapshot_id
+                    ? [{ label: "After snapshot",  value: change.new_snapshot_id }]
+                    : []),
+                ].map(({ label, value }) => (
+                  <div key={label} className="flex items-baseline gap-3">
+                    <span
+                      style={{
+                        width: "120px",
+                        flexShrink: 0,
+                        fontSize: "11px",
+                        color: "#565b6e",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.06em",
+                      }}
+                    >
+                      {label}
+                    </span>
+                    <span
+                      className="font-mono"
+                      style={{ fontSize: "11px", color: "#565b6e", wordBreak: "break-all" }}
+                    >
+                      {value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </details>
+        </div>
 
         {/* ── Raw / debug ─────────────────────────────────────────────── */}
         <div>
