@@ -252,21 +252,21 @@ def test_modifying_soa_record_is_critical() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_deleting_non_apex_a_record_is_high() -> None:
-    """Removing a subdomain A record → high (not critical, no email)."""
+    """Removing api.example.com A record → critical ('api' is a critical subdomain)."""
     change = _change_dict("removed", record_type="A", record_name="api.example.com")
     level, reason = classify_dns_change(change)
-    assert level == "high"
+    assert level == "critical"
 
 
 def test_deleting_txt_record_is_high() -> None:
-    """Removing a TXT record → high (generic deletion rule)."""
+    """Removing a generic TXT record (non-email-auth content) → medium."""
     change = _change_dict("removed", record_type="TXT", record_name="example.com")
     level, reason = classify_dns_change(change)
-    assert level == "high"
+    assert level == "medium"
 
 
 def test_modifying_cname_content_is_high() -> None:
-    """Changing a CNAME target → high (traffic redirection)."""
+    """Changing www.example.com CNAME target → critical ('www' is a critical subdomain)."""
     change = _change_dict(
         "modified",
         record_type="CNAME",
@@ -276,7 +276,7 @@ def test_modifying_cname_content_is_high() -> None:
         new_value="cdn.example.com",
     )
     level, reason = classify_dns_change(change)
-    assert level == "high"
+    assert level == "critical"
     assert "CNAME" in reason
 
 
@@ -295,7 +295,7 @@ def test_modifying_mx_content_is_high() -> None:
 
 
 def test_modifying_mx_priority_is_high() -> None:
-    """Changing MX priority → high (mail server order)."""
+    """Changing MX priority → medium (mail still delivered; only selection order changes)."""
     change = _change_dict(
         "modified",
         record_type="MX",
@@ -305,12 +305,12 @@ def test_modifying_mx_priority_is_high() -> None:
         new_value=20,
     )
     level, reason = classify_dns_change(change)
-    assert level == "high"
+    assert level == "medium"
     assert "priority" in reason.lower() or "mail" in reason.lower()
 
 
 def test_proxy_disabled_is_high() -> None:
-    """Disabling Cloudflare proxy (True→False) → high."""
+    """Disabling proxy on api.example.com → critical ('api' is a critical subdomain)."""
     change = _change_dict(
         "modified",
         record_type="A",
@@ -320,7 +320,7 @@ def test_proxy_disabled_is_high() -> None:
         new_value=False,
     )
     level, reason = classify_dns_change(change)
-    assert level == "high"
+    assert level == "critical"
     assert "proxy" in reason.lower() or "ip" in reason.lower()
 
 
@@ -388,7 +388,7 @@ def test_proxy_enabled_is_medium() -> None:
 
 
 def test_txt_content_change_is_medium() -> None:
-    """Modifying TXT record content → medium (SPF/DKIM/DMARC impact)."""
+    """Modifying SPF TXT content → high (email authentication record changed)."""
     change = _change_dict(
         "modified",
         record_type="TXT",
@@ -398,7 +398,7 @@ def test_txt_content_change_is_medium() -> None:
         new_value="v=spf1 include:new.com ~all",
     )
     level, reason = classify_dns_change(change)
-    assert level == "medium"
+    assert level == "high"
     assert "TXT" in reason or "SPF" in reason or "DKIM" in reason
 
 
