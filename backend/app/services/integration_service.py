@@ -427,6 +427,44 @@ def reconnect_credentials(
     return integration
 
 
+def get_recent_sync_runs(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    limit: int,
+    db: Session,
+) -> tuple[list, int]:
+    """Return (recent_runs, total) for an integration scoped to *user_id*.
+
+    *recent_runs* contains the ``limit`` most recent SyncRuns ordered by
+    ``created_at DESC``.  *total* is the all-time lifetime count so the
+    frontend can show "Last N of M total runs".
+
+    Both ``integration_id`` and ``user_id`` are filtered for defence-in-depth:
+    the caller should have already verified ownership, but we filter here too
+    so a mis-wired call cannot leak cross-user data.
+
+    Args:
+        integration_id: The integration whose runs are requested.
+        user_id:        Must match the integration's owner.
+        limit:          Maximum number of runs to return.
+        db:             Active SQLAlchemy session.
+    """
+    from app.models.sync_run import SyncRun
+
+    q = (
+        db.query(SyncRun)
+        .filter(
+            SyncRun.integration_id == integration_id,
+            SyncRun.user_id == user_id,
+        )
+        .order_by(SyncRun.created_at.desc())
+    )
+    total: int = q.count()
+    runs = q.limit(limit).all()
+    return runs, total
+
+
 def get_latest_sync_run_summary(
     integration_id: uuid.UUID,
     db: Session,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import StatusBadge from "@/components/common/StatusBadge";
@@ -441,10 +442,16 @@ export default function IntegrationList({
             >
               {/* Main row */}
               <div className="flex items-center gap-4 px-4 py-3">
-                {/* Name */}
-                <span className="flex-1 truncate" style={{ fontSize: "13px", color: "#e8eaf0" }}>
+                {/* Name — links to detail page */}
+                <Link
+                  href={`/integrations/${integration.id}`}
+                  className="flex-1 truncate"
+                  style={{ fontSize: "13px", color: "#e8eaf0", textDecoration: "none" }}
+                  onMouseOver={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "#b0b5c4"; }}
+                  onMouseOut={(e) => { (e.currentTarget as HTMLAnchorElement).style.color = "#e8eaf0"; }}
+                >
                   {integration.display_name}
-                </span>
+                </Link>
 
                 {/* Provider */}
                 <span

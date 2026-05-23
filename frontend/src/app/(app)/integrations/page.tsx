@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import { getIntegrations } from "@/lib/api";
+import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import PageHeader from "@/components/common/PageHeader";
 import IntegrationList from "@/components/integrations/IntegrationList";
 import CloudflareIntegrationForm from "@/components/integrations/CloudflareIntegrationForm";
@@ -83,10 +84,26 @@ export default function IntegrationsPage() {
     fetchIntegrations();
   }, [isLoaded, fetchIntegrations]);
 
+  // Polling — 30s, pauses when tab is hidden, resumes on visibility.
+  const { refresh: manualRefresh, lastUpdatedAt } = usePollingRefresh({
+    callback: fetchIntegrations,
+    intervalMs: 30_000,
+    enabled: !loading && error === null && isLoaded,
+  });
+
   function handleCreated() {
     // Hide the form and refresh the list.
     setShowForm(false);
     fetchIntegrations();
+  }
+
+  function formatElapsed(since: Date | null): string {
+    if (!since) return "";
+    const s = Math.round((Date.now() - since.getTime()) / 1000);
+    if (s < 5) return "just now";
+    if (s < 60) return `${s}s ago`;
+    const m = Math.floor(s / 60);
+    return `${m}m ago`;
   }
 
   return (
@@ -253,20 +270,46 @@ export default function IntegrationsPage() {
             exists — for empty-state users the setup guide above covers context. */}
         {!loading && !error && total > 0 && (
           <div
-            className="mb-4 flex flex-wrap items-center"
+            className="mb-4 flex flex-wrap items-center justify-between"
             style={{ gap: "10px", fontSize: "12px", color: "#8b90a0" }}
           >
-            <span>
-              {total} integration{total === 1 ? "" : "s"} connected
-            </span>
-            <span style={{ color: "#3a3d4a" }}>·</span>
-            <span title="Celery Beat fires every 5 minutes; each integration uses its own configured interval (5–60 min, default 60)">
-              Scheduled sync: active
-            </span>
-            <span style={{ color: "#3a3d4a" }}>·</span>
-            <span style={{ color: "#565b6e" }} title="Requires RESEND_API_KEY and ALERTS_FROM_EMAIL configured in Render">
-              Email alerts: high-risk and critical changes only
-            </span>
+            <div className="flex flex-wrap items-center" style={{ gap: "10px" }}>
+              <span>
+                {total} integration{total === 1 ? "" : "s"} connected
+              </span>
+              <span style={{ color: "#3a3d4a" }}>·</span>
+              <span title="Celery Beat fires every 5 minutes; each integration uses its own configured interval (5–60 min, default 60)">
+                Scheduled sync: active
+              </span>
+              <span style={{ color: "#3a3d4a" }}>·</span>
+              <span style={{ color: "#565b6e" }} title="Requires RESEND_API_KEY and ALERTS_FROM_EMAIL configured in Render">
+                Email alerts: high-risk and critical changes only
+              </span>
+            </div>
+            {/* Auto-refresh indicator */}
+            <div className="flex items-center gap-2">
+              {lastUpdatedAt && (
+                <span style={{ fontSize: "11px", color: "#3a3d4a" }}>
+                  Updated {formatElapsed(lastUpdatedAt)}
+                </span>
+              )}
+              <button
+                onClick={manualRefresh}
+                title="Refresh integrations"
+                style={{
+                  background: "transparent",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "6px",
+                  color: "#565b6e",
+                  fontSize: "11px",
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                ↻
+              </button>
+            </div>
           </div>
         )}
 

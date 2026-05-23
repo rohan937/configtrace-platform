@@ -30,6 +30,7 @@ import type {
   ResourceListItem,
   SnapshotListItem,
   SyncRun,
+  SyncRunListResponse,
 } from "@/types";
 
 const BASE_URL =
@@ -167,6 +168,37 @@ export async function getIntegrations(
   token?: string | null,
 ): Promise<IntegrationListResponse> {
   return apiFetch("/integrations", { token });
+}
+
+/**
+ * Fetch a single integration's detail by ID.
+ *
+ * Returns HTTP 404 if the integration does not exist, is soft-deleted, or
+ * belongs to a different user.  Credentials are never included in the response.
+ */
+export async function getIntegration(
+  integrationId: string,
+  token?: string | null,
+): Promise<Integration> {
+  return apiFetch(`/integrations/${integrationId}`, { token });
+}
+
+/**
+ * Fetch the most recent sync runs for an integration.
+ *
+ * ``limit`` defaults to 10 and is clamped to 50 server-side.
+ * The response includes a ``total`` field reflecting the all-time SyncRun
+ * count so the UI can show "Last N of M total runs".
+ */
+export async function getIntegrationSyncRuns(
+  integrationId: string,
+  limit: number = 10,
+  token?: string | null,
+): Promise<SyncRunListResponse> {
+  return apiFetch(
+    `/integrations/${integrationId}/sync-runs${buildQuery({ limit })}`,
+    { token },
+  );
 }
 
 /**

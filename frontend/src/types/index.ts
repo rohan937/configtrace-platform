@@ -160,3 +160,10 @@ export interface SyncRun {
   error_message: string | null;
   created_at: string;
 }
+
+/** Matches backend SyncRunListResponse — GET /integrations/{id}/sync-runs. */
+export interface SyncRunListResponse {
+  sync_runs: SyncRun[];
+  /** All-time count of SyncRuns for this integration (not limited to the slice). */
+  total: number;
+}

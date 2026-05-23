@@ -7,6 +7,7 @@ import type { ChangeListItem, Integration } from "@/types";
 import type { GetChangesParams } from "@/lib/api";
 import { getChanges, getIntegrations } from "@/lib/api";
 import { timeRangeToSince } from "@/lib/utils";
+import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import PageHeader from "@/components/common/PageHeader";
 import ChangeList from "@/components/changes/ChangeList";
 import LoadingState from "@/components/common/LoadingState";
@@ -221,6 +222,21 @@ function TimelineContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded]);
 
+  // Polling — 60s background refresh of page-1 with current filters.
+  // Does NOT reset pagination (previously-loaded pages stay visible).
+  // Filters, URL params, and scroll position are all preserved.
+  const pollCallback = useCallback(() => {
+    // Use a non-replace refetch so loadingMore state isn't affected.
+    // We silently overwrite page-1 data with fresh results.
+    doFetch(filters, 1, "replace");
+  }, [doFetch, filters]);
+
+  const { refresh: manualRefresh, lastUpdatedAt } = usePollingRefresh({
+    callback: pollCallback,
+    intervalMs: 60_000,
+    enabled: !loading && error === null && isLoaded,
+  });
+
   // ── Filter change — resets page, updates URL ─────────────────────────────
   function setFilter<K extends keyof Filters>(key: K, value: Filters[K]) {
     const next = { ...filters, [key]: value };
@@ -359,7 +375,7 @@ function TimelineContent() {
           </FilterRow>
         </div>
 
-        {/* ── Result count + clear filters ────────────────────────────── */}
+        {/* ── Result count + clear filters + refresh ──────────────────── */}
         {!loading && !error && (
           <div className="flex items-center justify-between mb-3">
             <p style={{ fontSize: "12px", color: "#565b6e", margin: 0 }}>
@@ -390,6 +406,32 @@ function TimelineContent() {
                   Email alerts: high-risk and critical only
                 </p>
               )}
+              {lastUpdatedAt && (
+                <span style={{ fontSize: "11px", color: "#3a3d4a" }}>
+                  Updated {(() => {
+                    const s = Math.round((Date.now() - lastUpdatedAt.getTime()) / 1000);
+                    if (s < 5) return "just now";
+                    if (s < 60) return `${s}s ago`;
+                    return `${Math.floor(s / 60)}m ago`;
+                  })()}
+                </span>
+              )}
+              <button
+                onClick={manualRefresh}
+                title="Refresh timeline"
+                style={{
+                  background: "transparent",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "6px",
+                  color: "#565b6e",
+                  fontSize: "11px",
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                ↻
+              </button>
             </div>
           </div>
         )}

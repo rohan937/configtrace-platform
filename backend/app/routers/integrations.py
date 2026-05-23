@@ -1,12 +1,14 @@
-"""Integration routes — M29: Integration Management.
+"""Integration routes — M30: Integration Detail + Sync History.
 
 Routes
 ------
-POST   /integrations                   — create a new integration
-GET    /integrations                   — list non-deleted integrations
-PATCH  /integrations/{id}             — rename / update interval / pause / resume
-DELETE /integrations/{id}             — soft-delete (sets status='deleted')
-POST   /integrations/{id}/reconnect   — token-only credential update
+POST   /integrations                        — create a new integration
+GET    /integrations                        — list non-deleted integrations
+GET    /integrations/{id}                   — single integration detail
+PATCH  /integrations/{id}                   — rename / update interval / pause / resume
+DELETE /integrations/{id}                   — soft-delete (sets status='deleted')
+POST   /integrations/{id}/reconnect         — token-only credential update
+GET    /integrations/{id}/sync-runs         — last N sync runs for this integration
 
 Credentials (api_token, zone_id, github_token, etc.) and their encrypted forms
 are **never** present in any response shape.  This is enforced at the schema
@@ -22,7 +24,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.connectors.exceptions import AuthenticationError, ConnectorError, NetworkError
@@ -38,6 +40,7 @@ from app.schemas.integration import (
     IntegrationResponse,
     IntegrationUpdateRequest,
 )
+from app.schemas.sync import SyncRunListResponse, SyncRunResponse
 from app.services import integration_service
 from pydantic import UUID4
 
@@ -171,6 +174,75 @@ def list_integrations(
     return IntegrationListResponse(
         integrations=[_build_response(r, db) for r in rows],
         total=len(rows),
+    )
+
+
+@router.get("/{integration_id}", response_model=IntegrationResponse)
+def get_integration(
+    integration_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IntegrationResponse:
+    """Return detail for a single non-deleted integration.
+
+    Returns the same safe ``IntegrationResponse`` shape as the list endpoint.
+    Deleted integrations return HTTP 404.  A missing integration and an
+    integration belonging to another user both return HTTP 404 to avoid
+    leaking object existence across user boundaries.
+
+    Credentials (api_token, zone_id, github_token, encrypted bytes) are never
+    included in the response — this is enforced at the schema level.
+    """
+    integration = integration_service.get_integration_by_id(
+        integration_id=integration_id,
+        user_id=current_user.id,
+        db=db,
+    )
+    if integration is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Integration not found or does not belong to this user.",
+        )
+    return _build_response(integration, db)
+
+
+@router.get("/{integration_id}/sync-runs", response_model=SyncRunListResponse)
+def get_integration_sync_runs(
+    integration_id: UUID4,
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of runs to return (1–50)."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SyncRunListResponse:
+    """Return the most recent sync runs for a single integration.
+
+    Ownership is verified before querying sync runs.  Deleted integrations
+    return HTTP 404.  The response also includes a ``total`` count of all
+    SyncRuns ever created for this integration so the frontend can render
+    "Showing last N of M total runs".
+
+    Sync run records do not contain credentials.
+    """
+    # Verify ownership and non-deleted status before querying runs.
+    integration = integration_service.get_integration_by_id(
+        integration_id=integration_id,
+        user_id=current_user.id,
+        db=db,
+    )
+    if integration is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Integration not found or does not belong to this user.",
+        )
+
+    runs, total = integration_service.get_recent_sync_runs(
+        integration_id=integration_id,
+        user_id=current_user.id,
+        limit=limit,
+        db=db,
+    )
+    return SyncRunListResponse(
+        sync_runs=[SyncRunResponse.model_validate(r) for r in runs],
+        total=total,
     )
 
 

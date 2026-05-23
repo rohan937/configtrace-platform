@@ -586,8 +586,9 @@ def test_sync_task_changed_sync_creates_change_rows(
     assert modified.field_path == "content"
     assert modified.prev_value == "1.1.1.1"
     assert modified.new_value == "9.9.9.9"
-    # A record content change — no specific high rule → default low
-    assert modified.risk_level == "low"
+    # M27 rule 8: apex A-record content change → critical
+    # (example.com has ≤2 labels → apex → is_critical=True)
+    assert modified.risk_level == "critical"
     assert modified.risk_reason is not None
 
     added = next(c for c in changes if c.change_type == "added")

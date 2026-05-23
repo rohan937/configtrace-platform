@@ -38,3 +38,15 @@ class SyncRunResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SyncRunListResponse(BaseModel):
+    """Response body for ``GET /integrations/{id}/sync-runs``.
+
+    ``sync_runs`` is the *limit* most-recent runs ordered newest first.
+    ``total`` is the lifetime count of SyncRuns for this integration — lets
+    the frontend show "Last 10 of N total runs" without a second query.
+    """
+
+    sync_runs: list[SyncRunResponse]
+    total: int
