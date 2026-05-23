@@ -165,9 +165,13 @@ def sync_integration(
 
         for resource in resources:
             # Select the correct connector based on provider.
-            # Future providers add an elif branch here.
+            # New providers: add an elif branch here.
             if integration.provider == "cloudflare":
                 connector = CloudflareConnector()
+                records = connector.fetch(credentials)
+            elif integration.provider == "github":
+                from app.connectors.github import GitHubConnector
+                connector = GitHubConnector()
                 records = connector.fetch(credentials)
             else:
                 logger.warning(

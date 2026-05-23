@@ -278,6 +278,25 @@ def _resolve_recipient(integration: Integration, db: Session) -> str | None:
     return email
 
 
+# Human-readable labels per provider.
+#
+# Subject labels (short form):
+#   "DNS" for Cloudflare → "[ConfigTrace] Critical DNS change detected for …"
+#   "GitHub config" for GitHub → "[ConfigTrace] High-risk GitHub config changes …"
+#
+# Body labels (full form):
+#   "Cloudflare DNS" → "Provider:     Cloudflare DNS"
+#   "GitHub"         → "Provider:     GitHub"
+_PROVIDER_SUBJECT_LABELS: dict[str, str] = {
+    "cloudflare": "DNS",
+    "github":     "GitHub config",
+}
+_PROVIDER_BODY_LABELS: dict[str, str] = {
+    "cloudflare": "Cloudflare DNS",
+    "github":     "GitHub",
+}
+
+
 def _compose_digest(
     *,
     integration: Integration,
@@ -287,7 +306,7 @@ def _compose_digest(
 
     Subject form:
         [ConfigTrace] Critical DNS change detected for <display_name>
-        [ConfigTrace] High-risk DNS changes detected for <display_name>
+        [ConfigTrace] High-risk GitHub config changes detected for <display_name>
 
     If there are multiple changes with mixed risk, the highest level wins
     in the subject ("Critical" beats "High").  The body lists each change
@@ -297,8 +316,12 @@ def _compose_digest(
     level_label = "Critical" if has_critical else "High-risk"
     plural = "change" if len(changes) == 1 else "changes"
 
+    provider = integration.provider
+    subject_label = _PROVIDER_SUBJECT_LABELS.get(provider, provider)
+    body_label = _PROVIDER_BODY_LABELS.get(provider, provider)
+
     subject = (
-        f"[ConfigTrace] {level_label} DNS {plural} detected "
+        f"[ConfigTrace] {level_label} {subject_label} {plural} detected "
         f"for {integration.display_name}"
     )
 
@@ -306,7 +329,7 @@ def _compose_digest(
     lines: list[str] = []
     lines.append(f"ConfigTrace detected {len(changes)} {plural} that may affect production.")
     lines.append("")
-    lines.append(f"Provider:     Cloudflare DNS")
+    lines.append(f"Provider:     {body_label}")
     lines.append(f"Integration:  {integration.display_name}")
     lines.append("")
     lines.append("─" * 60)

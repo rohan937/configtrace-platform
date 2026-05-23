@@ -1,4 +1,4 @@
-"""Risk classification service — Milestone 10.
+"""Risk classification service — Milestone 10 + 26.
 
 Responsibilities
 ----------------
@@ -14,10 +14,13 @@ Pipeline position
 
 Design decisions
 ----------------
-* All MVP changes use the Cloudflare DNS rule set from
-  ``app.services.risk_rules.cloudflare_dns``.  A future ``classify_change``
-  dispatch table can route by ``change.provider`` (stored on Change or
-  derivable from the parent Integration) once more providers are added.
+* Provider dispatch is via ``provider_metadata["record_type"]`` prefix:
+  - Record types starting with ``"github_"`` → GitHub rule set
+    (``app.services.risk_rules.github``).
+  - All other records → Cloudflare DNS rule set
+    (``app.services.risk_rules.cloudflare_dns``).
+  This approach works without a DB lookup: the record type is embedded in
+  ``provider_metadata`` at diff time, so no Integration join is needed.
 
 * ``classify_changes`` does a single ``db.flush()`` after updating all rows in
   memory.  This is more efficient than flushing once per row and mirrors the
@@ -35,6 +38,7 @@ Design decisions
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -44,12 +48,20 @@ from app.services.risk_rules.cloudflare_dns import classify_dns_change
 logger = logging.getLogger(__name__)
 
 
+def _get(obj: Any, key: str) -> Any:
+    """Return *obj[key]* for dicts, or ``getattr(obj, key, None)`` for objects."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
 def classify_change(change: Change) -> tuple[str, str]:
     """Return ``(risk_level, risk_reason)`` for *change*.
 
-    MVP routing: all changes go through the Cloudflare DNS rule set.
-    Future milestones can dispatch on ``change.provider`` or the parent
-    integration's provider field.
+    Dispatches to the appropriate provider rule set based on
+    ``provider_metadata["record_type"]``:
+    * Record types prefixed with ``"github_"`` → GitHub rule set.
+    * All others → Cloudflare DNS rule set.
 
     Args:
         change: A ``Change`` ORM instance (or a plain dict, for testing).
@@ -58,6 +70,13 @@ def classify_change(change: Change) -> tuple[str, str]:
         ``(risk_level, risk_reason)`` where *risk_level* is one of
         ``"critical"``, ``"high"``, ``"medium"``, ``"low"``.
     """
+    pm: dict = _get(change, "provider_metadata") or {}
+    record_type = (pm.get("record_type") or "").lower()
+
+    if record_type.startswith("github_"):
+        from app.services.risk_rules.github import classify_github_change
+        return classify_github_change(change)
+
     return classify_dns_change(change)
 
 

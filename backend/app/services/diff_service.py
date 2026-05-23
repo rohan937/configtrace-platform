@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Fields compared field-by-field when the same record appears in both snapshots.
+# Fields compared field-by-field for Cloudflare DNS records.
 # Ordered deterministically so multi-field modifications are always in the same
 # sequence, which matters for the UI and for risk rule matching.
 _TRACKED_FIELDS: tuple[str, ...] = (
@@ -72,6 +72,92 @@ _IGNORED_FIELDS: frozenset[str] = frozenset({
     "created_at",
     "updated_at",
 })
+
+# ── GitHub-specific tracked fields ──────────────────────────────────────────
+
+#: Set of GitHub record type strings — used for O(1) membership checks.
+_GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
+    "github_repo_settings",
+    "github_branch_protection",
+    "github_actions_secret",
+    "github_actions_variable",
+    "github_webhook",
+    "github_actions_permissions",
+    "github_deploy_key",
+})
+
+#: Per-record-type tracked field tuples for GitHub records.
+#: Only the fields listed here are compared field-by-field in compute_diff.
+#: Provider-managed timestamps (e.g. ``created_at``) are intentionally excluded.
+_GITHUB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "github_repo_settings": (
+        "visibility",
+        "default_branch",
+        "has_issues",
+        "has_projects",
+        "has_wiki",
+        "allow_merge_commit",
+        "allow_squash_merge",
+        "allow_rebase_merge",
+        "delete_branch_on_merge",
+        "archived",
+    ),
+    "github_branch_protection": (
+        "protection_enabled",
+        "required_status_checks_enabled",
+        "required_pull_request_reviews_enabled",
+        "required_approving_review_count",
+        "dismiss_stale_reviews",
+        "enforce_admins",
+        "required_linear_history",
+        "allow_force_pushes",
+        "allow_deletions",
+    ),
+    "github_actions_secret": (
+        # Only metadata — secret values are never fetched.
+        # last_updated_at changing signals a credential rotation.
+        "last_updated_at",
+    ),
+    "github_actions_variable": (
+        "value",
+    ),
+    "github_webhook": (
+        "url",
+        "active",
+        "events",
+        "content_type",
+    ),
+    "github_actions_permissions": (
+        "enabled",
+        "allowed_actions",
+    ),
+    "github_deploy_key": (
+        "title",
+        "read_only",
+        "verified",
+    ),
+}
+
+
+def _tracked_fields_for(record: dict) -> tuple[str, ...]:
+    """Return the tuple of field names to compare for *record*.
+
+    Dispatches on ``record["record_type"]``:
+    * Record types starting with ``"github_"`` look up in
+      ``_GITHUB_TRACKED_FIELDS_BY_TYPE`` — unknown sub-types return ``()``
+      (empty) so they never generate spurious modifications.
+    * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
+
+    Args:
+        record: A single record dict from a snapshot state list.
+
+    Returns:
+        Tuple of field name strings to compare field-by-field.
+    """
+    rt = record.get("record_type", "")
+    if isinstance(rt, str) and rt.startswith("github_"):
+        return _GITHUB_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    return _TRACKED_FIELDS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -256,7 +342,7 @@ def compute_diff(
         new_record = new_index[key]
         identifier = format_record_identifier(prev_record)
 
-        for field in _TRACKED_FIELDS:
+        for field in _tracked_fields_for(prev_record):
             prev_val = prev_record.get(field)
             new_val = new_record.get(field)
             if prev_val != new_val:

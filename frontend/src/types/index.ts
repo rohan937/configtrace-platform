@@ -95,13 +95,26 @@ export interface SnapshotListItem {
 
 export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
 
-/** Request body for POST /integrations. */
+/** Request body for POST /integrations.
+ *
+ * Provider-specific fields are optional at the type level; the caller must
+ * provide the correct subset for the chosen provider.
+ *
+ * Cloudflare: api_token + zone_id (required)
+ * GitHub:     github_token + repo_owner + repo_name (required)
+ */
 export interface IntegrationCreateRequest {
-  provider: "cloudflare";
+  provider: "cloudflare" | "github";
   display_name: string;
+  // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
-  api_token: string;
-  zone_id: string;
+  api_token?: string;
+  zone_id?: string;
+  // ── GitHub fields ──────────────────────────────────────────────────────────
+  /** Fine-grained PAT; sent once; never stored after submission. */
+  github_token?: string;
+  repo_owner?: string;
+  repo_name?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

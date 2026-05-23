@@ -364,23 +364,23 @@ export default function DashboardPage() {
             steps={[
               {
                 num: 1,
-                label: "Connect Cloudflare",
-                body: "Add a scoped API token and Zone ID — ConfigTrace only needs Zone DNS Read access.",
+                label: "Connect Cloudflare or GitHub",
+                body: "Add a Cloudflare DNS zone or a GitHub repository — ConfigTrace monitors configuration drift, not code.",
               },
               {
                 num: 2,
                 label: "Create a baseline",
-                body: "The first sync snapshots your current DNS state. Nothing is flagged as changed on this run — it establishes the comparison point.",
+                body: "The first sync snapshots your current configuration state. Nothing is flagged as changed on this run — it establishes the comparison point.",
               },
               {
                 num: 3,
                 label: "Track changes hourly",
-                body: "ConfigTrace syncs every hour and shows exactly what DNS records changed and how risky each change is.",
+                body: "ConfigTrace syncs every hour and shows exactly what changed and how risky each change is.",
               },
             ]}
-            actionLabel="Connect Cloudflare →"
+            actionLabel="Connect an integration →"
             actionHref="/integrations"
-            note="High-risk and critical DNS changes are emailed to the integration owner automatically."
+            note="High-risk and critical changes are emailed to the integration owner automatically."
           />
         )}
 
@@ -389,19 +389,19 @@ export default function DashboardPage() {
             steps={[
               {
                 num: 1,
-                label: "Connect Cloudflare",
+                label: "Connect Cloudflare or GitHub",
                 body: "Integration connected.",
                 done: true,
               },
               {
                 num: 2,
                 label: "Create a baseline",
-                body: "Run your first sync to snapshot current DNS state. No changes are detected on this run — it's the starting point.",
+                body: "Run your first sync to snapshot current configuration state. No changes are detected on this run — it's the starting point.",
               },
               {
                 num: 3,
                 label: "Track changes hourly",
-                body: "ConfigTrace syncs every hour and surfaces DNS changes automatically.",
+                body: "ConfigTrace syncs every hour and surfaces configuration changes automatically.",
               },
             ]}
             actionLabel="Go to Integrations →"
@@ -412,8 +412,8 @@ export default function DashboardPage() {
 
         {baselineOnly && (
           <NextStepGuide
-            title="Baseline active — ConfigTrace is monitoring your DNS."
-            body="Your current DNS state is on record. Changes will appear here on the next sync. To test the loop now, modify a DNS record in Cloudflare, then click Sync Now on the Integrations page."
+            title="Baseline active — ConfigTrace is monitoring your configuration."
+            body="Your current configuration state is on record. Changes will appear here on the next sync. To test the loop now, make a change in Cloudflare or GitHub, then click Sync Now on the Integrations page."
             actionLabel="Go to Integrations"
             actionHref="/integrations"
           />

@@ -1,0 +1,654 @@
+"""GitHub repository configuration connector — Milestone 26.
+
+Fetches repository-level configuration (not code) from the GitHub REST API
+using a fine-grained Personal Access Token (PAT).
+
+Seven categories are monitored per repository:
+    1. Repository settings     (visibility, default branch, merge policies, …)
+    2. Default-branch protection rules
+    3. Actions secrets metadata  (names + ``last_updated_at`` — **never** values)
+    4. Actions variables         (name + value)
+    5. Repository webhooks       (URL, events, active, content_type)
+    6. Actions permissions       (enabled, allowed_actions)
+    7. Deploy keys               (title, read_only, verified)
+
+Usage
+-----
+    from app.connectors.github import GitHubConnector
+
+    connector = GitHubConnector()
+    records = connector.fetch({
+        "github_token": "github_pat_...",
+        "repo_owner":   "acme",
+        "repo_name":    "myapp",
+    })
+
+Credentials dict
+----------------
+    github_token : str
+        Fine-grained PAT with the following **repository** permissions:
+            - Metadata: Read  (always required for fine-grained PATs)
+            - Administration: Read  (branch protection, webhooks, deploy keys,
+                                     Actions permissions)
+            - Secrets: Read         (Actions secrets metadata — names + timestamps)
+            - Variables: Read       (Actions variables)
+    repo_owner : str
+        The GitHub username or organisation that owns the repository.
+    repo_name : str
+        The repository name (without the owner prefix).
+
+Security constraints
+---------------------
+    * GitHub tokens are **never** logged.
+    * Secret values are **never** fetched or stored — only name + updated_at.
+    * All records are JSON-serialisable plain dicts.
+    * Token extraction runs only in the function body, not at class level.
+
+Rate limiting
+-------------
+    GitHub's primary rate limit is 5,000 requests/hour for authenticated
+    PATs (core endpoint).  A fetch for one repository uses ≤ 10 requests
+    (one per category, plus pagination if there are > 100 items in any
+    paginated collection).
+
+    HTTP 429 responses are retried up to ``_MAX_RETRIES`` times using the
+    ``Retry-After`` header value (default 60 s when absent).
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from typing import Any
+
+import httpx
+
+from app.connectors.base import BaseConnector
+from app.connectors.exceptions import (
+    AuthenticationError,
+    ConnectorError,
+    NetworkError,
+    RateLimitError,
+)
+from app.connectors.github_schema import (
+    GITHUB_ACTIONS_PERMISSIONS,
+    GITHUB_ACTIONS_SECRET,
+    GITHUB_ACTIONS_VARIABLE,
+    GITHUB_BRANCH_PROTECTION,
+    GITHUB_DEPLOY_KEY,
+    GITHUB_REPO_SETTINGS,
+    GITHUB_WEBHOOK,
+)
+
+logger = logging.getLogger(__name__)
+
+# ── Module-level constants ───────────────────────────────────────────────────
+
+_BASE_URL = "https://api.github.com"
+_PER_PAGE = 100
+_MAX_RETRIES = 3
+_TIMEOUT = 30.0
+
+
+# ── Auth headers ─────────────────────────────────────────────────────────────
+
+def _auth_headers(token: str) -> dict[str, str]:
+    """Build the GitHub REST API authentication headers."""
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+# ── Connector class ──────────────────────────────────────────────────────────
+
+class GitHubConnector(BaseConnector):
+    """Connector for GitHub repository configuration via the REST API.
+
+    This class is stateless — safe to construct once and reuse across calls.
+    Each ``fetch()`` / ``validate_credentials()`` call is fully self-contained.
+    """
+
+    # ── Public API ───────────────────────────────────────────────────────────
+
+    def fetch(self, credentials: dict) -> list[dict]:
+        """Fetch all monitored configuration categories for a repository.
+
+        Calls seven GitHub REST API endpoints and returns a flat list of
+        normalised record dicts, one per monitored item (one settings record,
+        one branch-protection record, N secrets, N variables, N webhooks,
+        one permissions record, N deploy keys).
+
+        Args:
+            credentials: Must contain ``github_token``, ``repo_owner``,
+                         ``repo_name``.
+
+        Returns:
+            List of record dicts.  Each dict contains at least
+            ``record_id``, ``record_type``, and ``name``.
+
+        Raises:
+            ConnectorError:      Missing credentials, 404 repo not found, or
+                                 other API error.
+            AuthenticationError: HTTP 401 or 403 from any endpoint.
+            RateLimitError:      HTTP 429 after all retries are exhausted.
+            NetworkError:        Timeout or transport-level failure.
+        """
+        token, owner, repo = self._extract_credentials(credentials)
+        headers = _auth_headers(token)
+        slug = f"{owner}/{repo}"
+
+        records: list[dict] = []
+
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            # 1. Repository settings — also extracts the default branch name
+            #    so the branch-protection call uses the right branch.
+            settings_record = self._fetch_repo_settings(
+                client, headers, owner, repo, slug
+            )
+            records.append(settings_record)
+            default_branch: str = settings_record.get("default_branch", "main")
+
+            # 2. Branch protection for the default branch
+            records.append(
+                self._fetch_branch_protection(
+                    client, headers, owner, repo, slug, default_branch
+                )
+            )
+
+            # 3. Actions secrets metadata (names + updated_at, never values)
+            records.extend(
+                self._fetch_actions_secrets(client, headers, owner, repo, slug)
+            )
+
+            # 4. Actions variables
+            records.extend(
+                self._fetch_actions_variables(client, headers, owner, repo, slug)
+            )
+
+            # 5. Webhooks
+            records.extend(
+                self._fetch_webhooks(client, headers, owner, repo, slug)
+            )
+
+            # 6. Actions permissions
+            records.append(
+                self._fetch_actions_permissions(client, headers, owner, repo, slug)
+            )
+
+            # 7. Deploy keys
+            records.extend(
+                self._fetch_deploy_keys(client, headers, owner, repo, slug)
+            )
+
+        logger.info(
+            "github_connector fetch complete  repo=%s  record_count=%d",
+            slug,
+            len(records),
+        )
+        return records
+
+    def validate_credentials(self, credentials: dict) -> bool:
+        """Verify that the token can access the repository.
+
+        Issues a single ``GET /repos/{owner}/{repo}`` call — the lightest
+        possible probe that exercises both authentication and repository-level
+        access.
+
+        Args:
+            credentials: Must contain ``github_token``, ``repo_owner``,
+                         ``repo_name``.
+
+        Returns:
+            ``True`` if the credentials are valid.
+
+        Raises:
+            AuthenticationError: HTTP 401 or 403.
+            ConnectorError:      HTTP 404 (repo not found / inaccessible) or
+                                 other API error.
+            NetworkError:        Timeout or transport failure.
+        """
+        token, owner, repo = self._extract_credentials(credentials)
+        headers = _auth_headers(token)
+
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            self._get(client, f"{_BASE_URL}/repos/{owner}/{repo}", headers)
+
+        return True
+
+    # ── Per-category fetch helpers ───────────────────────────────────────────
+
+    def _fetch_repo_settings(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> dict[str, Any]:
+        """Fetch overall repository settings."""
+        resp = self._get(client, f"{_BASE_URL}/repos/{owner}/{repo}", headers)
+        raw = resp.json()
+        return {
+            "record_id":              f"{slug}#settings",
+            "record_type":            GITHUB_REPO_SETTINGS,
+            "name":                   slug,
+            "visibility":             raw.get("visibility", "private"),
+            "default_branch":         raw.get("default_branch", "main"),
+            "has_issues":             bool(raw.get("has_issues", True)),
+            "has_projects":           bool(raw.get("has_projects", True)),
+            "has_wiki":               bool(raw.get("has_wiki", True)),
+            "allow_merge_commit":     bool(raw.get("allow_merge_commit", True)),
+            "allow_squash_merge":     bool(raw.get("allow_squash_merge", True)),
+            "allow_rebase_merge":     bool(raw.get("allow_rebase_merge", True)),
+            "delete_branch_on_merge": bool(raw.get("delete_branch_on_merge", False)),
+            "archived":               bool(raw.get("archived", False)),
+        }
+
+    def _fetch_branch_protection(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+        branch: str,
+    ) -> dict[str, Any]:
+        """Fetch branch protection rules; 404 is normalised to 'disabled' state.
+
+        GitHub returns HTTP 404 (not 200 with an empty payload) when no branch
+        protection rule is configured.  We normalise this to a record with
+        ``protection_enabled=False`` so that enable/disable transitions diff
+        correctly on the next sync.
+        """
+        url = f"{_BASE_URL}/repos/{owner}/{repo}/branches/{branch}/protection"
+        resp = self._get(client, url, headers, allow_404=True)
+
+        if resp.status_code == 404:
+            return self._disabled_protection_record(slug, branch)
+
+        raw = resp.json()
+        rpc: dict = raw.get("required_pull_request_reviews") or {}
+        rsc: dict = raw.get("required_status_checks") or {}
+        return {
+            "record_id":                             f"{slug}#branch_protection#{branch}",
+            "record_type":                           GITHUB_BRANCH_PROTECTION,
+            "name":                                  f"{branch} branch",
+            "branch":                                branch,
+            "protection_enabled":                    True,
+            "required_status_checks_enabled":        bool(rsc),
+            "required_pull_request_reviews_enabled": bool(rpc),
+            "required_approving_review_count":       rpc.get("required_approving_review_count"),
+            "dismiss_stale_reviews":                 bool(rpc.get("dismiss_stale_reviews", False)),
+            "enforce_admins": bool(
+                (raw.get("enforce_admins") or {}).get("enabled", False)
+            ),
+            "required_linear_history": bool(
+                (raw.get("required_linear_history") or {}).get("enabled", False)
+            ),
+            "allow_force_pushes": bool(
+                (raw.get("allow_force_pushes") or {}).get("enabled", False)
+            ),
+            "allow_deletions": bool(
+                (raw.get("allow_deletions") or {}).get("enabled", False)
+            ),
+        }
+
+    def _fetch_actions_secrets(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch Actions secrets metadata — names and ``updated_at`` only.
+
+        Secret values are **never** fetched.  The GitHub Secrets API never
+        returns values in any response — only metadata.
+        """
+        items = self._paginate(
+            client,
+            f"{_BASE_URL}/repos/{owner}/{repo}/actions/secrets",
+            headers,
+            items_key="secrets",
+        )
+        return [
+            {
+                "record_id":       f"{slug}#secret#{item['name']}",
+                "record_type":     GITHUB_ACTIONS_SECRET,
+                "name":            item["name"],
+                "secret_name":     item["name"],
+                "last_updated_at": item.get("updated_at", ""),
+            }
+            for item in items
+        ]
+
+    def _fetch_actions_variables(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch Actions variables (name + value)."""
+        items = self._paginate(
+            client,
+            f"{_BASE_URL}/repos/{owner}/{repo}/actions/variables",
+            headers,
+            items_key="variables",
+        )
+        return [
+            {
+                "record_id":     f"{slug}#variable#{item['name']}",
+                "record_type":   GITHUB_ACTIONS_VARIABLE,
+                "name":          item["name"],
+                "variable_name": item["name"],
+                "value":         item.get("value", ""),
+            }
+            for item in items
+        ]
+
+    def _fetch_webhooks(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch repository webhooks.
+
+        Webhook payloads use a ``config`` sub-object for the URL and
+        content_type.  The top-level ``url`` field is the GitHub API URL
+        for the hook itself (not the delivery URL).
+        """
+        items = self._paginate(
+            client,
+            f"{_BASE_URL}/repos/{owner}/{repo}/hooks",
+            headers,
+        )
+        records = []
+        for item in items:
+            hook_id = item["id"]
+            config: dict = item.get("config") or {}
+            records.append({
+                "record_id":    f"{slug}#webhook#{hook_id}",
+                "record_type":  GITHUB_WEBHOOK,
+                "name":         f"hook #{hook_id}",
+                "hook_id":      hook_id,
+                "url":          config.get("url", ""),
+                "active":       bool(item.get("active", True)),
+                "events":       sorted(item.get("events", [])),
+                "content_type": config.get("content_type", "json"),
+            })
+        return records
+
+    def _fetch_actions_permissions(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> dict[str, Any]:
+        """Fetch Actions permissions (enabled, allowed_actions).
+
+        Returns a 'disabled / unknown' record on HTTP 404 — this can happen
+        when Actions is not available for a repository (e.g. Actions is
+        disabled at the organisation level).
+        """
+        url = f"{_BASE_URL}/repos/{owner}/{repo}/actions/permissions"
+        resp = self._get(client, url, headers, allow_404=True)
+
+        if resp.status_code == 404:
+            return {
+                "record_id":       f"{slug}#actions_permissions",
+                "record_type":     GITHUB_ACTIONS_PERMISSIONS,
+                "name":            slug,
+                "enabled":         False,
+                "allowed_actions": "",
+            }
+
+        raw = resp.json()
+        return {
+            "record_id":       f"{slug}#actions_permissions",
+            "record_type":     GITHUB_ACTIONS_PERMISSIONS,
+            "name":            slug,
+            "enabled":         bool(raw.get("enabled", True)),
+            "allowed_actions": raw.get("allowed_actions", "all"),
+        }
+
+    def _fetch_deploy_keys(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch repository deploy keys."""
+        items = self._paginate(
+            client,
+            f"{_BASE_URL}/repos/{owner}/{repo}/keys",
+            headers,
+        )
+        return [
+            {
+                "record_id":  f"{slug}#deploy_key#{item['id']}",
+                "record_type": GITHUB_DEPLOY_KEY,
+                "name":       item.get("title", f"key #{item['id']}"),
+                "key_id":     item["id"],
+                "title":      item.get("title", ""),
+                "read_only":  bool(item.get("read_only", True)),
+                "verified":   bool(item.get("verified", False)),
+            }
+            for item in items
+        ]
+
+    # ── Pagination helper ────────────────────────────────────────────────────
+
+    def _paginate(
+        self,
+        client: httpx.Client,
+        url: str,
+        headers: dict[str, str],
+        *,
+        items_key: str | None = None,
+    ) -> list[dict]:
+        """Collect all items from a paginated GitHub API endpoint.
+
+        Handles two response shapes:
+
+        * **Envelope** (``items_key`` provided): the response is a JSON object
+          ``{"total_count": N, "<items_key>": [{...}, ...]}`` — used by the
+          Secrets and Variables APIs.
+        * **Array** (``items_key`` is ``None``): the response is a JSON array
+          ``[{...}, ...]`` — used by the Hooks and Keys APIs.
+
+        Pagination terminates when a page returns fewer than ``_PER_PAGE``
+        items, or when the total count is reached (envelope mode only).
+
+        Args:
+            client:    Active ``httpx.Client``.
+            url:       Full endpoint URL (no query parameters).
+            headers:   Auth headers.
+            items_key: Key to extract from envelope responses, or ``None``
+                       for plain-array responses.
+
+        Returns:
+            Flat list of all item dicts across all pages.
+        """
+        all_items: list[dict] = []
+        page = 1
+
+        while True:
+            resp = self._get(
+                client, url, headers,
+                params={"per_page": _PER_PAGE, "page": page},
+            )
+            body = resp.json()
+
+            if items_key:
+                page_items: list[dict] = body.get(items_key, [])
+                total_count: int = body.get("total_count", 0)
+            else:
+                page_items = body if isinstance(body, list) else []
+                total_count = len(all_items) + len(page_items)
+
+            all_items.extend(page_items)
+
+            logger.debug(
+                "github_connector paginate  url=%s  page=%d  fetched=%d",
+                url, page, len(all_items),
+            )
+
+            # Terminal condition: last page is smaller than the page size.
+            if len(page_items) < _PER_PAGE:
+                break
+            # For envelope responses, also stop when the count is satisfied.
+            if items_key and len(all_items) >= total_count:
+                break
+
+            page += 1
+
+        return all_items
+
+    # ── HTTP helper ──────────────────────────────────────────────────────────
+
+    def _get(
+        self,
+        client: httpx.Client,
+        url: str,
+        headers: dict[str, str],
+        params: dict | None = None,
+        *,
+        allow_404: bool = False,
+    ) -> httpx.Response:
+        """Issue a GET with 429 retry-backoff.
+
+        Retries up to ``_MAX_RETRIES`` times on HTTP 429.  The inter-retry
+        delay is taken from the ``Retry-After`` response header (default 60 s).
+
+        Args:
+            client:     Active ``httpx.Client``.
+            url:        Full endpoint URL.
+            headers:    Request headers (including Authorization).
+            params:     Query parameters dict, or ``None``.
+            allow_404:  When ``True``, return the 404 response instead of
+                        raising ``ConnectorError``.  Used by endpoints where
+                        a 404 has a well-defined semantic (e.g. no branch
+                        protection configured).
+
+        Returns:
+            Successful (2xx) ``httpx.Response``, or a 404 response when
+            ``allow_404=True``.
+
+        Raises:
+            AuthenticationError: HTTP 401 or 403.
+            RateLimitError:      HTTP 429 after all retries are exhausted.
+            ConnectorError:      HTTP 404 (when ``allow_404=False``) or any
+                                 other non-2xx response.
+            NetworkError:        ``httpx.TimeoutException`` or
+                                 ``httpx.RequestError``.
+        """
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                resp = client.get(url, headers=headers, params=params or {})
+            except httpx.TimeoutException as exc:
+                raise NetworkError(f"Request timed out: {exc}") from exc
+            except httpx.RequestError as exc:
+                raise NetworkError(f"Network error: {exc}") from exc
+
+            if resp.status_code == 429:
+                if attempt >= _MAX_RETRIES:
+                    raise RateLimitError(
+                        f"GitHub rate limit exceeded after {_MAX_RETRIES} retries. "
+                        "Try again later.",
+                    )
+                try:
+                    retry_after = float(resp.headers.get("Retry-After", "60"))
+                except ValueError:
+                    retry_after = 60.0
+                logger.warning(
+                    "github_connector rate limited (attempt %d/%d). "
+                    "Sleeping %.1f s before retry.",
+                    attempt + 1,
+                    _MAX_RETRIES,
+                    retry_after,
+                )
+                time.sleep(retry_after)
+                continue
+
+            if resp.status_code in (401, 403):
+                raise AuthenticationError(
+                    f"GitHub authentication failed (HTTP {resp.status_code}). "
+                    "Verify the fine-grained PAT has the required repository "
+                    "permissions: Metadata:Read, Administration:Read, "
+                    "Secrets:Read, Variables:Read.",
+                    status_code=resp.status_code,
+                )
+
+            if resp.status_code == 404:
+                if allow_404:
+                    return resp
+                raise ConnectorError(
+                    f"GitHub resource not found (HTTP 404): {url}. "
+                    "Check that the repository owner and name are correct and "
+                    "that the token has Metadata:Read permission.",
+                    status_code=404,
+                )
+
+            if not resp.is_success:
+                raise ConnectorError(
+                    f"GitHub API error (HTTP {resp.status_code}): {resp.text[:500]}",
+                    status_code=resp.status_code,
+                )
+
+            return resp
+
+        # The loop always raises or returns — this line is unreachable.
+        raise ConnectorError("Unexpected end of retry loop")  # pragma: no cover
+
+    # ── Credentials helper ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_credentials(credentials: dict) -> tuple[str, str, str]:
+        """Return ``(github_token, repo_owner, repo_name)`` or raise."""
+        token = credentials.get("github_token", "")
+        owner = credentials.get("repo_owner", "")
+        repo = credentials.get("repo_name", "")
+        if not token or not owner or not repo:
+            raise ConnectorError(
+                "GitHub credentials must include 'github_token', "
+                "'repo_owner', and 'repo_name'."
+            )
+        return token, owner, repo
+
+    # ── Static helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _disabled_protection_record(slug: str, branch: str) -> dict[str, Any]:
+        """Return a record representing 'no branch protection configured'.
+
+        All boolean fields are ``False`` and ``required_approving_review_count``
+        is ``None``.  Future syncs will diff correctly when protection is
+        added, because the baseline will show ``protection_enabled=False``.
+        """
+        return {
+            "record_id":                             f"{slug}#branch_protection#{branch}",
+            "record_type":                           GITHUB_BRANCH_PROTECTION,
+            "name":                                  f"{branch} branch",
+            "branch":                                branch,
+            "protection_enabled":                    False,
+            "required_status_checks_enabled":        False,
+            "required_pull_request_reviews_enabled": False,
+            "required_approving_review_count":       None,
+            "dismiss_stale_reviews":                 False,
+            "enforce_admins":                        False,
+            "required_linear_history":               False,
+            "allow_force_pushes":                    False,
+            "allow_deletions":                       False,
+        }

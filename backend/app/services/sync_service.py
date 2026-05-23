@@ -88,7 +88,7 @@ def has_in_flight_sync(integration_id: uuid.UUID, db: Session) -> bool:
 
 
 def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
-    """Scan active Cloudflare integrations and enqueue scheduled syncs.
+    """Scan active integrations (all providers) and enqueue scheduled syncs.
 
     Called hourly by the Celery Beat task ``enqueue_scheduled_syncs``.  Pure
     DB / queue side-effects; no return value the worker depends on.  The
@@ -97,7 +97,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
 
     Behaviour per integration:
 
-    1. Filter to ``provider == 'cloudflare'`` and ``status == 'active'``.
+    1. Filter to ``provider in ('cloudflare', 'github')`` and ``status == 'active'``.
        Inactive (paused / error) integrations are silently skipped.
     2. Skip the integration if it already has a SyncRun in ``pending`` or
        ``running`` (duplicate-prevention).
@@ -114,7 +114,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
 
     Returns:
         Dict with these integer counts:
-          - ``integrations_seen``: total active CF integrations queried
+          - ``integrations_seen``: total active integrations queried
           - ``enqueued``: number of scheduled SyncRuns created and queued
           - ``skipped_in_flight``: skipped because a pending/running sync existed
           - ``errors``: non-fatal per-integration failures (logged, counted)
@@ -132,7 +132,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     integrations = (
         db.query(Integration)
         .filter(
-            Integration.provider == "cloudflare",
+            Integration.provider.in_(("cloudflare", "github")),
             Integration.status == "active",
         )
         .all()
