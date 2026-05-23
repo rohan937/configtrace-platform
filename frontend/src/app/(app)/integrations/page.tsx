@@ -298,10 +298,22 @@ export default function IntegrationsPage() {
                   },
                   {
                     heading: "Attach a read-only inline policy.",
-                    body: <>Grant only the minimum required permissions:{" "}
-                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>sts:GetCallerIdentity</code> (required) and{" "}
-                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>ec2:DescribeRegions</code> (optional).
-                      ConfigTrace skips region discovery gracefully if the second permission is absent.</>,
+                    body: <>Grant the following read-only permissions.
+                      Required: <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>sts:GetCallerIdentity</code>.{" "}
+                      Optional (for S3 monitoring):{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:ListAllMyBuckets</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketLocation</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketPublicAccessBlock</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketPolicy</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketPolicyStatus</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketAcl</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetEncryptionConfiguration</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketVersioning</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketLogging</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetLifecycleConfiguration</code>,{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>s3:GetBucketTagging</code>.{" "}
+                      Also optional: <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>ec2:DescribeRegions</code> for region discovery.
+                      Missing optional permissions are recorded as warnings — they do not fail the sync.</>,
                   },
                   {
                     heading: "Create an access key.",

@@ -287,8 +287,9 @@ class TestAWSConnectorFetch:
         """Context manager patches for a successful fetch with 2 selected regions."""
         sts_resp = sts_response or STS_IDENTITY_RESPONSE
         ec2_resp = ec2_response or EC2_REGIONS_RESPONSE
-        # _call_aws is called: first for STS, then for EC2
-        call_aws_se = [sts_resp, ec2_resp]
+        # _call_aws is called: (1) STS get_caller_identity, (2) EC2 describe_regions,
+        # (3) S3 list_buckets (M37 — empty list keeps test output stable)
+        call_aws_se = [sts_resp, ec2_resp, {"Buckets": []}]
         return (
             patch.object(self.connector, "_make_client", return_value=_mock_client()),
             patch.object(self.connector, "_call_aws", side_effect=call_aws_se),
@@ -440,13 +441,16 @@ class TestAWSConnectorServiceInventory:
         assert result["record_id"] == "service_inventory"
 
     def test_inventory_enabled_surfaces(self) -> None:
+        # M37 moved s3 from future_surfaces → enabled_surfaces
         result = self.connector._fetch_service_inventory(CREDS)
-        assert result["enabled_surfaces"] == ["account_inventory"]
+        assert "account_inventory" in result["enabled_surfaces"]
+        assert "s3" in result["enabled_surfaces"]
 
     def test_inventory_future_surfaces_not_empty(self) -> None:
         result = self.connector._fetch_service_inventory(CREDS)
         future = result["future_surfaces"]
-        assert "s3" in future
+        # s3 was promoted to enabled_surfaces in M37 — it must NOT be in future
+        assert "s3" not in future
         assert "iam" in future
         assert "security_groups" in future
 

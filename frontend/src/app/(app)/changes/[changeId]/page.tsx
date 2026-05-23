@@ -420,7 +420,38 @@ function getChangeSummary(change: ChangeDetail): string {
   if (rt === "aws_service_inventory") {
     if (fp === "selected_regions") return "The set of AWS monitoring regions changed in the service inventory.";
     if (fp === "enabled_surfaces") return "The set of actively monitored AWS surfaces changed.";
+    if (fp === "s3_bucket_count")  return `The number of visible S3 buckets changed to ${String(nv)}.`;
     return "The AWS service inventory record was updated.";
+  }
+  if (rt === "aws_s3_bucket") {
+    // Derive bucket name from the record identifier (format: "aws_s3_bucket <name>")
+    const bucketName = change.record_identifier?.replace(/^aws_s3_bucket\s+/, "") || change.record_identifier;
+    if (change.change_type === "added")   return `S3 bucket ${bucketName} appeared in monitoring.`;
+    if (change.change_type === "removed") return `S3 bucket ${bucketName} is no longer visible.`;
+    // Modified field
+    if (fp === "policy_status_is_public" && nv === true)  return `S3 bucket ${bucketName} is now publicly accessible according to AWS.`;
+    if (fp === "policy_status_is_public" && nv === false) return `S3 bucket ${bucketName} is no longer publicly accessible.`;
+    if (fp === "acl_all_users_write"     && nv === true)  return `Public WRITE access was granted on S3 bucket ${bucketName} via ACL.`;
+    if (fp === "acl_all_users_read"      && nv === true)  return `Public READ access was granted on S3 bucket ${bucketName} via ACL.`;
+    if (fp === "public_principals_detected" && nv === true) return `A public principal (* or all AWS accounts) was added to the bucket policy of ${bucketName}.`;
+    if (fp === "block_public_acls"        && nv === false) return `Block Public ACLs was disabled on S3 bucket ${bucketName}.`;
+    if (fp === "ignore_public_acls"       && nv === false) return `Ignore Public ACLs was disabled on S3 bucket ${bucketName}.`;
+    if (fp === "block_public_policy"      && nv === false) return `Block Public Policy was disabled on S3 bucket ${bucketName}.`;
+    if (fp === "restrict_public_buckets"  && nv === false) return `Restrict Public Buckets was disabled on S3 bucket ${bucketName}.`;
+    if (fp === "public_access_block_configured" && nv === false) return `Block Public Access configuration was removed from S3 bucket ${bucketName}.`;
+    if (fp === "encryption_enabled" && nv === false)  return `Default encryption was disabled on S3 bucket ${bucketName}.`;
+    if (fp === "encryption_enabled" && nv === true)   return `Default encryption was enabled on S3 bucket ${bucketName}.`;
+    if (fp === "versioning_status" && (nv === "suspended" || nv === "disabled")) return `Versioning was ${String(nv)} on S3 bucket ${bucketName}.`;
+    if (fp === "versioning_status" && nv === "enabled") return `Versioning was enabled on S3 bucket ${bucketName}.`;
+    if (fp === "logging_enabled" && nv === false) return `Access logging was disabled on S3 bucket ${bucketName}.`;
+    if (fp === "logging_enabled" && nv === true)  return `Access logging was enabled on S3 bucket ${bucketName}.`;
+    if (fp === "policy_hash")    return `The bucket policy for ${bucketName} changed.`;
+    if (fp === "policy_present" && nv === true)  return `A bucket policy was added to S3 bucket ${bucketName}.`;
+    if (fp === "policy_present" && nv === false) return `The bucket policy was removed from S3 bucket ${bucketName}.`;
+    if (fp === "lifecycle_rule_count") return `Lifecycle rule count changed to ${String(nv)} on S3 bucket ${bucketName}.`;
+    if (fp === "encryption_algorithm") return `Encryption algorithm changed to ${String(nv)} on S3 bucket ${bucketName}.`;
+    if (fp === "bucket_region") return `The recorded region for S3 bucket ${bucketName} changed.`;
+    return `S3 bucket ${bucketName} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
@@ -616,6 +647,80 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the Stripe configuration change was intentional.",
       "Review your Stripe Dashboard for related settings.",
       "Verify that checkout and payment flows still function correctly.",
+    ];
+  }
+
+  // AWS S3
+  if (rt === "aws_s3_bucket") {
+    const fp5 = change.field_path ?? "";
+    const bucketName2 = change.record_identifier?.replace(/^aws_s3_bucket\s+/, "") || change.record_identifier;
+    if (fp5 === "policy_status_is_public" && change.new_value === true) {
+      return [
+        `Open the AWS S3 Console and check the bucket access settings for ${bucketName2}.`,
+        "Review the bucket policy and remove any Allow * (public) statements unless intentional.",
+        "Verify Block Public Access is enabled if this bucket should not be public.",
+        "Check S3 server access logs or CloudTrail for recent access from external IPs.",
+        "Enable Block Public Access immediately if this exposure was accidental.",
+      ];
+    }
+    if (fp5 === "acl_all_users_write" && change.new_value === true) {
+      return [
+        `Remove the public WRITE ACL grant from S3 bucket ${bucketName2} immediately.`,
+        "Check S3 server access logs for any unauthorized uploads or deletions.",
+        "Review CloudTrail for who made the ACL change and when.",
+        "Verify no malicious objects were uploaded to the bucket.",
+        "Enable Block Public Access to prevent future ACL grants from taking effect.",
+      ];
+    }
+    if (fp5 === "acl_all_users_read" && change.new_value === true) {
+      return [
+        `Remove the public READ ACL grant from S3 bucket ${bucketName2}.`,
+        "Verify Block Public Access is enabled to prevent ACL grants from taking effect.",
+        "Check whether sensitive objects are stored in this bucket.",
+        "Review CloudTrail for who made the ACL change.",
+        "Enable access logging on the bucket if not already enabled.",
+      ];
+    }
+    if (fp5 === "public_principals_detected" && change.new_value === true) {
+      return [
+        `Review the bucket policy for ${bucketName2} in the AWS S3 Console.`,
+        "Remove any Allow statement with Principal: * unless explicitly required.",
+        "Restrict the policy to specific AWS account principals or IAM roles.",
+        "Enable Block Public Access as a defence-in-depth measure.",
+        "Review CloudTrail for who changed the bucket policy.",
+      ];
+    }
+    if ((fp5 === "block_public_policy" || fp5 === "restrict_public_buckets" || fp5 === "block_public_acls" || fp5 === "ignore_public_acls") && change.new_value === false) {
+      return [
+        `Re-evaluate whether S3 bucket ${bucketName2} needs this Block Public Access control disabled.`,
+        "Check the current bucket policy and ACLs for any public grants that may now take effect.",
+        "Verify the AWS S3 Console shows the expected access level.",
+        "Re-enable the Block Public Access control if this was accidental.",
+        "Review CloudTrail for who made the change.",
+      ];
+    }
+    if (fp5 === "encryption_enabled" && change.new_value === false) {
+      return [
+        `Re-enable default encryption on S3 bucket ${bucketName2} in the AWS S3 Console.`,
+        "Verify existing objects are still encrypted (encryption changes apply to new objects only).",
+        "Check your compliance and security policy requirements for this bucket.",
+        "Review CloudTrail for who disabled encryption and when.",
+      ];
+    }
+    if (fp5 === "versioning_status" && (change.new_value === "suspended" || change.new_value === "disabled")) {
+      return [
+        `Consider re-enabling versioning on S3 bucket ${bucketName2}.`,
+        "Verify that object recovery requirements for this bucket are still met.",
+        "Check whether any lifecycle rules depended on versioned objects.",
+        "Review CloudTrail for who changed the versioning setting.",
+      ];
+    }
+    return [
+      `Review the S3 bucket ${bucketName2} settings in the AWS S3 Console.`,
+      "Verify that public access settings match your intended access level.",
+      "Check CloudTrail for recent changes to this bucket's configuration.",
+      "Review access logs for unexpected access patterns.",
+      "Confirm that encryption, versioning, and logging settings meet your requirements.",
     ];
   }
 

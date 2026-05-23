@@ -278,9 +278,18 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                 category="authentication",
                 error_code="aws_access_denied",
                 recommended_action=(
-                    "The AWS IAM credentials do not have permission to call the required "
-                    "read-only APIs (sts:GetCallerIdentity). Create a dedicated read-only "
-                    "IAM user or role for ConfigTrace and reconnect this integration."
+                    "The AWS IAM credentials do not have permission to call required "
+                    "read-only APIs. Ensure the IAM user has at minimum: "
+                    "sts:GetCallerIdentity (required). "
+                    "For S3 monitoring (all optional): s3:ListAllMyBuckets, "
+                    "s3:GetBucketLocation, s3:GetBucketPublicAccessBlock, "
+                    "s3:GetBucketPolicy, s3:GetBucketPolicyStatus, s3:GetBucketAcl, "
+                    "s3:GetEncryptionConfiguration, s3:GetBucketVersioning, "
+                    "s3:GetBucketLogging, s3:GetLifecycleConfiguration, "
+                    "s3:GetBucketTagging. "
+                    "Missing optional permissions are recorded as warnings rather "
+                    "than failures. "
+                    "Reconnect after updating the IAM policy."
                 ),
             )
         if provider == "stripe":

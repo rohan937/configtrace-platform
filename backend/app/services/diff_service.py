@@ -260,8 +260,50 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "aws_service_inventory": (
         "selected_regions",
         "enabled_surfaces",
+        "s3_bucket_count",
         # NOTE: future_surfaces is intentionally NOT tracked — adding future
         # surfaces to the placeholder list should not generate change events.
+    ),
+    # ── M37: S3 bucket configuration ─────────────────────────────────────────
+    # One record per S3 bucket. All security-relevant fields are tracked so
+    # that exposure changes generate change events at the correct risk level.
+    # creation_date is intentionally excluded (immutable).
+    # Raw policy text is never stored; policy_hash tracks policy text changes.
+    "aws_s3_bucket": (
+        # Location
+        "bucket_region",
+        # Block Public Access
+        "block_public_acls",
+        "ignore_public_acls",
+        "block_public_policy",
+        "restrict_public_buckets",
+        "public_access_block_configured",
+        # Policy
+        "policy_present",
+        "policy_status_is_public",
+        "policy_hash",            # hash of raw policy — tracks text changes
+        "public_principals_detected",
+        # ACL
+        "acl_all_users_read",
+        "acl_all_users_write",
+        "acl_authenticated_users_read",
+        "acl_authenticated_users_write",
+        # Encryption
+        "encryption_enabled",
+        "encryption_algorithm",
+        "bucket_key_enabled",
+        # Versioning
+        "versioning_status",
+        "mfa_delete_status",
+        # Logging
+        "logging_enabled",
+        "logging_target_bucket",
+        # Lifecycle
+        "lifecycle_rule_count",
+        # Tags
+        "tag_keys",
+        # Fetch-time warnings (missing optional permissions)
+        "config_fetch_warnings",
     ),
 }
 
