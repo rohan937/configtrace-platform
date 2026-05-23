@@ -260,8 +260,8 @@ export default function IntegrationsPage() {
               {total} integration{total === 1 ? "" : "s"} connected
             </span>
             <span style={{ color: "#3a3d4a" }}>·</span>
-            <span title="Celery Beat fires at minute 0 of every UTC hour">
-              Hourly sync: active
+            <span title="Celery Beat fires every 5 minutes; each integration uses its own configured interval (5–60 min, default 60)">
+              Scheduled sync: active
             </span>
             <span style={{ color: "#3a3d4a" }}>·</span>
             <span style={{ color: "#565b6e" }} title="Requires RESEND_API_KEY and ALERTS_FROM_EMAIL configured in Render">
@@ -298,6 +298,7 @@ export default function IntegrationsPage() {
           <IntegrationList
             integrations={integrations}
             onSyncComplete={fetchIntegrations}
+            onManagementComplete={fetchIntegrations}
           />
         )}
       </div>

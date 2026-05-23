@@ -9,8 +9,10 @@ Two trigger paths land here:
 * ``POST /syncs`` calls :func:`create_sync_run` with ``triggered_by="manual"``
   (the default — preserves pre-M23 behaviour).
 * Celery Beat fires :func:`create_scheduled_syncs_for_active_integrations`
-  hourly; that function calls :func:`create_sync_run` with
-  ``triggered_by="scheduled"`` for each eligible integration.
+  every 5 minutes (M29); that function decides which integrations are *due*
+  based on their ``sync_interval_minutes`` and ``last_synced_at``, then calls
+  :func:`create_sync_run` with ``triggered_by="scheduled"`` for each eligible
+  integration.
 
 Both paths produce SyncRun rows that the same ``sync_integration`` worker
 task processes — no separate worker pipeline.
@@ -33,6 +35,20 @@ logger = logging.getLogger(__name__)
 # When a scheduled sync would pick an integration that already has one of
 # these queued, we skip it instead of stacking another.
 _IN_FLIGHT_STATUSES = ("pending", "running")
+
+# Default sync cadence when sync_interval_minutes is NULL on an integration.
+# Matches the old hourly-only behaviour so existing integrations are unchanged.
+_DEFAULT_INTERVAL_MINUTES = 60
+
+# Allowed per-integration sync intervals (minutes).  Values outside this set
+# are ignored and fall back to the default.  Validated at the PATCH endpoint
+# so values in the DB should always be within this set.
+_ALLOWED_INTERVALS = frozenset({5, 10, 15, 30, 60})
+
+# Small grace window (seconds) applied when comparing elapsed time to the
+# configured interval.  Prevents a sync that completed at 12:00:02 from being
+# skipped at the 12:05:00 tick because only 4m58s elapsed.
+_INTERVAL_GRACE_SECONDS = 30
 
 
 def create_sync_run(
@@ -87,25 +103,53 @@ def has_in_flight_sync(integration_id: uuid.UUID, db: Session) -> bool:
     )
 
 
-def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
-    """Scan active integrations (all providers) and enqueue scheduled syncs.
+def _is_integration_due(integration: Integration, now: datetime) -> bool:
+    """Return True if *integration* is due for a scheduled sync tick.
 
-    Called hourly by the Celery Beat task ``enqueue_scheduled_syncs``.  Pure
-    DB / queue side-effects; no return value the worker depends on.  The
-    counts dict is returned so the task log line is self-explanatory and so
-    tests can assert behaviour without poking at the queue.
+    An integration is due when:
+    - It has never been synced (``last_synced_at`` is None), OR
+    - Enough time has elapsed since the last successful sync, accounting for
+      the configured ``sync_interval_minutes`` (default: 60).
+
+    A small grace window (``_INTERVAL_GRACE_SECONDS``) prevents a sync that
+    completed at 12:00:02 from being skipped at the 12:05:00 tick due to
+    sub-minute elapsed-time rounding.
+    """
+    interval = integration.sync_interval_minutes
+    if interval is None or interval not in _ALLOWED_INTERVALS:
+        interval = _DEFAULT_INTERVAL_MINUTES
+
+    if integration.last_synced_at is None:
+        # Never synced — always due on the first tick.
+        return True
+
+    elapsed_seconds = (now - integration.last_synced_at).total_seconds()
+    threshold_seconds = interval * 60 - _INTERVAL_GRACE_SECONDS
+    return elapsed_seconds >= threshold_seconds
+
+
+def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
+    """Scan active integrations and enqueue scheduled syncs that are due.
+
+    Called every 5 minutes by the Celery Beat task ``enqueue_scheduled_syncs``
+    (M29).  The task decides which integrations are *due* based on their
+    ``sync_interval_minutes`` and ``last_synced_at`` — the Beat tick is just
+    the scheduling granularity, not the sync cadence.
 
     Behaviour per integration:
 
     1. Filter to ``provider in ('cloudflare', 'github')`` and ``status == 'active'``.
-       Inactive (paused / error) integrations are silently skipped.
-    2. Skip the integration if it already has a SyncRun in ``pending`` or
-       ``running`` (duplicate-prevention).
-    3. Create a SyncRun with ``triggered_by='scheduled'`` and
+       Paused / deleted / errored integrations are silently skipped.
+    2. Check whether the integration is due using :func:`_is_integration_due`.
+       Skips integrations whose ``sync_interval_minutes`` has not elapsed since
+       ``last_synced_at``.
+    3. Skip the integration if it already has a SyncRun in ``pending`` or
+       ``running`` (duplicate-prevention — existing guard preserved from M23).
+    4. Create a SyncRun with ``triggered_by='scheduled'`` and
        ``user_id = integration.user_id``.  User isolation is preserved
        because the user_id is always taken from the integration row, never
        from a request or external source.
-    4. Enqueue ``sync_integration`` with the new SyncRun.  Same task, same
+    5. Enqueue ``sync_integration`` with the new SyncRun.  Same task, same
        worker, same pipeline as a manual sync.
 
     The ``sync_integration.delay`` import is deferred so this module stays
@@ -116,6 +160,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         Dict with these integer counts:
           - ``integrations_seen``: total active integrations queried
           - ``enqueued``: number of scheduled SyncRuns created and queued
+          - ``skipped_not_due``: skipped because interval has not elapsed
           - ``skipped_in_flight``: skipped because a pending/running sync existed
           - ``errors``: non-fatal per-integration failures (logged, counted)
     """
@@ -126,8 +171,11 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
 
     seen = 0
     enqueued = 0
-    skipped = 0
+    skipped_not_due = 0
+    skipped_in_flight = 0
     errors = 0
+
+    now = datetime.now(timezone.utc)
 
     integrations = (
         db.query(Integration)
@@ -141,8 +189,21 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     for integration in integrations:
         seen += 1
         try:
+            # ── Per-integration interval due-check (M29) ───────────────────
+            if not _is_integration_due(integration, now):
+                skipped_not_due += 1
+                logger.debug(
+                    "scheduled_sync skipped — interval not elapsed  "
+                    "integration_id=%s interval_minutes=%s last_synced_at=%s",
+                    integration.id,
+                    integration.sync_interval_minutes or _DEFAULT_INTERVAL_MINUTES,
+                    integration.last_synced_at,
+                )
+                continue
+
+            # ── In-flight guard (M23, preserved) ──────────────────────────
             if has_in_flight_sync(integration.id, db):
-                skipped += 1
+                skipped_in_flight += 1
                 logger.info(
                     "scheduled_sync skipped — in-flight sync exists  "
                     "integration_id=%s user_id=%s",
@@ -165,10 +226,11 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
             enqueued += 1
             logger.info(
                 "scheduled_sync enqueued  sync_run_id=%s integration_id=%s "
-                "user_id=%s",
+                "user_id=%s interval_minutes=%s",
                 sync_run.id,
                 integration.id,
                 integration.user_id,
+                integration.sync_interval_minutes or _DEFAULT_INTERVAL_MINUTES,
             )
         except Exception:
             # Don't let one integration's failure abort the loop — log it,
@@ -183,7 +245,8 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     return {
         "integrations_seen": seen,
         "enqueued": enqueued,
-        "skipped_in_flight": skipped,
+        "skipped_not_due": skipped_not_due,
+        "skipped_in_flight": skipped_in_flight,
         "errors": errors,
     }
 

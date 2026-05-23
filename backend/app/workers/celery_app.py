@@ -53,19 +53,28 @@ celery_app.conf.update(
     # httpx client caches).  At our current sync rate this triggers at most
     # once a day.
     worker_max_tasks_per_child=50,
-    # ── Periodic schedule (Milestone 23) ────────────────────────────────────────
-    # Beat fires ``enqueue_scheduled_syncs`` at minute 0 of every hour.  That
-    # task is short (a single DB query + N small queue messages) and runs on
-    # the worker — beat itself never touches the database.
+    # ── Periodic schedule (Milestone 29) ────────────────────────────────────────
+    # Beat fires ``enqueue_scheduled_syncs`` every 5 minutes.  The task itself
+    # decides which integrations are *due* based on their ``sync_interval_minutes``
+    # setting and ``last_synced_at`` timestamp — so the 5-minute tick is just
+    # the finest scheduling granularity, not the actual sync cadence.
     #
-    # ``crontab(minute=0)`` is preferred over ``timedelta(hours=1)`` so syncs
-    # land at predictable wall-clock times regardless of when beat last
-    # restarted.  After a deploy that bounces beat, the next tick is still
-    # the next top-of-the-hour rather than ~60 min after restart.
+    # Supported per-integration intervals: 5, 10, 15, 30, 60 minutes.
+    # Default (when ``sync_interval_minutes`` is NULL): 60 minutes.
+    #
+    # ``crontab(minute="*/5")`` is preferred over ``timedelta(minutes=5)`` so
+    # ticks land at predictable wall-clock times (:00, :05, :10, …) regardless
+    # of when beat last restarted.  After a deploy that bounces beat, the next
+    # tick is still the next multiple-of-5 minute rather than ~5 min after
+    # restart drift.
+    #
+    # worker_concurrency is intentionally kept at 1 (Render Starter cap).
+    # The in-flight guard in the task prevents pile-up when a single sync runs
+    # longer than the tick interval.
     beat_schedule={
-        "enqueue-scheduled-syncs-hourly": {
+        "enqueue-scheduled-syncs-every-5-min": {
             "task": "enqueue_scheduled_syncs",
-            "schedule": crontab(minute=0),
+            "schedule": crontab(minute="*/5"),
         },
     },
 )

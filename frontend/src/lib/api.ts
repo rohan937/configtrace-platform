@@ -96,6 +96,7 @@ export interface GetChangesParams {
   resource_id?: string;
   risk_level?: string;
   change_type?: string;
+  provider?: string;
   since?: string;
   until?: string;
   page?: number;
@@ -183,6 +184,75 @@ export async function createIntegration(
   return apiFetch("/integrations", {
     method: "POST",
     body: JSON.stringify(payload),
+    token,
+  });
+}
+
+/**
+ * Update an integration's display name, sync interval, or status.
+ * All fields optional — only provided fields are written.
+ */
+export interface IntegrationUpdateRequest {
+  display_name?: string;
+  sync_interval_minutes?: number;
+  status?: "active" | "paused";
+}
+
+export async function patchIntegration(
+  integrationId: string,
+  data: IntegrationUpdateRequest,
+  token?: string | null,
+): Promise<Integration> {
+  return apiFetch(`/integrations/${integrationId}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+/** Soft-delete an integration (sets status='deleted'). Returns nothing on 204. */
+export async function deleteIntegration(
+  integrationId: string,
+  token?: string | null,
+): Promise<void> {
+  const url = `${BASE_URL}/integrations/${integrationId}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: buildHeaders(token),
+  });
+  if (!res.ok && res.status !== 204) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+}
+
+/**
+ * Token-only reconnect — replaces the API token while keeping the existing
+ * resource (zone_id / repo_owner+repo_name) pinned.
+ *
+ * Provide api_token for Cloudflare integrations.
+ * Provide github_token for GitHub integrations.
+ * Never store the token in frontend state after this call returns.
+ */
+export interface IntegrationReconnectRequest {
+  api_token?: string;
+  github_token?: string;
+}
+
+export async function reconnectIntegration(
+  integrationId: string,
+  data: IntegrationReconnectRequest,
+  token?: string | null,
+): Promise<Integration> {
+  return apiFetch(`/integrations/${integrationId}/reconnect`, {
+    method: "POST",
+    body: JSON.stringify(data),
     token,
   });
 }

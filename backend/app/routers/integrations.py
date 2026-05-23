@@ -1,7 +1,12 @@
-"""Integration routes.
+"""Integration routes — M29: Integration Management.
 
-POST /integrations  — create a new integration (validates + encrypts credentials)
-GET  /integrations  — list integrations for the authenticated user
+Routes
+------
+POST   /integrations                   — create a new integration
+GET    /integrations                   — list non-deleted integrations
+PATCH  /integrations/{id}             — rename / update interval / pause / resume
+DELETE /integrations/{id}             — soft-delete (sets status='deleted')
+POST   /integrations/{id}/reconnect   — token-only credential update
 
 Credentials (api_token, zone_id, github_token, etc.) and their encrypted forms
 are **never** present in any response shape.  This is enforced at the schema
@@ -15,23 +20,62 @@ Supported providers
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
 from app.connectors.exceptions import AuthenticationError, ConnectorError, NetworkError
 from app.core.auth import get_current_user
 from app.core.encryption import EncryptionKeyError
 from app.database import get_db
+from app.models.integration import Integration
 from app.models.user import User
 from app.schemas.integration import (
     IntegrationCreateRequest,
     IntegrationListResponse,
+    IntegrationReconnectRequest,
     IntegrationResponse,
+    IntegrationUpdateRequest,
 )
 from app.services import integration_service
+from pydantic import UUID4
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
+
+# ── Response builder ──────────────────────────────────────────────────────────
+
+def _build_response(integration: Integration, db: Session) -> IntegrationResponse:
+    """Build an IntegrationResponse including last-sync status from SyncRun.
+
+    ``last_sync_status`` and ``last_sync_error`` are not ORM attributes —
+    they are populated by querying the most recent SyncRun for this
+    integration.  This helper centralises that enrichment so every route
+    returns a consistent shape.
+
+    Performance note: this does one extra SELECT per integration.  At M29
+    scale (single user, small integration count) this is acceptable.  If
+    the list endpoint becomes a bottleneck, batch the SyncRun query.
+    """
+    last_status, last_error = integration_service.get_latest_sync_run_summary(
+        integration.id, db
+    )
+    return IntegrationResponse(
+        id=integration.id,
+        provider=integration.provider,
+        display_name=integration.display_name,
+        status=integration.status,
+        last_synced_at=integration.last_synced_at,
+        created_at=integration.created_at,
+        resource_count=integration.resource_count,
+        sync_interval_minutes=integration.sync_interval_minutes,
+        last_sync_status=last_status,
+        last_sync_error=last_error,
+    )
+
+
+# ── Credential extraction helper (unchanged from M28) ─────────────────────────
 
 def _build_credentials(body: IntegrationCreateRequest) -> dict:
     """Extract the provider-specific credentials dict from the request body.
@@ -53,10 +97,10 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "repo_owner":   body.repo_owner,
             "repo_name":    body.repo_name,
         }
-    # Unreachable when Pydantic validation passes (Literal["cloudflare", "github"]),
-    # but included as a safety net for future providers.
     return {}
 
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=IntegrationResponse, status_code=201)
 def create_integration(
@@ -107,7 +151,7 @@ def create_integration(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return integration
+    return _build_response(integration, db)
 
 
 @router.get("", response_model=IntegrationListResponse)
@@ -115,10 +159,180 @@ def list_integrations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IntegrationListResponse:
-    """List all integrations belonging to the authenticated user.
+    """List all non-deleted integrations belonging to the authenticated user.
+
+    Soft-deleted integrations (status='deleted') are excluded.  Their
+    historical changes remain accessible via GET /changes.
 
     The response includes only safe metadata fields.  Encrypted credentials,
     IVs, and provider tokens are never included.
     """
     rows = integration_service.get_integrations(user_id=current_user.id, db=db)
-    return IntegrationListResponse(integrations=rows, total=len(rows))
+    return IntegrationListResponse(
+        integrations=[_build_response(r, db) for r in rows],
+        total=len(rows),
+    )
+
+
+@router.patch("/{integration_id}", response_model=IntegrationResponse)
+def update_integration(
+    integration_id: UUID4,
+    body: IntegrationUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IntegrationResponse:
+    """Update an integration's display name, sync interval, or status.
+
+    All body fields are optional — only the provided fields are written.
+    At least one field must be present (enforced by the schema validator).
+
+    Status transitions via this endpoint:
+    - ``'active'``  → ``'paused'``  (disable scheduled sync + block Sync Now)
+    - ``'paused'``  → ``'active'``  (re-enable)
+
+    To soft-delete an integration use ``DELETE /integrations/{id}`` instead.
+    Setting ``status='deleted'`` via PATCH is rejected with HTTP 422.
+
+    Returns HTTP 404 if the integration does not exist, is already deleted,
+    or belongs to a different user (no object-existence leak).
+    """
+    try:
+        integration = integration_service.update_integration(
+            integration_id=integration_id,
+            user_id=current_user.id,
+            display_name=body.display_name,
+            sync_interval_minutes=body.sync_interval_minutes,
+            status=body.status,
+            db=db,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return _build_response(integration, db)
+
+
+@router.delete("/{integration_id}", status_code=204)
+def delete_integration(
+    integration_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Soft-delete an integration (sets ``status='deleted'``).
+
+    Soft-delete behaviour:
+    - The integration no longer appears in ``GET /integrations``.
+    - Scheduled syncs are skipped for deleted integrations.
+    - Manual ``POST /syncs`` for a deleted integration returns HTTP 404.
+    - Historical changes, resources, and snapshots are **preserved** — they
+      remain visible in the timeline (``GET /changes``).
+
+    This operation is idempotent — deleting an already-deleted integration
+    returns 204 without error.
+
+    Returns HTTP 404 if the integration never existed or belongs to a
+    different user.
+    """
+    try:
+        integration_service.soft_delete_integration(
+            integration_id=integration_id,
+            user_id=current_user.id,
+            db=db,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return Response(status_code=204)
+
+
+@router.post("/{integration_id}/reconnect", response_model=IntegrationResponse)
+def reconnect_integration(
+    integration_id: UUID4,
+    body: IntegrationReconnectRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IntegrationResponse:
+    """Update the API token for an existing integration (token-only reconnect).
+
+    The integration's underlying resource (Cloudflare zone_id or GitHub
+    owner/repo) cannot be changed via this endpoint.  Only the token is
+    replaced.
+
+    The new token is validated against the live provider API before the
+    database row is updated.  If validation fails, the existing credentials
+    remain unchanged.
+
+    If the integration's status was 'error' (e.g. from a previous credential
+    failure), it is reset to 'active' on success.
+
+    Provider-specific field requirements:
+    - Cloudflare: provide ``api_token``
+    - GitHub: provide ``github_token``
+
+    Returns HTTP 400 if the token is invalid, expired, or lacks required
+    permissions.  Returns HTTP 404 if the integration does not exist, is
+    deleted, or belongs to a different user.
+    """
+    # Fetch integration first to determine provider (before reading token).
+    integration = integration_service.get_integration_by_id(
+        integration_id=integration_id,
+        user_id=current_user.id,
+        db=db,
+    )
+    if integration is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Integration not found or does not belong to this user.",
+        )
+
+    # Extract the correct token for this integration's provider.
+    if integration.provider == "cloudflare":
+        if not body.api_token:
+            raise HTTPException(
+                status_code=422,
+                detail="api_token is required for Cloudflare integrations.",
+            )
+        new_token = body.api_token
+    elif integration.provider == "github":
+        if not body.github_token:
+            raise HTTPException(
+                status_code=422,
+                detail="github_token is required for GitHub integrations.",
+            )
+        new_token = body.github_token
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Reconnect is not supported for provider: {integration.provider!r}",
+        )
+
+    try:
+        integration = integration_service.reconnect_credentials(
+            integration_id=integration_id,
+            user_id=current_user.id,
+            new_token=new_token,
+            db=db,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Authentication failed: {exc}",
+        ) from exc
+    except ConnectorError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Provider validation error: {exc}",
+        ) from exc
+    except NetworkError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not reach provider API: {exc}",
+        ) from exc
+    except EncryptionKeyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Server misconfiguration — ENCRYPTION_KEY not set correctly: {exc}",
+        ) from exc
+
+    return _build_response(integration, db)

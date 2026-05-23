@@ -47,6 +47,14 @@ def list_changes(
         None,
         description="Filter by change type: added, removed, modified.",
     ),
+    provider: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by provider: cloudflare, github. "
+            "Changes from soft-deleted integrations are still included "
+            "so historical data is preserved."
+        ),
+    ),
     since: Optional[datetime] = Query(
         None,
         description="Return only changes at or after this ISO 8601 datetime.",
@@ -77,6 +85,7 @@ def list_changes(
         resource_id=resource_id,
         risk_level=risk_level,
         change_type=change_type,
+        provider=provider,
         since=since,
         until=until,
         page=page,

@@ -20,8 +20,9 @@ Design decisions
   column — SQLAlchemy / psycopg2 will coerce it, but callers should send
   UTC-aware values to avoid ambiguity.
 
-* No joins are performed here.  The ``integration_id`` and ``resource_id``
-  are denormalised onto the Change row, so all filters are single-table.
+* Most filters are single-table (``integration_id``, ``resource_id``, etc.).
+  The ``provider`` filter (M29) requires a JOIN to the ``Integration`` table
+  since ``provider`` is not denormalised onto the Change row.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.change import Change
+from app.models.integration import Integration
 
 _MAX_PAGE_SIZE = 100
 
@@ -45,6 +47,7 @@ def get_changes(
     resource_id: Optional[uuid.UUID] = None,
     risk_level: Optional[str] = None,
     change_type: Optional[str] = None,
+    provider: Optional[str] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     page: int = 1,
@@ -64,6 +67,11 @@ def get_changes(
                         ``'critical'``.
         change_type:    Restrict to ``'added'``, ``'removed'``, or
                         ``'modified'``.
+        provider:       Restrict to changes from integrations with this
+                        provider (e.g. ``'cloudflare'``, ``'github'``).
+                        Requires a JOIN to the Integration table.  Changes
+                        from soft-deleted integrations are still included
+                        because history must be preserved.
         since:          Return only changes with ``created_at >= since``.
         until:          Return only changes with ``created_at <= until``.
         page:           1-based page number (clamped to ≥ 1).
@@ -77,6 +85,15 @@ def get_changes(
     page = max(page, 1)
 
     q = db.query(Change).filter(Change.user_id == user_id)
+
+    if provider is not None:
+        # JOIN to Integration to filter by provider.  Using a regular JOIN
+        # (not outer join) is safe because every Change row has a valid
+        # integration_id FK — the provider filter simply narrows to one
+        # provider's rows.  Soft-deleted integrations are still joined so
+        # their historical changes remain accessible.
+        q = q.join(Integration, Change.integration_id == Integration.id)
+        q = q.filter(Integration.provider == provider)
 
     if integration_id is not None:
         q = q.filter(Change.integration_id == integration_id)

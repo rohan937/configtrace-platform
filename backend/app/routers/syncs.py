@@ -43,9 +43,23 @@ def create_sync(
         db=db,
     )
     if integration is None:
+        # Also covers soft-deleted integrations — both missing and deleted
+        # map to 404 so callers cannot distinguish the two cases.
         raise HTTPException(
             status_code=404,
             detail="Integration not found or does not belong to this user.",
+        )
+
+    # M29: Block manual Sync Now for paused integrations.
+    # Deleted integrations are caught by the 404 above (get_integration_by_id
+    # excludes status='deleted').
+    if integration.status == "paused":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Integration is paused. "
+                "Enable it before running a sync."
+            ),
         )
 
     sync_run = sync_service.create_sync_run(

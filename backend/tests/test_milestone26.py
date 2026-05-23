@@ -498,7 +498,7 @@ def test_schema_cloudflare_valid():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def test_alert_compose_digest_github_label(db_session):
-    """Alert email subject contains 'GitHub config' for GitHub integrations."""
+    """Alert email subject contains 'GitHub change' for GitHub integrations."""
     from app.services.alert_service import _compose_digest
     from unittest.mock import MagicMock
 
@@ -515,6 +515,8 @@ def test_alert_compose_digest_github_label(db_session):
         change.prev_value = True
         change.new_value = False
         change.risk_reason = "Branch protection removed."
+        # Real dict so explain_change() dispatches to the GitHub handler correctly
+        change.provider_metadata = {"record_type": "github_branch_protection"}
         from datetime import datetime, timezone
         change.created_at = datetime.now(timezone.utc)
         change.id = uuid.uuid4()
@@ -524,7 +526,9 @@ def test_alert_compose_digest_github_label(db_session):
             changes=[change],
         )
 
-        assert "GitHub config" in subject, f"Expected 'GitHub config' in subject: {subject!r}"
+        # M28 changed the single-change subject format to:
+        # "[ConfigTrace] High-risk GitHub change: <fragment>"
+        assert "GitHub change" in subject, f"Expected 'GitHub change' in subject: {subject!r}"
         assert "GitHub" in body
     finally:
         try:

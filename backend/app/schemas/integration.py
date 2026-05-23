@@ -24,6 +24,10 @@ from typing import Literal, Optional
 
 from pydantic import UUID4, BaseModel, Field, model_validator
 
+# Allowed per-integration sync intervals (minutes).  Must stay in sync with
+# ``sync_service._ALLOWED_INTERVALS``.
+_ALLOWED_SYNC_INTERVALS = frozenset({5, 10, 15, 30, 60})
+
 
 class IntegrationCreateRequest(BaseModel):
     """Request body for ``POST /integrations``.
@@ -122,6 +126,91 @@ class IntegrationCreateRequest(BaseModel):
         return self
 
 
+class IntegrationUpdateRequest(BaseModel):
+    """Request body for ``PATCH /integrations/{id}``.
+
+    All fields are optional — only the provided fields are updated.
+    At least one field must be present.
+
+    Constraints:
+    - ``status`` may only be set to ``"active"`` or ``"paused"`` via this
+      endpoint.  Soft-delete is performed via ``DELETE /integrations/{id}``.
+    - ``sync_interval_minutes`` must be one of: 5, 10, 15, 30, 60.
+    """
+
+    display_name: Optional[str] = Field(
+        None,
+        min_length=1,
+        max_length=200,
+        description="New display name for the integration.",
+    )
+    sync_interval_minutes: Optional[int] = Field(
+        None,
+        description=(
+            "Scheduled sync cadence in minutes. "
+            "Allowed values: 5, 10, 15, 30, 60. "
+            "Default (when null): 60."
+        ),
+    )
+    status: Optional[Literal["active", "paused"]] = Field(
+        None,
+        description=(
+            "Integration status. Use 'paused' to suspend scheduled syncs "
+            "and block manual Sync Now requests. Use 'active' to re-enable."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_at_least_one_field(self) -> "IntegrationUpdateRequest":
+        if (
+            self.display_name is None
+            and self.sync_interval_minutes is None
+            and self.status is None
+        ):
+            raise ValueError(
+                "At least one field (display_name, sync_interval_minutes, "
+                "or status) must be provided."
+            )
+        if (
+            self.sync_interval_minutes is not None
+            and self.sync_interval_minutes not in _ALLOWED_SYNC_INTERVALS
+        ):
+            raise ValueError(
+                f"sync_interval_minutes must be one of: "
+                f"{sorted(_ALLOWED_SYNC_INTERVALS)}."
+            )
+        return self
+
+
+class IntegrationReconnectRequest(BaseModel):
+    """Request body for ``POST /integrations/{id}/reconnect``.
+
+    Token-only reconnect — the integration's underlying resource (Cloudflare
+    zone_id or GitHub owner/repo) cannot be changed via this endpoint.
+
+    Provide ``api_token`` for Cloudflare integrations.
+    Provide ``github_token`` for GitHub integrations.
+    The backend uses the integration's existing provider to determine which
+    field is required.  The token is validated against the live provider API
+    before saving.  Tokens are never logged or returned.
+    """
+
+    api_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Cloudflare API token. Required for Cloudflare integrations."
+        ),
+    )
+    github_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New GitHub Personal Access Token. Required for GitHub integrations."
+        ),
+    )
+
+
 class IntegrationResponse(BaseModel):
     """Safe representation of a single integration — no credentials."""
 
@@ -135,6 +224,15 @@ class IntegrationResponse(BaseModel):
     # ``resources`` relationship is loaded eagerly (selectin) so this incurs
     # no additional query.
     resource_count: int = 0
+
+    # ── M29 additions ─────────────────────────────────────────────────────────
+    # ``sync_interval_minutes`` comes from the Integration column (dormant in
+    # prior milestones).  ``last_sync_status`` and ``last_sync_error`` are
+    # populated from the most recent SyncRun by the router helper
+    # ``_build_response`` — they are not ORM attributes.
+    sync_interval_minutes: Optional[int] = None
+    last_sync_status: Optional[str] = None
+    last_sync_error: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

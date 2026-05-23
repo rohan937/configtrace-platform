@@ -127,6 +127,13 @@ export interface Integration {
   created_at: string;
   /** Number of Resource rows attached to this integration (always ≥ 1 after creation). */
   resource_count: number;
+  // M29 additions
+  /** Scheduled sync cadence in minutes. Null means default (60). */
+  sync_interval_minutes: number | null;
+  /** Status of the most recent SyncRun for this integration, or null if never synced. */
+  last_sync_status: "pending" | "running" | "completed" | "failed" | null;
+  /** Error message from the most recent failed SyncRun, or null. */
+  last_sync_error: string | null;
 }
 
 /** Matches backend IntegrationListResponse (uses "integrations" key, not "items"). */
