@@ -14,7 +14,8 @@ Coverage
 2. decode_private_key
    - Accepts literal PEM strings.
    - Accepts base64-encoded PEM strings.
-   - Falls back to literal for non-PEM base64 content.
+   - Raises ValueError for non-PEM base64 content.
+   - Raises ValueError for non-PEM literal content.
 
 3. GET /integrations/github/app/install-url
    - Returns 503 when GitHub App env vars are not set.
@@ -26,8 +27,10 @@ Coverage
    - Returns 400 for an invalid state token.
    - Returns 400 for an expired state token.
    - Returns 400 for a tampered state token.
+   - Returns 503 when GITHUB_APP_PRIVATE_KEY cannot be parsed.
    - Returns repos list when state is valid (GitHub API mocked).
    - Returns 502 when GitHub API is unreachable.
+   - 502 detail includes GitHub's error message.
 
 5. POST /integrations/github/app/complete
    - Returns 503 when GitHub App is not configured.
@@ -291,12 +294,20 @@ class TestDecodePrivateKey:
         assert "PRIVATE KEY" in result
         assert result == self._FAKE_PEM
 
-    def test_non_pem_base64_falls_back_to_literal(self):
-        # Base64-encoded string that does NOT contain "PRIVATE KEY"
+    def test_non_pem_base64_raises_value_error(self):
+        # Base64-encoded string that does NOT contain PEM markers — should raise.
         non_pem = base64.b64encode(b"this is not a pem file").decode()
-        result = decode_private_key(non_pem)
-        # Falls back to treating it as literal (raw base64 string returned)
-        assert result == non_pem
+        with pytest.raises(ValueError, match="could not be parsed"):
+            decode_private_key(non_pem)
+
+    def test_non_pem_literal_raises_value_error(self):
+        # A literal string with no PEM markers — should raise.
+        with pytest.raises(ValueError, match="could not be parsed"):
+            decode_private_key("not-a-pem-at-all")
+
+    def test_empty_string_raises_value_error(self):
+        with pytest.raises(ValueError, match="could not be parsed"):
+            decode_private_key("")
 
 
 # ── 3. GET /integrations/github/app/install-url ───────────────────────────────
@@ -381,6 +392,67 @@ class TestGetInstallationRepos:
         )
         assert resp.status_code == 400
         assert "expired" in resp.json()["detail"].lower()
+
+    def test_returns_503_on_bad_private_key(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """When GITHUB_APP_PRIVATE_KEY is set but unparseable, return 503."""
+        from app import config
+
+        # Configure all four vars so _require_app_configured passes, but
+        # set a key value that has no PEM markers so decode_private_key raises.
+        monkeypatch.setattr(config.settings, "GITHUB_APP_ID", "12345")
+        monkeypatch.setattr(config.settings, "GITHUB_APP_SLUG", "configtrace-app")
+        monkeypatch.setattr(
+            config.settings,
+            "GITHUB_APP_PRIVATE_KEY",
+            "not-a-pem-not-base64-encoded-pem",  # no -----BEGIN markers
+        )
+        monkeypatch.setattr(
+            config.settings, "GITHUB_APP_OAUTH_STATE_SECRET", _SECRET
+        )
+
+        state = self._valid_state(test_user)
+        resp = client.get(
+            "/integrations/github/app/installation-repos",
+            params={"installation_id": 12345, "state": state},
+        )
+        assert resp.status_code == 503
+        detail = resp.json()["detail"]
+        assert "private key" in detail.lower()
+        assert "could not be parsed" in detail.lower()
+
+    def test_502_detail_includes_github_message(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """502 responses from GitHub API failures include GitHub's error message."""
+        _patch_github_app_settings(monkeypatch)
+        state = self._valid_state(test_user)
+
+        with (
+            patch("app.routers.integrations_github_app._get_app_jwt", return_value="fake-jwt"),
+            patch(
+                "app.routers.integrations_github_app.list_installation_repos",
+                side_effect=RuntimeError(
+                    "GitHub App authentication failed minting installation token "
+                    "(HTTP 401: Bad credentials). Verify GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY."
+                ),
+            ),
+        ):
+            resp = client.get(
+                "/integrations/github/app/installation-repos",
+                params={"installation_id": 12345, "state": state},
+            )
+
+        assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert "Bad credentials" in detail
 
     def test_returns_repos_when_configured(
         self,

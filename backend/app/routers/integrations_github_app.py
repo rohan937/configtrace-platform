@@ -171,11 +171,18 @@ def get_installation_repos(
     the frontend picker.
 
     Returns HTTP 400 if the state token is invalid or expired.
-    Returns HTTP 503 if the GitHub App is not configured.
-    Returns HTTP 502 if the GitHub API is unreachable.
+    Returns HTTP 503 if the GitHub App is not configured or the private key
+    cannot be parsed.
+    Returns HTTP 502 if the GitHub API call fails.
     """
     _require_app_configured()
 
+    # ── Step: verify state token ──────────────────────────────────────────────
+    logger.info(
+        "route=installation_repos step=verify_state installation_id=%d user_id=%s",
+        installation_id,
+        str(current_user.id),
+    )
     try:
         verify_state_token(
             state,
@@ -183,14 +190,62 @@ def get_installation_repos(
             settings.GITHUB_APP_OAUTH_STATE_SECRET,  # type: ignore[arg-type]
         )
     except ValueError as exc:
+        logger.warning(
+            "route=installation_repos step=verify_state result=rejected "
+            "installation_id=%d reason=%s",
+            installation_id,
+            exc,
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # ── Step: mint GitHub App JWT ─────────────────────────────────────────────
+    # _get_app_jwt() calls decode_private_key (may raise ValueError — config
+    # error) then mint_app_jwt (may raise RuntimeError — transient error).
+    logger.info(
+        "route=installation_repos step=mint_app_jwt installation_id=%d",
+        installation_id,
+    )
     try:
         app_jwt = _get_app_jwt()
-        repos = list_installation_repos(installation_id, app_jwt)
+    except ValueError as exc:
+        # Private key is mis-configured — operator must fix it.
+        logger.error(
+            "route=installation_repos step=decode_private_key result=failed "
+            "installation_id=%d error=%s",
+            installation_id,
+            exc,
+        )
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except RuntimeError as exc:
+        logger.error(
+            "route=installation_repos step=mint_app_jwt result=failed "
+            "installation_id=%d error=%s",
+            installation_id,
+            exc,
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # ── Step: list installation repos via GitHub API ──────────────────────────
+    logger.info(
+        "route=installation_repos step=list_repos installation_id=%d",
+        installation_id,
+    )
+    try:
+        repos = list_installation_repos(installation_id, app_jwt)
+    except RuntimeError as exc:
+        logger.error(
+            "route=installation_repos step=list_repos result=failed "
+            "installation_id=%d error=%s",
+            installation_id,
+            exc,
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    logger.info(
+        "route=installation_repos step=complete installation_id=%d repo_count=%d",
+        installation_id,
+        len(repos),
+    )
     return GitHubInstallationReposResponse(
         repos=[GitHubInstallationRepo(**r) for r in repos],
         installation_id=installation_id,
@@ -231,13 +286,46 @@ def complete_github_app_install(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # ── Mint ephemeral installation token for validation ──────────────────────
-    # SECURITY: this token is used only within this request and is never stored
-    # or logged.  At each subsequent sync, a fresh token is minted by the worker.
+    # ── Step: mint GitHub App JWT ─────────────────────────────────────────────
+    # SECURITY: JWT and installation token are never stored or logged.
+    logger.info(
+        "route=complete step=mint_app_jwt installation_id=%d",
+        body.installation_id,
+    )
     try:
         app_jwt = _get_app_jwt()
+    except ValueError as exc:
+        # Private key is mis-configured — operator must fix it.
+        logger.error(
+            "route=complete step=decode_private_key result=failed "
+            "installation_id=%d error=%s",
+            body.installation_id,
+            exc,
+        )
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        logger.error(
+            "route=complete step=mint_app_jwt result=failed "
+            "installation_id=%d error=%s",
+            body.installation_id,
+            exc,
+        )
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # ── Step: mint installation access token ──────────────────────────────────
+    logger.info(
+        "route=complete step=mint_installation_token installation_id=%d",
+        body.installation_id,
+    )
+    try:
         install_token = mint_installation_token(body.installation_id, app_jwt)
     except RuntimeError as exc:
+        logger.error(
+            "route=complete step=mint_installation_token result=failed "
+            "installation_id=%d error=%s",
+            body.installation_id,
+            exc,
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     # ── Validate repo access with the installation token ──────────────────────

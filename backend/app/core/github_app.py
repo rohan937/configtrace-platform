@@ -54,17 +54,32 @@ def decode_private_key(raw: str) -> str:
     The raw value may be:
       * Base64-encoded PEM (preferred for Render) — decoded first.
       * Literal PEM (local .env files, legacy configs).
+
+    Raises:
+        ValueError: If the result does not look like a PEM private key.
+                    The error message is safe to surface to operators; it does
+                    NOT include the key value.
     """
     stripped = raw.strip()
     # Attempt base64 decode first (handles Render's env var injection).
+    # Python's b64decode ignores whitespace, so base64 strings that have
+    # embedded newlines (e.g. from `base64` without -w 0) still decode.
     try:
         decoded = base64.b64decode(stripped).decode("utf-8")
-        if "PRIVATE KEY" in decoded:
+        if "-----BEGIN" in decoded and "PRIVATE KEY" in decoded:
             return decoded
     except Exception:
         pass
     # Fall back: treat as literal PEM.
-    return stripped
+    if "-----BEGIN" in stripped and "PRIVATE KEY" in stripped:
+        return stripped
+    raise ValueError(
+        "GitHub App private key could not be parsed. "
+        "GITHUB_APP_PRIVATE_KEY must be a PEM private key or its base64-encoded form. "
+        "To encode: base64 -w 0 private-key.pem  (Linux) "
+        "or base64 -i private-key.pem | tr -d '\\n'  (macOS). "
+        "Never paste the raw PEM into Render — newlines are mangled."
+    )
 
 
 # ── HMAC state tokens ─────────────────────────────────────────────────────────
@@ -195,6 +210,23 @@ def mint_app_jwt(app_id: str, private_key_pem: str) -> str:
         raise RuntimeError(f"Failed to mint GitHub App JWT: {exc}") from exc
 
 
+# ── GitHub API helpers ────────────────────────────────────────────────────────
+
+def _safe_github_message(resp: "httpx.Response") -> str:
+    """Extract GitHub's 'message' field from an error response body.
+
+    GitHub error responses have the shape ``{"message": "...", ...}``.
+    This field never contains secrets so it is safe to log and surface.
+    Returns an empty string if the body cannot be parsed.
+    """
+    try:
+        body = resp.json()
+        msg = body.get("message", "")
+        return str(msg) if msg else ""
+    except Exception:
+        return ""
+
+
 # ── Installation token ────────────────────────────────────────────────────────
 
 def mint_installation_token(installation_id: int, app_jwt: str) -> str:
@@ -237,15 +269,19 @@ def mint_installation_token(installation_id: int, app_jwt: str) -> str:
         # NOTE: do not log resp.json() — it contains the token.
         return resp.json()["token"]
 
+    # Extract GitHub's human-readable error message — safe to surface.
+    gh_msg = _safe_github_message(resp)
+    gh_suffix = f": {gh_msg}" if gh_msg else ""
+
     if resp.status_code in (401, 403):
         raise RuntimeError(
             f"GitHub App authentication failed minting installation token "
-            f"(HTTP {resp.status_code}). Verify GITHUB_APP_ID and "
-            "GITHUB_APP_PRIVATE_KEY are correct."
+            f"(HTTP {resp.status_code}{gh_suffix}). "
+            "Verify GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY are correct."
         )
     raise RuntimeError(
-        f"Failed to mint installation token: GitHub returned HTTP "
-        f"{resp.status_code}."
+        f"Failed to mint installation token: "
+        f"GitHub returned HTTP {resp.status_code}{gh_suffix}."
     )
 
 
@@ -291,14 +327,18 @@ def list_installation_repos(installation_id: int, app_jwt: str) -> list[dict]:
                     params={"per_page": per_page, "page": page},
                 )
                 if resp.status_code in (401, 403):
+                    gh_msg = _safe_github_message(resp)
+                    gh_suffix = f": {gh_msg}" if gh_msg else ""
                     raise RuntimeError(
                         f"Installation token rejected by GitHub "
-                        f"(HTTP {resp.status_code})."
+                        f"(HTTP {resp.status_code}{gh_suffix})."
                     )
                 if not resp.is_success:
+                    gh_msg = _safe_github_message(resp)
+                    gh_suffix = f": {gh_msg}" if gh_msg else ""
                     raise RuntimeError(
                         f"GitHub API error listing repos "
-                        f"(HTTP {resp.status_code})."
+                        f"(HTTP {resp.status_code}{gh_suffix})."
                     )
                 body = resp.json()
                 page_repos: list[dict] = body.get("repositories", [])
