@@ -3,25 +3,34 @@
 /**
  * GitHub App installation callback page — M31.
  *
- * GitHub redirects here after the user installs the App:
+ * GitHub redirects here after the user installs or updates the App:
  *   https://app.configtrace.org/integrations/github/callback
  *     ?installation_id=12345
- *     &setup_action=install
+ *     &setup_action=install|update|delete
  *     &state=<hmac-token>
  *
  * Flow:
  *   1. Read installation_id + state from URL query params.
- *   2. Verify state matches what we stored in sessionStorage (CSRF guard).
+ *   2. Pass state to the backend for authoritative HMAC + expiry + user validation.
  *   3. Fetch the list of repositories for this installation.
  *   4. If one repo  → skip picker, go straight to confirmation.
  *      If many repos → show GitHubRepoPicker.
  *   5. On repo selection → POST /integrations/github/app/complete.
  *   6. On success → redirect to /integrations.
  *
- * Security:
- *   - state is never logged or shown in UI.
- *   - installation_id is never stored beyond this session.
- *   - The JWT is fetched fresh for each API call and not held in state.
+ * Security model:
+ *   The backend is the authoritative validator for the state token:
+ *   it verifies the HMAC signature, expiry, and that state.user_id matches
+ *   the current Clerk user.  sessionStorage is used as an optional one-time
+ *   cleanup hint only — it is NOT a hard security gate on the frontend.
+ *
+ *   Removing the hard sessionStorage check does not weaken security because:
+ *   - A forged state token fails backend HMAC verification.
+ *   - A state token for a different user fails the user_id binding check.
+ *   - An expired state token is rejected by the backend.
+ *   The frontend hard-blocking on sessionStorage was causing legitimate
+ *   re-entry (setup_action=update, tab-reuse, retry after network error)
+ *   to fail before the backend could even run its checks.
  *
  * Next.js requirement:
  *   useSearchParams() must be inside a <Suspense> boundary during SSG/prerender.
@@ -37,11 +46,12 @@ import LoadingState from "@/components/common/LoadingState";
 import GitHubRepoPicker from "@/components/integrations/GitHubRepoPicker";
 
 // Key used to store the state token in sessionStorage before the redirect.
+// Used for soft one-time-use cleanup only — not a hard security gate.
 const STATE_KEY = "github_app_oauth_state";
 
-// ── Shared loading UI (used as Suspense fallback and inside the component) ───
+// ── Shared loading UI ─────────────────────────────────────────────────────────
 
-function LoadingVerifying() {
+function LoadingVerifying({ message }: { message?: string }) {
   return (
     <div className="px-6 py-12">
       <LoadingState />
@@ -53,7 +63,7 @@ function LoadingVerifying() {
           marginTop: "12px",
         }}
       >
-        Verifying GitHub App installation…
+        {message ?? "Verifying GitHub App installation…"}
       </p>
     </div>
   );
@@ -70,6 +80,7 @@ function CallbackContent() {
   const [phase, setPhase] = useState<
     "loading" | "picker" | "completing" | "error" | "success"
   >("loading");
+  const [loadingMessage, setLoadingMessage] = useState<string | undefined>(undefined);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Parsed from URL
@@ -85,79 +96,98 @@ function CallbackContent() {
   // Display name pre-filled from the repo's full_name
   const [displayName, setDisplayName] = useState("");
 
-  // ── Step 1-3: parse URL, verify state, fetch repos ───────────────────────
+  // ── Step 1-3: parse URL, validate state via backend, fetch repos ──────────
 
   const init = useCallback(async () => {
-    const idParam = searchParams.get("installation_id");
+    const idParam    = searchParams.get("installation_id");
     const stateParam = searchParams.get("state");
-    const action = searchParams.get("setup_action");
+    const action     = searchParams.get("setup_action");
 
+    // ── Basic URL param checks ─────────────────────────────────────────────
     if (!idParam || !stateParam) {
       setErrorMsg(
         "Missing installation_id or state in the callback URL. " +
-          "Please restart the GitHub App installation."
+          "Please restart the GitHub App installation from the integrations page.",
       );
       setPhase("error");
       return;
     }
 
+    // Uninstall — nothing to create.
     if (action === "delete") {
-      // User uninstalled the App — nothing to do.
       router.replace("/integrations");
       return;
     }
 
     const parsedId = parseInt(idParam, 10);
     if (isNaN(parsedId)) {
-      setErrorMsg("Invalid installation_id in callback URL.");
+      setErrorMsg("Invalid installation_id in callback URL. Please try again.");
       setPhase("error");
       return;
     }
 
-    // CSRF check: compare with the token we stashed before the redirect.
+    // ── sessionStorage: soft cleanup, not a hard gate ─────────────────────
+    //
+    // We stored the state token before redirecting to GitHub.  We clean it up
+    // here as a one-time-use hint.  However, we do NOT block on a mismatch
+    // because the backend is the authoritative HMAC validator.
+    //
+    // sessionStorage may be absent or wrong when:
+    //   - GitHub redirects back with setup_action=update (user changed settings)
+    //   - The callback opened in a different tab or window
+    //   - A previous failed attempt already cleared it
+    //   - The user retried by refreshing the callback URL
+    //
+    // In all those cases, the backend still validates the token cryptographically.
     const storedState = sessionStorage.getItem(STATE_KEY);
-    if (!storedState || storedState !== stateParam) {
-      setErrorMsg(
-        "State token mismatch — this link may have expired or been tampered with. " +
-          "Please start the installation again."
+    if (storedState && storedState !== stateParam) {
+      console.warn(
+        "[github-callback] sessionStorage state does not match URL state — " +
+          "proceeding; backend will perform authoritative HMAC validation.",
       );
-      setPhase("error");
-      return;
     }
-
-    // Clear state from storage (one-time use).
+    // Remove regardless — one-time use intent; errors come from the backend.
     sessionStorage.removeItem(STATE_KEY);
 
     setInstallationId(parsedId);
     setStateToken(stateParam);
 
+    // ── Fetch repos — backend validates state here ─────────────────────────
+    //
+    // setup_action=install and setup_action=update are treated identically:
+    // we show the repo picker and let the user complete the integration.
+    setLoadingMessage("Loading repositories…");
+    let repoList: GitHubInstallationRepo[];
     try {
       const token = await getToken();
       const data = await getInstallationRepositories(parsedId, stateParam, token);
-      const repoList = data.repos;
-      setRepos(repoList);
-
-      if (repoList.length === 0) {
-        setErrorMsg(
-          "No repositories found for this installation. " +
-            "Make sure you granted the App access to at least one repository."
-        );
-        setPhase("error");
-        return;
-      }
-
-      if (repoList.length === 1) {
-        // Single-repo install — skip the picker, show confirmation step.
-        setAutoRepo(repoList[0]);
-        setDisplayName(repoList[0].full_name);
-        setPhase("picker");
-      } else {
-        setPhase("picker");
-      }
+      repoList = data.repos;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load repositories.";
-      setErrorMsg(msg);
+      const msg = err instanceof Error ? err.message : "Unknown error.";
+      setErrorMsg(`Could not load installation repositories — ${msg}`);
       setPhase("error");
+      return;
+    }
+
+    setRepos(repoList);
+
+    if (repoList.length === 0) {
+      setErrorMsg(
+        "No repositories found for this installation. " +
+          "Make sure you granted the App access to at least one repository, " +
+          "then try again from the integrations page.",
+      );
+      setPhase("error");
+      return;
+    }
+
+    if (repoList.length === 1) {
+      // Single-repo install — skip the picker, show confirmation step.
+      setAutoRepo(repoList[0]);
+      setDisplayName(repoList[0].full_name);
+      setPhase("picker");
+    } else {
+      setPhase("picker");
     }
   }, [searchParams, getToken, router]);
 
@@ -188,9 +218,8 @@ function CallbackContent() {
       // Redirect after a short pause so the user sees the success message.
       setTimeout(() => router.replace("/integrations"), 1500);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Failed to complete installation.";
-      setErrorMsg(msg);
+      const msg = err instanceof Error ? err.message : "Unknown error.";
+      setErrorMsg(`Could not complete installation — ${msg}`);
       setPhase("error");
     }
   }
@@ -198,7 +227,7 @@ function CallbackContent() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (phase === "loading") {
-    return <LoadingVerifying />;
+    return <LoadingVerifying message={loadingMessage} />;
   }
 
   if (phase === "success") {
@@ -251,21 +280,7 @@ function CallbackContent() {
   }
 
   if (phase === "completing") {
-    return (
-      <div className="px-6 py-12">
-        <LoadingState />
-        <p
-          style={{
-            textAlign: "center",
-            fontSize: "13px",
-            color: "#8b90a0",
-            marginTop: "12px",
-          }}
-        >
-          Creating integration…
-        </p>
-      </div>
-    );
+    return <LoadingVerifying message="Creating integration…" />;
   }
 
   // phase === "picker"

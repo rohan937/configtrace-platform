@@ -63,18 +63,30 @@ async function apiFetch<T>(
 ): Promise<T> {
   const { token, headers, ...rest } = options ?? {};
   const url = `${BASE_URL}${path}`;
-  const res = await fetch(url, {
-    ...rest,
-    headers: buildHeaders(token, headers),
-  });
+
+  // Catch network-level failures (server unreachable, CORS, DNS, timeout).
+  // Without this, the browser throws a raw TypeError("Failed to fetch") that
+  // gives the caller no context about which request failed or why.
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...rest,
+      headers: buildHeaders(token, headers),
+    });
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    throw new Error(`Network error — could not reach the server. (${cause})`);
+  }
 
   if (!res.ok) {
+    // Always surface the HTTP status so callers can see whether the backend
+    // rejected the request (4xx) or had an internal error (5xx).
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      if (body?.detail) detail = String(body.detail);
+      if (body?.detail) detail = `HTTP ${res.status}: ${String(body.detail)}`;
     } catch {
-      // ignore parse errors
+      // ignore JSON parse errors — keep the "HTTP N" prefix
     }
     throw new Error(detail);
   }
