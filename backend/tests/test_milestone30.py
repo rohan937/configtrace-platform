@@ -301,32 +301,34 @@ class TestGetIntegrationSyncRuns:
         assert runs[1]["id"] == str(run2.id)
         assert runs[2]["id"] == str(run1.id)
 
-    def test_limit_param_caps_results(self, client, test_user, db_session):
-        """?limit=3 returns at most 3 runs even if more exist."""
+    def test_page_size_param_caps_results(self, client, test_user, db_session):
+        """?page_size=3 returns at most 3 runs even if more exist."""
         integration = _make_cloudflare_integration(db_session, test_user)
         for _ in range(7):
             _make_sync_run(db_session, integration)
-        resp = client.get(f"/integrations/{integration.id}/sync-runs?limit=3")
+        resp = client.get(f"/integrations/{integration.id}/sync-runs?page_size=3")
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["sync_runs"]) == 3
         assert body["total"] == 7
 
-    def test_default_limit_is_10(self, client, test_user, db_session):
-        """No limit param → returns at most 10 runs by default."""
+    def test_default_page_size_is_25(self, client, test_user, db_session):
+        """No page_size param → returns up to 25 runs by default."""
         integration = _make_cloudflare_integration(db_session, test_user)
         for _ in range(15):
             _make_sync_run(db_session, integration)
         resp = client.get(f"/integrations/{integration.id}/sync-runs")
         assert resp.status_code == 200
         body = resp.json()
-        assert len(body["sync_runs"]) == 10
+        # 15 runs, all fit in one page of 25
+        assert len(body["sync_runs"]) == 15
         assert body["total"] == 15
+        assert body["page_size"] == 25
 
-    def test_limit_clamped_to_max_50(self, client, test_user, db_session):
-        """?limit=999 is rejected with 422 (query param validation)."""
+    def test_page_size_clamped_to_max_100(self, client, test_user, db_session):
+        """?page_size=999 is rejected with 422 (query param validation)."""
         integration = _make_cloudflare_integration(db_session, test_user)
-        resp = client.get(f"/integrations/{integration.id}/sync-runs?limit=999")
+        resp = client.get(f"/integrations/{integration.id}/sync-runs?page_size=999")
         assert resp.status_code == 422
 
     def test_other_user_integration_returns_404(self, client, db_session):
@@ -375,11 +377,11 @@ class TestGetIntegrationSyncRuns:
             assert field not in body_str, f"Sensitive field {field!r} in sync-run response"
 
     def test_total_field_is_lifetime_count(self, client, test_user, db_session):
-        """total reflects all-time run count, not just the limited slice."""
+        """total reflects all-time run count, not just the current page slice."""
         integration = _make_cloudflare_integration(db_session, test_user)
         for _ in range(20):
             _make_sync_run(db_session, integration)
-        resp = client.get(f"/integrations/{integration.id}/sync-runs?limit=5")
+        resp = client.get(f"/integrations/{integration.id}/sync-runs?page_size=5")
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["sync_runs"]) == 5

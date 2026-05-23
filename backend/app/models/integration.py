@@ -57,6 +57,23 @@ class Integration(BaseMixin, Base):
         Integer, nullable=True
     )
 
+    # ── M32: consecutive failure tracking ─────────────────────────────────────
+    # consecutive_failure_count: incremented on each *scheduled* sync failure,
+    #   reset to 0 on any successful sync.  Manual failures do not change it.
+    # last_failure_at: UTC timestamp of the most recent sync failure (any type).
+    # last_failure_alert_sent_at: when we last emailed the user about failures.
+    #   Used to enforce a 24-hour cooldown — never send more than one failure
+    #   alert per integration per 24 hours.
+    consecutive_failure_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_failure_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_failure_alert_sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # ── Relationships ────────────────────────────────────────────────────────
     user: Mapped[User] = relationship("User", back_populates="integrations")
     resources: Mapped[list[Resource]] = relationship(

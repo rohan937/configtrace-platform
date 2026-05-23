@@ -199,19 +199,27 @@ export async function getIntegration(
 }
 
 /**
- * Fetch the most recent sync runs for an integration.
+ * Fetch paginated sync runs for an integration.
  *
- * ``limit`` defaults to 10 and is clamped to 50 server-side.
- * The response includes a ``total`` field reflecting the all-time SyncRun
- * count so the UI can show "Last N of M total runs".
+ * Supports offset pagination (page/page_size) and optional filters.
+ * The response includes total, page, page_size, and total_pages for
+ * the frontend paginator.
+ *
+ * Pass page=1, page_size=N for the integration detail page preview.
+ * Pass page=N with filters for the dedicated sync-runs history page.
  */
 export async function getIntegrationSyncRuns(
   integrationId: string,
-  limit: number = 10,
+  params: {
+    page?: number;
+    page_size?: number;
+    status?: string;
+    trigger?: string;
+  } = {},
   token?: string | null,
 ): Promise<SyncRunListResponse> {
   return apiFetch(
-    `/integrations/${integrationId}/sync-runs${buildQuery({ limit })}`,
+    `/integrations/${integrationId}/sync-runs${buildQuery(params)}`,
     { token },
   );
 }

@@ -60,14 +60,20 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
     ``connection_method`` is derived from the first resource's metadata
     without credential decryption — safe to expose.
 
+    ``consecutive_failure_count`` comes from the Integration column (M32).
+    ``needs_attention`` is derived: True when consecutive_failure_count >= 3.
+
     Performance note: this does one extra SELECT per integration.  At M29
     scale (single user, small integration count) this is acceptable.  If
     the list endpoint becomes a bottleneck, batch the SyncRun query.
     """
+    from app.core.failure_classifier import NEEDS_ATTENTION_THRESHOLD
+
     last_status, last_error = integration_service.get_latest_sync_run_summary(
         integration.id, db
     )
     connection_method = integration_service.get_connection_method(integration)
+    consecutive = integration.consecutive_failure_count or 0
     return IntegrationResponse(
         id=integration.id,
         provider=integration.provider,
@@ -80,6 +86,8 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
         last_sync_status=last_status,
         last_sync_error=last_error,
         connection_method=connection_method,
+        consecutive_failure_count=consecutive,
+        needs_attention=consecutive >= NEEDS_ATTENTION_THRESHOLD,
     )
 
 
@@ -214,16 +222,28 @@ def get_integration(
 @router.get("/{integration_id}/sync-runs", response_model=SyncRunListResponse)
 def get_integration_sync_runs(
     integration_id: UUID4,
-    limit: int = Query(10, ge=1, le=50, description="Maximum number of runs to return (1–50)."),
+    page: int = Query(1, ge=1, description="Page number (1-indexed)."),
+    page_size: int = Query(25, ge=1, le=100, description="Rows per page (1–100)."),
+    status: str | None = Query(
+        None,
+        description="Filter by status: pending | running | completed | failed.",
+    ),
+    trigger: str | None = Query(
+        None,
+        description="Filter by trigger: manual | scheduled.",
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SyncRunListResponse:
-    """Return the most recent sync runs for a single integration.
+    """Return paginated sync runs for a single integration.
 
-    Ownership is verified before querying sync runs.  Deleted integrations
-    return HTTP 404.  The response also includes a ``total`` count of all
-    SyncRuns ever created for this integration so the frontend can render
-    "Showing last N of M total runs".
+    Ownership is verified before querying runs.  Deleted integrations return
+    HTTP 404.  The response includes ``total`` (filtered count), ``page``,
+    ``page_size``, and ``total_pages`` for the frontend paginator.
+
+    Optional filters:
+    - ``status``:  restrict to a specific run status.
+    - ``trigger``: restrict to ``'manual'`` or ``'scheduled'`` runs.
 
     Sync run records do not contain credentials.
     """
@@ -239,15 +259,38 @@ def get_integration_sync_runs(
             detail="Integration not found or does not belong to this user.",
         )
 
+    # Validate filter values to return clear errors instead of empty results.
+    _VALID_STATUSES = {"pending", "running", "completed", "failed"}
+    _VALID_TRIGGERS = {"manual", "scheduled"}
+    if status is not None and status not in _VALID_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status filter {status!r}. "
+                   f"Allowed: {sorted(_VALID_STATUSES)}.",
+        )
+    if trigger is not None and trigger not in _VALID_TRIGGERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid trigger filter {trigger!r}. "
+                   f"Allowed: {sorted(_VALID_TRIGGERS)}.",
+        )
+
     runs, total = integration_service.get_recent_sync_runs(
         integration_id=integration_id,
         user_id=current_user.id,
-        limit=limit,
+        page=page,
+        page_size=page_size,
+        status_filter=status,
+        trigger_filter=trigger,
         db=db,
     )
+    total_pages = max(1, -(-total // page_size))  # ceiling division
     return SyncRunListResponse(
         sync_runs=[SyncRunResponse.model_validate(r) for r in runs],
         total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
     )
 
 

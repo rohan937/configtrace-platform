@@ -295,11 +295,68 @@ def mark_sync_failed(
     *,
     error_message: str,
     db: Session,
+    failure_category: str | None = None,
+    error_code: str | None = None,
+    recommended_action: str | None = None,
 ) -> None:
-    """Transition to ``'failed'`` and store the error message."""
+    """Transition to ``'failed'`` and store the error message.
+
+    The optional *failure_category*, *error_code*, and *recommended_action*
+    fields (added in M32) are written when provided.  Existing callers that
+    omit them continue to work unchanged.
+    """
     sync_run = db.get(SyncRun, sync_run_id)
     if sync_run is not None:
         sync_run.status = "failed"
         sync_run.completed_at = datetime.now(timezone.utc)
         sync_run.error_message = error_message
+        if failure_category is not None:
+            sync_run.failure_category = failure_category
+        if error_code is not None:
+            sync_run.error_code = error_code
+        if recommended_action is not None:
+            sync_run.recommended_action = recommended_action
+        db.commit()
+
+
+def increment_consecutive_failures(
+    integration_id: uuid.UUID,
+    db: Session,
+) -> int:
+    """Increment ``consecutive_failure_count`` and update ``last_failure_at``.
+
+    Called after a *scheduled* sync fails.  Returns the new count so the
+    caller can decide whether to dispatch a failure alert.
+
+    Manual sync failures should NOT call this function — consecutive failure
+    tracking is intentionally limited to scheduled syncs so a user manually
+    retrying a broken integration doesn't inflate the counter.
+    """
+    integration = db.get(Integration, integration_id)
+    if integration is None:
+        logger.warning(
+            "increment_consecutive_failures: integration %s not found",
+            integration_id,
+        )
+        return 0
+    integration.consecutive_failure_count = (
+        (integration.consecutive_failure_count or 0) + 1
+    )
+    integration.last_failure_at = datetime.now(timezone.utc)
+    db.commit()
+    return integration.consecutive_failure_count
+
+
+def reset_consecutive_failures(
+    integration_id: uuid.UUID,
+    db: Session,
+) -> None:
+    """Reset ``consecutive_failure_count`` to 0 after a successful sync.
+
+    Called after any successful sync (manual or scheduled) to clear any
+    accumulated failure streak.  Safe to call even if the count is already 0.
+    """
+    integration = db.get(Integration, integration_id)
+    if integration is not None and integration.consecutive_failure_count != 0:
+        integration.consecutive_failure_count = 0
         db.commit()

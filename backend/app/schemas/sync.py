@@ -37,16 +37,29 @@ class SyncRunResponse(BaseModel):
     error_message: Optional[str]
     created_at: datetime
 
+    # ── M32: structured failure classification ────────────────────────────────
+    # Populated only for failed runs.  Null for completed/pending/running runs.
+    # failure_category: broad category (authentication, network, config_error …)
+    # error_code:       provider-specific machine-readable code
+    # recommended_action: user-facing remediation hint
+    failure_category: Optional[str] = None
+    error_code: Optional[str] = None
+    recommended_action: Optional[str] = None
+
     model_config = {"from_attributes": True}
 
 
 class SyncRunListResponse(BaseModel):
     """Response body for ``GET /integrations/{id}/sync-runs``.
 
-    ``sync_runs`` is the *limit* most-recent runs ordered newest first.
-    ``total`` is the lifetime count of SyncRuns for this integration — lets
-    the frontend show "Last 10 of N total runs" without a second query.
+    Supports cursor-free offset pagination.  ``sync_runs`` is one page of
+    runs ordered newest first.  ``total`` is the all-time SyncRun count for
+    this integration (considering any applied filters).
+    ``total_pages`` is derived from ``total`` / ``page_size``.
     """
 
     sync_runs: list[SyncRunResponse]
     total: int
+    page: int = 1
+    page_size: int = 25
+    total_pages: int = 1

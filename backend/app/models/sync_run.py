@@ -50,6 +50,14 @@ class SyncRun(BaseImmutable, Base):
     snapshot_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # ── M32: structured failure classification ────────────────────────────────
+    # failure_category: broad category (authentication, network, config_error …)
+    # error_code:       provider-specific code (github_token_revoked, …)
+    # recommended_action: user-facing remediation hint shown in the UI
+    failure_category: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    recommended_action: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return (
             f"<SyncRun id={self.id} status={self.status!r}"

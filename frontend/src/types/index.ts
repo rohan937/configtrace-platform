@@ -142,6 +142,17 @@ export interface Integration {
    * null         — not a GitHub integration (e.g. Cloudflare)
    */
   connection_method: "github_app" | "pat" | null;
+  // M32 additions
+  /**
+   * Number of consecutive *scheduled* sync failures since the last success.
+   * Reset to 0 on any successful sync.  Manual failures are not counted.
+   */
+  consecutive_failure_count: number;
+  /**
+   * True when consecutive_failure_count >= 3.  The backend computes this so
+   * the frontend doesn't need to know the threshold.
+   */
+  needs_attention: boolean;
 }
 
 // ── GitHub App install flow (M31) ─────────────────────────────────────────────
@@ -199,11 +210,21 @@ export interface SyncRun {
   snapshot_count: number | null;
   error_message: string | null;
   created_at: string;
+  // M32: structured failure classification (null for non-failed runs)
+  failure_category: string | null;
+  error_code: string | null;
+  recommended_action: string | null;
 }
 
 /** Matches backend SyncRunListResponse — GET /integrations/{id}/sync-runs. */
 export interface SyncRunListResponse {
   sync_runs: SyncRun[];
-  /** All-time count of SyncRuns for this integration (not limited to the slice). */
+  /** Filtered count of SyncRuns (reflects any applied status/trigger filters). */
   total: number;
+  /** Current page number (1-indexed). */
+  page: number;
+  /** Rows per page. */
+  page_size: number;
+  /** Total number of pages. */
+  total_pages: number;
 }

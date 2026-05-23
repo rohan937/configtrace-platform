@@ -240,6 +240,15 @@ class IntegrationResponse(BaseModel):
     # This field is safe to expose — it conveys the auth method, not a secret.
     connection_method: Optional[str] = None
 
+    # ── M32 additions ─────────────────────────────────────────────────────────
+    # consecutive_failure_count: number of consecutive *scheduled* sync failures
+    #   since the last success.  Reset to 0 on any successful sync.
+    # needs_attention: True when consecutive_failure_count >= 3.  Populated by
+    #   the router helper so the frontend can show a warning badge without
+    #   knowing the threshold.
+    consecutive_failure_count: int = 0
+    needs_attention: bool = False
+
     model_config = {"from_attributes": True}
 
 

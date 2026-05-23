@@ -81,6 +81,7 @@ def sync_integration(
     from app.database import SessionLocal
     from app.models.integration import Integration
     from app.models.resource import Resource
+    from app.models.sync_run import SyncRun
     from app.services.alert_service import dispatch_alerts_for_sync
     from app.services.diff_service import compute_diff, store_changes
     from app.services.risk_service import classify_changes as apply_risk_classification
@@ -95,6 +96,13 @@ def sync_integration(
     _integration_uuid = uuid.UUID(integration_id)
 
     db = SessionLocal()
+
+    # Declare early so the except block can reference them even if an
+    # exception fires before these are assigned inside the try block.
+    integration = None
+    credentials: dict = {}
+    _triggered_by: str = "manual"  # resolved from SyncRun below
+
     try:
         logger.info(
             "sync_integration started  sync_run_id=%s  integration_id=%s",
@@ -102,8 +110,14 @@ def sync_integration(
             integration_id,
         )
 
-        # ── Mark as running ──────────────────────────────────────────────────
+        # ── Mark as running + capture triggered_by ───────────────────────────
         mark_sync_running(_sync_run_uuid, db)
+
+        # Load the SyncRun to get triggered_by (needed for consecutive failure
+        # tracking — only scheduled failures increment the counter).
+        _sync_run_obj = db.get(SyncRun, _sync_run_uuid)
+        if _sync_run_obj is not None:
+            _triggered_by = _sync_run_obj.triggered_by
 
         # ── Load integration ─────────────────────────────────────────────────
         integration = db.get(Integration, _integration_uuid)
@@ -133,6 +147,8 @@ def sync_integration(
         )
 
         # ── Decrypt credentials ──────────────────────────────────────────────
+        # Assign to the outer-scope `credentials` so the except block can
+        # read credential_type for failure classification.
         credentials = decrypt_credentials(
             integration.encrypted_credentials,
             integration.credential_iv,
@@ -335,6 +351,21 @@ def sync_integration(
             db=db,
         )
 
+        # ── Reset consecutive failure counter on success (M32) ───────────────
+        # Any successful sync (manual or scheduled) resets the streak so the
+        # "needs attention" badge clears after the user has fixed the issue.
+        if integration is not None:
+            try:
+                from app.services.sync_service import reset_consecutive_failures
+                reset_consecutive_failures(integration.id, db)
+            except Exception:
+                # Never let a counter-reset failure abort a successful sync.
+                logger.exception(
+                    "sync_integration: failed to reset consecutive_failure_count  "
+                    "integration_id=%s",
+                    integration_id,
+                )
+
         logger.info(
             "sync_integration completed  sync_run_id=%s  "
             "snapshots=%d  changes=%d",
@@ -355,13 +386,65 @@ def sync_integration(
             sync_run_id,
             str(exc),
         )
+
+        # ── M32: classify failure + update failure tracking ──────────────────
+        from app.core.failure_classifier import classify_failure
+        from app.services.sync_service import increment_consecutive_failures
+
+        _provider = integration.provider if integration is not None else ""
+        _cred_type = credentials.get("credential_type") if credentials else None
+        _classification = classify_failure(exc, _provider, _cred_type)
+
         try:
-            mark_sync_failed(_sync_run_uuid, error_message=str(exc), db=db)
+            mark_sync_failed(
+                _sync_run_uuid,
+                error_message=str(exc),
+                failure_category=_classification.category,
+                error_code=_classification.error_code,
+                recommended_action=_classification.recommended_action,
+                db=db,
+            )
         except Exception:
             logger.exception(
                 "Could not mark sync_run %s as failed — DB may be unavailable",
                 sync_run_id,
             )
+
+        # Consecutive failure tracking and failure alerts (scheduled only)
+        if integration is not None and _triggered_by == "scheduled":
+            try:
+                new_count = increment_consecutive_failures(integration.id, db)
+                logger.info(
+                    "sync_integration: consecutive_failure_count=%d  "
+                    "integration_id=%s",
+                    new_count,
+                    integration_id,
+                )
+
+                # Reload the fresh sync run (with classification fields) for
+                # use in the alert email body.
+                _failed_run = db.get(SyncRun, _sync_run_uuid)
+                if _failed_run is not None:
+                    from app.services.sync_failure_alert_service import (
+                        maybe_send_failure_alert,
+                    )
+                    # Reload integration to pick up the updated consecutive count
+                    # and last_failure_alert_sent_at (committed by increment_…).
+                    db.refresh(integration)
+                    maybe_send_failure_alert(
+                        integration=integration,
+                        sync_run=_failed_run,
+                        consecutive_count=new_count,
+                        db=db,
+                    )
+            except Exception:
+                # Never let tracking / alerting abort the exception propagation.
+                logger.exception(
+                    "sync_integration: failure tracking raised unexpectedly  "
+                    "integration_id=%s",
+                    integration_id,
+                )
+
         raise
 
     finally:

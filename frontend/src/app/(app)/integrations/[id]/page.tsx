@@ -455,7 +455,36 @@ function HealthPanel({
               }
             />
           )}
+          {lastFailure.recommended_action && (
+            <MetaRow
+              label="Action"
+              value={
+                <span style={{ color: "#f5a623", wordBreak: "break-word" }}>
+                  {lastFailure.recommended_action}
+                </span>
+              }
+            />
+          )}
         </>
+      )}
+      {/* M32: needs-attention warning when ≥ 3 consecutive scheduled failures */}
+      {integration.needs_attention && (
+        <div
+          style={{
+            marginTop: "10px",
+            padding: "8px 12px",
+            background: "rgba(245,166,35,0.08)",
+            border: "1px solid rgba(245,166,35,0.3)",
+            borderRadius: "5px",
+            fontSize: "12px",
+            color: "#f5a623",
+          }}
+        >
+          ⚠ {integration.consecutive_failure_count} consecutive scheduled syncs have failed.{" "}
+          {lastFailure?.recommended_action
+            ? lastFailure.recommended_action
+            : "Check the sync history for details."}
+        </div>
       )}
     </Panel>
   );
@@ -632,7 +661,7 @@ export default function IntegrationDetailPage() {
       const token = await getToken();
       const [integrationData, runsData, changesData] = await Promise.all([
         getIntegration(integrationId, token),
-        getIntegrationSyncRuns(integrationId, 10, token),
+        getIntegrationSyncRuns(integrationId, { page: 1, page_size: 10 }, token),
         getChanges({ integration_id: integrationId, page_size: 10 }, token),
       ]);
       if (!mountedRef.current) return;
@@ -1031,6 +1060,16 @@ export default function IntegrationDetailPage() {
               title={`Sync history${syncRunsTotal > 0 ? ` · ${syncRunsTotal} total` : ""}`}
             >
               <SyncHistoryTable runs={syncRuns} total={syncRunsTotal} />
+              {syncRunsTotal > 0 && (
+                <div style={{ marginTop: "10px", textAlign: "right" }}>
+                  <Link
+                    href={`/integrations/${integrationId}/sync-runs`}
+                    style={{ fontSize: "12px", color: "#4f80f7", textDecoration: "none" }}
+                  >
+                    View all sync runs →
+                  </Link>
+                </div>
+              )}
             </Panel>
 
             {/* Recent changes */}

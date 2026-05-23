@@ -533,14 +533,22 @@ def get_recent_sync_runs(
     *,
     integration_id: uuid.UUID,
     user_id: uuid.UUID,
-    limit: int,
+    limit: int | None = None,
+    page: int = 1,
+    page_size: int = 25,
+    status_filter: str | None = None,
+    trigger_filter: str | None = None,
     db: Session,
 ) -> tuple[list, int]:
-    """Return (recent_runs, total) for an integration scoped to *user_id*.
+    """Return ``(runs, total)`` for an integration scoped to *user_id*.
 
-    *recent_runs* contains the ``limit`` most recent SyncRuns ordered by
-    ``created_at DESC``.  *total* is the all-time lifetime count so the
-    frontend can show "Last N of M total runs".
+    Supports offset pagination via *page* / *page_size*.  When the legacy
+    *limit* kwarg is provided, it overrides *page_size* and forces *page=1*
+    (backward-compatible — callers that just want the last N runs continue
+    to work unchanged).
+
+    The *total* reflects the count **after** any applied filters so the
+    frontend can render "Page N of M" correctly.
 
     Both ``integration_id`` and ``user_id`` are filtered for defence-in-depth:
     the caller should have already verified ownership, but we filter here too
@@ -549,7 +557,11 @@ def get_recent_sync_runs(
     Args:
         integration_id: The integration whose runs are requested.
         user_id:        Must match the integration's owner.
-        limit:          Maximum number of runs to return.
+        limit:          Legacy: if set, return at most this many runs (page=1).
+        page:           1-indexed page number (ignored when *limit* is set).
+        page_size:      Rows per page.
+        status_filter:  If set, restrict to runs with this ``status`` value.
+        trigger_filter: If set, restrict to runs with this ``triggered_by`` value.
         db:             Active SQLAlchemy session.
     """
     from app.models.sync_run import SyncRun
@@ -560,10 +572,22 @@ def get_recent_sync_runs(
             SyncRun.integration_id == integration_id,
             SyncRun.user_id == user_id,
         )
-        .order_by(SyncRun.created_at.desc())
     )
+    if status_filter is not None:
+        q = q.filter(SyncRun.status == status_filter)
+    if trigger_filter is not None:
+        q = q.filter(SyncRun.triggered_by == trigger_filter)
+
+    q = q.order_by(SyncRun.created_at.desc())
     total: int = q.count()
-    runs = q.limit(limit).all()
+
+    if limit is not None:
+        # Legacy: caller wants the last N runs (page-1 semantics).
+        runs = q.limit(limit).all()
+    else:
+        offset = (page - 1) * page_size
+        runs = q.offset(offset).limit(page_size).all()
+
     return runs, total
 
 
