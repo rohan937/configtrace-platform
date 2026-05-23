@@ -22,9 +22,13 @@
  *   - state is never logged or shown in UI.
  *   - installation_id is never stored beyond this session.
  *   - The JWT is fetched fresh for each API call and not held in state.
+ *
+ * Next.js requirement:
+ *   useSearchParams() must be inside a <Suspense> boundary during SSG/prerender.
+ *   CallbackContent owns useSearchParams(); GitHubAppCallbackPage wraps it.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import type { GitHubInstallationRepo } from "@/types";
@@ -32,10 +36,33 @@ import { completeGitHubAppInstall, getInstallationRepositories } from "@/lib/api
 import LoadingState from "@/components/common/LoadingState";
 import GitHubRepoPicker from "@/components/integrations/GitHubRepoPicker";
 
-// Prefix used to store the state token in sessionStorage.
+// Key used to store the state token in sessionStorage before the redirect.
 const STATE_KEY = "github_app_oauth_state";
 
-export default function GitHubAppCallbackPage() {
+// ── Shared loading UI (used as Suspense fallback and inside the component) ───
+
+function LoadingVerifying() {
+  return (
+    <div className="px-6 py-12">
+      <LoadingState />
+      <p
+        style={{
+          textAlign: "center",
+          fontSize: "13px",
+          color: "#8b90a0",
+          marginTop: "12px",
+        }}
+      >
+        Verifying GitHub App installation…
+      </p>
+    </div>
+  );
+}
+
+// ── Inner component — owns useSearchParams() ──────────────────────────────────
+// Must be rendered inside a <Suspense> boundary (see default export below).
+
+function CallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { getToken, isLoaded } = useAuth();
@@ -55,7 +82,7 @@ export default function GitHubAppCallbackPage() {
   // Auto-selected repo (single-repo installations skip the picker)
   const [autoRepo, setAutoRepo] = useState<GitHubInstallationRepo | null>(null);
 
-  // Display name for completing the integration
+  // Display name pre-filled from the repo's full_name
   const [displayName, setDisplayName] = useState("");
 
   // ── Step 1-3: parse URL, verify state, fetch repos ───────────────────────
@@ -120,10 +147,10 @@ export default function GitHubAppCallbackPage() {
       }
 
       if (repoList.length === 1) {
-        // Single-repo install — skip the picker.
+        // Single-repo install — skip the picker, show confirmation step.
         setAutoRepo(repoList[0]);
         setDisplayName(repoList[0].full_name);
-        setPhase("picker"); // still show the confirm step
+        setPhase("picker");
       } else {
         setPhase("picker");
       }
@@ -171,21 +198,7 @@ export default function GitHubAppCallbackPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (phase === "loading") {
-    return (
-      <div className="px-6 py-12">
-        <LoadingState />
-        <p
-          style={{
-            textAlign: "center",
-            fontSize: "13px",
-            color: "#8b90a0",
-            marginTop: "12px",
-          }}
-        >
-          Verifying GitHub App installation…
-        </p>
-      </div>
-    );
+    return <LoadingVerifying />;
   }
 
   if (phase === "success") {
@@ -280,5 +293,18 @@ export default function GitHubAppCallbackPage() {
         onCancel={() => router.replace("/integrations")}
       />
     </div>
+  );
+}
+
+// ── Page export — wraps CallbackContent in Suspense ───────────────────────────
+// Required by Next.js App Router: useSearchParams() in a child component must
+// have a Suspense boundary above it in the tree, or the build fails with
+// "useSearchParams() should be wrapped in a suspense boundary".
+
+export default function GitHubAppCallbackPage() {
+  return (
+    <Suspense fallback={<LoadingVerifying />}>
+      <CallbackContent />
+    </Suspense>
   );
 }
