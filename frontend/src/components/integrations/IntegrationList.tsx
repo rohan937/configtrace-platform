@@ -489,7 +489,7 @@ export default function IntegrationList({
                   className="shrink-0 uppercase tracking-wider"
                   style={{ fontSize: "11px", color: "#8b90a0", width: "100px" }}
                 >
-                  {integration.provider === "cloudflare" ? "Cloudflare" : integration.provider === "github" ? "GitHub" : integration.provider}
+                  {integration.provider === "cloudflare" ? "Cloudflare" : integration.provider === "github" ? "GitHub" : integration.provider === "vercel" ? "Vercel" : integration.provider}
                 </span>
 
                 {/* Last synced */}

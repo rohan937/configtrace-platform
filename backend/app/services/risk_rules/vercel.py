@@ -37,6 +37,23 @@ Design decisions
 * Domain "production vs. preview" is determined by whether the domain record's
   ``git_branch`` field is set.  A domain without a branch is a global/production
   custom domain; one with a branch is a preview-branch domain.
+
+Preview / non-production env var intentional design
+----------------------------------------------------
+Preview and development environment variable changes are deliberately classified
+at a lower severity than production changes:
+
+  * Preview env var **added**   → ``low``
+    Adding a variable to a preview environment is routine during development.
+    It does not affect production deployments.
+
+  * Preview env var **removed** → ``medium``
+    Removing a preview variable may break preview/staging deployments but
+    cannot directly break production.  "medium" prompts investigation without
+    triggering a high-priority alert.
+
+These levels are *intentionally* not ``critical`` or ``high``.  Manual QA
+confirmed: TEST_CONFIGTRACE_VAR add/remove in Preview → Medium is correct.
 """
 
 from __future__ import annotations

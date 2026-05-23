@@ -26,6 +26,11 @@ function ProviderBadge({ resourceType }: { resourceType: string }) {
     color = "#b0b5c4";
     bg = "rgba(176,181,196,0.08)";
     border = "#2a2d38";
+  } else if (type === "vercel_project") {
+    label = "Vercel";
+    color = "#b0b5c4";
+    bg = "rgba(176,181,196,0.08)";
+    border = "#2a2d38";
   }
 
   if (!label) return null;

@@ -415,6 +415,39 @@ def sync_integration(
                 sync_run_id,
             )
 
+        # ── M33 QA: Mark resources inactive when the resource no longer exists ─
+        # When a sync fails because the remote resource is missing (deleted
+        # repo, deleted Vercel project, removed zone, etc.), flip is_active=False
+        # on every resource for this integration so the Resources page stops
+        # showing a green "Active" badge.  This applies regardless of whether
+        # the sync was manual or scheduled — a 404 is definitive evidence that
+        # the resource is gone and should not silently appear healthy.
+        if integration is not None and _classification.category == "resource_missing":
+            try:
+                _stale_resources = (
+                    db.query(Resource)
+                    .filter(
+                        Resource.integration_id == _integration_uuid,
+                        Resource.is_active.is_(True),
+                    )
+                    .all()
+                )
+                for _r in _stale_resources:
+                    _r.is_active = False
+                db.commit()
+                logger.info(
+                    "sync_integration: marked %d resource(s) inactive "
+                    "(resource_missing)  integration_id=%s",
+                    len(_stale_resources),
+                    integration_id,
+                )
+            except Exception:
+                logger.exception(
+                    "sync_integration: failed to mark resources inactive  "
+                    "integration_id=%s",
+                    integration_id,
+                )
+
         # Consecutive failure tracking and failure alerts (scheduled only)
         if integration is not None and _triggered_by == "scheduled":
             try:

@@ -260,12 +260,13 @@ function AddedRemovedPanel({
 
 // ── Provider-aware helpers ────────────────────────────────────────────────────
 
-/** "Cloudflare DNS" | "GitHub repo configuration" | "Unknown" */
+/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" */
 function getProviderLabel(change: ChangeDetail): string {
   const rt = (
     (change.provider_metadata?.record_type as string | undefined) ?? ""
   ).toLowerCase();
   if (rt.startsWith("github_")) return "GitHub repo configuration";
+  if (rt.startsWith("vercel_")) return "Vercel project configuration";
   if (change.provider_metadata?.record_type) return "Cloudflare DNS";
   return "Cloudflare DNS";
 }
@@ -315,6 +316,39 @@ function getChangeSummary(change: ChangeDetail): string {
   }
   if (rt.startsWith("github_")) {
     return `A GitHub configuration record changed (${rt}).`;
+  }
+
+  // Vercel
+  if (rt === "vercel_project") {
+    if (change.change_type === "modified") {
+      if (fp === "framework")          return `The Vercel project framework changed to ${String(nv)}.`;
+      if (fp === "build_command")      return `The Vercel build command changed.`;
+      if (fp === "install_command")    return `The Vercel install command changed.`;
+      if (fp === "root_directory")     return `The Vercel root directory changed to ${String(nv)}.`;
+      if (fp === "output_directory")   return `The Vercel output directory changed.`;
+      if (fp === "node_version")       return `The Node.js version changed to ${String(nv)}.`;
+      if (fp === "git_branch")         return `The production branch changed to ${String(nv)}.`;
+      if (fp === "git_repository")     return `The connected Git repository changed.`;
+      if (fp === "sso_protection")     return nv ? `SSO protection was enabled on this Vercel project.` : `SSO protection was disabled on this Vercel project.`;
+      if (fp === "password_protection") return nv ? `Password protection was enabled.` : `Password protection was disabled.`;
+      return `A Vercel project setting changed (${fp}).`;
+    }
+    return `Vercel project configuration changed.`;
+  }
+  if (rt === "vercel_env_var") {
+    // SECURITY: env var values are never stored — only metadata is shown.
+    const envName = (change.provider_metadata?.record_name as string | undefined) ?? rn;
+    if (change.change_type === "removed") return `The environment variable ${envName || "key"} was removed.`;
+    if (change.change_type === "added")   return `A new environment variable${envName ? ` (${envName})` : ""} was added.`;
+    return `An environment variable was modified (${fp}).`;
+  }
+  if (rt === "vercel_domain") {
+    if (change.change_type === "removed") return `The domain ${rn || change.record_identifier} was removed from this Vercel project.`;
+    if (change.change_type === "added")   return `The domain ${rn || change.record_identifier} was added to this Vercel project.`;
+    return `Domain configuration changed for ${rn || change.record_identifier}.`;
+  }
+  if (rt.startsWith("vercel_")) {
+    return `A Vercel configuration record changed (${rt}).`;
   }
 
   // Cloudflare DNS
@@ -381,6 +415,73 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Review GitHub repository settings.",
       "Check GitHub audit logs for who made the change.",
       "Verify workflows and deployments still pass.",
+      "Restore the previous setting if this was accidental.",
+    ];
+  }
+
+  // Vercel
+  if (rt === "vercel_project") {
+    const fp2 = change.field_path ?? "";
+    if (fp2 === "sso_protection" && !change.new_value) {
+      return [
+        "Confirm SSO protection was intentionally disabled.",
+        "Verify all deployment URLs are still restricted to intended users.",
+        "Check the Vercel project protection settings in the Vercel dashboard.",
+        "Re-enable SSO protection if this was accidental.",
+      ];
+    }
+    if (fp2 === "password_protection" && !change.new_value) {
+      return [
+        "Confirm password protection was intentionally disabled.",
+        "Verify deployments are still restricted to intended users.",
+        "Check the Vercel project settings in the Vercel dashboard.",
+        "Re-enable password protection if this was accidental.",
+      ];
+    }
+    if (fp2 === "git_branch") {
+      return [
+        "Confirm the production branch change was intentional.",
+        "Verify the new branch is correctly configured for production deployments.",
+        "Check that CI/CD pipelines target the correct branch.",
+        "Restore the previous branch if this was accidental.",
+      ];
+    }
+    if (fp2 === "git_repository") {
+      return [
+        "Confirm the repository connection change was intentional.",
+        "Verify the new repository has the correct source code.",
+        "Check that deployments are still functioning.",
+        "Restore the previous repository if this was accidental.",
+      ];
+    }
+    return [
+      "Confirm the Vercel project setting change was intentional.",
+      "Verify the project builds and deploys correctly after the change.",
+      "Check the Vercel dashboard for any deployment failures.",
+      "Restore the previous setting if this was accidental.",
+    ];
+  }
+  if (rt === "vercel_env_var") {
+    return [
+      "Confirm the environment variable change was intentional.",
+      "Verify deployments that depend on this variable still function correctly.",
+      "Check the Vercel project environment variables for unexpected additions or removals.",
+      "Rotate any potentially exposed credentials if this was unintentional.",
+    ];
+  }
+  if (rt === "vercel_domain") {
+    return [
+      "Confirm the domain change was intentional.",
+      "Verify DNS records are correctly configured for the domain.",
+      "Check that the domain is verified and active in the Vercel project.",
+      "Re-add the domain and update DNS if it was accidentally removed.",
+    ];
+  }
+  if (rt.startsWith("vercel_")) {
+    return [
+      "Confirm the Vercel configuration change was intentional.",
+      "Review the Vercel project settings in the Vercel dashboard.",
+      "Verify recent deployments are functioning correctly.",
       "Restore the previous setting if this was accidental.",
     ];
   }
@@ -814,6 +915,7 @@ export default function ChangeDetailPage() {
   const summary       = getChangeSummary(change);
   const checks        = getSuggestedChecks(change);
   const isGitHub      = providerLabel === "GitHub repo configuration";
+  const isVercel      = providerLabel === "Vercel project configuration";
 
   return (
     <>
@@ -989,15 +1091,15 @@ export default function ChangeDetailPage() {
             {change.change_type === "modified"
               ? "What changed"
               : change.change_type === "added"
-              ? isGitHub ? "Configuration added" : "DNS record added"
-              : isGitHub ? "Configuration removed" : "DNS record removed"}
+              ? (isGitHub || isVercel) ? "Configuration added" : "DNS record added"
+              : (isGitHub || isVercel) ? "Configuration removed" : "DNS record removed"}
           </SectionLabel>
 
           <Panel>
             {change.change_type === "modified" ? (
               <ModifiedDiffPanel change={change} />
             ) : (
-              <AddedRemovedPanel change={change} isGitHub={isGitHub} />
+              <AddedRemovedPanel change={change} isGitHub={isGitHub || isVercel} />
             )}
           </Panel>
         </div>
