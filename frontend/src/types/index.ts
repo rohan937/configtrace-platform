@@ -134,6 +134,46 @@ export interface Integration {
   last_sync_status: "pending" | "running" | "completed" | "failed" | null;
   /** Error message from the most recent failed SyncRun, or null. */
   last_sync_error: string | null;
+  // M31 addition
+  /**
+   * How the integration authenticates to GitHub.
+   * "github_app" — GitHub App installation token (recommended)
+   * "pat"        — fine-grained Personal Access Token
+   * null         — not a GitHub integration (e.g. Cloudflare)
+   */
+  connection_method: "github_app" | "pat" | null;
+}
+
+// ── GitHub App install flow (M31) ─────────────────────────────────────────────
+
+/** Response from GET /integrations/github/app/install-url */
+export interface GitHubAppInstallUrlResponse {
+  install_url: string;
+  state: string;
+}
+
+/** A single repository returned by GET /integrations/github/app/installation-repos */
+export interface GitHubInstallationRepo {
+  full_name: string;
+  owner: string;
+  name: string;
+  private: boolean;
+  description: string | null;
+}
+
+/** Response from GET /integrations/github/app/installation-repos */
+export interface GitHubInstallationReposResponse {
+  repos: GitHubInstallationRepo[];
+  installation_id: number;
+}
+
+/** Request body for POST /integrations/github/app/complete */
+export interface GitHubAppCompleteRequest {
+  installation_id: number;
+  state: string;
+  repo_owner: string;
+  repo_name: string;
+  display_name: string;
 }
 
 /** Matches backend IntegrationListResponse (uses "integrations" key, not "items"). */

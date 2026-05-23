@@ -234,6 +234,12 @@ class IntegrationResponse(BaseModel):
     last_sync_status: Optional[str] = None
     last_sync_error: Optional[str] = None
 
+    # ── M31 addition ──────────────────────────────────────────────────────────
+    # Derived without credential decryption — read from resource_metadata.
+    # Values: "github_app" | "pat" (GitHub only) | None (non-GitHub providers).
+    # This field is safe to expose — it conveys the auth method, not a secret.
+    connection_method: Optional[str] = None
+
     model_config = {"from_attributes": True}
 
 

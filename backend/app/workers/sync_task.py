@@ -171,8 +171,49 @@ def sync_integration(
                 records = connector.fetch(credentials)
             elif integration.provider == "github":
                 from app.connectors.github import GitHubConnector
+
+                # M31: branch on credential_type.
+                # "github_app"  → mint a short-lived installation token at
+                #                 sync time; pass it as github_token.
+                # "pat" / absent → use the decrypted token directly (unchanged).
+                # SECURITY: installation tokens are NEVER stored or logged.
+                if credentials.get("credential_type") == "github_app":
+                    from app.config import settings as _settings
+                    from app.core.github_app import (
+                        decode_private_key,
+                        mint_app_jwt,
+                        mint_installation_token,
+                    )
+
+                    _private_key = decode_private_key(
+                        _settings.GITHUB_APP_PRIVATE_KEY or ""
+                    )
+                    _app_jwt = mint_app_jwt(
+                        _settings.GITHUB_APP_ID or "",
+                        _private_key,
+                    )
+                    _install_token = mint_installation_token(
+                        int(credentials["installation_id"]),
+                        _app_jwt,
+                    )
+                    # Build a runtime-only credentials dict for the connector.
+                    # The installation token is intentionally NOT persisted.
+                    effective_credentials = {
+                        "github_token": _install_token,
+                        "repo_owner":   credentials["repo_owner"],
+                        "repo_name":    credentials["repo_name"],
+                    }
+                    logger.info(
+                        "sync_integration: using GitHub App installation token "
+                        "for resource_id=%s  (token not logged)",
+                        resource.id,
+                    )
+                else:
+                    # PAT path — credentials already contain github_token.
+                    effective_credentials = credentials
+
                 connector = GitHubConnector()
-                records = connector.fetch(credentials)
+                records = connector.fetch(effective_credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

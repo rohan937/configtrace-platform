@@ -22,6 +22,9 @@
 import type {
   ChangeDetail,
   ChangeListItem,
+  GitHubAppCompleteRequest,
+  GitHubAppInstallUrlResponse,
+  GitHubInstallationReposResponse,
   Integration,
   IntegrationCreateRequest,
   IntegrationListResponse,
@@ -285,6 +288,65 @@ export async function reconnectIntegration(
   return apiFetch(`/integrations/${integrationId}/reconnect`, {
     method: "POST",
     body: JSON.stringify(data),
+    token,
+  });
+}
+
+// ── GitHub App install flow (M31) ─────────────────────────────────────────────
+
+/**
+ * Generate a GitHub App install URL with an HMAC-signed state token.
+ *
+ * The returned state must be stored (e.g. sessionStorage) and passed to
+ * completeGitHubAppInstall() after the GitHub callback.  It expires in 10 min.
+ *
+ * Returns HTTP 503 if the server is not configured with GitHub App credentials.
+ */
+export async function getGitHubAppInstallUrl(
+  token?: string | null,
+): Promise<GitHubAppInstallUrlResponse> {
+  return apiFetch("/integrations/github/app/install-url", { token });
+}
+
+/**
+ * List repositories accessible to a GitHub App installation.
+ *
+ * Call this from the callback page after GitHub redirects back with
+ * installation_id.  The state token validates CSRF.
+ *
+ * Returns HTTP 400 if the state token is invalid or expired.
+ * Returns HTTP 502 if the GitHub API is unreachable.
+ */
+export async function getInstallationRepositories(
+  installationId: number,
+  state: string,
+  token?: string | null,
+): Promise<GitHubInstallationReposResponse> {
+  return apiFetch(
+    `/integrations/github/app/installation-repos${buildQuery({
+      installation_id: installationId,
+      state,
+    })}`,
+    { token },
+  );
+}
+
+/**
+ * Complete a GitHub App installation — create the integration.
+ *
+ * The installation token is minted server-side and never exposed to the
+ * frontend.  The state token must match the one from getGitHubAppInstallUrl().
+ *
+ * Returns HTTP 400 on state validation failure, auth error, or duplicate repo.
+ * Returns HTTP 502 if the GitHub API is unreachable during validation.
+ */
+export async function completeGitHubAppInstall(
+  payload: GitHubAppCompleteRequest,
+  token?: string | null,
+): Promise<Integration> {
+  return apiFetch("/integrations/github/app/complete", {
+    method: "POST",
+    body: JSON.stringify(payload),
     token,
   });
 }

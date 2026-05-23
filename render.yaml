@@ -68,6 +68,21 @@ services:
       - key: APP_BASE_URL
         value: https://app.configtrace.org
 
+      # ── Milestone 31 — GitHub App integration ──────────────────────────────
+      # See docs/deployment.md → "GitHub App setup" for the creation runbook.
+      # All four vars are required for the GitHub App flow.  When omitted,
+      # the App install endpoints return HTTP 503 and the PAT flow still works.
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      # base64-encode the PEM: base64 -w 0 private-key.pem
+      # NEVER paste the raw PEM here — newlines are mangled by Render.
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
+      - key: GITHUB_APP_OAUTH_STATE_SECRET
+        sync: false
+
   # ── Celery worker ────────────────────────────────────────────────────────────
   # Processes sync tasks enqueued by POST /syncs.
   # Shares the same Docker image as the API; only the dockerCommand differs.
@@ -110,6 +125,17 @@ services:
       # Used to build deep links in alert email bodies.  Safe to commit.
       - key: APP_BASE_URL
         value: https://app.configtrace.org
+
+      # ── Milestone 31 — GitHub App integration ──────────────────────────────
+      # Worker mints installation tokens at sync time — all four vars required.
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_SLUG
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
+        sync: false
+      - key: GITHUB_APP_OAUTH_STATE_SECRET
+        sync: false
 
   # ── Celery Beat scheduler (Milestone 23) ────────────────────────────────────
   # Fires the ``enqueue_scheduled_syncs`` task at minute 0 of every hour.
@@ -160,3 +186,10 @@ services:
         sync: false
       - key: APP_BASE_URL
         value: https://app.configtrace.org
+
+      # ── Milestone 31 — GitHub App vars intentionally omitted from Beat ────
+      # All four GITHUB_APP_* settings are Optional[str] = None in
+      # app.config.Settings, so pydantic-settings validates without them.
+      # Beat never routes HTTP requests, never mints App JWTs, and never
+      # calls the GitHub App installation flow.  Setting them here would
+      # require Render credentials that Beat has no use for.

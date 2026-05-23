@@ -61,6 +61,29 @@ class Settings(BaseSettings):
     # The default is fine for production; override locally for dev/staging.
     APP_BASE_URL: str = "https://app.configtrace.org"
 
+    # ── Required for Milestone 31 (GitHub App integration) ──────────────────
+    # GitHub App numeric ID — shown on the App settings page.
+    GITHUB_APP_ID: Optional[str] = None
+
+    # GitHub App slug — the lowercase URL-safe name used in the install URL:
+    #   https://github.com/apps/<GITHUB_APP_SLUG>/installations/new
+    # Find it on the GitHub App settings page under "Public link".
+    GITHUB_APP_SLUG: Optional[str] = None
+
+    # RSA private key for the GitHub App, used to sign App JWTs (RS256).
+    # In Render: base64-encode the PEM file contents into a single env var:
+    #   base64 -w 0 private-key.pem
+    # Locally: paste the literal PEM (including -----BEGIN RSA PRIVATE KEY-----)
+    # NEVER log or expose this value.
+    GITHUB_APP_PRIVATE_KEY: Optional[str] = None
+
+    # Random secret used to HMAC-sign state tokens (CSRF protection for the
+    # GitHub App install callback).  Generate with:
+    #   python -c "import secrets; print(secrets.token_hex(32))"
+    # Must be the same value on all API service instances.
+    # NEVER log or expose this value.
+    GITHUB_APP_OAUTH_STATE_SECRET: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         # Ignore extra env vars passed by Docker Compose (POSTGRES_*, etc.)

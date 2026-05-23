@@ -776,3 +776,101 @@ alerts: email send failed  sync_run_id=...  error=...
 - **Recipient email looks like a placeholder** (`@clerk.user`) → Same as
   above: warning logged, no Alert rows.  Fix by updating Clerk's session
   template to include the `email` claim.
+
+---
+
+## GitHub App setup (Milestone 31)
+
+The GitHub App integration flow requires a GitHub App registered under your
+account or organisation.  PAT-based integrations continue to work without
+this setup.
+
+### 1. Create the GitHub App
+
+1. Go to **GitHub → Settings → Developer settings → GitHub Apps → New GitHub App**.
+2. Fill in the fields:
+   - **GitHub App name**: `ConfigTrace` (or any name — this is the public display name)
+   - **Homepage URL**: `https://configtrace.org`
+   - **Callback URL**: leave **blank** — ConfigTrace uses Clerk for identity; OAuth user
+     authorization is not part of this flow
+   - **Request user authorization (OAuth) during installation**: leave **unchecked**
+   - **Setup URL**: `https://app.configtrace.org/integrations/github/callback`
+     (GitHub redirects here after installation so the frontend can complete the flow)
+   - **Webhook → Active**: **uncheck** (M31 is read-only; no webhook events are consumed)
+3. Under **Repository permissions** set:
+   - `Metadata`: Read
+   - `Administration`: Read
+   - `Secrets`: Read
+   - `Variables`: Read
+   - All others: No access
+4. Under **Where can this GitHub App be installed?**: select *Any account*
+   (or *Only on this account* for a private deployment).
+5. Click **Create GitHub App**.
+
+### 2. Note the App ID and slug
+
+After creation:
+- **App ID** — shown at the top of the App settings page (e.g. `12345`).
+- **App slug** — the last path segment of the **Public link** field
+  (e.g. `configtrace` in `https://github.com/apps/configtrace`).
+
+### 3. Generate and encode the private key
+
+1. On the App settings page, scroll to **Private keys → Generate a private key**.
+   A `.pem` file downloads automatically.
+2. Base64-encode it for Render (which mangles multiline env vars):
+   ```
+   base64 -w 0 private-key.pem
+   ```
+   On macOS: `base64 -i private-key.pem | tr -d '\n'`
+3. Store the single-line output as `GITHUB_APP_PRIVATE_KEY` in Render.
+   **Never paste the raw PEM** — newlines are stripped by Render's env injection.
+
+### 4. Generate the state secret
+
+```
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Store the output as `GITHUB_APP_OAUTH_STATE_SECRET`.  This must be the same
+value on all API service instances.
+
+### 5. Set the four env vars in Render
+
+| Variable | Value |
+|---|---|
+| `GITHUB_APP_ID` | Numeric App ID (e.g. `12345`) |
+| `GITHUB_APP_SLUG` | App slug (e.g. `configtrace`) |
+| `GITHUB_APP_PRIVATE_KEY` | Base64-encoded PEM (single line, no newlines) |
+| `GITHUB_APP_OAUTH_STATE_SECRET` | 64-char hex random string |
+
+Set these on both **configtrace-api** and **configtrace-worker** services.
+
+### 6. Deploy
+
+Redeploy both services.  The new routes become available immediately.
+
+### Verification
+
+1. Open `https://app.configtrace.org/integrations`.
+2. Click **Add GitHub Integration**.
+3. The first option should be **Connect via GitHub App (Recommended)**.
+4. Click **Connect via GitHub App →** — this redirects to GitHub.
+5. Install the App on a repository.
+6. GitHub redirects to `https://app.configtrace.org/integrations/github/callback`.
+7. Select the repository and click **Connect repository**.
+8. Integration appears in the list with `via GitHub App` sub-label.
+9. Run **Sync Now** — the worker mints an installation token and syncs the repo.
+
+### Troubleshooting
+
+- **503 "GitHub App is not configured"** — one or more of the four env vars
+  is missing or empty.  Check both API and worker services.
+- **"Failed to mint GitHub App JWT"** — the private key is malformed.
+  Verify it's base64-encoded and that the App ID matches the key's App.
+- **"GitHub App authentication failed"** — the App ID or private key does not
+  match the GitHub App.  Regenerate the private key in GitHub settings.
+- **State token expired** — the user took more than 10 minutes to complete the
+  GitHub install flow.  Ask them to start again.
+- **State token mismatch** — browser cleared sessionStorage between the redirect
+  and the callback (e.g. opened a new tab).  Ask them to start again.

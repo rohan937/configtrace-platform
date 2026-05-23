@@ -57,6 +57,9 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
     integration.  This helper centralises that enrichment so every route
     returns a consistent shape.
 
+    ``connection_method`` is derived from the first resource's metadata
+    without credential decryption — safe to expose.
+
     Performance note: this does one extra SELECT per integration.  At M29
     scale (single user, small integration count) this is acceptable.  If
     the list endpoint becomes a bottleneck, batch the SyncRun query.
@@ -64,6 +67,7 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
     last_status, last_error = integration_service.get_latest_sync_run_summary(
         integration.id, db
     )
+    connection_method = integration_service.get_connection_method(integration)
     return IntegrationResponse(
         id=integration.id,
         provider=integration.provider,
@@ -75,6 +79,7 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
         sync_interval_minutes=integration.sync_interval_minutes,
         last_sync_status=last_status,
         last_sync_error=last_error,
+        connection_method=connection_method,
     )
 
 
@@ -365,6 +370,18 @@ def reconnect_integration(
             )
         new_token = body.api_token
     elif integration.provider == "github":
+        # M31: GitHub App integrations cannot be reconnected via PAT.
+        # The user must re-install the GitHub App through the App install flow.
+        conn_method = integration_service.get_connection_method(integration)
+        if conn_method == "github_app":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "This integration uses GitHub App authentication. "
+                    "To update credentials, use the 'Re-install GitHub App' "
+                    "option — there is no token to update."
+                ),
+            )
         if not body.github_token:
             raise HTTPException(
                 status_code=422,

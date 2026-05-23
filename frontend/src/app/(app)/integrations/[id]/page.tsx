@@ -11,6 +11,7 @@ import type {
   SyncRun,
 } from "@/types";
 import {
+  getGitHubAppInstallUrl,
   getIntegration,
   getIntegrationSyncRuns,
   getChanges,
@@ -519,6 +520,18 @@ function ProviderOverview({
             </code>
           }
         />
+        {integration.connection_method && (
+          <MetaRow
+            label="Auth method"
+            value={
+              <span style={{ color: "#8b90a0" }}>
+                {integration.connection_method === "github_app"
+                  ? "GitHub App (recommended)"
+                  : "Personal Access Token"}
+              </span>
+            }
+          />
+        )}
         <MetaRow
           label="Last snapshot"
           value={
@@ -754,6 +767,19 @@ export default function IntegrationDetailPage() {
     poll();
   }
 
+  // ── GitHub App re-install ──────────────────────────────────────────────────
+
+  async function handleReinstallApp() {
+    try {
+      const token = await getToken();
+      const { install_url, state } = await getGitHubAppInstallUrl(token);
+      sessionStorage.setItem("github_app_oauth_state", state);
+      window.location.href = install_url;
+    } catch {
+      // Non-fatal — stay on the page
+    }
+  }
+
   // ── Pause / resume ─────────────────────────────────────────────────────────
 
   async function handleTogglePause() {
@@ -932,12 +958,22 @@ export default function IntegrationDetailPage() {
               {isPaused ? "Resume" : "Pause"}
             </button>
 
-            <button
-              onClick={() => setActiveModal("reconnect")}
-              style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid #2a2d38", background: "transparent", color: "#8b90a0", fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}
-            >
-              Update token
-            </button>
+            {/* Credential update — "Re-install App" for GitHub App, "Update token" otherwise */}
+            {integration.connection_method === "github_app" ? (
+              <button
+                onClick={() => { void handleReinstallApp(); }}
+                style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid #2a2d38", background: "transparent", color: "#8b90a0", fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Re-install GitHub App
+              </button>
+            ) : (
+              <button
+                onClick={() => setActiveModal("reconnect")}
+                style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid #2a2d38", background: "transparent", color: "#8b90a0", fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}
+              >
+                Update token
+              </button>
+            )}
 
             <button
               onClick={() => setActiveModal("delete")}

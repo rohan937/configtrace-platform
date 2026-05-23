@@ -427,6 +427,108 @@ def reconnect_credentials(
     return integration
 
 
+def create_github_app_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    db: Session,
+) -> Integration:
+    """Create a GitHub App integration + repository resource.
+
+    The *credentials* dict must contain::
+        {
+            "credential_type": "github_app",
+            "installation_id": int,
+            "repo_owner": str,
+            "repo_name":  str,
+        }
+
+    Note: credential validation (via GitHubConnector) is performed by the
+    calling route before this function is invoked.  This function only
+    handles the DB writes.
+
+    Uniqueness enforcement: a given user cannot connect the same
+    ``"{owner}/{repo}"`` twice regardless of auth method.
+
+    Raises:
+        ValueError:         Duplicate repo.
+        EncryptionKeyError: ENCRYPTION_KEY not configured.
+    """
+    owner: str = credentials["repo_owner"]
+    repo_name: str = credentials["repo_name"]
+    slug = f"{owner}/{repo_name}"
+
+    # ── Duplicate-repo check (same user, same repo, any auth method) ──────────
+    existing = (
+        db.query(Resource)
+        .filter(
+            Resource.user_id == user_id,
+            Resource.provider_resource_type == "github_repo",
+            Resource.provider_resource_id == slug,
+        )
+        .first()
+    )
+    if existing is not None:
+        raise ValueError("This GitHub repository is already connected.")
+
+    # ── Encrypt credentials ───────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── Create Integration row ────────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="github",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+    )
+    db.add(integration)
+    db.flush()  # Populate integration.id before the Resource FK reference
+
+    # ── Create Resource row — metadata marks this as GitHub App auth ──────────
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="github_repo",
+        provider_resource_id=slug,
+        display_name=f"{display_name} ({slug})",
+        resource_metadata={
+            "repo_owner": owner,
+            "repo_name": repo_name,
+            "connection_method": "github_app",
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── Commit ────────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def get_connection_method(integration: Integration) -> str | None:
+    """Return the connection method for an integration without decrypting creds.
+
+    Derived from the first resource's ``resource_metadata["connection_method"]``
+    field, which is set at creation time.
+
+    Returns:
+        ``"github_app"`` — authenticated via GitHub App installation token.
+        ``"pat"``        — authenticated via fine-grained Personal Access Token
+                           (or legacy integrations created before M31).
+        ``None``         — not a GitHub integration (e.g. Cloudflare).
+    """
+    if integration.provider != "github":
+        return None
+    if not integration.resources:
+        return "pat"
+    metadata = integration.resources[0].resource_metadata or {}
+    return metadata.get("connection_method", "pat")
+
+
 def get_recent_sync_runs(
     *,
     integration_id: uuid.UUID,

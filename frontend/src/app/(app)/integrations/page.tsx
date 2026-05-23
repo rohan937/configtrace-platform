@@ -9,10 +9,13 @@ import PageHeader from "@/components/common/PageHeader";
 import IntegrationList from "@/components/integrations/IntegrationList";
 import CloudflareIntegrationForm from "@/components/integrations/CloudflareIntegrationForm";
 import GitHubIntegrationForm from "@/components/integrations/GitHubIntegrationForm";
+import GitHubAppConnectCard from "@/components/integrations/GitHubAppConnectCard";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 
 type Provider = "cloudflare" | "github";
+// GitHub sub-modes: "app" = recommended GitHub App flow, "pat" = advanced PAT flow
+type GitHubMode = "app" | "pat";
 
 // ── SetupSteps helper component ───────────────────────────────────────────────
 
@@ -62,6 +65,8 @@ export default function IntegrationsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<Provider>("cloudflare");
+  // GitHub sub-mode: "app" = GitHub App (default), "pat" = PAT (advanced)
+  const [githubMode, setGithubMode] = useState<GitHubMode>("app");
   const { getToken, isLoaded } = useAuth();
 
   const fetchIntegrations = useCallback(async () => {
@@ -237,7 +242,7 @@ export default function IntegrationsPage() {
               Add Cloudflare Integration
             </button>
             <button
-              onClick={() => { setSelectedProvider("github"); setShowForm(true); }}
+              onClick={() => { setSelectedProvider("github"); setGithubMode("app"); setShowForm(true); }}
               style={{
                 background: "#1e2030",
                 color: "#b0b5c4",
@@ -258,11 +263,52 @@ export default function IntegrationsPage() {
             onCreated={handleCreated}
             onCancel={() => setShowForm(false)}
           />
+        ) : githubMode === "app" ? (
+          /* GitHub App flow (recommended) */
+          <div>
+            <GitHubAppConnectCard onCancel={() => setShowForm(false)} />
+            <div style={{ marginTop: "-12px", marginBottom: "24px" }}>
+              <button
+                onClick={() => setGithubMode("pat")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#565b6e",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  padding: 0,
+                  textDecoration: "underline",
+                }}
+              >
+                Advanced: use a Personal Access Token instead →
+              </button>
+            </div>
+          </div>
         ) : (
-          <GitHubIntegrationForm
-            onCreated={handleCreated}
-            onCancel={() => setShowForm(false)}
-          />
+          /* PAT flow (advanced) */
+          <div>
+            <div style={{ marginBottom: "12px" }}>
+              <button
+                onClick={() => setGithubMode("app")}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#4f80f7",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  padding: 0,
+                }}
+              >
+                ← Back to GitHub App (recommended)
+              </button>
+            </div>
+            <GitHubIntegrationForm
+              onCreated={handleCreated}
+              onCancel={() => setShowForm(false)}
+            />
+          </div>
         )}
 
         {/* ── Integration count + scheduled-sync notice ─────────────────── */}

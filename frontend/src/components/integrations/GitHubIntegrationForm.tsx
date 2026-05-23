@@ -109,16 +109,23 @@ export default function GitHubIntegrationForm({
       }}
     >
       {/* Section heading */}
-      <div
-        style={{
-          fontSize: "11px",
-          color: "#8b90a0",
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          marginBottom: "16px",
-        }}
-      >
-        Connect GitHub Repository
+      <div style={{ marginBottom: "16px" }}>
+        <div
+          style={{
+            fontSize: "11px",
+            color: "#8b90a0",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            marginBottom: "6px",
+          }}
+        >
+          Connect GitHub Repository — Advanced (Personal Access Token)
+        </div>
+        <p style={{ fontSize: "12px", color: "#565b6e", margin: 0, lineHeight: 1.5 }}>
+          For most users, the{" "}
+          <strong style={{ color: "#8b90a0" }}>GitHub App</strong> option is
+          easier and more secure — no token to create or manage.
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} autoComplete="off" noValidate>

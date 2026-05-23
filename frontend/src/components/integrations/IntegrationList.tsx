@@ -2,14 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import StatusBadge from "@/components/common/StatusBadge";
 import { formatRelativeTime } from "@/lib/utils";
-import { getSyncStatus, patchIntegration, triggerSync } from "@/lib/api";
+import { getGitHubAppInstallUrl, getSyncStatus, patchIntegration, triggerSync } from "@/lib/api";
 import RenameIntegrationModal from "./RenameIntegrationModal";
 import DeleteIntegrationModal from "./DeleteIntegrationModal";
 import ReconnectIntegrationModal from "./ReconnectIntegrationModal";
+
+// Key used to stash state token for GitHub App re-install flow.
+const GITHUB_APP_STATE_KEY = "github_app_oauth_state";
 
 // ── Providers that have live sync available ───────────────────────────────────
 // Used to gate the "Live / webhook sync: coming soon" copy.
@@ -39,11 +43,20 @@ interface KebabMenuProps {
   onRename: () => void;
   onTogglePause: () => void;
   onUpdateToken: () => void;
+  onReinstallApp: () => void;
   onDelete: () => void;
   busy: boolean;
 }
 
-function KebabMenu({ integration, onRename, onTogglePause, onUpdateToken, onDelete, busy }: KebabMenuProps) {
+function KebabMenu({
+  integration,
+  onRename,
+  onTogglePause,
+  onUpdateToken,
+  onReinstallApp,
+  onDelete,
+  busy,
+}: KebabMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -59,11 +72,15 @@ function KebabMenu({ integration, onRename, onTogglePause, onUpdateToken, onDele
   }, [open]);
 
   const isPaused = integration.status === "paused";
+  const isGitHubApp = integration.connection_method === "github_app";
 
   const menuItems: { label: string; action: () => void; danger?: boolean }[] = [
     { label: "Rename", action: onRename },
     { label: isPaused ? "Resume" : "Pause", action: onTogglePause },
-    { label: "Update token", action: onUpdateToken },
+    // GitHub App integrations: show "Re-install App" instead of "Update token"
+    isGitHubApp
+      ? { label: "Re-install GitHub App", action: onReinstallApp }
+      : { label: "Update token", action: onUpdateToken },
     { label: "Delete", action: onDelete, danger: true },
   ];
 
@@ -220,6 +237,7 @@ export default function IntegrationList({
   const [pauseInProgress, setPauseInProgress] = useState<Record<string, boolean>>({});
   const mountedRef = useRef(true);
   const { getToken } = useAuth();
+  const router = useRouter();
 
   // Keep local state in sync when the parent re-fetches
   useEffect(() => {
@@ -290,6 +308,19 @@ export default function IntegrationList({
       // Revert optimistic update — parent re-fetch will correct it
     } finally {
       setPauseInProgress((prev) => ({ ...prev, [integration.id]: false }));
+    }
+  }
+
+  // ── GitHub App re-install ─────────────────────────────────────────────────
+
+  async function handleReinstallApp() {
+    try {
+      const token = await getToken();
+      const { install_url, state } = await getGitHubAppInstallUrl(token);
+      sessionStorage.setItem(GITHUB_APP_STATE_KEY, state);
+      window.location.href = install_url;
+    } catch {
+      // Non-fatal — the integration list stays visible
     }
   }
 
@@ -524,6 +555,7 @@ export default function IntegrationList({
                     onRename={() => openModal("rename", integration)}
                     onTogglePause={() => handleTogglePause(integration)}
                     onUpdateToken={() => openModal("reconnect", integration)}
+                    onReinstallApp={() => void handleReinstallApp()}
                     onDelete={() => openModal("delete", integration)}
                   />
                 </div>
@@ -568,6 +600,25 @@ export default function IntegrationList({
                   Resources monitored:{" "}
                   <span style={{ color: "#8b90a0" }}>{integration.resource_count}</span>
                 </span>
+
+                {/* GitHub connection method sub-label */}
+                {integration.provider === "github" && integration.connection_method && (
+                  <>
+                    <span style={{ color: "#2a2d38" }}>·</span>
+                    <span
+                      style={{ color: "#3a3d4a" }}
+                      title={
+                        integration.connection_method === "github_app"
+                          ? "Authenticated via GitHub App installation token"
+                          : "Authenticated via Personal Access Token"
+                      }
+                    >
+                      {integration.connection_method === "github_app"
+                        ? "via GitHub App"
+                        : "via Personal Access Token"}
+                    </span>
+                  </>
+                )}
 
                 {/* Live sync coming soon */}
                 {!hasLiveSync && (

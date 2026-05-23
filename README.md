@@ -1950,3 +1950,10 @@ The MVP is built across 18 milestones defined in [`docs/MVPBuildPlan.txt`](docs/
 - [x] Milestone 23: Scheduled syncs — hourly Celery Beat, `triggered_by="scheduled"`, duplicate prevention, separate `configtrace-beat` Render service
 - [x] Milestone 24: High-risk email alerts — Resend digest per sync, per-change idempotency via `alerts` table, Clerk Backend API email resolution, backfill script
 - [x] Milestone 25: Production onboarding and Cloudflare MVP polish — 3-step checklist dashboard, setup guide with credential instructions, per-integration status metadata, timeline copy polish, alert-level explanations, `resource_count` on integration API
+- [x] Milestone 26: GitHub repository connector — monitors repo settings, branch protection, Actions secrets (metadata only), variables, webhooks, Actions permissions, and deploy keys via PAT
+- [x] Milestone 27: Risk classification for GitHub changes — 12 provider-agnostic rules + 6 GitHub-specific rules covering visibility, branch protection, webhook, and Actions changes
+- [x] Milestone 28: GitHub integration UI — setup form, connection guide, monitored-categories panel on integration detail page
+- [x] Milestone 29: Sync interval selector — per-integration configurable interval (5/10/15/30/60 min), PATCH /integrations endpoint, UI selector in integration list
+- [x] Milestone 30: Integration detail page — sync history table, recent changes panel, health panel, provider overview, 30-second polling auto-refresh, reconnect modal
+- [x] Milestone 30.5: UI copy + resource list polish — provider badges, friendly resource type labels, integration links from resource list, provider-agnostic copy
+- [x] Milestone 31: GitHub App installation flow — recommended GitHub App auth (HMAC-signed state tokens, ephemeral installation tokens, repo picker), PAT preserved as advanced option, `connection_method` field on integrations, "Re-install GitHub App" replaces "Update token" for App integrations, `GITHUB_APP_ID` / `GITHUB_APP_SLUG` / `GITHUB_APP_PRIVATE_KEY` / `GITHUB_APP_OAUTH_STATE_SECRET` env vars
