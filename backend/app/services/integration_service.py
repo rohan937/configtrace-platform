@@ -342,19 +342,23 @@ def _create_stripe_integration(
     - ``stripe_api_key`` is never logged, never returned, and is only used
       transiently during validation before being passed to the encryption layer.
     - Customer PII, payment data, and webhook signing secrets are NEVER fetched.
+    - For restricted keys (rk_...) that lack the "Account" permission, the
+      resource identifier is a non-reversible SHA-256 fingerprint of the key.
     """
     from app.connectors.stripe import StripeConnector
 
     # ── 1. Validate credentials against the live API ─────────────────────────
-    # This also fetches the account ID (via /v1/account) which we use as the
-    # stable resource identifier.
+    # Multi-probe validation — succeeds even if /v1/account returns 403 (common
+    # for restricted keys that don't have the "Account" permission).
     connector = StripeConnector()
     connector.validate_credentials(credentials)
 
-    # ── 2. Fetch the account ID for the resource identifier ──────────────────
+    # ── 2. Resolve the stable account identifier ──────────────────────────────
+    # _resolve_account_id() tries GET /v1/account first.  If the key is a
+    # restricted key without "Account" permission (HTTP 403), it falls back to
+    # a SHA-256 fingerprint of the key — stable, non-reversible, safe to store.
     # SECURITY: do not log the API key.
-    account_data = connector._get(credentials, "/v1/account")
-    account_id: str = account_data.get("id", "")
+    account_id, is_real_account_id = connector._resolve_account_id(credentials)
 
     # ── 3. Duplicate-account check (same user, same Stripe account) ──────────
     existing = (
@@ -387,13 +391,18 @@ def _create_stripe_integration(
     db.flush()  # Populate integration.id before the Resource FK reference
 
     # ── 6. Create Resource row for the Stripe account ─────────────────────────
+    # account_id_source distinguishes real Stripe account IDs (acct_xxx) from
+    # key fingerprints used when /v1/account is inaccessible to restricted keys.
     resource = Resource(
         integration_id=integration.id,
         user_id=user_id,
         provider_resource_type="stripe_account",
         provider_resource_id=account_id,
         display_name=f"{display_name} ({account_id})",
-        resource_metadata={"stripe_account_id": account_id},
+        resource_metadata={
+            "stripe_account_id": account_id,
+            "account_id_source": "stripe_api" if is_real_account_id else "key_fingerprint",
+        },
         is_active=True,
     )
     db.add(resource)

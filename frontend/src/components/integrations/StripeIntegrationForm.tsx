@@ -149,14 +149,29 @@ export default function StripeIntegrationForm({
           {/* API key — type=password to prevent shoulder-surfing */}
           <div>
             <label htmlFor="stripe-api-key" style={LABEL_STYLE}>
-              Stripe Restricted API Key
+              Stripe API Key
+              <span
+                style={{
+                  marginLeft: "6px",
+                  background: "rgba(79,128,247,0.15)",
+                  color: "#4f80f7",
+                  borderRadius: "3px",
+                  padding: "1px 5px",
+                  fontSize: "9px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                  verticalAlign: "middle",
+                }}
+              >
+                Restricted key recommended
+              </span>
             </label>
             <input
               id="stripe-api-key"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="rk_live_… or rk_test_…"
+              placeholder="rk_live_… or rk_test_…  (sk_live_… also accepted)"
               disabled={submitting}
               autoComplete="new-password"
               style={{
@@ -168,8 +183,11 @@ export default function StripeIntegrationForm({
               onBlur={(e) => { e.currentTarget.style.borderColor = "#2a2d38"; }}
             />
             <p style={HELPER_STYLE}>
-              Restricted API key from dashboard.stripe.com → Developers → API keys.
-              Credentials are encrypted server-side and never shown again.
+              Use a <strong style={{ color: "#8b90a0" }}>restricted key</strong> (
+              <code style={{ fontSize: "11px" }}>rk_live_…</code> or{" "}
+              <code style={{ fontSize: "11px" }}>rk_test_…</code>) for least-privilege
+              access. Standard secret keys (<code style={{ fontSize: "11px" }}>sk_…</code>)
+              are also accepted but grant broader access than needed.
             </p>
 
             {/* Permissions note */}
@@ -179,20 +197,35 @@ export default function StripeIntegrationForm({
                 background: "#13151a",
                 border: "1px solid #2a2d38",
                 borderRadius: "4px",
-                padding: "8px 12px",
+                padding: "10px 12px",
                 fontSize: "11px",
                 color: "#565b6e",
-                lineHeight: 1.7,
+                lineHeight: 1.75,
               }}
             >
-              <span style={{ color: "#8b90a0", display: "block", marginBottom: "2px" }}>
-                Recommended restricted key permissions (read-only):
+              <span style={{ color: "#8b90a0", display: "block", marginBottom: "4px", fontWeight: 500 }}>
+                Minimum required permissions for restricted key (read-only):
               </span>
-              <span>Account settings · Webhook endpoints · Payment method configurations</span>
+              <span style={{ color: "#6b7080" }}>
+                ✓ Webhook Endpoints — Read
+              </span>
               <br />
-              <span>Payment method domains</span>
+              <span style={{ color: "#565b6e" }}>
+                ○ Account settings — Read{" "}
+                <span style={{ color: "#3a3d4a", fontStyle: "italic" }}>(optional — skipped if unavailable)</span>
+              </span>
               <br />
-              <span style={{ color: "#3a3d4a" }}>
+              <span style={{ color: "#565b6e" }}>
+                ○ Payment Method Configurations — Read{" "}
+                <span style={{ color: "#3a3d4a", fontStyle: "italic" }}>(optional)</span>
+              </span>
+              <br />
+              <span style={{ color: "#565b6e" }}>
+                ○ Payment Method Domains — Read{" "}
+                <span style={{ color: "#3a3d4a", fontStyle: "italic" }}>(optional)</span>
+              </span>
+              <br />
+              <span style={{ color: "#3a3d4a", marginTop: "4px", display: "block" }}>
                 Customer data, payment history, and signing secrets are never accessed.
               </span>
             </div>

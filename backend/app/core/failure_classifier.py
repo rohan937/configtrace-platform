@@ -254,6 +254,25 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
     """Classify a generic ConnectorError by its HTTP status_code."""
     status = exc.status_code
 
+    # ── 403: permissions error ────────────────────────────────────────────────
+    # For Stripe, 403 means the restricted key no longer has read access to any
+    # monitored resource.  This is treated as an authentication/permission issue
+    # rather than a transient error, so the user must take action.
+    if status == 403:
+        if provider == "stripe":
+            return FailureClassification(
+                category="authentication",
+                error_code="stripe_permissions_insufficient",
+                recommended_action=(
+                    "The Stripe API key no longer has read access to any monitored resource. "
+                    "Update the restricted key permissions (grant read access to at least one "
+                    "of: Webhook Endpoints, Payment Method Configurations, or Events), "
+                    "or reconnect with a valid key."
+                ),
+            )
+        # Other providers: treat as auth failure.
+        return _classify_auth(provider, None)
+
     if status == 404:
         if provider == "github":
             return FailureClassification(

@@ -2,23 +2,29 @@
 
 Test coverage
 -------------
-1.  StripeConnector._fetch_account_settings() normalises record correctly.
+1.  StripeConnector._fetch_account_settings() normalises record correctly;
+    returns None when key lacks Account permission (HTTP 403).
 2.  StripeConnector._fetch_webhook_endpoints() normalises + sorts enabled_events;
-    signing secret is NEVER included in the output.
+    signing secret is NEVER included in the output; returns [] on 403.
 3.  StripeConnector._fetch_payment_method_configurations() normalises correctly.
 4.  StripeConnector._fetch_payment_method_domains() normalises correctly.
 5.  StripeConnector.fetch() returns all four record types; total count correct.
-6.  StripeConnector error handling: 401/403 → AuthenticationError,
+6.  StripeConnector error handling: 401 → AuthenticationError (immediately);
+    all probes 403 → ConnectorError(status_code=403); 401 beats 403 multi-probe;
     429 → RateLimitError, 500 → ConnectorError, network → NetworkError.
-7.  StripeConnector.validate_credentials() success/failure paths.
-8.  Risk classification (classify_stripe_change) — account, webhook, PM config,
+7.  StripeConnector.validate_credentials() — multi-probe strategy:
+    first 200 wins; restricted key (403 on account, 200 on webhook) passes.
+8.  StripeConnector._resolve_account_id() — real ID from /v1/account;
+    SHA-256 fingerprint fallback when 403.
+9.  Risk classification (classify_stripe_change) — account, webhook, PM config,
     PM domain.
-9.  Diff service tracked-fields dispatch for stripe_ record types.
-10. Failure classifier returns stripe_* error codes for Stripe provider.
-11. Schema validation: stripe provider requires stripe_api_key.
-12. Integration creation (unit-level): correct Integration + Resource rows,
-    duplicate-account detection.
-13. Sync task: routes to StripeConnector for stripe provider.
+10. Diff service tracked-fields dispatch for stripe_ record types.
+11. Failure classifier returns stripe_* error codes for Stripe provider,
+    including stripe_permissions_insufficient for 403 ConnectorError.
+12. Schema validation: stripe provider requires stripe_api_key.
+13. Integration creation (unit-level): correct Integration + Resource rows,
+    duplicate-account detection; works for both real account IDs and fingerprints.
+14. Sync task: routes to StripeConnector for stripe provider.
 
 SECURITY invariants asserted throughout:
   - No record may contain a ``stripe_api_key`` value.
@@ -208,6 +214,84 @@ class TestFetchAccountSettings:
         assert "stripe_api_key" not in record
         assert "secret" not in record
 
+    @patch("httpx.get")
+    def test_account_403_returns_none(self, mock_get):
+        """RESTRICTED KEY SUPPORT: _fetch_account_settings() returns None when
+        the key lacks Account permission (HTTP 403).  Callers skip gracefully."""
+        mock_get.return_value = _make_response(
+            403, {"error": {"message": "No Account permission"}}
+        )
+        result = self._connector()._fetch_account_settings(CREDS)
+        assert result is None, (
+            "Expected None from _fetch_account_settings on 403 "
+            "(restricted key without Account permission)"
+        )
+
+
+# ── _resolve_account_id tests ─────────────────────────────────────────────────
+
+
+class TestResolveAccountId:
+    """Tests for the fingerprint fallback used by restricted keys."""
+
+    @patch("httpx.get")
+    def test_returns_real_account_id_when_accessible(self, mock_get):
+        """When /v1/account is accessible, returns (real_id, True)."""
+        mock_get.return_value = _make_response(200, RAW_ACCOUNT)
+        account_id, is_real = StripeConnector()._resolve_account_id(CREDS)
+        assert account_id == "acct_test123"
+        assert is_real is True
+
+    @patch("httpx.get")
+    def test_returns_fingerprint_on_403(self, mock_get):
+        """RESTRICTED KEY SUPPORT: when /v1/account returns 403, returns a
+        SHA-256 fingerprint of the API key as a stable, non-reversible ID."""
+        mock_get.return_value = _make_response(
+            403, {"error": {"message": "No Account permission"}}
+        )
+        account_id, is_real = StripeConnector()._resolve_account_id(CREDS)
+        assert is_real is False
+        assert account_id.startswith("fp_"), (
+            f"Fingerprint ID must start with 'fp_', got: {account_id!r}"
+        )
+        assert len(account_id) == len("fp_") + 24, (
+            f"Fingerprint ID must be fp_<24 hex chars>, got: {account_id!r}"
+        )
+
+    @patch("httpx.get")
+    def test_fingerprint_is_stable(self, mock_get):
+        """The fingerprint must be deterministic — same key → same fingerprint."""
+        mock_get.return_value = _make_response(
+            403, {"error": {"message": "No Account permission"}}
+        )
+        c = StripeConnector()
+        id1, _ = c._resolve_account_id(CREDS)
+        mock_get.return_value = _make_response(
+            403, {"error": {"message": "No Account permission"}}
+        )
+        id2, _ = c._resolve_account_id(CREDS)
+        assert id1 == id2, "Fingerprint must be stable across calls for the same key"
+
+    @patch("httpx.get")
+    def test_fingerprint_does_not_contain_key(self, mock_get):
+        """SECURITY: the fingerprint must not contain or be reversible to the key."""
+        mock_get.return_value = _make_response(
+            403, {"error": {"message": "Forbidden"}}
+        )
+        account_id, _ = StripeConnector()._resolve_account_id(CREDS)
+        assert CREDS["stripe_api_key"] not in account_id, (
+            "SECURITY VIOLATION: API key value found in account identifier"
+        )
+
+    @patch("httpx.get")
+    def test_401_propagates_not_swallowed(self, mock_get):
+        """_resolve_account_id must re-raise 401 (invalid key), never swallow it."""
+        mock_get.return_value = _make_response(
+            401, {"error": {"message": "Invalid key"}}
+        )
+        with pytest.raises(AuthenticationError):
+            StripeConnector()._resolve_account_id(CREDS)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Webhook endpoints normalisation + security
@@ -261,6 +345,20 @@ class TestFetchWebhookEndpoints:
         assert r["status"] == "enabled"
         assert r["api_version"] == "2024-06-20"
         assert r["description"] == "Main webhook"
+
+    @patch("httpx.get")
+    def test_webhook_403_returns_empty_list(self, mock_get):
+        """RESTRICTED KEY SUPPORT: _fetch_webhook_endpoints() returns [] when
+        the key lacks Webhook Endpoints permission (HTTP 403).  The caller
+        continues with the remaining resources — fetch() is not aborted."""
+        mock_get.return_value = _make_response(
+            403, {"error": {"message": "No webhook permission"}}
+        )
+        records = StripeConnector()._fetch_webhook_endpoints(CREDS)
+        assert records == [], (
+            "Expected empty list from _fetch_webhook_endpoints on 403 "
+            "(restricted key without Webhook Endpoints permission)"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -417,10 +515,20 @@ class TestStripeConnectorErrors:
             StripeConnector().validate_credentials(CREDS)
 
     @patch("httpx.get")
-    def test_403_raises_auth_error(self, mock_get):
+    def test_all_403_raises_connector_error(self, mock_get):
+        """When EVERY probe endpoint returns 403, ConnectorError is raised — not
+        AuthenticationError.  A 403 means the key is valid but lacks permission;
+        only a 401 (invalid key) triggers AuthenticationError."""
         mock_get.return_value = _make_response(403, {"error": {"message": "Forbidden"}})
-        with pytest.raises(AuthenticationError):
+        with pytest.raises(ConnectorError) as exc_info:
             StripeConnector().validate_credentials(CREDS)
+        # status_code must be 403 so the failure classifier maps it correctly.
+        assert exc_info.value.status_code == 403
+        # validate_credentials tries every probe (5) with no retries on 403.
+        assert mock_get.call_count == len(
+            ["/v1/webhook_endpoints", "/v1/payment_method_configurations",
+             "/v1/payment_method_domains", "/v1/events", "/v1/account"]
+        )
 
     @patch("httpx.get")
     def test_429_raises_rate_limit_after_retries(self, mock_get):
@@ -465,19 +573,58 @@ class TestStripeValidateCredentials:
         assert result is True
 
     @patch("httpx.get")
-    def test_calls_v1_account(self, mock_get):
-        mock_get.return_value = _make_response(200, RAW_ACCOUNT)
+    def test_calls_first_probe_endpoint(self, mock_get):
+        """validate_credentials() uses /v1/webhook_endpoints as the first probe.
+        A 200 from the first probe means only one HTTP call is made."""
+        mock_get.return_value = _make_response(200, {"data": [], "has_more": False})
         StripeConnector().validate_credentials(CREDS)
-        call_args = mock_get.call_args
-        assert "/v1/account" in call_args[0][0]
+        # Only the first probe should be called (returned 200 immediately).
+        assert mock_get.call_count == 1
+        first_call_url = mock_get.call_args_list[0][0][0]
+        assert "/v1/webhook_endpoints" in first_call_url
 
     @patch("httpx.get")
     def test_uses_api_key_as_auth(self, mock_get):
         """SECURITY: API key is passed as Basic Auth username (Stripe scheme)."""
-        mock_get.return_value = _make_response(200, RAW_ACCOUNT)
+        mock_get.return_value = _make_response(200, {"data": [], "has_more": False})
         StripeConnector().validate_credentials(CREDS)
         call_kwargs = mock_get.call_args[1]
         assert call_kwargs["auth"] == (CREDS["stripe_api_key"], "")
+
+    @patch("httpx.get")
+    def test_restricted_key_with_webhook_access_passes(self, mock_get):
+        """RESTRICTED KEY SUPPORT: a key that returns 403 on /v1/account but 200
+        on /v1/webhook_endpoints must succeed validation.  This is the expected
+        behaviour for rk_live_... / rk_test_... restricted keys."""
+        forbidden = _make_response(403, {"error": {"message": "No Account permission"}})
+        webhook_ok = _make_response(200, {"data": [], "has_more": False})
+        # First probe (/v1/webhook_endpoints) → 200 → validates immediately.
+        mock_get.return_value = webhook_ok
+        result = StripeConnector().validate_credentials(CREDS)
+        assert result is True
+
+    @patch("httpx.get")
+    def test_restricted_key_skips_to_working_probe(self, mock_get):
+        """A restricted key with only Events access passes after probing through
+        all preceding endpoints (each returning 403) until Events returns 200."""
+        forbidden = _make_response(403, {"error": {"message": "Forbidden"}})
+        events_ok  = _make_response(200, {"data": [], "has_more": False})
+        # Probes: webhook(403), pm_config(403), pm_domain(403), events(200)
+        mock_get.side_effect = [forbidden, forbidden, forbidden, events_ok]
+        result = StripeConnector().validate_credentials(CREDS)
+        assert result is True
+        assert mock_get.call_count == 4
+
+    @patch("httpx.get")
+    def test_401_on_first_probe_fails_immediately(self, mock_get):
+        """A 401 on the first probe must fail immediately — no further probes."""
+        mock_get.return_value = _make_response(
+            401, {"error": {"message": "Invalid key"}}
+        )
+        with pytest.raises(AuthenticationError):
+            StripeConnector().validate_credentials(CREDS)
+        # Only one HTTP call — did not continue to other probes.
+        assert mock_get.call_count == 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -804,6 +951,23 @@ class TestFailureClassifierStripe:
         assert result.category == "rate_limited"
         assert result.error_code == "rate_limit_exceeded"
 
+    def test_403_connector_error_returns_permissions_insufficient(self):
+        """RESTRICTED KEY SUPPORT: when all validation probes return 403,
+        ConnectorError(status_code=403) is raised.  The classifier must map
+        this to stripe_permissions_insufficient (not internal_error)."""
+        from app.connectors.exceptions import ConnectorError
+        from app.core.failure_classifier import classify_failure
+        exc = ConnectorError(
+            "The Stripe API key has no read access to any monitored resource."
+        )
+        exc.status_code = 403
+        result = classify_failure(exc, "stripe")
+        assert result.category == "authentication"
+        assert result.error_code == "stripe_permissions_insufficient"
+        # recommended_action must guide the user to fix their key permissions.
+        assert "permission" in result.recommended_action.lower() or \
+               "key" in result.recommended_action.lower()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 11. Schema validation
@@ -871,13 +1035,15 @@ class TestStripeIntegrationCreation:
 
     @patch("app.services.integration_service.encrypt_credentials")
     @patch("app.connectors.stripe.StripeConnector.validate_credentials")
-    @patch("app.connectors.stripe.StripeConnector._get")
+    @patch("app.connectors.stripe.StripeConnector._resolve_account_id")
     def test_creates_integration_and_resource(
-        self, mock_get, mock_validate, mock_encrypt
+        self, mock_resolve, mock_validate, mock_encrypt
     ):
+        """Integration and Resource are created; _resolve_account_id() is used
+        (not _get directly) so restricted keys without Account permission work."""
         from app.services.integration_service import _create_stripe_integration
         mock_validate.return_value = True
-        mock_get.return_value = {"id": "acct_newtest", "charges_enabled": True}
+        mock_resolve.return_value = ("acct_newtest", True)  # (id, is_real)
         mock_encrypt.return_value = (b"ciphertext", b"iv")
 
         db = self._make_db(query_first=None)  # no duplicate
@@ -903,16 +1069,65 @@ class TestStripeIntegrationCreation:
         # Integration was added to DB
         db.add.assert_called()
         db.commit.assert_called()
+        # _resolve_account_id must be called (not _get directly)
+        mock_resolve.assert_called_once()
 
     @patch("app.services.integration_service.encrypt_credentials")
     @patch("app.connectors.stripe.StripeConnector.validate_credentials")
-    @patch("app.connectors.stripe.StripeConnector._get")
+    @patch("app.connectors.stripe.StripeConnector._resolve_account_id")
+    def test_creates_integration_with_fingerprint_id(
+        self, mock_resolve, mock_validate, mock_encrypt
+    ):
+        """RESTRICTED KEY SUPPORT: when /v1/account is inaccessible, a fingerprint
+        is used as the resource ID and account_id_source is set to 'key_fingerprint'."""
+        from app.services.integration_service import _create_stripe_integration
+        mock_validate.return_value = True
+        # Restricted key — returns fingerprint (is_real=False)
+        fingerprint_id = "fp_" + "a" * 24
+        mock_resolve.return_value = (fingerprint_id, False)
+        mock_encrypt.return_value = (b"ciphertext", b"iv")
+
+        db = self._make_db(query_first=None)  # no duplicate
+        integration_obj = MagicMock()
+        integration_obj.id = uuid.uuid4()
+        db.flush.return_value = None
+        db.add.return_value = None
+        db.commit.return_value = None
+        db.refresh.return_value = None
+
+        resource_kwargs: dict = {}
+
+        def capture_resource(**kwargs):
+            resource_kwargs.update(kwargs)
+            return MagicMock()
+
+        with patch("app.services.integration_service.Integration") as MockIntegration, \
+             patch("app.services.integration_service.Resource") as MockResource:
+            MockIntegration.return_value = integration_obj
+            MockResource.side_effect = capture_resource
+
+            _create_stripe_integration(
+                user_id=uuid.uuid4(),
+                display_name="Restricted Stripe",
+                credentials={"stripe_api_key": "rk_test_abc"},
+                db=db,
+            )
+
+        # Resource ID is the fingerprint
+        assert resource_kwargs.get("provider_resource_id") == fingerprint_id
+        # Metadata marks this as a fingerprint source
+        meta = resource_kwargs.get("resource_metadata", {})
+        assert meta.get("account_id_source") == "key_fingerprint"
+
+    @patch("app.services.integration_service.encrypt_credentials")
+    @patch("app.connectors.stripe.StripeConnector.validate_credentials")
+    @patch("app.connectors.stripe.StripeConnector._resolve_account_id")
     def test_duplicate_account_raises_value_error(
-        self, mock_get, mock_validate, mock_encrypt
+        self, mock_resolve, mock_validate, mock_encrypt
     ):
         from app.services.integration_service import _create_stripe_integration
         mock_validate.return_value = True
-        mock_get.return_value = {"id": "acct_existing"}
+        mock_resolve.return_value = ("acct_existing", True)
         mock_encrypt.return_value = (b"ciphertext", b"iv")
 
         # Simulate existing resource

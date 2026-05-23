@@ -1,4 +1,4 @@
-"""Stripe connector — M35.
+"""Stripe connector — M35 (restricted key support fix).
 
 Fetches read-only configuration data from the Stripe API.  Customer PII,
 payment data, and secrets are NEVER fetched or stored.
@@ -7,6 +7,8 @@ Resources fetched
 -----------------
 stripe_account_settings
     GET /v1/account — account-level settings only.
+    OPTIONAL: restricted keys without the "Account" permission will skip
+    this resource gracefully.  All other resources remain functional.
 
 stripe_webhook_endpoint
     GET /v1/webhook_endpoints — all endpoints.
@@ -14,9 +16,24 @@ stripe_webhook_endpoint
 
 stripe_payment_method_configuration
     GET /v1/payment_method_configurations — all PM configs.
+    OPTIONAL: skipped on 403.
 
 stripe_payment_method_domain
     GET /v1/payment_method_domains — all PM domains.
+    OPTIONAL: skipped on 403.
+
+Restricted key support (rk_test_... / rk_live_...)
+---------------------------------------------------
+Restricted keys are the PREFERRED auth method for least-privilege access.
+They may not have the "Account" permission (GET /v1/account returns 403);
+that is fine — account settings will be omitted but all other resources
+remain fully functional.
+
+Validation uses a multi-probe strategy: it tries resource-specific endpoints
+(webhook_endpoints, pm_configurations, pm_domains, events) before /v1/account.
+The first endpoint returning 200 confirms the key is valid.
+
+Standard secret keys (sk_test_... / sk_live_...) continue to work.
 
 SECURITY
 --------
@@ -25,10 +42,13 @@ SECURITY
 - Webhook signing secrets are NEVER fetched or included in any snapshot.
 - Customer PII is NEVER fetched (no /v1/customers, /v1/charges, etc.).
 - The connector is stateless and DB-independent.
+- The fingerprint used as resource ID when /v1/account is inaccessible is a
+  SHA-256 hash — non-reversible, does not leak the key.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from typing import Any
@@ -56,9 +76,24 @@ _TIMEOUT = 20.0  # seconds
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = (1.0, 2.0, 4.0)
 
+# Ordered probe endpoints for validate_credentials().
+# Resource-specific endpoints (require only targeted read permission) are tried
+# before /v1/account (requires broad Account permission not available to most
+# restricted keys).  The first 200 response confirms the key is valid.
+_VALIDATE_PROBE_ENDPOINTS = [
+    "/v1/webhook_endpoints",
+    "/v1/payment_method_configurations",
+    "/v1/payment_method_domains",
+    "/v1/events",
+    "/v1/account",
+]
+
 
 class StripeConnector(BaseConnector):
     """Read-only Stripe configuration connector.
+
+    Supports both restricted keys (rk_test_... / rk_live_..., recommended)
+    and standard secret keys (sk_test_... / sk_live_...).
 
     SECURITY: The API key is passed in credentials["stripe_api_key"].
     It is NEVER logged, NEVER returned to the frontend, and NEVER stored
@@ -73,15 +108,21 @@ class StripeConnector(BaseConnector):
     ) -> Any:
         """Make an authenticated GET to the Stripe API with retry/back-off.
 
-        Raises
-        ------
-        AuthenticationError  — 401 / 403
-        ConnectorError       — 4xx (other than 401/403/429)
-        RateLimitError       — 429
-        NetworkError         — connection / timeout failures
+        HTTP status distinction
+        ----------------------
+        - 401  → ``AuthenticationError`` (invalid or revoked key — re-auth needed).
+        - 403  → ``ConnectorError(status_code=403)`` (valid key, lacks permission
+                 for THIS endpoint — callers may try a different endpoint or skip).
+        - 429  → ``RateLimitError``
+        - 5xx  → ``ConnectorError`` (transient server error, retried)
+        - net  → ``NetworkError``
 
-        SECURITY: The API key is used as HTTP Basic Auth username (Stripe's
-        bearer auth scheme).  It is NEVER written to any log line.
+        The 401/403 split is crucial for restricted key support:
+        - 401 means the key itself is invalid → fail hard.
+        - 403 means the key is valid but this specific endpoint is not
+          permitted → the caller can skip this endpoint and try another.
+
+        SECURITY: The API key is NEVER written to any log line.
         """
         # SECURITY: do not log the API key value.
         logger.debug("stripe._get path=%s", path)
@@ -129,10 +170,25 @@ class StripeConnector(BaseConnector):
                     f"Stripe API rate limit hit for {path}. Retry after {retry_after}s."
                 )
 
-            if resp.status_code in (401, 403):
+            # ── 401: key is invalid or revoked ────────────────────────────────
+            if resp.status_code == 401:
                 raise AuthenticationError(
-                    f"Stripe API authentication failed (HTTP {resp.status_code}). "
-                    "Check that the API key is valid and has the required permissions."
+                    "Stripe API authentication failed: the API key is invalid, "
+                    "revoked, or has no permissions at all. "
+                    "Check that the key value is correct.",
+                    status_code=401,
+                )
+
+            # ── 403: key is valid but lacks permission for THIS endpoint ──────
+            # This is expected for restricted keys on endpoints they haven't
+            # been granted access to.  Callers handle 403 ConnectorError by
+            # skipping the endpoint or trying an alternative.
+            if resp.status_code == 403:
+                raise ConnectorError(
+                    f"Stripe API returned 403 for {path}: the key lacks "
+                    "permission for this endpoint. If using a restricted key "
+                    "(rk_...), ensure read access is granted for this resource.",
+                    status_code=403,
                 )
 
             if resp.status_code >= 500:
@@ -147,7 +203,8 @@ class StripeConnector(BaseConnector):
                     continue
                 raise ConnectorError(
                     f"Stripe API returned HTTP {resp.status_code} for {path} "
-                    f"after {_MAX_RETRIES} attempts."
+                    f"after {_MAX_RETRIES} attempts.",
+                    status_code=resp.status_code,
                 )
 
             if not resp.is_success:
@@ -157,7 +214,8 @@ class StripeConnector(BaseConnector):
                 except Exception:
                     detail = resp.text
                 raise ConnectorError(
-                    f"Stripe API returned HTTP {resp.status_code} for {path}: {detail}"
+                    f"Stripe API returned HTTP {resp.status_code} for {path}: {detail}",
+                    status_code=resp.status_code,
                 )
 
             return resp.json()
@@ -169,6 +227,7 @@ class StripeConnector(BaseConnector):
         """Fetch a paginated Stripe list endpoint, returning all items.
 
         Uses Stripe's cursor-based pagination (starting_after).
+        Raises ConnectorError(status_code=403) if the key lacks permission.
         """
         items: list[dict] = []
         params: dict = {"limit": limit}
@@ -189,11 +248,68 @@ class StripeConnector(BaseConnector):
 
         return items
 
+    def _resolve_account_id(self, credentials: dict) -> tuple[str, bool]:
+        """Return a stable identifier for the connected Stripe account.
+
+        Tries GET /v1/account first (returns the real account ID).
+        If the key lacks permission (HTTP 403, common for restricted keys),
+        falls back to a SHA-256 fingerprint of the API key — non-reversible,
+        stable across sessions, safe to store.
+
+        Returns
+        -------
+        (identifier, is_real_account_id)
+            is_real_account_id = True  → ``identifier`` is a real Stripe
+                account ID (``acct_xxx``).
+            is_real_account_id = False → ``identifier`` is a key fingerprint
+                (``fp_<24-hex-chars>``).
+
+        SECURITY: The fingerprint is SHA-256(key) — non-reversible.  The full
+        API key is never stored, logged, or embedded in the identifier.
+        """
+        try:
+            data = self._get(credentials, "/v1/account")
+            account_id: str = data.get("id", "")
+            logger.debug("stripe: resolved real account_id=%s", account_id)
+            return account_id, True
+        except ConnectorError as exc:
+            if exc.status_code == 403:
+                # Restricted key without Account permission — use fingerprint.
+                # SECURITY: SHA-256 of the full key; non-reversible.
+                fingerprint = hashlib.sha256(
+                    credentials["stripe_api_key"].encode()
+                ).hexdigest()[:24]
+                fake_id = f"fp_{fingerprint}"
+                logger.info(
+                    "stripe: /v1/account not accessible (restricted key without "
+                    "Account permission) — using key fingerprint as stable identifier"
+                )
+                return fake_id, False
+            raise
+
     # ── Fetch helpers ──────────────────────────────────────────────────────────
 
-    def _fetch_account_settings(self, credentials: dict) -> dict:
-        """Fetch GET /v1/account and normalise into a stripe_account_settings record."""
-        data = self._get(credentials, "/v1/account")
+    def _fetch_account_settings(self, credentials: dict) -> dict | None:
+        """Fetch GET /v1/account and normalise into a stripe_account_settings record.
+
+        Returns
+        -------
+        dict    — normalised record on success.
+        None    — when the key lacks permission (HTTP 403, common for restricted
+                  keys).  The caller should skip this record silently.
+
+        SECURITY: No PII, payment data, or secrets are included.
+        """
+        try:
+            data = self._get(credentials, "/v1/account")
+        except ConnectorError as exc:
+            if exc.status_code == 403:
+                logger.info(
+                    "stripe: /v1/account not accessible (restricted key without "
+                    "Account permission) — stripe_account_settings omitted"
+                )
+                return None
+            raise
 
         # Capabilities: extract names of requested+active capabilities.
         capabilities = data.get("capabilities") or {}
@@ -249,10 +365,22 @@ class StripeConnector(BaseConnector):
     def _fetch_webhook_endpoints(self, credentials: dict) -> list[dict]:
         """Fetch GET /v1/webhook_endpoints and normalise records.
 
+        Returns an empty list if the key lacks permission (HTTP 403).
+
         SECURITY: The ``secret`` field in Stripe's API response is NEVER
         accessed, stored, or included in the returned records.
         """
-        raw = self._get_list(credentials, "/v1/webhook_endpoints")
+        try:
+            raw = self._get_list(credentials, "/v1/webhook_endpoints")
+        except ConnectorError as exc:
+            if exc.status_code == 403:
+                logger.info(
+                    "stripe: /v1/webhook_endpoints not accessible "
+                    "(restricted key without Webhook Endpoints permission) — skipping"
+                )
+                return []
+            raise
+
         records = []
         for ep in raw:
             # SECURITY: do NOT access ep["secret"] — signing secrets must
@@ -276,11 +404,14 @@ class StripeConnector(BaseConnector):
         return records
 
     def _fetch_payment_method_configurations(self, credentials: dict) -> list[dict]:
-        """Fetch GET /v1/payment_method_configurations and normalise records."""
+        """Fetch GET /v1/payment_method_configurations and normalise records.
+
+        Returns an empty list if the endpoint is inaccessible (403 or other error).
+        """
         try:
             raw = self._get_list(credentials, "/v1/payment_method_configurations")
         except ConnectorError as exc:
-            # Endpoint not available on all account types — treat as empty.
+            # Endpoint not available on all account types or key lacks permission.
             logger.info(
                 "stripe: payment_method_configurations unavailable (%s) — skipping",
                 exc,
@@ -324,7 +455,10 @@ class StripeConnector(BaseConnector):
         return records
 
     def _fetch_payment_method_domains(self, credentials: dict) -> list[dict]:
-        """Fetch GET /v1/payment_method_domains and normalise records."""
+        """Fetch GET /v1/payment_method_domains and normalise records.
+
+        Returns an empty list if the endpoint is inaccessible (403 or other error).
+        """
         try:
             raw = self._get_list(credentials, "/v1/payment_method_domains")
         except ConnectorError as exc:
@@ -363,17 +497,24 @@ class StripeConnector(BaseConnector):
     # ── Public interface ───────────────────────────────────────────────────────
 
     def fetch(self, credentials: dict) -> list[dict]:
-        """Fetch all Stripe configuration records.
+        """Fetch all accessible Stripe configuration records.
 
-        Returns a flat list of normalised records across all four resource
-        types.  Records are safe to snapshot — they contain no PII, no
-        payment data, and no secrets.
+        All four resource types are attempted.  Resources for which the key
+        lacks permission (HTTP 403) are skipped gracefully — the remaining
+        resources are still returned.  This ensures restricted keys (rk_...)
+        that don't have the "Account" permission can still monitor webhooks,
+        PM configurations, and PM domains.
+
+        Returns
+        -------
+        Flat list of normalised records.  May be empty if the key has no
+        useful permissions (but validation would have caught that earlier).
 
         Raises
         ------
-        AuthenticationError  — invalid or revoked API key.
-        ConnectorError       — unexpected API error.
-        RateLimitError       — Stripe rate limit hit.
+        AuthenticationError  — key is invalid or revoked (HTTP 401).
+        ConnectorError       — unexpected non-permission API error.
+        RateLimitError       — Stripe rate limit hit after all retries.
         NetworkError         — network / timeout failure.
         """
         # SECURITY: do not log credentials["stripe_api_key"].
@@ -381,12 +522,19 @@ class StripeConnector(BaseConnector):
 
         records: list[dict] = []
 
-        # 1. Account settings (always present — one record per integration).
+        # 1. Account settings — optional (requires "Account" permission).
+        #    Restricted keys without this permission return None; skip silently.
         account_record = self._fetch_account_settings(credentials)
-        records.append(account_record)
-        logger.info("StripeConnector.fetch: account_settings fetched")
+        if account_record is not None:
+            records.append(account_record)
+            logger.info("StripeConnector.fetch: account_settings fetched")
+        else:
+            logger.info(
+                "StripeConnector.fetch: account_settings skipped "
+                "(restricted key without Account permission)"
+            )
 
-        # 2. Webhook endpoints.
+        # 2. Webhook endpoints — skipped on 403.
         webhook_records = self._fetch_webhook_endpoints(credentials)
         records.extend(webhook_records)
         logger.info(
@@ -394,7 +542,7 @@ class StripeConnector(BaseConnector):
             len(webhook_records),
         )
 
-        # 3. Payment method configurations.
+        # 3. Payment method configurations — skipped on 403 or unavailable.
         pm_config_records = self._fetch_payment_method_configurations(credentials)
         records.extend(pm_config_records)
         logger.info(
@@ -402,7 +550,7 @@ class StripeConnector(BaseConnector):
             len(pm_config_records),
         )
 
-        # 4. Payment method domains.
+        # 4. Payment method domains — skipped on 403 or unavailable.
         pm_domain_records = self._fetch_payment_method_domains(credentials)
         records.extend(pm_domain_records)
         logger.info(
@@ -417,15 +565,75 @@ class StripeConnector(BaseConnector):
         return records
 
     def validate_credentials(self, credentials: dict) -> bool:
-        """Validate the Stripe API key by calling GET /v1/account.
+        """Validate the Stripe API key using a least-privilege probe strategy.
 
-        Returns True on success.  Raises AuthenticationError, ConnectorError,
-        or NetworkError on failure.
+        Tries endpoints in order of preference (most-targeted permissions first,
+        broad account access last).  The first endpoint returning HTTP 200
+        confirms the key is valid.  This design supports restricted keys that
+        don't have the "Account" permission.
+
+        Probe order
+        -----------
+        1. GET /v1/webhook_endpoints       — requires Webhook Endpoints:Read
+        2. GET /v1/payment_method_configurations — requires PM Configs:Read
+        3. GET /v1/payment_method_domains  — requires PM Domains:Read
+        4. GET /v1/events                  — requires Events:Read
+        5. GET /v1/account                 — requires broad Account permission
+                                             (standard sk_* keys or accounts with
+                                             full access)
+
+        Failure semantics
+        -----------------
+        - HTTP 401 on ANY probe → ``AuthenticationError`` (key is invalid; no retry).
+        - HTTP 403 on a probe   → not counted as a failure; try the next probe.
+        - All probes return 403 → ``ConnectorError(status_code=403)`` with a
+          message listing the required permissions.
+        - HTTP 4xx (other)      → ``ConnectorError`` raised immediately.
+        - Network/rate limit    → ``NetworkError`` / ``RateLimitError``.
 
         SECURITY: The API key is NEVER logged.
         """
         # SECURITY: do not log credentials["stripe_api_key"].
-        logger.info("StripeConnector.validate_credentials: calling /v1/account")
-        self._get(credentials, "/v1/account")
-        logger.info("StripeConnector.validate_credentials: success")
-        return True
+        logger.info("StripeConnector.validate_credentials: probing endpoints")
+
+        forbidden_count = 0
+        last_403_exc: ConnectorError | None = None
+
+        for endpoint in _VALIDATE_PROBE_ENDPOINTS:
+            try:
+                self._get(credentials, endpoint, params={"limit": 1})
+                logger.info(
+                    "StripeConnector.validate_credentials: success via %s",
+                    endpoint,
+                )
+                return True
+            except AuthenticationError:
+                # 401 = key is invalid — fail hard and immediately.
+                # Do NOT try other endpoints; a bad key is a bad key.
+                raise
+            except ConnectorError as exc:
+                if exc.status_code == 403:
+                    # 403 = key is valid but doesn't have permission for THIS
+                    # endpoint.  Try the next probe.
+                    forbidden_count += 1
+                    last_403_exc = exc
+                    logger.debug(
+                        "stripe.validate: 403 on %s — trying next probe",
+                        endpoint,
+                    )
+                    continue
+                # Other ConnectorError (4xx, 5xx) — surface immediately.
+                raise
+            except (NetworkError, RateLimitError):
+                raise
+
+        # Every probe returned 403.  The key is technically valid but has no
+        # permissions for any resource we monitor.
+        raise ConnectorError(
+            "The Stripe API key has no read access to any monitored resource. "
+            "Grant read-only access to at least one of: "
+            "Webhook Endpoints, Payment Method Configurations, "
+            "Payment Method Domains, or Events. "
+            f"(All {forbidden_count} probe endpoints returned HTTP 403.)",
+            status_code=403,
+        )
