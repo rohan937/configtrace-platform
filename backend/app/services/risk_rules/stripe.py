@@ -4,15 +4,26 @@ Entry point: ``classify_stripe_change(change)``
 
 Risk levels
 -----------
-critical  — Webhook URL changed, webhook deleted, charges_enabled turned off,
-            payouts_enabled turned off, Apple/Google Pay domain removed.
-high      — Webhook added, enabled_events changed, webhook disabled,
-            payment method domain added/removed, payout schedule changed,
-            payment method enabled/disabled in a config.
-medium    — Account settings changed (branding, support contact, currency,
-            business name), PM domain status changed.
-low       — Read-only or cosmetic changes (display name, dashboard locale,
-            branding colors, description fields).
+critical  — Webhook deleted, charges_enabled turned off, payouts_enabled
+            turned off, Apple/Google Pay domain removed.
+high      — Webhook URL changed (events redirected to new destination),
+            webhook added, webhook disabled, enabled_events changed,
+            payment method domain disabled/domain_name changed,
+            payment method enabled/disabled in a config, is_default unset,
+            payout schedule interval changed, controller type changed.
+medium    — Account settings changed (capabilities, currency, support contact,
+            business name), PM domain status changed, is_default set to True,
+            payment method re-enabled, API version changed.
+low       — Protection-strengthening changes (charges/payouts re-enabled,
+            webhook re-enabled), cosmetic changes (branding, display name,
+            descriptions), routine additions (PM config added).
+
+Directionality
+--------------
+Every classification distinguishes:
+  * new_value → False / "disabled" / removed  — weakening or loss of capability
+  * new_value → True  / "enabled"  / added    — strengthening or new capability
+Unknown / unavailable data never escalates to critical.
 """
 
 from __future__ import annotations
@@ -34,28 +45,34 @@ def _classify_account_settings_change(change: Change) -> tuple[str, str]:
     ct = (_get(change, "change_type") or "").lower()
     new_v = _get(change, "new_value")
 
-    # Operational flags — service-impacting
+    # Operational flags — service-impacting (directional)
     if fp == "charges_enabled":
         if new_v is False or new_v == "false":
             return (
                 "critical",
                 "Charges have been disabled on this Stripe account. "
-                "This will prevent accepting new payments immediately.",
+                "New payments will be rejected immediately. "
+                "Check the Stripe Dashboard for the reason and re-enable if this was unintended.",
             )
+        # True → charges restored (positive / strengthening change)
         return (
-            "high",
-            "Charges enabled status changed on this Stripe account.",
+            "medium",
+            "Charges were re-enabled on this Stripe account. "
+            "Payment acceptance has been restored.",
         )
     if fp == "payouts_enabled":
         if new_v is False or new_v == "false":
             return (
                 "critical",
                 "Payouts have been disabled on this Stripe account. "
-                "Funds can no longer be transferred out.",
+                "Funds can no longer be transferred out. "
+                "Check the Stripe Dashboard for the reason and re-enable if this was unintended.",
             )
+        # True → payouts restored (positive / strengthening change)
         return (
-            "high",
-            "Payouts enabled status changed on this Stripe account.",
+            "medium",
+            "Payouts were re-enabled on this Stripe account. "
+            "Fund transfers to your bank account have been restored.",
         )
 
     # Payout schedule — affects cash flow
@@ -63,7 +80,8 @@ def _classify_account_settings_change(change: Change) -> tuple[str, str]:
         return (
             "high",
             "The payout schedule interval changed. "
-            "This affects when funds are transferred to your bank account.",
+            "This affects when funds are transferred to your bank account. "
+            "Confirm the new schedule aligns with your cash-flow expectations.",
         )
     if fp == "payout_schedule_delay_days":
         return (
@@ -76,21 +94,24 @@ def _classify_account_settings_change(change: Change) -> tuple[str, str]:
     if fp == "enabled_payment_methods":
         return (
             "medium",
-            "The set of enabled payment method capabilities changed on this Stripe account.",
+            "The set of active payment method capabilities changed on this Stripe account. "
+            "Verify that all payment methods you rely on are still enabled.",
         )
 
     # Default currency
     if fp == "default_currency":
         return (
             "medium",
-            "The default currency for this Stripe account changed.",
+            "The default currency for this Stripe account changed. "
+            "Confirm pricing, checkout flows, and reporting are unaffected.",
         )
 
     # Business profile — contact / support info
     if fp in ("support_email", "support_url", "business_url"):
         return (
             "medium",
-            f"The Stripe account {fp.replace('_', ' ')} changed.",
+            f"The Stripe account {fp.replace('_', ' ')} changed. "
+            "Verify the new contact details are correct.",
         )
     if fp == "business_name":
         return (
@@ -122,7 +143,8 @@ def _classify_account_settings_change(change: Change) -> tuple[str, str]:
         return (
             "high",
             "The Stripe account controller type changed. "
-            "This may indicate a platform ownership change.",
+            "This may indicate a platform ownership change. "
+            "Verify the new controller configuration is expected.",
         )
 
     # Added / removed entire account record — shouldn't happen but handle it.
@@ -146,45 +168,52 @@ def _classify_webhook_endpoint_change(change: Change) -> tuple[str, str]:
             "critical",
             "A Stripe webhook endpoint was deleted. "
             "Events are no longer being delivered to this URL. "
-            "Verify this was intentional and that dependent services are updated.",
+            "Verify this was intentional — payment, checkout, and subscription "
+            "events may stop reaching your application.",
         )
     if ct == "added":
         return (
             "high",
             "A new Stripe webhook endpoint was added. "
             "Confirm the delivery URL is under your control "
-            "and the event set is correctly scoped.",
+            "and the subscribed event set is correctly scoped.",
         )
 
     # Modified
     if fp == "url":
         return (
-            "critical",
-            "The Stripe webhook delivery URL changed. "
-            "Events will now be sent to the new URL — verify it is under your control.",
+            "high",
+            "A Stripe webhook endpoint URL changed. "
+            "Stripe events will now be sent to the new URL. "
+            "Verify the destination is under your control and ready to receive events.",
         )
     if fp == "status":
         if new_v in ("disabled", False, "false"):
             return (
                 "high",
                 "A Stripe webhook endpoint was disabled. "
-                "Events are no longer being delivered.",
+                "Payment, checkout, or subscription events may stop reaching your application. "
+                "Re-enable the endpoint if this was unintended.",
             )
+        # Enabled — strengthening / restoration (positive change)
         return (
-            "medium",
-            "A Stripe webhook endpoint was re-enabled.",
+            "low",
+            "A Stripe webhook endpoint was re-enabled. "
+            "Event delivery to this URL has been restored.",
         )
     if fp == "enabled_events":
         return (
             "high",
-            "The event types subscribed to by a Stripe webhook changed. "
-            "Verify the new event set matches what your integration expects.",
+            "The set of event types subscribed to by a Stripe webhook changed. "
+            "Payment, checkout, or subscription events may have been added or removed. "
+            "Verify that your application still receives the events it depends on.",
         )
     if fp == "api_version":
         return (
             "medium",
-            "The API version for a Stripe webhook endpoint changed. "
-            "Ensure your handler is compatible with the new version.",
+            "The API version used for Stripe webhook event payloads changed. "
+            "If your handler expects the previous format, events may fail to process. "
+            "Test your webhook handler against the new API version.",
         )
     if fp == "description":
         return ("low", "The Stripe webhook endpoint description changed.")
@@ -201,14 +230,15 @@ def _classify_payment_method_configuration_change(change: Change) -> tuple[str, 
 
     if ct == "added":
         return (
-            "medium",
-            "A new Stripe payment method configuration was added.",
+            "low",
+            "A new Stripe payment method configuration was added. "
+            "Review the configuration to confirm its payment method availability is correct.",
         )
     if ct == "removed":
         return (
             "high",
             "A Stripe payment method configuration was removed. "
-            "Check that payment flows depending on this configuration still work.",
+            "Check that checkout and payment flows that relied on this configuration still work.",
         )
 
     # Modified
@@ -219,10 +249,20 @@ def _classify_payment_method_configuration_change(change: Change) -> tuple[str, 
             "Verify that checkout flows still offer the expected payment options.",
         )
     if fp == "is_default":
+        # Directional: losing default status is more impactful than gaining it.
+        if new_v is False or new_v == "false":
+            return (
+                "high",
+                "The default Stripe payment method configuration was unset or replaced. "
+                "Checkout flows may now use a different configuration's payment method availability. "
+                "Verify the correct configuration is still the default.",
+            )
+        # True — a configuration was promoted to default (neutral/informational)
         return (
-            "high",
-            "The default Stripe payment method configuration changed. "
-            "This affects which payment methods are shown at checkout by default.",
+            "medium",
+            "A Stripe payment method configuration was set as the new default. "
+            "Checkout flows will use this configuration's payment method availability. "
+            "Confirm the promoted configuration has the correct payment methods enabled.",
         )
     if fp == "config_name":
         return ("low", "A Stripe payment method configuration was renamed.")
@@ -255,20 +295,33 @@ def _classify_payment_method_domain_change(change: Change) -> tuple[str, str]:
         if new_v is False or new_v == "false":
             return (
                 "high",
-                "Apple Pay was disabled for a Stripe payment method domain.",
+                "Apple Pay was disabled for a Stripe payment method domain. "
+                "Apple Pay will no longer be available to customers on this domain.",
             )
-        return ("medium", "Apple Pay was enabled for a Stripe payment method domain.")
+        return (
+            "medium",
+            "Apple Pay was enabled for a Stripe payment method domain.",
+        )
     if fp == "google_pay_enabled":
         if new_v is False or new_v == "false":
             return (
                 "high",
-                "Google Pay was disabled for a Stripe payment method domain.",
+                "Google Pay was disabled for a Stripe payment method domain. "
+                "Google Pay will no longer be available to customers on this domain.",
             )
-        return ("medium", "Google Pay was enabled for a Stripe payment method domain.")
-    if fp == "link_enabled":
         return (
             "medium",
-            "Link by Stripe was toggled on a payment method domain.",
+            "Google Pay was enabled for a Stripe payment method domain.",
+        )
+    if fp == "link_enabled":
+        if new_v is False or new_v == "false":
+            return (
+                "medium",
+                "Link by Stripe was disabled for a payment method domain.",
+            )
+        return (
+            "low",
+            "Link by Stripe was enabled for a payment method domain.",
         )
     if fp == "enabled":
         if new_v is False or new_v == "false":
@@ -277,9 +330,18 @@ def _classify_payment_method_domain_change(change: Change) -> tuple[str, str]:
                 "A Stripe payment method domain was disabled. "
                 "Apple Pay and Google Pay will stop working on this domain.",
             )
-        return ("medium", "A Stripe payment method domain was re-enabled.")
+        return (
+            "low",
+            "A Stripe payment method domain was re-enabled. "
+            "Domain-based payment methods have been restored.",
+        )
     if fp == "domain_name":
-        return ("medium", "The domain name for a Stripe payment method domain changed.")
+        return (
+            "high",
+            "The domain name for a Stripe payment method domain changed. "
+            "Apple Pay, Google Pay, and Link may no longer work on the previous domain. "
+            "Verify the new domain is correctly registered and verified with Stripe.",
+        )
 
     return ("medium", "A Stripe payment method domain setting changed.")
 

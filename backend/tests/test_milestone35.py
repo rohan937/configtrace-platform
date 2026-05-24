@@ -715,13 +715,16 @@ class TestStripeRiskClassification:
         level, reason = classify_stripe_change(change)
         assert level == "high"
 
-    def test_webhook_url_change_is_critical(self):
+    def test_webhook_url_change_is_high(self):
+        """Webhook URL change is High — events redirected to a new destination.
+        Updated from Critical: the change is significant but the explanation
+        should guide the user to verify the URL rather than alarm them."""
         change = _stripe_change(
             STRIPE_WEBHOOK_ENDPOINT, "modified", "url",
             new_value="https://attacker.com/hook"
         )
         level, reason = classify_stripe_change(change)
-        assert level == "critical"
+        assert level == "high"
         assert "url" in reason.lower()
 
     def test_webhook_disabled_is_high(self):
@@ -755,10 +758,11 @@ class TestStripeRiskClassification:
 
     # ── stripe_payment_method_configuration ──
 
-    def test_pm_config_added_is_medium(self):
+    def test_pm_config_added_is_low(self):
+        """Adding a PM config is routine — Low (previously Medium)."""
         change = _stripe_change(STRIPE_PAYMENT_METHOD_CONFIGURATION, "added")
         level, reason = classify_stripe_change(change)
-        assert level == "medium"
+        assert level == "low"
 
     def test_pm_config_removed_is_high(self):
         change = _stripe_change(STRIPE_PAYMENT_METHOD_CONFIGURATION, "removed")
@@ -773,12 +777,24 @@ class TestStripeRiskClassification:
         level, reason = classify_stripe_change(change)
         assert level == "high"
 
-    def test_pm_config_default_changed_is_high(self):
+    def test_pm_config_is_default_set_is_medium(self):
+        """is_default going True (a config promoted to default) is Medium.
+        The more impactful direction (losing default) is High — tested separately."""
         change = _stripe_change(
             STRIPE_PAYMENT_METHOD_CONFIGURATION, "modified", "is_default", new_value=True
         )
         level, reason = classify_stripe_change(change)
+        assert level == "medium"
+        assert "default" in reason.lower()
+
+    def test_pm_config_is_default_unset_is_high(self):
+        """is_default going False (default config replaced/removed) is High."""
+        change = _stripe_change(
+            STRIPE_PAYMENT_METHOD_CONFIGURATION, "modified", "is_default", new_value=False
+        )
+        level, reason = classify_stripe_change(change)
         assert level == "high"
+        assert "default" in reason.lower()
 
     def test_pm_config_renamed_is_low(self):
         change = _stripe_change(
@@ -1029,7 +1045,15 @@ class TestStripeSchemaValidation:
 
 class TestStripeIntegrationCreation:
     def _make_db(self, query_first=None):
+        """Build a mock DB whose duplicate-check query returns *query_first*.
+
+        The duplicate check now joins Resource with Integration before filtering
+        (to exclude soft-deleted integrations), so the mock chain must be:
+            db.query(Resource).join(Integration).filter(...).first()
+        """
         db = MagicMock()
+        # Support both the old .filter().first() path and the new .join().filter().first() path
+        db.query.return_value.join.return_value.filter.return_value.first.return_value = query_first
         db.query.return_value.filter.return_value.first.return_value = query_first
         return db
 
@@ -1212,3 +1236,580 @@ class TestSyncTaskStripeDispatch:
         level, reason = classify_change(FakeChange())
         assert level == "critical"
         assert "webhook" in reason.lower() or "deleted" in reason.lower() or "removed" in reason.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 14. Stripe visibility bug — deleted integration must not block reconnect
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestStripeVisibilityBug:
+    """Regression tests for the Stripe soft-delete visibility bug.
+
+    Root cause: _create_stripe_integration() queried the Resource table for
+    duplicates without checking Integration.status.  A soft-deleted Stripe
+    integration left a Resource row behind, which blocked reconnection while
+    the integration itself was invisible in GET /integrations.
+
+    Fix: join with Integration and filter Integration.status != 'deleted'.
+    """
+
+    @patch("app.services.integration_service.encrypt_credentials")
+    @patch("app.connectors.stripe.StripeConnector.validate_credentials")
+    @patch("app.connectors.stripe.StripeConnector._resolve_account_id")
+    def test_deleted_integration_does_not_block_reconnect(
+        self, mock_resolve, mock_validate, mock_encrypt
+    ):
+        """After soft-deleting a Stripe integration, the same account can be
+        re-connected.  Before the fix, the Resource row left behind by the
+        soft-deleted integration would raise ValueError('already connected')."""
+        from app.services.integration_service import _create_stripe_integration
+
+        mock_validate.return_value = True
+        mock_resolve.return_value = ("acct_existing", True)
+        mock_encrypt.return_value = (b"cipher", b"iv")
+
+        # Simulate DB: the join query returns None (deleted integration excluded).
+        # The fix adds Integration.status != 'deleted' to the filter, so
+        # db.query(Resource).join(Integration).filter(...).first() returns None.
+        db = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.first.return_value = None
+        integration_obj = MagicMock()
+        integration_obj.id = uuid.uuid4()
+        db.flush.return_value = None
+        db.add.return_value = None
+        db.commit.return_value = None
+        db.refresh.return_value = None
+
+        with patch("app.services.integration_service.Integration"), \
+             patch("app.services.integration_service.Resource"):
+            # Should NOT raise ValueError — deleted integration is excluded
+            _create_stripe_integration(
+                user_id=uuid.uuid4(),
+                display_name="Stripe Reconnect",
+                credentials={"stripe_api_key": "rk_test_xyz"},
+                db=db,
+            )
+        # If we reach here, the duplicate check correctly allowed reconnect.
+        db.commit.assert_called()
+
+    @patch("app.services.integration_service.encrypt_credentials")
+    @patch("app.connectors.stripe.StripeConnector.validate_credentials")
+    @patch("app.connectors.stripe.StripeConnector._resolve_account_id")
+    def test_active_integration_still_blocks_duplicate(
+        self, mock_resolve, mock_validate, mock_encrypt
+    ):
+        """An ACTIVE (non-deleted) Stripe integration still blocks a duplicate
+        connect.  The fix must not regress this guard."""
+        from app.services.integration_service import _create_stripe_integration
+
+        mock_validate.return_value = True
+        mock_resolve.return_value = ("acct_existing", True)
+        mock_encrypt.return_value = (b"cipher", b"iv")
+
+        # Simulate DB: join query returns an existing resource (active integration)
+        existing_resource = MagicMock()
+        db = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.first.return_value = (
+            existing_resource
+        )
+
+        with pytest.raises(ValueError, match="already connected"):
+            _create_stripe_integration(
+                user_id=uuid.uuid4(),
+                display_name="Stripe Duplicate",
+                credentials={"stripe_api_key": "rk_test_xyz"},
+                db=db,
+            )
+
+    def test_duplicate_check_uses_join_not_plain_filter(self):
+        """Confirm the duplicate check calls .join() before .filter().
+
+        This is a structural regression test: if someone removes the join,
+        the mock chain will fail and the test catches the regression.
+        """
+        from app.services import integration_service
+
+        # Build a mock db that returns None from the join→filter chain
+        db = MagicMock()
+        db.query.return_value.join.return_value.filter.return_value.first.return_value = None
+
+        # Also need the constructor path to succeed
+        integration_obj = MagicMock()
+        integration_obj.id = uuid.uuid4()
+
+        with patch("app.services.integration_service.encrypt_credentials",
+                   return_value=(b"c", b"iv")), \
+             patch("app.connectors.stripe.StripeConnector.validate_credentials"), \
+             patch("app.connectors.stripe.StripeConnector._resolve_account_id",
+                   return_value=("acct_test", True)), \
+             patch("app.services.integration_service.Integration",
+                   return_value=integration_obj), \
+             patch("app.services.integration_service.Resource"):
+            integration_service._create_stripe_integration(
+                user_id=uuid.uuid4(),
+                display_name="Join test",
+                credentials={"stripe_api_key": "rk_test_abc"},
+                db=db,
+            )
+        # .join() must have been called on the query chain
+        db.query.return_value.join.assert_called()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 15. Stripe risk rules — quality and directionality audit
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _make_stripe_change(record_type, change_type, field_path=None,
+                        new_value=None, prev_value=None):
+    """Return a minimal fake Change object for Stripe risk tests."""
+    class FakeChange:
+        pass
+
+    c = FakeChange()
+    c.provider_metadata = {"record_type": record_type}
+    c.change_type = change_type
+    c.field_path = field_path
+    c.new_value = new_value
+    c.prev_value = prev_value
+    return c
+
+
+_WH = "stripe_webhook_endpoint"
+_ACC = "stripe_account_settings"
+_PMC = "stripe_payment_method_configuration"
+_PMD = "stripe_payment_method_domain"
+
+
+class TestStripeRiskQuality:
+    """Directionality, content, and specificity tests for Stripe risk rules."""
+
+    # ── Webhook ──────────────────────────────────────────────────────────────
+
+    def test_webhook_deleted_is_critical(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "removed")
+        )
+        assert level == "critical"
+        assert "webhook" in reason.lower()
+        assert "deleted" in reason.lower() or "no longer" in reason.lower()
+
+    def test_webhook_url_changed_is_high(self):
+        """URL change is High (events redirected — needs verification)."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "modified", "url",
+                                new_value="https://evil.example.com/wh")
+        )
+        assert level == "high"
+        assert "url" in reason.lower() or "destination" in reason.lower()
+
+    def test_webhook_disabled_is_high_and_mentions_events(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "modified", "status", new_value="disabled")
+        )
+        assert level == "high"
+        # Must mention what could break — payment, checkout, or subscription
+        lower = reason.lower()
+        assert any(kw in lower for kw in ("payment", "checkout", "subscription", "event"))
+
+    def test_webhook_reenabled_is_low_not_high(self):
+        """Re-enabling a webhook is a positive/strengthening change — Low."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "modified", "status", new_value="enabled")
+        )
+        assert level == "low"
+        assert "re-enabled" in reason.lower() or "restored" in reason.lower()
+
+    def test_webhook_enabled_events_changed_is_high_with_payment_context(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "modified", "enabled_events",
+                                new_value=["payment_intent.succeeded"])
+        )
+        assert level == "high"
+        lower = reason.lower()
+        # Must explain payment/checkout/subscription impact
+        assert any(kw in lower for kw in ("payment", "checkout", "subscription", "event"))
+
+    def test_webhook_added_is_high(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "added")
+        )
+        assert level == "high"
+        assert "url" in reason.lower() or "control" in reason.lower()
+
+    def test_webhook_api_version_changed_is_medium(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "modified", "api_version",
+                                new_value="2024-10-28")
+        )
+        assert level == "medium"
+
+    def test_webhook_description_changed_is_low(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_WH, "modified", "description",
+                                new_value="Updated description")
+        )
+        assert level == "low"
+
+    # ── Account settings ─────────────────────────────────────────────────────
+
+    def test_charges_disabled_is_critical_with_payment_impact(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "charges_enabled", new_value=False)
+        )
+        assert level == "critical"
+        lower = reason.lower()
+        assert "payment" in lower or "charge" in lower
+
+    def test_charges_reenabled_is_medium_not_high(self):
+        """Re-enabling charges is a positive change — should be Medium, not High."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "charges_enabled", new_value=True)
+        )
+        assert level == "medium"
+        lower = reason.lower()
+        assert "re-enabled" in lower or "restored" in lower
+
+    def test_payouts_disabled_is_critical(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "payouts_enabled", new_value=False)
+        )
+        assert level == "critical"
+
+    def test_payouts_reenabled_is_medium_not_high(self):
+        """Re-enabling payouts is a positive change — should be Medium, not High."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "payouts_enabled", new_value=True)
+        )
+        assert level == "medium"
+        lower = reason.lower()
+        assert "re-enabled" in lower or "restored" in lower
+
+    def test_payout_schedule_interval_is_high(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "payout_schedule_interval",
+                                new_value="weekly")
+        )
+        assert level == "high"
+        assert "payout" in reason.lower() or "bank" in reason.lower()
+
+    def test_payout_schedule_delay_is_medium(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "payout_schedule_delay_days",
+                                new_value=7)
+        )
+        assert level == "medium"
+
+    def test_branding_color_is_low(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "branding_primary_color",
+                                new_value="#00ff00")
+        )
+        assert level == "low"
+
+    def test_display_name_is_low(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "display_name",
+                                new_value="New Name")
+        )
+        assert level == "low"
+
+    def test_controller_type_changed_is_high(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_ACC, "modified", "controller_type",
+                                new_value="application")
+        )
+        assert level == "high"
+        assert "controller" in reason.lower() or "platform" in reason.lower()
+
+    # ── Payment method configuration ─────────────────────────────────────────
+
+    def test_pm_config_removed_is_high(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMC, "removed")
+        )
+        assert level == "high"
+        assert "configuration" in reason.lower() or "checkout" in reason.lower()
+
+    def test_pm_config_added_is_low(self):
+        """Adding a PM config is a routine/non-urgent change — should be Low."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMC, "added")
+        )
+        assert level == "low"
+
+    def test_pm_config_enabled_payment_methods_changed_is_high(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMC, "modified", "enabled_payment_methods",
+                                new_value=["card"])
+        )
+        assert level == "high"
+        assert "checkout" in reason.lower() or "payment" in reason.lower()
+
+    def test_pm_config_is_default_unset_is_high(self):
+        """is_default going False means the default config changed — High."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMC, "modified", "is_default", new_value=False)
+        )
+        assert level == "high"
+        lower = reason.lower()
+        assert "default" in lower
+        assert "checkout" in lower or "configuration" in lower
+
+    def test_pm_config_is_default_set_is_medium(self):
+        """is_default going True (a config promoted to default) — Medium."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMC, "modified", "is_default", new_value=True)
+        )
+        assert level == "medium"
+        assert "default" in reason.lower()
+
+    def test_pm_config_rename_is_low(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMC, "modified", "config_name",
+                                new_value="My Config v2")
+        )
+        assert level == "low"
+
+    # ── Payment method domain ─────────────────────────────────────────────────
+
+    def test_pm_domain_removed_is_critical(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "removed")
+        )
+        assert level == "critical"
+        lower = reason.lower()
+        assert "apple" in lower or "google" in lower
+
+    def test_pm_domain_disabled_is_high_mentions_apple_google(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "enabled", new_value=False)
+        )
+        assert level == "high"
+        lower = reason.lower()
+        assert "apple" in lower or "google" in lower
+
+    def test_pm_domain_reenabled_is_low(self):
+        """Re-enabling a PM domain is positive — should be Low."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "enabled", new_value=True)
+        )
+        assert level == "low"
+        assert "re-enabled" in reason.lower() or "restored" in reason.lower()
+
+    def test_pm_domain_added_is_high(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "added")
+        )
+        assert level == "high"
+
+    def test_apple_pay_disabled_is_high_with_explanation(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "apple_pay_enabled",
+                                new_value=False)
+        )
+        assert level == "high"
+        assert "apple" in reason.lower()
+        # Should explain the customer-facing impact
+        assert "no longer" in reason.lower() or "unavailable" in reason.lower() or "disabled" in reason.lower()
+
+    def test_apple_pay_enabled_is_medium_not_high(self):
+        """Enabling Apple Pay is a positive change — should be Medium."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "apple_pay_enabled",
+                                new_value=True)
+        )
+        assert level == "medium"
+
+    def test_google_pay_disabled_is_high(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "google_pay_enabled",
+                                new_value=False)
+        )
+        assert level == "high"
+        assert "google" in reason.lower()
+
+    def test_domain_name_changed_is_high(self):
+        """Domain name change affects Apple/Google Pay on the old domain — High."""
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "domain_name",
+                                new_value="new-pay.example.com")
+        )
+        assert level == "high"
+        lower = reason.lower()
+        assert "apple" in lower or "google" in lower or "domain" in lower
+
+    def test_link_disabled_is_medium(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "link_enabled", new_value=False)
+        )
+        assert level == "medium"
+
+    def test_link_enabled_is_low(self):
+        level, reason = classify_stripe_change(
+            _make_stripe_change(_PMD, "modified", "link_enabled", new_value=True)
+        )
+        assert level == "low"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 16. Scheduled sync provider coverage
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestScheduledSyncProviderCoverage:
+    """Regression tests for the scheduled sync provider filter bug.
+
+    Root cause: create_scheduled_syncs_for_active_integrations() filtered
+    providers to ('cloudflare', 'github', 'vercel') only.  Stripe (M35) and
+    AWS (M36/M37) were never included, so their scheduled syncs never fired.
+
+    Fix: the filter now includes all five supported providers.
+    Also: Integration.scheduled_sync_enabled must be True for an integration
+    to be picked up — this respects the user's explicit opt-in.
+    """
+
+    def _make_integration(self, provider: str, scheduled_sync_enabled: bool = True):
+        """Build a MagicMock Integration with relevant attributes."""
+        i = MagicMock()
+        i.provider = provider
+        i.status = "active"
+        i.scheduled_sync_enabled = scheduled_sync_enabled
+        i.sync_interval_minutes = 60
+        i.last_synced_at = None  # Never synced → always due
+        i.id = uuid.uuid4()
+        i.user_id = uuid.uuid4()
+        return i
+
+    def _run_scheduler(self, integrations: list) -> dict:
+        """Call create_scheduled_syncs_for_active_integrations with a mocked DB.
+
+        The scheduler makes two different db.query() calls:
+          1. db.query(Integration).filter(...).all() → returns our integrations list
+          2. db.query(SyncRun.id).filter(...).first() → must return None (no in-flight)
+
+        We use side_effect on db.query() so each call pattern gets the right mock.
+        Without this, db.query() returns a single MagicMock whose .first() is truthy,
+        causing every integration to be flagged as in-flight and skipped.
+        """
+        from app.services.sync_service import create_scheduled_syncs_for_active_integrations
+        from app.models.integration import Integration as _Integration
+
+        def _query_side_effect(model_or_col):
+            q = MagicMock()
+            if model_or_col is _Integration:
+                # Main integration listing query
+                q.filter.return_value.all.return_value = integrations
+            else:
+                # SyncRun.id in-flight check — return None so nothing is in-flight
+                q.filter.return_value.first.return_value = None
+            return q
+
+        db = MagicMock()
+        db.query.side_effect = _query_side_effect
+
+        with patch("app.workers.sync_task.sync_integration") as mock_task:
+            mock_task.delay = MagicMock()
+            with patch("app.services.sync_service.create_sync_run") as mock_create_run:
+                mock_run = MagicMock()
+                mock_run.id = uuid.uuid4()
+                mock_create_run.return_value = mock_run
+                result = create_scheduled_syncs_for_active_integrations(db)
+
+        return result
+
+    def test_stripe_integration_gets_enqueued(self):
+        """Stripe integrations must now be included in scheduled sync."""
+        stripe_int = self._make_integration("stripe")
+        result = self._run_scheduler([stripe_int])
+        assert result["enqueued"] == 1, (
+            "Stripe integration was not enqueued. Root cause: provider filter excluded stripe."
+        )
+
+    def test_aws_integration_gets_enqueued(self):
+        """AWS integrations must now be included in scheduled sync."""
+        aws_int = self._make_integration("aws")
+        result = self._run_scheduler([aws_int])
+        assert result["enqueued"] == 1, (
+            "AWS integration was not enqueued. Root cause: provider filter excluded aws."
+        )
+
+    def test_cloudflare_still_gets_enqueued(self):
+        """Regression: Cloudflare scheduled sync must still work."""
+        cf_int = self._make_integration("cloudflare")
+        result = self._run_scheduler([cf_int])
+        assert result["enqueued"] == 1
+
+    def test_github_still_gets_enqueued(self):
+        """Regression: GitHub scheduled sync must still work."""
+        gh_int = self._make_integration("github")
+        result = self._run_scheduler([gh_int])
+        assert result["enqueued"] == 1
+
+    def test_vercel_still_gets_enqueued(self):
+        """Regression: Vercel scheduled sync must still work."""
+        vc_int = self._make_integration("vercel")
+        result = self._run_scheduler([vc_int])
+        assert result["enqueued"] == 1
+
+    def test_mixed_providers_all_enqueued(self):
+        """All five providers in one batch are all enqueued."""
+        integrations = [
+            self._make_integration("cloudflare"),
+            self._make_integration("github"),
+            self._make_integration("vercel"),
+            self._make_integration("stripe"),
+            self._make_integration("aws"),
+        ]
+        result = self._run_scheduler(integrations)
+        assert result["enqueued"] == 5
+        assert result["integrations_seen"] == 5
+
+    def test_aws_interval_not_elapsed_is_skipped(self):
+        """AWS integration whose interval has not elapsed is correctly skipped."""
+        from datetime import datetime, timedelta, timezone
+
+        aws_int = self._make_integration("aws")
+        # Last synced 30 minutes ago; interval is 60 min → not due
+        aws_int.last_synced_at = datetime.now(timezone.utc) - timedelta(minutes=30)
+        aws_int.sync_interval_minutes = 60
+
+        result = self._run_scheduler([aws_int])
+        assert result["enqueued"] == 0
+        assert result["skipped_not_due"] == 1
+
+    def test_aws_interval_elapsed_is_enqueued(self):
+        """AWS integration whose interval has elapsed is correctly enqueued."""
+        from datetime import datetime, timedelta, timezone
+
+        aws_int = self._make_integration("aws")
+        # Last synced 70 minutes ago; interval is 60 min → due
+        aws_int.last_synced_at = datetime.now(timezone.utc) - timedelta(minutes=70)
+        aws_int.sync_interval_minutes = 60
+
+        result = self._run_scheduler([aws_int])
+        assert result["enqueued"] == 1
+
+    def test_scheduled_sync_disabled_skips_integration(self):
+        """An integration with scheduled_sync_enabled=False must not be returned
+        by the DB query.  We verify the scheduler correctly handles the case where
+        the query only returns enabled integrations.
+
+        Note: the actual DB-level filtering is done by Integration.scheduled_sync_enabled.is_(True)
+        in the SQLAlchemy query.  This test simulates that the DB returns an empty
+        list when only disabled integrations exist."""
+        # DB returns no integrations (all had scheduled_sync_enabled=False)
+        result = self._run_scheduler([])
+        assert result["enqueued"] == 0
+        assert result["integrations_seen"] == 0
+
+    def test_stripe_result_dict_has_all_keys(self):
+        """Result dict must always contain all expected keys."""
+        stripe_int = self._make_integration("stripe")
+        result = self._run_scheduler([stripe_int])
+        assert "integrations_seen" in result
+        assert "enqueued" in result
+        assert "skipped_not_due" in result
+        assert "skipped_in_flight" in result
+        assert "errors" in result

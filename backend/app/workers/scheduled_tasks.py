@@ -9,7 +9,8 @@ What the task does
 1. Opens a SQLAlchemy session.
 2. Calls ``sync_service.create_scheduled_syncs_for_active_integrations(db)``
    which:
-     - lists active Cloudflare integrations
+     - lists active integrations for all supported providers
+       (cloudflare, github, vercel, stripe, aws) where scheduled_sync_enabled=True
      - skips any with an in-flight (pending/running) SyncRun
      - creates a SyncRun with ``triggered_by="scheduled"`` per eligible
        integration

@@ -205,6 +205,10 @@ def _create_github_integration(
     Uniqueness enforcement: a given user cannot connect the same
     ``"{owner}/{repo}"`` twice.  Raises ``ValueError`` with a user-facing
     message on collision.  Different users connecting the same repo is allowed.
+
+    Note: the duplicate check joins with the Integration table to exclude
+    soft-deleted integrations.  A deleted integration's Resource row stays in
+    the DB for historical purposes, but should not block a reconnect.
     """
     from app.connectors.github import GitHubConnector
 
@@ -212,13 +216,17 @@ def _create_github_integration(
     repo_name: str = credentials["repo_name"]
     slug = f"{owner}/{repo_name}"
 
-    # ── 1. Duplicate-repo check (same user, same repo) ────────────────────────
+    # ── 1. Duplicate-repo check (same user, same repo, non-deleted only) ──────
+    # Join with Integration to exclude resources belonging to soft-deleted
+    # integrations — a deleted integration's resource must not block reconnection.
     existing = (
         db.query(Resource)
+        .join(Integration, Integration.id == Resource.integration_id)
         .filter(
             Resource.user_id == user_id,
             Resource.provider_resource_type == "github_repo",
             Resource.provider_resource_id == slug,
+            Integration.status != "deleted",
         )
         .first()
     )
@@ -286,13 +294,15 @@ def _create_vercel_integration(
 
     project_id: str = credentials["vercel_project_id"]
 
-    # ── 1. Duplicate-project check (same user, same project) ─────────────────
+    # ── 1. Duplicate-project check (same user, same project, non-deleted) ───────
     existing = (
         db.query(Resource)
+        .join(Integration, Integration.id == Resource.integration_id)
         .filter(
             Resource.user_id == user_id,
             Resource.provider_resource_type == "vercel_project",
             Resource.provider_resource_id == project_id,
+            Integration.status != "deleted",
         )
         .first()
     )
@@ -374,13 +384,19 @@ def _create_stripe_integration(
     # SECURITY: do not log the API key.
     account_id, is_real_account_id = connector._resolve_account_id(credentials)
 
-    # ── 3. Duplicate-account check (same user, same Stripe account) ──────────
+    # ── 3. Duplicate-account check (same user, same Stripe account, non-deleted) ─
+    # Bug fix (visibility issue): join with Integration to exclude resources
+    # belonging to soft-deleted integrations.  A deleted Stripe integration's
+    # Resource row persists for historical audit, but must NOT block the user
+    # from reconnecting the same Stripe account after deleting the integration.
     existing = (
         db.query(Resource)
+        .join(Integration, Integration.id == Resource.integration_id)
         .filter(
             Resource.user_id == user_id,
             Resource.provider_resource_type == "stripe_account",
             Resource.provider_resource_id == account_id,
+            Integration.status != "deleted",
         )
         .first()
     )
@@ -457,13 +473,15 @@ def _create_aws_integration(
     # SECURITY: do not log the full access key ID.
     account_id = connector.get_account_id(credentials)
 
-    # ── 3. Duplicate-account check ────────────────────────────────────────────
+    # ── 3. Duplicate-account check (non-deleted only) ────────────────────────
     existing = (
         db.query(Resource)
+        .join(Integration, Integration.id == Resource.integration_id)
         .filter(
             Resource.user_id == user_id,
             Resource.provider_resource_type == "aws_account",
             Resource.provider_resource_id == account_id,
+            Integration.status != "deleted",
         )
         .first()
     )
@@ -854,13 +872,15 @@ def create_github_app_integration(
     repo_name: str = credentials["repo_name"]
     slug = f"{owner}/{repo_name}"
 
-    # ── Duplicate-repo check (same user, same repo, any auth method) ──────────
+    # ── Duplicate-repo check (same user, same repo, non-deleted, any auth) ──────
     existing = (
         db.query(Resource)
+        .join(Integration, Integration.id == Resource.integration_id)
         .filter(
             Resource.user_id == user_id,
             Resource.provider_resource_type == "github_repo",
             Resource.provider_resource_id == slug,
+            Integration.status != "deleted",
         )
         .first()
     )

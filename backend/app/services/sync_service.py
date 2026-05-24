@@ -138,8 +138,12 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
 
     Behaviour per integration:
 
-    1. Filter to ``provider in ('cloudflare', 'github')`` and ``status == 'active'``.
-       Paused / deleted / errored integrations are silently skipped.
+    1. Filter to all supported providers (cloudflare, github, vercel, stripe, aws)
+       with ``status == 'active'`` AND ``scheduled_sync_enabled == True``.
+       Paused / deleted integrations are excluded by status.  Integrations
+       whose user explicitly disabled auto-sync (``scheduled_sync_enabled=False``)
+       are excluded by the flag — only status is the pause/resume toggle in the
+       UI, but ``scheduled_sync_enabled`` is the explicit opt-in gate.
     2. Check whether the integration is due using :func:`_is_integration_due`.
        Skips integrations whose ``sync_interval_minutes`` has not elapsed since
        ``last_synced_at``.
@@ -151,6 +155,13 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
        from a request or external source.
     5. Enqueue ``sync_integration`` with the new SyncRun.  Same task, same
        worker, same pipeline as a manual sync.
+
+    Supported providers (M35–M37 update)
+    -------------------------------------
+    Originally this function only covered cloudflare + github (M23), then vercel
+    (M28).  Stripe (M35) and AWS (M36/M37) were added later but the filter was
+    never updated, which silently caused scheduled syncs to never fire for those
+    providers.  All five are now included.
 
     The ``sync_integration.delay`` import is deferred so this module stays
     importable in environments without Redis (e.g. unit tests that mock
@@ -177,13 +188,26 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
 
     now = datetime.now(timezone.utc)
 
+    # All currently-supported providers.  If a new provider is added, extend
+    # this tuple so its integrations are automatically included in scheduling.
+    _SUPPORTED_PROVIDERS = (
+        "cloudflare", "github", "vercel", "stripe", "aws",
+    )
+
     integrations = (
         db.query(Integration)
         .filter(
-            Integration.provider.in_(("cloudflare", "github", "vercel")),
+            Integration.provider.in_(_SUPPORTED_PROVIDERS),
             Integration.status == "active",
+            Integration.scheduled_sync_enabled.is_(True),
         )
         .all()
+    )
+
+    logger.info(
+        "enqueue_scheduled_syncs: scanning providers=%s seen=%d",
+        _SUPPORTED_PROVIDERS,
+        len(integrations),
     )
 
     for integration in integrations:
