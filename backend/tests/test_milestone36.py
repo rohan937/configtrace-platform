@@ -451,9 +451,12 @@ class TestAWSConnectorServiceInventory:
         future = result["future_surfaces"]
         # s3 was promoted to enabled_surfaces in M37 — it must NOT be in future
         assert "s3" not in future
-        assert "iam" in future
         # security_groups was promoted to enabled_surfaces in M38 — no longer future
         assert "security_groups" not in future
+        # iam was promoted to enabled_surfaces in M39 — no longer future
+        assert "iam" not in future
+        # future_surfaces list must still contain remaining planned services
+        assert len(future) > 0
 
     def test_future_surfaces_not_in_diff_tracked_fields(self) -> None:
         """future_surfaces must NOT be in the tracked fields to avoid spurious diffs."""

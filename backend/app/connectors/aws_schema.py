@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -18,6 +18,26 @@ AWS_ROUTE_TABLE = "aws_route_table"
 AWS_INTERNET_GATEWAY = "aws_internet_gateway"
 AWS_NETWORK_ACL = "aws_network_acl"
 
+# ── M39 record types — IAM Identity, Permissions, Policy and Trust Risk ───────
+# One per AWS account — aggregate account-level IAM posture.
+AWS_IAM_ACCOUNT_SUMMARY = "aws_iam_account_summary"
+# One per IAM user — identity, MFA, access key counts, group/policy membership.
+AWS_IAM_USER = "aws_iam_user"
+# One per IAM access key — metadata only; secret key is NEVER stored.
+AWS_IAM_ACCESS_KEY = "aws_iam_access_key"
+# One per IAM group — members, attached and inline policies.
+AWS_IAM_GROUP = "aws_iam_group"
+# One per IAM role — trust summary, attached and inline policies.
+AWS_IAM_ROLE = "aws_iam_role"
+# One per customer-managed IAM policy — default-version policy summary.
+AWS_IAM_POLICY = "aws_iam_policy"
+# One per principal-to-managed-policy attachment (user, group, or role).
+AWS_IAM_POLICY_ATTACHMENT = "aws_iam_policy_attachment"
+# One per inline policy per principal (user, group, or role).
+AWS_IAM_INLINE_POLICY = "aws_iam_inline_policy"
+# One per OIDC or SAML identity provider registered in the account.
+AWS_IAM_IDENTITY_PROVIDER = "aws_iam_identity_provider"
+
 AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_ACCOUNT_IDENTITY,
     AWS_REGION,
@@ -32,4 +52,14 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_ROUTE_TABLE,
     AWS_INTERNET_GATEWAY,
     AWS_NETWORK_ACL,
+    # M39
+    AWS_IAM_ACCOUNT_SUMMARY,
+    AWS_IAM_USER,
+    AWS_IAM_ACCESS_KEY,
+    AWS_IAM_GROUP,
+    AWS_IAM_ROLE,
+    AWS_IAM_POLICY,
+    AWS_IAM_POLICY_ATTACHMENT,
+    AWS_IAM_INLINE_POLICY,
+    AWS_IAM_IDENTITY_PROVIDER,
 })

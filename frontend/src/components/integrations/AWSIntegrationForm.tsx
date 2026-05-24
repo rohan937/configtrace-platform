@@ -326,6 +326,43 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* IAM — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              IAM monitoring — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:GetAccountSummary &nbsp;○ iam:GetAccountPasswordPolicy
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:ListUsers &nbsp;○ iam:GetUser &nbsp;○ iam:ListAccessKeys &nbsp;○ iam:GetAccessKeyLastUsed
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:ListMFADevices &nbsp;○ iam:ListUserPolicies &nbsp;○ iam:GetUserPolicy &nbsp;○ iam:ListAttachedUserPolicies
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:ListGroups &nbsp;○ iam:GetGroup &nbsp;○ iam:ListGroupPolicies &nbsp;○ iam:GetGroupPolicy &nbsp;○ iam:ListAttachedGroupPolicies
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:ListRoles &nbsp;○ iam:GetRole &nbsp;○ iam:ListRolePolicies &nbsp;○ iam:GetRolePolicy &nbsp;○ iam:ListAttachedRolePolicies
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:ListPolicies &nbsp;○ iam:GetPolicy &nbsp;○ iam:GetPolicyVersion &nbsp;○ iam:ListPolicyVersions
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:ListOpenIDConnectProviders &nbsp;○ iam:GetOpenIDConnectProvider
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ iam:ListSAMLProviders &nbsp;○ iam:GetSAMLProvider
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.

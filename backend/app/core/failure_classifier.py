@@ -47,6 +47,12 @@ AWS EC2/VPC (partial/per-API failures, via classify_aws_ec2_failure):
   aws_security_groups_unavailable, aws_security_group_rules_unavailable
   aws_vpc_unavailable, aws_subnets_unavailable, aws_route_tables_unavailable
   aws_internet_gateways_unavailable, aws_network_acls_unavailable
+AWS IAM (partial/per-API failures, via classify_aws_iam_failure):
+  aws_iam_access_denied, aws_iam_rate_limited, aws_iam_api_unavailable
+  aws_iam_users_unavailable, aws_iam_roles_unavailable, aws_iam_groups_unavailable
+  aws_iam_policies_unavailable, aws_iam_policy_versions_unavailable
+  aws_iam_inline_policies_unavailable, aws_iam_access_keys_unavailable
+  aws_iam_mfa_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -521,4 +527,135 @@ def classify_aws_ec2_failure(
         category="provider_unavailable",
         error_code=error_code,
         recommended_action=_EC2_PARTIAL_ACTION,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AWS IAM partial-failure classification — M39
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Maps IAM API name to the stable error_code produced when that API fails for
+# a reason other than auth, rate-limiting, or a transient 5xx.
+_AWS_IAM_API_CODE: dict[str, str] = {
+    "ListUsers":                "aws_iam_users_unavailable",
+    "GetUser":                  "aws_iam_users_unavailable",
+    "ListRoles":                "aws_iam_roles_unavailable",
+    "GetRole":                  "aws_iam_roles_unavailable",
+    "ListGroups":               "aws_iam_groups_unavailable",
+    "GetGroup":                 "aws_iam_groups_unavailable",
+    "ListPolicies":             "aws_iam_policies_unavailable",
+    "GetPolicy":                "aws_iam_policies_unavailable",
+    "GetPolicyVersion":         "aws_iam_policy_versions_unavailable",
+    "ListPolicyVersions":       "aws_iam_policy_versions_unavailable",
+    "GetRolePolicy":            "aws_iam_inline_policies_unavailable",
+    "GetUserPolicy":            "aws_iam_inline_policies_unavailable",
+    "GetGroupPolicy":           "aws_iam_inline_policies_unavailable",
+    "ListRolePolicies":         "aws_iam_inline_policies_unavailable",
+    "ListUserPolicies":         "aws_iam_inline_policies_unavailable",
+    "ListGroupPolicies":        "aws_iam_inline_policies_unavailable",
+    "ListAccessKeys":           "aws_iam_access_keys_unavailable",
+    "GetAccessKeyLastUsed":     "aws_iam_access_keys_unavailable",
+    "ListMFADevices":           "aws_iam_mfa_unavailable",
+    "GetAccountSummary":        "aws_iam_api_unavailable",
+    "GetAccountPasswordPolicy": "aws_iam_api_unavailable",
+    "ListAttachedUserPolicies": "aws_iam_users_unavailable",
+    "ListAttachedRolePolicies": "aws_iam_roles_unavailable",
+    "ListAttachedGroupPolicies": "aws_iam_groups_unavailable",
+    "ListOpenIDConnectProviders": "aws_iam_api_unavailable",
+    "GetOpenIDConnectProvider": "aws_iam_api_unavailable",
+    "ListSAMLProviders":        "aws_iam_api_unavailable",
+    "GetSAMLProvider":          "aws_iam_api_unavailable",
+}
+
+# Recommended action returned for all per-API IAM unavailability codes.
+_IAM_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional IAM metadata; "
+    "other AWS checks may still work."
+)
+
+# Recommended action returned for IAM access-denied errors.
+_IAM_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace read-only IAM permissions. "
+    "Required for IAM monitoring: iam:ListUsers, iam:ListRoles, iam:ListGroups, "
+    "iam:ListPolicies, iam:GetAccountSummary, iam:GetAccountPasswordPolicy. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_iam_failure(
+    api_name: str,
+    exc: Exception,
+) -> FailureClassification:
+    """Classify a partial IAM sync failure (per-API).
+
+    Unlike :func:`classify_failure` (which classifies whole-integration
+    failures), this function is used when an individual IAM API call
+    fails inside ``_fetch_iam_resources``.  The overall sync continues;
+    the result is logged as a structured warning.
+
+    Args:
+        api_name: The IAM API name that failed (e.g. ``"ListUsers"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code`` and a
+        human-readable ``recommended_action``.  Credentials are never included
+        in the returned strings.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    # ── 403 / credentials rejected ────────────────────────────────────────────
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_iam_access_denied",
+            recommended_action=_IAM_ACCESS_DENIED_ACTION,
+        )
+
+    # ── Rate limiting ─────────────────────────────────────────────────────────
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_iam_rate_limited",
+            recommended_action=(
+                "AWS throttled IAM API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    # ── Network error ─────────────────────────────────────────────────────────
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented IAM API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    # ── 5xx: IAM API temporarily unavailable ──────────────────────────────────
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_iam_api_unavailable",
+            recommended_action=(
+                "The IAM API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    # ── Per-API codes for unexpected/generic failures ─────────────────────────
+    error_code = _AWS_IAM_API_CODE.get(api_name, "aws_iam_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_IAM_PARTIAL_ACTION,
     )

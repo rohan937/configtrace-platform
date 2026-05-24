@@ -99,7 +99,7 @@ from app.connectors.exceptions import (
     NetworkError,
     RateLimitError,
 )
-from app.core.failure_classifier import classify_aws_ec2_failure
+from app.core.failure_classifier import classify_aws_ec2_failure, classify_aws_iam_failure
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
     AWS_REGION,
@@ -112,6 +112,15 @@ from app.connectors.aws_schema import (
     AWS_ROUTE_TABLE,
     AWS_INTERNET_GATEWAY,
     AWS_NETWORK_ACL,
+    AWS_IAM_ACCOUNT_SUMMARY,
+    AWS_IAM_USER,
+    AWS_IAM_ACCESS_KEY,
+    AWS_IAM_GROUP,
+    AWS_IAM_ROLE,
+    AWS_IAM_POLICY,
+    AWS_IAM_POLICY_ATTACHMENT,
+    AWS_IAM_INLINE_POLICY,
+    AWS_IAM_IDENTITY_PROVIDER,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,6 +350,327 @@ def _parse_partition(arn: str) -> str:
     return parts[1] if len(parts) >= 2 else "aws"
 
 
+# ── M39: IAM policy and trust analysis helpers ────────────────────────────────
+
+# Services whose actions in a policy are considered sensitive for privilege
+# escalation or data access risk assessment.
+_IAM_SENSITIVE_SERVICES: frozenset[str] = frozenset({
+    "iam", "sts", "s3", "ec2", "lambda", "cloudformation",
+    "secretsmanager", "ssm", "kms", "organizations",
+})
+
+# IAM write action prefixes indicating privilege escalation risk.
+# Only checked against "iam:" actions.
+_IAM_WRITE_PREFIXES: frozenset[str] = frozenset({
+    "create", "update", "delete", "put", "attach", "detach",
+    "set", "add", "remove", "tag", "untag", "upload",
+})
+
+# Privilege escalation action patterns (lower-case action suffixes for iam:)
+_PRIV_ESC_IAM_ACTIONS: frozenset[str] = frozenset({
+    "createpolicy", "createpolicyversion", "setdefaultpolicyversion",
+    "createrole", "updateassumerolepolicy",
+    "attachrolepolicy", "attachuserpolicy", "attachgrouppolicy",
+    "putrolepolicy", "putuserpolicy", "putgrouppolicy",
+    "addusertogroup", "createloginprofile", "updateloginprofile",
+    "createvirtualmfadevice", "enablemfadevice",
+    "passrole",
+})
+
+
+def _analyze_policy_document(policy_json: str, account_id: str) -> dict:
+    """Analyze an IAM policy document and return a safe summary.
+
+    SECURITY: policy_json is parsed in memory only; it is NEVER stored or
+    returned. Only the derived summary fields are returned.
+
+    Args:
+        policy_json: JSON string of the IAM policy document.
+        account_id:  AWS account ID used to detect cross-account trust.
+
+    Returns:
+        A dict with safe summary fields — see inline comments for semantics.
+    """
+    import json
+    import hashlib
+
+    # Canonical hash of the raw document for change tracking (not the doc itself)
+    doc_hash = hashlib.sha256(policy_json.encode("utf-8")).hexdigest()[:16]
+
+    try:
+        policy = json.loads(policy_json)
+    except (json.JSONDecodeError, ValueError):
+        return {
+            "statement_count": 0,
+            "action_count": 0,
+            "resource_count": 0,
+            "has_wildcard_action": False,
+            "has_wildcard_resource": False,
+            "has_not_action": False,
+            "has_not_resource": False,
+            "admin_access": False,
+            "iam_write_actions": False,
+            "sts_assume_role_actions": False,
+            "pass_role_present": False,
+            "privilege_escalation_actions": False,
+            "sensitive_services_touched": [],
+            "finding_codes": ["parse_error"],
+            "policy_document_hash": doc_hash,
+        }
+
+    statements = policy.get("Statement", [])
+    if not isinstance(statements, list):
+        statements = [statements]
+
+    action_set: set[str] = set()
+    resource_set: set[str] = set()
+    has_wildcard_action = False
+    has_wildcard_resource = False
+    has_not_action = False
+    has_not_resource = False
+
+    for stmt in statements:
+        if not isinstance(stmt, dict):
+            continue
+        # Only Allow statements grant permissions.  Deny statements restrict
+        # access and must NOT contribute to grant-based findings such as
+        # admin_access, iam_write_actions, sts_assume_role, pass_role, or
+        # privilege_escalation_actions.  Counting Deny actions as grants would
+        # produce false-positive findings (e.g. a policy that Denies iam:*
+        # would incorrectly be flagged for iam_write_access).
+        if stmt.get("Effect", "Allow").upper() != "ALLOW":
+            continue
+        # NotAction / NotResource in Allow statements are unusual and deserve
+        # flagging — they grant everything *except* the listed actions/resources.
+        if "NotAction" in stmt:
+            has_not_action = True
+        if "NotResource" in stmt:
+            has_not_resource = True
+        # Actions
+        actions = stmt.get("Action") or stmt.get("NotAction") or []
+        if isinstance(actions, str):
+            actions = [actions]
+        for a in actions:
+            if isinstance(a, str):
+                action_set.add(a.lower())
+                if a == "*":
+                    has_wildcard_action = True
+        # Resources
+        resources = stmt.get("Resource") or stmt.get("NotResource") or []
+        if isinstance(resources, str):
+            resources = [resources]
+        for r in resources:
+            if isinstance(r, str):
+                resource_set.add(r)
+                if r == "*":
+                    has_wildcard_resource = True
+
+    # Derive risk signals from collected actions
+    admin_access = (
+        has_wildcard_action and has_wildcard_resource
+    ) or ("*" in action_set and "*" in resource_set)
+
+    iam_write_actions = any(
+        a.startswith("iam:") and any(a[4:].startswith(p) for p in _IAM_WRITE_PREFIXES)
+        for a in action_set
+    ) or ("iam:*" in action_set)
+
+    sts_assume_role = any(
+        a in ("sts:assumerole", "sts:assumerolewithaml", "sts:assumerolewithwebidentity", "sts:*")
+        for a in action_set
+    )
+
+    pass_role = any(a in ("iam:passrole", "iam:*") for a in action_set)
+
+    privilege_escalation = any(
+        a in {f"iam:{x}" for x in _PRIV_ESC_IAM_ACTIONS}
+        for a in action_set
+    ) or iam_write_actions
+
+    sensitive_services: list[str] = sorted({
+        a.split(":")[0]
+        for a in action_set
+        if ":" in a and a.split(":")[0] in _IAM_SENSITIVE_SERVICES
+    })
+
+    # Build finding codes (stable, machine-readable)
+    finding_codes: list[str] = []
+    if admin_access:
+        finding_codes.append("admin_access")
+    if has_wildcard_action and not admin_access:
+        finding_codes.append("wildcard_action")
+    if has_wildcard_resource and not admin_access:
+        finding_codes.append("wildcard_resource")
+    if has_not_action:
+        finding_codes.append("not_action")
+    if has_not_resource:
+        finding_codes.append("not_resource")
+    if iam_write_actions:
+        finding_codes.append("iam_write_access")
+    if sts_assume_role:
+        finding_codes.append("sts_assume_role")
+    if pass_role:
+        finding_codes.append("pass_role")
+    if privilege_escalation and not admin_access:
+        finding_codes.append("privilege_escalation_risk")
+
+    return {
+        "statement_count":              len(statements),
+        "action_count":                 len(action_set),
+        "resource_count":               len(resource_set),
+        "has_wildcard_action":          has_wildcard_action,
+        "has_wildcard_resource":        has_wildcard_resource,
+        "has_not_action":               has_not_action,
+        "has_not_resource":             has_not_resource,
+        "admin_access":                 admin_access,
+        "iam_write_actions":            iam_write_actions,
+        "sts_assume_role_actions":      sts_assume_role,
+        "pass_role_present":            pass_role,
+        "privilege_escalation_actions": privilege_escalation,
+        "sensitive_services_touched":   sensitive_services,
+        "finding_codes":                finding_codes,
+        "policy_document_hash":         doc_hash,
+    }
+
+
+def _analyze_trust_policy(trust_policy_dict: dict, account_id: str) -> dict:
+    """Analyze a role's trust policy (AssumeRolePolicyDocument) safely.
+
+    SECURITY: The trust policy dict is analyzed in memory only; it is NEVER
+    stored or returned. Only the derived trust_summary fields are returned.
+
+    Args:
+        trust_policy_dict: Parsed trust policy dict (from GetRole response).
+        account_id:        AWS account ID to detect external-account trust.
+
+    Returns:
+        A dict with safe trust summary fields.
+    """
+    statements = trust_policy_dict.get("Statement", [])
+    if not isinstance(statements, list):
+        statements = [statements]
+
+    principal_types: set[str] = set()
+    aws_account_ids: set[str] = set()
+    service_principals: set[str] = set()
+    federated_count = 0
+    has_wildcard_principal = False
+    has_external_account = False
+    has_root_account = False
+    has_oidc_trust = False
+    has_saml_trust = False
+    has_external_id_condition = False
+    has_mfa_condition = False
+    condition_keys: set[str] = set()
+
+    for stmt in statements:
+        if not isinstance(stmt, dict):
+            continue
+        principal = stmt.get("Principal")
+        if principal == "*":
+            has_wildcard_principal = True
+            principal_types.add("*")
+        elif isinstance(principal, dict):
+            # AWS principals
+            aws_p = principal.get("AWS", [])
+            if isinstance(aws_p, str):
+                aws_p = [aws_p]
+            for p in (aws_p if isinstance(aws_p, list) else []):
+                if isinstance(p, str):
+                    principal_types.add("AWS")
+                    if p == "*":
+                        has_wildcard_principal = True
+                    elif ":root" in p:
+                        has_root_account = True
+                        # Extract account ID from root ARN
+                        parts = p.split(":")
+                        if len(parts) >= 5:
+                            acct = parts[4]
+                            if acct and acct != account_id:
+                                has_external_account = True
+                            aws_account_ids.add(acct)
+                    else:
+                        # Extract account ID from ARN
+                        parts = p.split(":")
+                        if len(parts) >= 5:
+                            acct = parts[4]
+                            if acct:
+                                aws_account_ids.add(acct)
+                                if acct != account_id:
+                                    has_external_account = True
+            # Service principals
+            svc_p = principal.get("Service", [])
+            if isinstance(svc_p, str):
+                svc_p = [svc_p]
+            for p in (svc_p if isinstance(svc_p, list) else []):
+                if isinstance(p, str):
+                    principal_types.add("Service")
+                    service_principals.add(p)
+            # Federated principals (OIDC/SAML)
+            fed_p = principal.get("Federated", [])
+            if isinstance(fed_p, str):
+                fed_p = [fed_p]
+            for p in (fed_p if isinstance(fed_p, list) else []):
+                if isinstance(p, str):
+                    principal_types.add("Federated")
+                    federated_count += 1
+                    if "oidc-provider" in p or "cognito-identity" in p:
+                        has_oidc_trust = True
+                    elif "saml-provider" in p:
+                        has_saml_trust = True
+        # Conditions
+        conditions = stmt.get("Condition") or {}
+        if isinstance(conditions, dict):
+            for op, cond_map in conditions.items():
+                if isinstance(cond_map, dict):
+                    for key in cond_map:
+                        condition_keys.add(key)
+                        k_lower = key.lower()
+                        if "externalid" in k_lower or "external-id" in k_lower:
+                            has_external_id_condition = True
+                        if "mfa" in k_lower or "multifactor" in k_lower:
+                            has_mfa_condition = True
+
+    return {
+        "principal_types":          sorted(principal_types),
+        "aws_principal_account_ids": sorted(aws_account_ids),
+        "service_principals":       sorted(service_principals),
+        "federated_principal_count": federated_count,
+        "has_wildcard_principal":   has_wildcard_principal,
+        "has_external_account_trust": has_external_account,
+        "has_root_account_trust":   has_root_account,
+        "has_oidc_trust":           has_oidc_trust,
+        "has_saml_trust":           has_saml_trust,
+        "has_external_id_condition": has_external_id_condition,
+        "has_mfa_condition":        has_mfa_condition,
+        "condition_keys":           sorted(condition_keys),
+    }
+
+
+def _stable_iam_attachment_id(
+    principal_type: str, principal_id: str, policy_arn: str
+) -> str:
+    """Return a stable 16-hex record_id for a principal↔policy attachment."""
+    import hashlib
+    parts = f"{principal_type}|{principal_id}|{policy_arn}"
+    return hashlib.sha256(parts.encode()).hexdigest()[:16]
+
+
+def _stable_iam_inline_id(
+    principal_type: str, principal_id: str, policy_name: str
+) -> str:
+    """Return a stable 16-hex record_id for an inline policy on a principal."""
+    import hashlib
+    parts = f"{principal_type}|{principal_id}|{policy_name}"
+    return hashlib.sha256(parts.encode()).hexdigest()[:16]
+
+
+def _stable_iam_idp_id(arn: str) -> str:
+    """Return a stable 16-hex record_id for an OIDC/SAML identity provider."""
+    import hashlib
+    return hashlib.sha256(arn.encode()).hexdigest()[:16]
+
+
 class AWSConnector(BaseConnector):
     """Read-only AWS connector for account/inventory metadata — M36.
 
@@ -505,7 +835,7 @@ class AWSConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict) -> list[dict]:
-        """Fetch all AWS account/inventory, S3, and network records.
+        """Fetch all AWS account/inventory, S3, network, and IAM records.
 
         Returns a flat list of normalized records:
         - 1 × aws_account_identity  (M36)
@@ -513,16 +843,23 @@ class AWSConnector(BaseConnector):
         - M × aws_s3_bucket         (M37, one per visible S3 bucket)
         - P × aws_security_group    (M38, one per SG per selected region)
         - Q × aws_security_group_rule (M38, one per flattened rule)
-        - R × aws_vpc               (M38, one per VPC per selected region)
-        - S × aws_subnet / aws_route_table / aws_internet_gateway / aws_network_acl
+        - R × aws_vpc / aws_subnet / aws_route_table / aws_internet_gateway / aws_network_acl
+        - 1 × aws_iam_account_summary (M39)
+        - U × aws_iam_user          (M39, one per IAM user)
+        - V × aws_iam_access_key    (M39, one per access key)
+        - W × aws_iam_group         (M39, one per IAM group)
+        - X × aws_iam_role          (M39, one per IAM role)
+        - Y × aws_iam_policy        (M39, one per customer-managed policy)
+        - Z × aws_iam_policy_attachment (M39, one per principal↔policy link)
+        - ZZ × aws_iam_inline_policy (M39, one per inline policy per principal)
+        - ZZZ × aws_iam_identity_provider (M39, OIDC/SAML providers)
         - 1 × aws_service_inventory (last — reflects all active surfaces)
 
         All resources use fail-soft behavior for optional endpoints.
-        The account identity is the only required call — a 403 on account
-        identity propagates as AuthenticationError.
+        The account identity is the only required call.
 
         SECURITY: Credentials are never included in returned records.
-                  S3 object contents and keys are never fetched.
+                  Raw policy documents are NEVER stored.
                   No write operations are performed.  No resource mutations.
         """
         logger.info(
@@ -549,8 +886,6 @@ class AWSConnector(BaseConnector):
         )
 
         # 3. S3 buckets (optional — fails soft on 403)
-        # SECURITY: credentials are passed to _make_client only; never stored
-        # in records. Object contents and keys are never fetched.
         s3_records = self._fetch_s3_buckets(credentials)
         records.extend(s3_records)
         logger.info(
@@ -559,8 +894,6 @@ class AWSConnector(BaseConnector):
         )
 
         # 4. Network resources — security groups, VPCs, route tables, etc. (M38)
-        # Fail-soft: if the account has no EC2 permissions, returns empty list.
-        # Per-region and per-API-call failures are also soft.
         network_records = self._fetch_network_resources(credentials)
         records.extend(network_records)
         logger.info(
@@ -568,7 +901,18 @@ class AWSConnector(BaseConnector):
             len(network_records),
         )
 
-        # 5. Service inventory (always last — reflects all active surfaces)
+        # 5. IAM resources — users, groups, roles, policies, providers (M39)
+        # IAM is global; all data fetched once per account.
+        # Fail-soft: if IAM permissions are absent, returns empty list.
+        account_id: str = account_record.get("account_id", "")
+        iam_records = self._fetch_iam_resources(credentials, account_id)
+        records.extend(iam_records)
+        logger.info(
+            "AWSConnector.fetch: iam_resources fetched  count=%d",
+            len(iam_records),
+        )
+
+        # 6. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
             if r.get("record_type") == AWS_SECURITY_GROUP
@@ -577,11 +921,21 @@ class AWSConnector(BaseConnector):
             1 for r in network_records
             if r.get("record_type") == AWS_VPC
         )
+        iam_user_count = sum(
+            1 for r in iam_records
+            if r.get("record_type") == AWS_IAM_USER
+        )
+        iam_role_count = sum(
+            1 for r in iam_records
+            if r.get("record_type") == AWS_IAM_ROLE
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
             security_group_count=sg_count,
             vpc_count=vpc_count,
+            iam_user_count=iam_user_count,
+            iam_role_count=iam_role_count,
         )
         records.append(inventory_record)
 
@@ -683,31 +1037,24 @@ class AWSConnector(BaseConnector):
         s3_count: int = 0,
         security_group_count: int = 0,
         vpc_count: int = 0,
+        iam_user_count: int = 0,
+        iam_role_count: int = 0,
     ) -> dict:
-        """Return a service inventory record reflecting active monitored surfaces.
-
-        Records which surfaces are actively monitored and which are planned for
-        future milestones.  This record allows diff tracking to detect when the
-        set of active surfaces or selected regions changes.
-
-        Args:
-            credentials:           AWS credentials (used only for region extraction).
-            s3_count:              Number of S3 bucket records fetched this sync.
-            security_group_count:  Number of security group records fetched (M38).
-            vpc_count:             Number of VPC records fetched (M38).
-        """
+        """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
         return {
             "record_type":           AWS_SERVICE_INVENTORY,
             "record_id":             "service_inventory",
             "name":                  "AWS Service Inventory",
             "selected_regions":      selected,
-            "enabled_surfaces":      ["account_inventory", "s3", "security_groups", "vpc"],
+            "enabled_surfaces":      ["account_inventory", "s3", "security_groups", "vpc", "iam"],
             "s3_bucket_count":       s3_count,
             "security_group_count":  security_group_count,
             "vpc_count":             vpc_count,
+            "iam_user_count":        iam_user_count,
+            "iam_role_count":        iam_role_count,
             "future_surfaces": [
-                "iam", "route53", "cloudfront",
+                "route53", "cloudfront",
                 "secrets", "rds", "lambda", "api_gateway", "load_balancers",
                 "waf", "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
@@ -1825,4 +2172,959 @@ class AWSConnector(BaseConnector):
                 "rule_count":              len(entries),
                 "tag_keys":                _extract_tag_keys(acl.get("Tags") or []),
             })
+        return records
+
+    # ── IAM fetch methods (M39) ───────────────────────────────────────────────
+
+    def _paginate_iam(self, method: Any, result_key: str, **kwargs: Any) -> list:
+        """Paginate an IAM API call using IsTruncated/Marker style.
+
+        IAM uses a different pagination style from EC2/S3 (IsTruncated + Marker
+        instead of NextToken). This helper wraps the pattern so sub-methods
+        stay clean.
+
+        Args:
+            method:     The boto3 IAM client method to call (e.g. client.list_users).
+            result_key: The key in the response dict that contains the result list.
+            **kwargs:   Additional keyword arguments forwarded to the method.
+
+        Returns:
+            A flat list of all items across all pages.
+        """
+        results: list = []
+        while True:
+            response = self._call_aws(method, **kwargs)
+            results.extend(response.get(result_key) or [])
+            if not response.get("IsTruncated"):
+                break
+            kwargs["Marker"] = response["Marker"]
+        return results
+
+    def _fetch_iam_resources(self, credentials: dict, account_id: str) -> list[dict]:
+        """Fetch all IAM resources for the account. Fail-soft on 403.
+
+        IAM is a global service — data is fetched once per account using a
+        single client pointed at us-east-1. No per-region iteration needed.
+
+        Returns a flat list of IAM records:
+        - 0 or 1  × aws_iam_account_summary
+        - 0 or N  × aws_iam_user
+        - 0 or N  × aws_iam_access_key
+        - 0 or N  × aws_iam_group
+        - 0 or N  × aws_iam_role
+        - 0 or N  × aws_iam_policy
+        - 0 or N  × aws_iam_policy_attachment
+        - 0 or N  × aws_iam_inline_policy
+        - 0 or N  × aws_iam_identity_provider
+
+        SECURITY: Raw policy documents are NEVER stored. Credentials are never
+        placed in returned records. No write operations are performed.
+        """
+        # IAM is global — always use us-east-1 as the signing region.
+        try:
+            client = self._make_client("iam", credentials, region="us-east-1")
+        except Exception:
+            logger.warning(
+                "aws: failed to create IAM client — skipping IAM monitoring",
+                exc_info=True,
+            )
+            return []
+
+        records: list[dict] = []
+        config_fetch_warnings: list[str] = []
+
+        # ── Account summary + password policy ────────────────────────────────
+        try:
+            summary_record = self._fetch_iam_account_summary(client, account_id)
+            if summary_record:
+                records.append(summary_record)
+        except Exception as exc:
+            fc = classify_aws_iam_failure("GetAccountSummary", exc)
+            logger.warning(
+                "aws: IAM account summary unavailable  error_code=%s",
+                fc.error_code,
+            )
+            config_fetch_warnings.append("iam_account_summary_error")
+
+        # ── Users (with access keys, MFA, policies) ──────────────────────────
+        user_records: list[dict] = []
+        key_records: list[dict] = []
+        user_attachments: list[dict] = []
+        user_inlines: list[dict] = []
+        try:
+            user_records, key_records, user_attachments, user_inlines = (
+                self._fetch_iam_users(client, account_id)
+            )
+            records.extend(user_records)
+            records.extend(key_records)
+        except Exception as exc:
+            fc = classify_aws_iam_failure("ListUsers", exc)
+            logger.warning(
+                "aws: IAM users unavailable  error_code=%s",
+                fc.error_code,
+            )
+            config_fetch_warnings.append("iam_users_error")
+
+        # ── Groups (with members, policies) ──────────────────────────────────
+        group_records: list[dict] = []
+        group_attachments: list[dict] = []
+        group_inlines: list[dict] = []
+        try:
+            group_records, group_attachments, group_inlines = (
+                self._fetch_iam_groups(client, account_id)
+            )
+            records.extend(group_records)
+        except Exception as exc:
+            fc = classify_aws_iam_failure("ListGroups", exc)
+            logger.warning(
+                "aws: IAM groups unavailable  error_code=%s",
+                fc.error_code,
+            )
+            config_fetch_warnings.append("iam_groups_error")
+
+        # ── Roles (with trust policy, attached/inline policies) ───────────────
+        role_records: list[dict] = []
+        role_attachments: list[dict] = []
+        role_inlines: list[dict] = []
+        try:
+            role_records, role_attachments, role_inlines = (
+                self._fetch_iam_roles(client, account_id)
+            )
+            records.extend(role_records)
+        except Exception as exc:
+            fc = classify_aws_iam_failure("ListRoles", exc)
+            logger.warning(
+                "aws: IAM roles unavailable  error_code=%s",
+                fc.error_code,
+            )
+            config_fetch_warnings.append("iam_roles_error")
+
+        # ── Customer-managed policies ─────────────────────────────────────────
+        try:
+            policy_records = self._fetch_iam_policies(client, account_id)
+            records.extend(policy_records)
+        except Exception as exc:
+            fc = classify_aws_iam_failure("ListPolicies", exc)
+            logger.warning(
+                "aws: IAM policies unavailable  error_code=%s",
+                fc.error_code,
+            )
+            config_fetch_warnings.append("iam_policies_error")
+
+        # ── Policy attachments (gathered from user/group/role fetch) ──────────
+        all_attachments = user_attachments + group_attachments + role_attachments
+        records.extend(all_attachments)
+
+        # ── Inline policies (gathered from user/group/role fetch) ─────────────
+        all_inlines = user_inlines + group_inlines + role_inlines
+        records.extend(all_inlines)
+
+        # ── OIDC / SAML identity providers ───────────────────────────────────
+        try:
+            idp_records = self._fetch_iam_identity_providers(client, account_id)
+            records.extend(idp_records)
+        except Exception as exc:
+            fc = classify_aws_iam_failure("ListOpenIDConnectProviders", exc)
+            logger.warning(
+                "aws: IAM identity providers unavailable  error_code=%s",
+                fc.error_code,
+            )
+            config_fetch_warnings.append("iam_idp_error")
+
+        if config_fetch_warnings:
+            logger.info(
+                "aws: IAM fetch completed with warnings  warnings=%s",
+                config_fetch_warnings,
+            )
+
+        logger.debug(
+            "aws._fetch_iam_resources: fetched %d IAM record(s)  "
+            "users=%d keys=%d groups=%d roles=%d attachments=%d inlines=%d",
+            len(records),
+            len(user_records),
+            len(key_records),
+            len(group_records),
+            len(role_records),
+            len(all_attachments),
+            len(all_inlines),
+        )
+        return records
+
+    def _fetch_iam_account_summary(self, client: Any, account_id: str) -> dict | None:
+        """Fetch IAM account summary and password policy.
+
+        Calls GetAccountSummary and GetAccountPasswordPolicy and combines them
+        into a single aws_iam_account_summary record.
+
+        Returns None if both calls fail (already logged by caller).
+        """
+        # ── Account summary ───────────────────────────────────────────────────
+        try:
+            summary_resp = self._call_aws(client.get_account_summary)
+            summary_map: dict = summary_resp.get("SummaryMap") or {}
+        except Exception as exc:
+            fc = classify_aws_iam_failure("GetAccountSummary", exc)
+            logger.warning(
+                "aws: GetAccountSummary failed  error_code=%s",
+                fc.error_code,
+            )
+            summary_map = {}
+
+        user_count    = summary_map.get("Users", 0)
+        group_count   = summary_map.get("Groups", 0)
+        role_count    = summary_map.get("Roles", 0)
+        policy_count  = summary_map.get("Policies", 0)
+        # AccountMFAEnabled: 0 or 1
+        mfa_root      = summary_map.get("AccountMFAEnabled", 0) == 1
+        # AccountAccessKeysPresent: 0 or 1
+        root_keys     = summary_map.get("AccountAccessKeysPresent", 0) >= 1
+
+        # ── Password policy ───────────────────────────────────────────────────
+        password_policy_present = False
+        pw_min_length: int | None = None
+        pw_req_symbols: bool | None = None
+        pw_req_numbers: bool | None = None
+        pw_req_upper: bool | None = None
+        pw_req_lower: bool | None = None
+        pw_max_age: int | None = None
+        pw_reuse: int | None = None
+        pw_hard_expiry: bool | None = None
+
+        try:
+            pp_resp = self._call_aws(client.get_account_password_policy)
+            pp = pp_resp.get("PasswordPolicy") or {}
+            if pp:
+                password_policy_present = True
+                pw_min_length  = pp.get("MinimumPasswordLength")
+                pw_req_symbols = pp.get("RequireSymbols")
+                pw_req_numbers = pp.get("RequireNumbers")
+                pw_req_upper   = pp.get("RequireUppercaseCharacters")
+                pw_req_lower   = pp.get("RequireLowercaseCharacters")
+                pw_max_age     = pp.get("MaxPasswordAge")
+                pw_reuse       = pp.get("PasswordReusePrevention")
+                pw_hard_expiry = pp.get("HardExpiry")
+        except Exception as exc:
+            # NoSuchEntity (404) means no policy — that is a valid state.
+            try:
+                import botocore.exceptions as _bce
+                if isinstance(exc.__cause__, _bce.ClientError):
+                    code = exc.__cause__.response["Error"]["Code"]
+                    if code == "NoSuchEntity":
+                        password_policy_present = False
+                    else:
+                        logger.warning(
+                            "aws: GetAccountPasswordPolicy failed  error=%s",
+                            code,
+                        )
+                else:
+                    logger.warning(
+                        "aws: GetAccountPasswordPolicy failed",
+                        exc_info=True,
+                    )
+            except Exception:
+                logger.warning(
+                    "aws: GetAccountPasswordPolicy failed",
+                    exc_info=True,
+                )
+
+        return {
+            "record_type":              AWS_IAM_ACCOUNT_SUMMARY,
+            "record_id":                f"{account_id}/iam_account_summary",
+            "external_id":              f"{account_id}/iam_account_summary",
+            "name":                     "IAM Account Summary",
+            "user_count":               user_count,
+            "group_count":              group_count,
+            "role_count":               role_count,
+            "policy_count":             policy_count,
+            "mfa_enabled_for_root":     mfa_root,
+            "root_access_keys_present": root_keys,
+            "password_policy_present":  password_policy_present,
+            "password_min_length":      pw_min_length,
+            "password_requires_symbols": pw_req_symbols,
+            "password_requires_numbers": pw_req_numbers,
+            "password_requires_uppercase": pw_req_upper,
+            "password_requires_lowercase": pw_req_lower,
+            "password_max_age":         pw_max_age,
+            "password_reuse_prevention": pw_reuse,
+            "password_hard_expiry":     pw_hard_expiry,
+        }
+
+    def _fetch_iam_users(
+        self,
+        client: Any,
+        account_id: str,
+    ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+        """Fetch all IAM users with access keys, MFA devices, and policies.
+
+        Returns a 4-tuple of:
+        - user_records:       list of aws_iam_user dicts
+        - key_records:        list of aws_iam_access_key dicts
+        - attachment_records: list of aws_iam_policy_attachment dicts (managed)
+        - inline_records:     list of aws_iam_inline_policy dicts
+
+        SECURITY: Secret access keys are NEVER fetched or stored. Only the
+        access key ID (public identifier, AKIA...) and metadata are stored.
+        Inline policy documents are analyzed in memory; only policy_summary
+        is stored.
+        """
+        import urllib.parse
+
+        users = self._paginate_iam(client.list_users, "Users")
+        user_records: list[dict] = []
+        key_records: list[dict] = []
+        attachment_records: list[dict] = []
+        inline_records: list[dict] = []
+
+        for user in users:
+            username: str = user.get("UserName") or ""
+            user_id: str  = user.get("UserId") or ""
+            arn: str       = user.get("Arn") or ""
+            path: str      = user.get("Path") or "/"
+            tags_raw       = user.get("Tags") or []
+
+            if not user_id or not username:
+                continue
+
+            # ── Access keys (metadata only — never the secret) ────────────────
+            active_keys = 0
+            inactive_keys = 0
+            last_used_age: int | None = None
+            try:
+                access_keys = self._paginate_iam(
+                    client.list_access_keys, "AccessKeyMetadata",
+                    UserName=username,
+                )
+                for ak in access_keys:
+                    ak_id: str    = ak.get("AccessKeyId") or ""
+                    ak_status: str = ak.get("Status") or "Inactive"
+                    if ak_status == "Active":
+                        active_keys += 1
+                    else:
+                        inactive_keys += 1
+
+                    # Fetch last-used metadata (fail-soft)
+                    last_used_svc: str | None = None
+                    last_used_region: str | None = None
+                    key_age: int | None = None
+                    try:
+                        lu_resp = self._call_aws(
+                            client.get_access_key_last_used, AccessKeyId=ak_id
+                        )
+                        lu = lu_resp.get("AccessKeyLastUsed") or {}
+                        if lu.get("LastUsedDate"):
+                            from datetime import datetime, timezone
+                            lu_date = lu["LastUsedDate"]
+                            if hasattr(lu_date, "tzinfo"):
+                                now = datetime.now(timezone.utc)
+                                delta = now - lu_date.astimezone(timezone.utc)
+                                key_age = delta.days
+                                if last_used_age is None or key_age < last_used_age:
+                                    last_used_age = key_age
+                        last_used_svc    = lu.get("ServiceName") or None
+                        last_used_region = lu.get("Region") or None
+                    except Exception:
+                        pass  # last-used is optional
+
+                    key_records.append({
+                        "record_type":      AWS_IAM_ACCESS_KEY,
+                        "record_id":        ak_id,
+                        "external_id":      ak_id,
+                        "name":             ak_id,
+                        "access_key_id":    ak_id,
+                        "username":         username,
+                        "user_id":          user_id,
+                        "status":           ak_status,
+                        "last_used_age_days": key_age,
+                        "last_used_service":  last_used_svc,
+                        "last_used_region":   last_used_region,
+                    })
+            except Exception as exc:
+                fc = classify_aws_iam_failure("ListAccessKeys", exc)
+                logger.warning(
+                    "aws: ListAccessKeys failed for user  error_code=%s",
+                    fc.error_code,
+                )
+
+            # ── MFA devices ───────────────────────────────────────────────────
+            mfa_count = 0
+            try:
+                mfa_devices = self._paginate_iam(
+                    client.list_mfa_devices, "MFADevices",
+                    UserName=username,
+                )
+                mfa_count = len(mfa_devices)
+            except Exception:
+                pass  # MFA count is optional
+
+            # ── Groups for this user ──────────────────────────────────────────
+            user_group_count = 0
+            try:
+                groups_for_user = self._paginate_iam(
+                    client.list_groups_for_user, "Groups",
+                    UserName=username,
+                )
+                user_group_count = len(groups_for_user)
+            except Exception:
+                pass  # group count is optional
+
+            # ── Attached managed policies ─────────────────────────────────────
+            attached_count = 0
+            try:
+                attached = self._paginate_iam(
+                    client.list_attached_user_policies, "AttachedPolicies",
+                    UserName=username,
+                )
+                attached_count = len(attached)
+                for ap in attached:
+                    p_arn  = ap.get("PolicyArn") or ""
+                    p_name = ap.get("PolicyName") or p_arn.split("/")[-1]
+                    if not p_arn:
+                        continue
+                    attachment_records.append({
+                        "record_type":    AWS_IAM_POLICY_ATTACHMENT,
+                        "record_id":      _stable_iam_attachment_id("user", user_id, p_arn),
+                        "external_id":    _stable_iam_attachment_id("user", user_id, p_arn),
+                        "name":           f"{p_name} → {username}",
+                        "principal_type": "user",
+                        "principal_id":   user_id,
+                        "principal_name": username,
+                        "principal_arn":  arn,
+                        "policy_arn":     p_arn,
+                        "policy_name":    p_name,
+                    })
+            except Exception as exc:
+                fc = classify_aws_iam_failure("ListAttachedUserPolicies", exc)
+                logger.warning(
+                    "aws: ListAttachedUserPolicies failed  error_code=%s",
+                    fc.error_code,
+                )
+
+            # ── Inline policies ───────────────────────────────────────────────
+            inline_count = 0
+            try:
+                inline_names = self._paginate_iam(
+                    client.list_user_policies, "PolicyNames",
+                    UserName=username,
+                )
+                inline_count = len(inline_names)
+                for policy_name in inline_names:
+                    policy_summary: dict = {}
+                    try:
+                        gp_resp = self._call_aws(
+                            client.get_user_policy,
+                            UserName=username,
+                            PolicyName=policy_name,
+                        )
+                        doc_raw = gp_resp.get("PolicyDocument") or "{}"
+                        # Policy documents from GetUserPolicy may be URL-encoded
+                        if "%" in doc_raw:
+                            doc_raw = urllib.parse.unquote(doc_raw)
+                        # SECURITY: analyze in memory; never store raw doc
+                        policy_summary = _analyze_policy_document(doc_raw, account_id)
+                    except Exception:
+                        pass  # policy summary is optional
+
+                    inline_records.append({
+                        "record_type":    AWS_IAM_INLINE_POLICY,
+                        "record_id":      _stable_iam_inline_id("user", user_id, policy_name),
+                        "external_id":    _stable_iam_inline_id("user", user_id, policy_name),
+                        "name":           f"{policy_name} (inline on {username})",
+                        "principal_type": "user",
+                        "principal_id":   user_id,
+                        "principal_name": username,
+                        "principal_arn":  arn,
+                        "policy_name":    policy_name,
+                        "policy_summary": policy_summary,
+                    })
+            except Exception as exc:
+                fc = classify_aws_iam_failure("ListUserPolicies", exc)
+                logger.warning(
+                    "aws: ListUserPolicies failed  error_code=%s",
+                    fc.error_code,
+                )
+
+            user_records.append({
+                "record_type":          AWS_IAM_USER,
+                "record_id":            user_id,
+                "external_id":          user_id,
+                "name":                 username,
+                "username":             username,
+                "user_id":              user_id,
+                "path":                 path,
+                "arn":                  arn,
+                "mfa_enabled":          mfa_count > 0,
+                "mfa_device_count":     mfa_count,
+                "active_key_count":     active_keys,
+                "inactive_key_count":   inactive_keys,
+                "last_key_used_age_days": last_used_age,
+                "group_count":          user_group_count,
+                "attached_policy_count": attached_count,
+                "inline_policy_count":  inline_count,
+                "tag_keys":             _extract_tag_keys(tags_raw),
+            })
+
+        return user_records, key_records, attachment_records, inline_records
+
+    def _fetch_iam_groups(
+        self,
+        client: Any,
+        account_id: str,
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Fetch all IAM groups with member counts and policies.
+
+        Returns a 3-tuple of:
+        - group_records:      list of aws_iam_group dicts
+        - attachment_records: list of aws_iam_policy_attachment dicts
+        - inline_records:     list of aws_iam_inline_policy dicts
+        """
+        import urllib.parse
+
+        groups = self._paginate_iam(client.list_groups, "Groups")
+        group_records: list[dict] = []
+        attachment_records: list[dict] = []
+        inline_records: list[dict] = []
+
+        for group in groups:
+            group_name: str = group.get("GroupName") or ""
+            group_id: str   = group.get("GroupId") or ""
+            arn: str         = group.get("Arn") or ""
+            path: str        = group.get("Path") or "/"
+
+            if not group_id or not group_name:
+                continue
+
+            # ── Group members ─────────────────────────────────────────────────
+            member_count = 0
+            try:
+                grp_resp = self._call_aws(
+                    client.get_group, GroupName=group_name
+                )
+                members = grp_resp.get("Users") or []
+                member_count = len(members)
+                # Handle pagination for large groups
+                while grp_resp.get("IsTruncated"):
+                    grp_resp = self._call_aws(
+                        client.get_group,
+                        GroupName=group_name,
+                        Marker=grp_resp["Marker"],
+                    )
+                    member_count += len(grp_resp.get("Users") or [])
+            except Exception:
+                pass  # member count is optional
+
+            # ── Attached managed policies ─────────────────────────────────────
+            attached_count = 0
+            try:
+                attached = self._paginate_iam(
+                    client.list_attached_group_policies, "AttachedPolicies",
+                    GroupName=group_name,
+                )
+                attached_count = len(attached)
+                for ap in attached:
+                    p_arn  = ap.get("PolicyArn") or ""
+                    p_name = ap.get("PolicyName") or p_arn.split("/")[-1]
+                    if not p_arn:
+                        continue
+                    attachment_records.append({
+                        "record_type":    AWS_IAM_POLICY_ATTACHMENT,
+                        "record_id":      _stable_iam_attachment_id("group", group_id, p_arn),
+                        "external_id":    _stable_iam_attachment_id("group", group_id, p_arn),
+                        "name":           f"{p_name} → {group_name}",
+                        "principal_type": "group",
+                        "principal_id":   group_id,
+                        "principal_name": group_name,
+                        "principal_arn":  arn,
+                        "policy_arn":     p_arn,
+                        "policy_name":    p_name,
+                    })
+            except Exception as exc:
+                fc = classify_aws_iam_failure("ListAttachedGroupPolicies", exc)
+                logger.warning(
+                    "aws: ListAttachedGroupPolicies failed  error_code=%s",
+                    fc.error_code,
+                )
+
+            # ── Inline policies ───────────────────────────────────────────────
+            inline_count = 0
+            try:
+                inline_names = self._paginate_iam(
+                    client.list_group_policies, "PolicyNames",
+                    GroupName=group_name,
+                )
+                inline_count = len(inline_names)
+                for policy_name in inline_names:
+                    policy_summary: dict = {}
+                    try:
+                        gp_resp = self._call_aws(
+                            client.get_group_policy,
+                            GroupName=group_name,
+                            PolicyName=policy_name,
+                        )
+                        doc_raw = gp_resp.get("PolicyDocument") or "{}"
+                        if "%" in doc_raw:
+                            doc_raw = urllib.parse.unquote(doc_raw)
+                        policy_summary = _analyze_policy_document(doc_raw, account_id)
+                    except Exception:
+                        pass
+
+                    inline_records.append({
+                        "record_type":    AWS_IAM_INLINE_POLICY,
+                        "record_id":      _stable_iam_inline_id("group", group_id, policy_name),
+                        "external_id":    _stable_iam_inline_id("group", group_id, policy_name),
+                        "name":           f"{policy_name} (inline on {group_name})",
+                        "principal_type": "group",
+                        "principal_id":   group_id,
+                        "principal_name": group_name,
+                        "principal_arn":  arn,
+                        "policy_name":    policy_name,
+                        "policy_summary": policy_summary,
+                    })
+            except Exception as exc:
+                fc = classify_aws_iam_failure("ListGroupPolicies", exc)
+                logger.warning(
+                    "aws: ListGroupPolicies failed  error_code=%s",
+                    fc.error_code,
+                )
+
+            group_records.append({
+                "record_type":           AWS_IAM_GROUP,
+                "record_id":             group_id,
+                "external_id":           group_id,
+                "name":                  group_name,
+                "group_name":            group_name,
+                "group_id":              group_id,
+                "path":                  path,
+                "arn":                   arn,
+                "member_count":          member_count,
+                "attached_policy_count": attached_count,
+                "inline_policy_count":   inline_count,
+            })
+
+        return group_records, attachment_records, inline_records
+
+    def _fetch_iam_roles(
+        self,
+        client: Any,
+        account_id: str,
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Fetch all IAM roles with trust policy summary and policies.
+
+        Returns a 3-tuple of:
+        - role_records:       list of aws_iam_role dicts
+        - attachment_records: list of aws_iam_policy_attachment dicts
+        - inline_records:     list of aws_iam_inline_policy dicts
+
+        SECURITY: Trust policy documents are analyzed in memory only; only
+        the safe trust_summary dict is stored. Raw documents are never stored.
+        Inline policy documents likewise produce only policy_summary.
+        """
+        import urllib.parse
+
+        roles = self._paginate_iam(client.list_roles, "Roles")
+        role_records: list[dict] = []
+        attachment_records: list[dict] = []
+        inline_records: list[dict] = []
+
+        for role in roles:
+            role_name: str = role.get("RoleName") or ""
+            role_id: str   = role.get("RoleId") or ""
+            arn: str        = role.get("Arn") or ""
+            path: str       = role.get("Path") or "/"
+            max_session     = role.get("MaxSessionDuration") or 3600
+            tags_raw        = role.get("Tags") or []
+            trust_doc       = role.get("AssumeRolePolicyDocument") or {}
+
+            if not role_id or not role_name:
+                continue
+
+            # ── Trust policy analysis (in memory — never stored raw) ──────────
+            trust_summary: dict = {}
+            try:
+                if isinstance(trust_doc, str):
+                    import json
+                    if "%" in trust_doc:
+                        trust_doc = urllib.parse.unquote(trust_doc)
+                    trust_doc = json.loads(trust_doc)
+                trust_summary = _analyze_trust_policy(trust_doc, account_id)
+            except Exception:
+                logger.warning(
+                    "aws: failed to analyze trust policy for role %r",
+                    role_name,
+                    exc_info=True,
+                )
+
+            # ── Attached managed policies ─────────────────────────────────────
+            attached_count = 0
+            try:
+                attached = self._paginate_iam(
+                    client.list_attached_role_policies, "AttachedPolicies",
+                    RoleName=role_name,
+                )
+                attached_count = len(attached)
+                for ap in attached:
+                    p_arn  = ap.get("PolicyArn") or ""
+                    p_name = ap.get("PolicyName") or p_arn.split("/")[-1]
+                    if not p_arn:
+                        continue
+                    attachment_records.append({
+                        "record_type":    AWS_IAM_POLICY_ATTACHMENT,
+                        "record_id":      _stable_iam_attachment_id("role", role_id, p_arn),
+                        "external_id":    _stable_iam_attachment_id("role", role_id, p_arn),
+                        "name":           f"{p_name} → {role_name}",
+                        "principal_type": "role",
+                        "principal_id":   role_id,
+                        "principal_name": role_name,
+                        "principal_arn":  arn,
+                        "policy_arn":     p_arn,
+                        "policy_name":    p_name,
+                    })
+            except Exception as exc:
+                fc = classify_aws_iam_failure("ListAttachedRolePolicies", exc)
+                logger.warning(
+                    "aws: ListAttachedRolePolicies failed  error_code=%s",
+                    fc.error_code,
+                )
+
+            # ── Inline policies ───────────────────────────────────────────────
+            inline_count = 0
+            try:
+                inline_names = self._paginate_iam(
+                    client.list_role_policies, "PolicyNames",
+                    RoleName=role_name,
+                )
+                inline_count = len(inline_names)
+                for policy_name in inline_names:
+                    policy_summary: dict = {}
+                    try:
+                        gp_resp = self._call_aws(
+                            client.get_role_policy,
+                            RoleName=role_name,
+                            PolicyName=policy_name,
+                        )
+                        doc_raw = gp_resp.get("PolicyDocument") or "{}"
+                        if "%" in doc_raw:
+                            doc_raw = urllib.parse.unquote(doc_raw)
+                        policy_summary = _analyze_policy_document(doc_raw, account_id)
+                    except Exception:
+                        pass
+
+                    inline_records.append({
+                        "record_type":    AWS_IAM_INLINE_POLICY,
+                        "record_id":      _stable_iam_inline_id("role", role_id, policy_name),
+                        "external_id":    _stable_iam_inline_id("role", role_id, policy_name),
+                        "name":           f"{policy_name} (inline on {role_name})",
+                        "principal_type": "role",
+                        "principal_id":   role_id,
+                        "principal_name": role_name,
+                        "principal_arn":  arn,
+                        "policy_name":    policy_name,
+                        "policy_summary": policy_summary,
+                    })
+            except Exception as exc:
+                fc = classify_aws_iam_failure("ListRolePolicies", exc)
+                logger.warning(
+                    "aws: ListRolePolicies failed  error_code=%s",
+                    fc.error_code,
+                )
+
+            role_records.append({
+                "record_type":           AWS_IAM_ROLE,
+                "record_id":             role_id,
+                "external_id":           role_id,
+                "name":                  role_name,
+                "role_name":             role_name,
+                "role_id":               role_id,
+                "path":                  path,
+                "arn":                   arn,
+                "max_session_duration":  max_session,
+                "attached_policy_count": attached_count,
+                "inline_policy_count":   inline_count,
+                "tag_keys":              _extract_tag_keys(tags_raw),
+                "trust_summary":         trust_summary,
+            })
+
+        return role_records, attachment_records, inline_records
+
+    def _fetch_iam_policies(self, client: Any, account_id: str) -> list[dict]:
+        """Fetch all customer-managed IAM policies with their default version summary.
+
+        Only Scope="Local" (customer-managed) policies are fetched.
+        AWS-managed policies are excluded to reduce noise.
+
+        SECURITY: Policy documents are analyzed in memory only; only the
+        safe policy_summary dict is stored. Raw documents are never stored.
+        """
+        import urllib.parse
+
+        policies = self._paginate_iam(
+            client.list_policies, "Policies",
+            Scope="Local",
+            OnlyAttached=False,
+        )
+        records: list[dict] = []
+
+        for policy in policies:
+            policy_name: str = policy.get("PolicyName") or ""
+            policy_id: str   = policy.get("PolicyId") or ""
+            policy_arn: str  = policy.get("Arn") or ""
+            path: str         = policy.get("Path") or "/"
+            attachment_count  = policy.get("AttachmentCount") or 0
+            is_attachable     = bool(policy.get("IsAttachable", True))
+            default_version   = policy.get("DefaultVersionId") or ""
+            version_count     = policy.get("PolicyVersionList") or None
+
+            if not policy_id or not policy_arn:
+                continue
+
+            # ── Fetch default version document (never stored raw) ─────────────
+            policy_summary: dict = {}
+            pv_count = 1
+            try:
+                versions_resp = self._call_aws(
+                    client.list_policy_versions, PolicyArn=policy_arn
+                )
+                versions = versions_resp.get("Versions") or []
+                pv_count = len(versions)
+                # Fetch the default version document (in memory only)
+                if default_version:
+                    doc_resp = self._call_aws(
+                        client.get_policy_version,
+                        PolicyArn=policy_arn,
+                        VersionId=default_version,
+                    )
+                    pv = doc_resp.get("PolicyVersion") or {}
+                    doc = pv.get("Document") or "{}"
+                    if isinstance(doc, str):
+                        if "%" in doc:
+                            doc = urllib.parse.unquote(doc)
+                    else:
+                        import json
+                        doc = json.dumps(doc)
+                    # SECURITY: analyze in memory; never store raw doc
+                    policy_summary = _analyze_policy_document(doc, account_id)
+            except Exception as exc:
+                fc = classify_aws_iam_failure("GetPolicyVersion", exc)
+                logger.warning(
+                    "aws: policy version fetch failed  policy=%r  error_code=%s",
+                    policy_name,
+                    fc.error_code,
+                )
+
+            records.append({
+                "record_type":      AWS_IAM_POLICY,
+                "record_id":        policy_id,
+                "external_id":      policy_id,
+                "name":             policy_name,
+                "policy_name":      policy_name,
+                "policy_id":        policy_id,
+                "arn":              policy_arn,
+                "path":             path,
+                "attachment_count": attachment_count,
+                "is_attachable":    is_attachable,
+                "version_count":    pv_count,
+                "policy_summary":   policy_summary,
+            })
+
+        return records
+
+    def _fetch_iam_identity_providers(self, client: Any, account_id: str) -> list[dict]:
+        """Fetch OIDC and SAML identity providers registered in the account.
+
+        Returns one aws_iam_identity_provider record per OIDC/SAML provider.
+        """
+        records: list[dict] = []
+
+        # ── OIDC providers ────────────────────────────────────────────────────
+        try:
+            oidc_resp = self._call_aws(client.list_open_id_connect_providers)
+            oidc_list = oidc_resp.get("OpenIDConnectProviderList") or []
+            for item in oidc_list:
+                arn = item.get("Arn") or ""
+                if not arn:
+                    continue
+                client_count: int | None = None
+                thumbprint_count: int | None = None
+                try:
+                    detail = self._call_aws(
+                        client.get_open_id_connect_provider,
+                        OpenIDConnectProviderArn=arn,
+                    )
+                    client_ids = detail.get("ClientIDList") or []
+                    thumbprints = detail.get("ThumbprintList") or []
+                    client_count = len(client_ids)
+                    thumbprint_count = len(thumbprints)
+                    # URL is stored in safe form (not a credential)
+                    oidc_url: str | None = detail.get("Url") or None
+                except Exception:
+                    oidc_url = None
+
+                stable_id = _stable_iam_idp_id(arn)
+                # Extract a short name from the ARN (last component)
+                display_name = arn.split("/")[-1] or arn
+                records.append({
+                    "record_type":          AWS_IAM_IDENTITY_PROVIDER,
+                    "record_id":            stable_id,
+                    "external_id":          stable_id,
+                    "name":                 display_name,
+                    "arn":                  arn,
+                    "provider_type":        "oidc",
+                    "oidc_url":             oidc_url,
+                    "oidc_client_id_count": client_count,
+                    "oidc_thumbprint_count": thumbprint_count,
+                    "saml_valid_until":     None,
+                    "saml_provider_name":   None,
+                })
+        except Exception as exc:
+            fc = classify_aws_iam_failure("ListOpenIDConnectProviders", exc)
+            logger.warning(
+                "aws: OIDC provider listing failed  error_code=%s",
+                fc.error_code,
+            )
+
+        # ── SAML providers ────────────────────────────────────────────────────
+        try:
+            saml_resp = self._call_aws(client.list_saml_providers)
+            saml_list = saml_resp.get("SAMLProviderList") or []
+            for item in saml_list:
+                arn = item.get("Arn") or ""
+                if not arn:
+                    continue
+                valid_until: str | None = None
+                try:
+                    detail = self._call_aws(
+                        client.get_saml_provider,
+                        SAMLProviderArn=arn,
+                    )
+                    vu = detail.get("ValidUntil")
+                    if vu and hasattr(vu, "isoformat"):
+                        valid_until = vu.isoformat()
+                    elif vu:
+                        valid_until = str(vu)
+                    # SECURITY: SAMLMetadataDocument is NEVER stored
+                except Exception:
+                    pass
+
+                stable_id = _stable_iam_idp_id(arn)
+                # Extract a short name from the ARN (last component)
+                display_name = arn.split("/")[-1] or arn
+                records.append({
+                    "record_type":          AWS_IAM_IDENTITY_PROVIDER,
+                    "record_id":            stable_id,
+                    "external_id":          stable_id,
+                    "name":                 display_name,
+                    "arn":                  arn,
+                    "provider_type":        "saml",
+                    "oidc_url":             None,
+                    "oidc_client_id_count": None,
+                    "oidc_thumbprint_count": None,
+                    "saml_valid_until":     valid_until,
+                    "saml_provider_name":   display_name,
+                })
+        except Exception as exc:
+            fc = classify_aws_iam_failure("ListSAMLProviders", exc)
+            logger.warning(
+                "aws: SAML provider listing failed  error_code=%s",
+                fc.error_code,
+            )
+
         return records

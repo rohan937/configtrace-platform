@@ -532,6 +532,17 @@ function getChangeSummary(change: ChangeDetail): string {
     return `Network ACL ${naclId} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
 
+  // AWS M39 — IAM
+  if (rt === "aws_iam_account_summary") return "IAM Account Posture";
+  if (rt === "aws_iam_user") return `IAM User: ${rn || change.record_identifier || ""}`;
+  if (rt === "aws_iam_access_key") return `Access Key: ${rn || change.record_identifier || ""}`;
+  if (rt === "aws_iam_group") return `IAM Group: ${rn || change.record_identifier || ""}`;
+  if (rt === "aws_iam_role") return `IAM Role: ${rn || change.record_identifier || ""}`;
+  if (rt === "aws_iam_policy") return `IAM Policy: ${rn || change.record_identifier || ""}`;
+  if (rt === "aws_iam_policy_attachment") return `Policy Attachment: ${rn || change.record_identifier || ""}`;
+  if (rt === "aws_iam_inline_policy") return `Inline Policy: ${rn || change.record_identifier || ""}`;
+  if (rt === "aws_iam_identity_provider") return `Identity Provider: ${rn || change.record_identifier || ""}`;
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -881,6 +892,126 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Check CloudTrail for recent changes to this bucket's configuration.",
       "Review access logs for unexpected access patterns.",
       "Confirm that encryption, versioning, and logging settings meet your requirements.",
+    ];
+  }
+
+  // AWS M39 — IAM
+  if (rt === "aws_iam_account_summary") {
+    const fp7 = change.field_path ?? "";
+    if (fp7 === "mfa_enabled_for_root") {
+      return [
+        "Re-enable MFA on the AWS root account immediately via the AWS Console → Security credentials.",
+        "Verify the root account is used exclusively for break-glass scenarios.",
+        "Check AWS CloudTrail for recent root account login activity.",
+        "Ensure all day-to-day access uses IAM users or roles, not root.",
+      ];
+    }
+    if (fp7 === "root_access_keys_present" && change.new_value === true) {
+      return [
+        "Delete the root account access keys immediately via the AWS Console → Security credentials.",
+        "AWS best practice is to never create or use root access keys.",
+        "Create a dedicated IAM user or role for programmatic access instead.",
+        "Check AWS CloudTrail for any API calls made using the root access keys.",
+      ];
+    }
+    if (fp7 === "password_policy_present" && change.new_value === false) {
+      return [
+        "Re-enable the IAM account password policy via the AWS Console → IAM → Account settings.",
+        "Enforce minimum length, complexity requirements, and password expiration.",
+        "Check AWS CloudTrail for who removed the password policy.",
+        "Verify all IAM users have strong passwords.",
+      ];
+    }
+    return [
+      "Review the IAM account summary changes in the AWS Console → IAM → Account settings.",
+      "Verify root account MFA is enabled and root access keys do not exist.",
+      "Confirm password policy settings meet your security requirements.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_iam_user") {
+    const fp8 = change.field_path ?? "";
+    if (fp8 === "mfa_enabled" && change.new_value === false) {
+      return [
+        "Re-enable MFA for this IAM user immediately via the AWS Console → IAM → Users.",
+        "Verify no unauthorized access occurred while MFA was disabled.",
+        "Check AWS CloudTrail for recent API calls by this user.",
+        "Consider deactivating the user's access keys until MFA is restored.",
+      ];
+    }
+    if (fp8 === "active_key_count" && typeof change.new_value === "number" && typeof change.prev_value === "number" && change.new_value > (change.prev_value as number)) {
+      return [
+        "Confirm the new access key was intentionally created for this IAM user.",
+        "Verify the key is securely stored and not committed to version control.",
+        "Check AWS CloudTrail for who created the key.",
+        "Rotate or deactivate the key if it was created unintentionally.",
+      ];
+    }
+    return [
+      "Review this IAM user's configuration in the AWS Console → IAM → Users.",
+      "Verify MFA is enabled and only expected access keys are active.",
+      "Check AWS CloudTrail for recent activity by this user.",
+      "Confirm attached policies and group memberships are appropriate.",
+    ];
+  }
+  if (rt === "aws_iam_role") {
+    const fp9 = change.field_path ?? "";
+    if (fp9 === "trust_summary") {
+      return [
+        "Review the IAM role trust policy in the AWS Console → IAM → Roles.",
+        "Verify that all trusted principals are expected and appropriate.",
+        "Confirm any cross-account trust uses ExternalId conditions to prevent confused deputy attacks.",
+        "Remove wildcard (*) principals from the trust policy immediately if present.",
+        "Check AWS CloudTrail for who modified the trust policy.",
+      ];
+    }
+    return [
+      "Review this IAM role's configuration in the AWS Console → IAM → Roles.",
+      "Verify the trust policy allows only expected principals to assume this role.",
+      "Check attached and inline policies for overly broad permissions.",
+      "Check AWS CloudTrail for recent role assumption activity.",
+    ];
+  }
+  if (rt === "aws_iam_policy" || rt === "aws_iam_inline_policy") {
+    return [
+      "Review the full policy document in the AWS Console → IAM → Policies.",
+      "Check for wildcard actions (*) or wildcard resources (*) that grant broad access.",
+      "Verify the policy is attached only to principals that require these permissions.",
+      "Check AWS CloudTrail for who modified the policy and when.",
+      "Consider using IAM Access Analyzer to identify overly permissive policies.",
+    ];
+  }
+  if (rt === "aws_iam_policy_attachment") {
+    return [
+      "Confirm this policy attachment was intentionally made.",
+      "Review the full permissions granted by the attached policy.",
+      "Verify the principal (user, group, or role) should have these permissions.",
+      "Check AWS CloudTrail for who made the attachment.",
+      "Remove the attachment if it was unauthorized or accidental.",
+    ];
+  }
+  if (rt === "aws_iam_identity_provider") {
+    return [
+      "Confirm this identity provider change was intentional.",
+      "Verify the provider configuration is correct and uses trusted OIDC or SAML metadata.",
+      "Check which IAM roles trust this provider in their trust policies.",
+      "Review AWS CloudTrail for who made the change.",
+      "Disable the provider if it was added unintentionally.",
+    ];
+  }
+  if (rt === "aws_iam_access_key") {
+    if (change.field_path === "status" && change.new_value === "active" && change.prev_value === "inactive") {
+      return [
+        "Confirm this access key reactivation was intentional.",
+        "Verify the key belongs to the expected IAM user.",
+        "Check AWS CloudTrail for any API calls using this key.",
+        "Deactivate the key immediately if reactivation was unauthorized.",
+      ];
+    }
+    return [
+      "Confirm the access key change was intentional.",
+      "Review the IAM user's access keys in the AWS Console → IAM → Users → Security credentials.",
+      "Check AWS CloudTrail for recent API calls using this key.",
     ];
   }
 

@@ -85,7 +85,11 @@ Test coverage
     added, ingress, PostgreSQL 0.0.0.0/0 → critical.
     added, ingress, all-traffic 0.0.0.0/0 → critical.
     added, ingress, HTTP 0.0.0.0/0 → medium.
-    added, ingress, HTTPS 0.0.0.0/0 → low.
+    added, ingress, HTTPS 0.0.0.0/0 non-sensitive → medium.
+    added, ingress, HTTPS 0.0.0.0/0 sensitive/prod-named group → high.
+    added, ingress, HTTP 0.0.0.0/0 sensitive/prod-named group → high.
+    added, ingress, HTTPS ::/0 non-sensitive → medium.
+    added, ingress, HTTP ::/0 → medium.
     added, ingress, private CIDR → low.
     added, egress, all-traffic 0.0.0.0/0 → low.
     added, group-to-group ref → low.
@@ -1450,12 +1454,114 @@ class TestSGRuleRiskAdded:
         assert level == "medium"
         assert "HTTP" in reason
 
-    def test_public_https_low(self) -> None:
+    def test_public_https_medium_non_sensitive(self) -> None:
+        """HTTPS 443 from 0.0.0.0/0 on a non-sensitive group → medium (not low)."""
         rule = _sg_rule_dict(
             from_port=443, to_port=443, port_category="web",
+            cidr_ipv4="0.0.0.0/0",
+        )
+        # _change default record_name="web-sg (sg-12345678)" — not sensitive
+        level, reason = self._added(rule)
+        assert level == "medium"
+        assert "HTTPS" in reason
+
+    def test_public_https_medium_ipv6(self) -> None:
+        """HTTPS 443 from ::/0 on a non-sensitive group → medium."""
+        rule = _sg_rule_dict(
+            from_port=443, to_port=443, port_category="web",
+            cidr_ipv4=None, cidr_ipv6="::/0",
+        )
+        level, _ = self._added(rule)
+        assert level == "medium"
+
+    def test_public_https_8443_medium(self) -> None:
+        """HTTPS alt port 8443 from 0.0.0.0/0 non-sensitive → medium."""
+        rule = _sg_rule_dict(
+            from_port=8443, to_port=8443, port_category="web",
+            cidr_ipv4="0.0.0.0/0",
+        )
+        level, _ = self._added(rule)
+        assert level == "medium"
+
+    def test_public_https_sensitive_group_high(self) -> None:
+        """HTTPS 443 from 0.0.0.0/0 on a prod/backend-named group → high."""
+        rule = _sg_rule_dict(
+            from_port=443, to_port=443, port_category="web",
+            cidr_ipv4="0.0.0.0/0",
+        )
+        level, reason = _classify_security_group_rule_change(
+            _change(
+                AWS_SECURITY_GROUP_RULE,
+                change_type="added",
+                new_value=rule,
+                record_name="prod-backend-sg",  # sensitive pattern
+            )
+        )
+        assert level == "high"
+        assert "HTTPS" in reason
+
+    def test_public_https_internal_group_high(self) -> None:
+        """HTTPS 443 from ::/0 on an 'internal'-named group → high."""
+        rule = _sg_rule_dict(
+            from_port=443, to_port=443, port_category="web",
+            cidr_ipv4=None, cidr_ipv6="::/0",
+        )
+        level, _ = _classify_security_group_rule_change(
+            _change(
+                AWS_SECURITY_GROUP_RULE,
+                change_type="added",
+                new_value=rule,
+                record_name="internal-api-sg",  # matches "api" pattern
+            )
+        )
+        assert level == "high"
+
+    def test_public_http_sensitive_group_high(self) -> None:
+        """HTTP 80 from 0.0.0.0/0 on a prod-named group → high."""
+        rule = _sg_rule_dict(
+            from_port=80, to_port=80, port_category="web",
+            cidr_ipv4="0.0.0.0/0",
+        )
+        level, reason = _classify_security_group_rule_change(
+            _change(
+                AWS_SECURITY_GROUP_RULE,
+                change_type="added",
+                new_value=rule,
+                record_name="prod-web-sg",  # sensitive pattern
+            )
+        )
+        assert level == "high"
+
+    def test_public_http_ipv6_medium(self) -> None:
+        """HTTP 80 from ::/0 non-sensitive → medium (same as IPv4)."""
+        rule = _sg_rule_dict(
+            from_port=80, to_port=80, port_category="web",
+            cidr_ipv4=None, cidr_ipv6="::/0",
         )
         level, reason = self._added(rule)
-        assert level == "low"
+        assert level == "medium"
+
+    def test_ssh_still_critical(self) -> None:
+        """SSH 22 public remains critical regardless of sensitivity."""
+        rule = _sg_rule_dict(from_port=22, to_port=22, port_category="admin")
+        level, _ = self._added(rule)
+        assert level == "critical"
+
+    def test_postgres_still_critical(self) -> None:
+        """Postgres 5432 public remains critical regardless of sensitivity."""
+        rule = _sg_rule_dict(
+            from_port=5432, to_port=5432, port_category="database",
+        )
+        level, _ = self._added(rule)
+        assert level == "critical"
+
+    def test_all_ports_still_critical(self) -> None:
+        """All-ports/all-protocols public remains critical."""
+        rule = _sg_rule_dict(
+            protocol="-1", from_port=None, to_port=None, port_category="all",
+        )
+        level, _ = self._added(rule)
+        assert level == "critical"
 
     def test_public_other_port_medium(self) -> None:
         rule = _sg_rule_dict(

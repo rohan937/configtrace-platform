@@ -50,6 +50,15 @@ from app.connectors.aws_schema import (
     AWS_ROUTE_TABLE,
     AWS_INTERNET_GATEWAY,
     AWS_NETWORK_ACL,
+    AWS_IAM_ACCOUNT_SUMMARY,
+    AWS_IAM_USER,
+    AWS_IAM_ACCESS_KEY,
+    AWS_IAM_GROUP,
+    AWS_IAM_ROLE,
+    AWS_IAM_POLICY,
+    AWS_IAM_POLICY_ATTACHMENT,
+    AWS_IAM_INLINE_POLICY,
+    AWS_IAM_IDENTITY_PROVIDER,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -692,11 +701,17 @@ def _risk_for_public_ingress_rule(
     from_port: int | None,
     to_port: int | None,
     cidr: str,
+    group_name: str = "",
 ) -> tuple[str, str]:
     """Return (risk_level, risk_reason) for a public ingress rule (added).
 
     Uses "may be reachable" hedging throughout — a SG rule allowing public
     access does not prove reachability without subnet/IGW/route-table context.
+
+    Args:
+        group_name: Human-readable security group name, used to detect
+                    sensitive/production groups that warrant higher risk for
+                    web traffic rules.  Defaults to empty string (non-sensitive).
     """
     port_cat = _port_category(from_port, to_port, protocol)
     port_str = (
@@ -746,21 +761,42 @@ def _risk_for_public_ingress_rule(
         )
 
     if port_cat == "web":
-        # Distinguish HTTP (risky for data exposure) from HTTPS (expected)
+        # Sensitive groups (production, backend, internal, admin, etc.) warrant
+        # a higher signal even for expected web ports — public web exposure on
+        # those groups merits deliberate review.
+        sensitive = _is_sensitive_principal(group_name)
+
         if _has_port_in_range(80, from_port, to_port, protocol) or _has_port_in_range(8080, from_port, to_port, protocol):
+            level = "high" if sensitive else "medium"
+            note = (
+                f"HTTP on a sensitive or production-facing group should be "
+                f"reviewed immediately. HTTPS (port 443) is preferred."
+                if sensitive
+                else f"Verify that public HTTP access is intentional for the "
+                     f"attached resources. HTTPS (port 443) is preferred for web traffic."
+            )
             return (
-                "medium",
+                level,
                 f"An inbound HTTP rule ({port_str}) was added to security group {group_id!r} "
                 f"in {region or 'unknown region'} allowing traffic from {cidr or 'all sources'}. "
-                f"Verify that public HTTP access is intentional for the attached resources. "
-                f"HTTPS (port 443) is preferred for web traffic.",
+                f"{note}",
             )
-        # HTTPS (443, 8443) — standard for public web services
+
+        # HTTPS (443, 8443) — publicly expected for web services, but still
+        # worth reviewing on sensitive groups.
+        level = "high" if sensitive else "medium"
+        note = (
+            f"HTTPS on a sensitive or production-facing group should be reviewed "
+            f"to confirm only the intended resources are reachable from the internet."
+            if sensitive
+            else f"HTTPS access from the internet is expected for public web services. "
+                 f"Verify this group is attached to the appropriate resources."
+        )
         return (
-            "low",
+            level,
             f"An inbound HTTPS rule ({port_str}) was added to security group {group_id!r} "
             f"in {region or 'unknown region'} allowing traffic from {cidr or 'all sources'}. "
-            f"HTTPS access from the internet is expected for public web services.",
+            f"{note}",
         )
 
     # Other port with public CIDR
@@ -780,8 +816,9 @@ def _classify_security_group_rule_change(change: object) -> tuple[str, str]:
 
     Added rules:
       - Critical for public inbound SSH, RDP, database ports, or all-traffic.
-      - Medium for public inbound HTTP or other non-web ports.
-      - Low for public HTTPS, private CIDRs, group references, or egress.
+      - High for public inbound HTTP/HTTPS on sensitive/production-named groups.
+      - Medium for public inbound HTTP/HTTPS on non-sensitive groups, or other ports.
+      - Low for private CIDRs, group references, or egress.
     Removed rules:
       - Always low (rule removed = less exposure or routine cleanup).
     Modified rules (description only):
@@ -799,8 +836,12 @@ def _classify_security_group_rule_change(change: object) -> tuple[str, str]:
         is_public: bool = bool(rule.get("is_public"))
 
         if direction == "ingress" and is_public:
+            # Extract the security group name from provider_metadata for
+            # sensitive-group escalation on web port rules.
+            pm = _get(change, "provider_metadata") or {}
+            sg_name = (pm.get("record_name") or "") if isinstance(pm, dict) else ""
             return _risk_for_public_ingress_rule(
-                group_id, region, protocol, from_port, to_port, cidr
+                group_id, region, protocol, from_port, to_port, cidr, sg_name
             )
 
         if direction == "ingress":
@@ -1315,6 +1356,937 @@ def _classify_network_acl_change(change: object) -> tuple[str, str]:
     )
 
 
+# ── M39: IAM risk classification ──────────────────────────────────────────────
+
+# IAM principal names that suggest production/sensitive environments.
+# Used to escalate risk when sensitive principals gain broad permissions.
+_SENSITIVE_PRINCIPAL_PATTERNS: frozenset[str] = frozenset({
+    "prod", "production", "live", "app", "api", "database", "db",
+    "admin", "bastion", "deploy", "ci", "cd", "cicd",
+    "release", "master", "main", "primary",
+})
+
+
+def _is_sensitive_principal(name: str) -> bool:
+    """Return True if the principal name suggests a production/sensitive context."""
+    n = name.lower()
+    return any(p in n for p in _SENSITIVE_PRINCIPAL_PATTERNS)
+
+
+def _policy_summary_finding_codes(policy_summary: object) -> list[str]:
+    """Extract finding_codes from a policy_summary dict or object."""
+    if isinstance(policy_summary, dict):
+        codes = policy_summary.get("finding_codes")
+        return codes if isinstance(codes, list) else []
+    return []
+
+
+def _policy_summary_admin(policy_summary: object) -> bool:
+    """Return True if policy_summary indicates admin access."""
+    if isinstance(policy_summary, dict):
+        return bool(policy_summary.get("admin_access"))
+    return False
+
+
+def _policy_summary_priv_esc(policy_summary: object) -> bool:
+    """Return True if policy_summary indicates privilege escalation risk."""
+    if isinstance(policy_summary, dict):
+        codes = policy_summary.get("finding_codes") or []
+        return "privilege_escalation_risk" in codes or "iam_write_access" in codes
+    return False
+
+
+# ── aws_iam_account_summary ───────────────────────────────────────────────────
+
+
+def _classify_iam_account_summary_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if ct == "added":
+        return (
+            "low",
+            "IAM account summary record was established for this integration.",
+        )
+    if ct == "removed":
+        return (
+            "medium",
+            "The IAM account summary record was removed. "
+            "Verify the integration still has IAM read permissions.",
+        )
+
+    # ── Root security ─────────────────────────────────────────────────────────
+    if fp == "mfa_enabled_for_root":
+        if nv is False and pv is True:
+            return (
+                "critical",
+                "MFA was disabled on the AWS root account. "
+                "Root account access without MFA is a critical security risk. "
+                "Re-enable MFA on the root account immediately.",
+            )
+        if nv is True:
+            return (
+                "low",
+                "MFA was enabled on the AWS root account. "
+                "This is a security improvement.",
+            )
+        return ("medium", "Root account MFA status changed.")
+
+    if fp == "root_access_keys_present":
+        if nv is True and pv is not True:
+            return (
+                "critical",
+                "Root account access keys are now present. "
+                "AWS best practice is to never create root access keys. "
+                "Remove these keys from the root account immediately.",
+            )
+        if nv is False:
+            return (
+                "low",
+                "Root account access keys were removed. "
+                "This is a security improvement.",
+            )
+        return ("medium", "Root account access key status changed.")
+
+    # ── Password policy ───────────────────────────────────────────────────────
+    if fp == "password_policy_present":
+        if nv is False and pv is True:
+            return (
+                "high",
+                "The IAM account password policy was removed. "
+                "Without a policy, there are no password complexity or rotation "
+                "requirements for IAM users. Consider re-enabling a strong policy.",
+            )
+        if nv is True:
+            return (
+                "low",
+                "An IAM account password policy was added.",
+            )
+        return ("medium", "Password policy presence changed.")
+
+    if fp == "password_min_length":
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)) and nv < pv:
+            return (
+                "medium",
+                f"IAM password minimum length decreased from {pv!r} to {nv!r}. "
+                "A shorter minimum may weaken password security.",
+            )
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)) and nv > pv:
+            return (
+                "low",
+                f"IAM password minimum length increased from {pv!r} to {nv!r}.",
+            )
+        return ("low", f"IAM password minimum length changed ({pv!r} → {nv!r}).")
+
+    if fp == "password_max_age":
+        if nv is None and pv is not None:
+            return (
+                "medium",
+                "IAM password expiration policy was removed. "
+                "Passwords will no longer expire automatically.",
+            )
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)) and nv > pv:
+            return (
+                "medium",
+                f"IAM password maximum age increased from {pv!r} to {nv!r} days. "
+                "Passwords will expire less frequently.",
+            )
+        return ("low", f"IAM password age policy changed ({pv!r} → {nv!r} days).")
+
+    if fp in ("password_requires_symbols", "password_requires_numbers",
+               "password_requires_uppercase", "password_requires_lowercase"):
+        if nv is False and pv is True:
+            return (
+                "medium",
+                f"IAM password complexity requirement '{fp}' was disabled. "
+                "This may weaken password security for IAM users.",
+            )
+        if nv is True:
+            return ("low", f"IAM password complexity requirement '{fp}' was enabled.")
+        return ("low", f"IAM password complexity requirement '{fp}' changed.")
+
+    if fp == "password_reuse_prevention":
+        if nv is None and pv is not None:
+            return (
+                "medium",
+                "IAM password reuse prevention was removed. "
+                "Users may now reuse old passwords.",
+            )
+        return ("low", f"IAM password reuse prevention changed ({pv!r} → {nv!r}).")
+
+    # ── Aggregate counts ──────────────────────────────────────────────────────
+    if fp in ("user_count", "group_count", "role_count", "policy_count"):
+        return (
+            "low",
+            f"IAM {fp.replace('_', ' ')} changed from {pv!r} to {nv!r}. "
+            "Review the IAM users, groups, roles, or policies lists for details.",
+        )
+
+    return (
+        "low",
+        f"IAM account summary changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── aws_iam_user ──────────────────────────────────────────────────────────────
+
+
+def _classify_iam_user_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    user_name: str = (
+        (pm.get("record_name") or pm.get("record_id") or "")
+        if isinstance(pm, dict) else ""
+    )
+    sensitive = _is_sensitive_principal(user_name)
+
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        if nv_dict.get("active_key_count", 0) > 0 and not nv_dict.get("mfa_enabled"):
+            return (
+                "high",
+                f"IAM user {user_name!r} was created with active access keys "
+                "and no MFA. Access keys without MFA may allow programmatic "
+                "access without a second factor. Review this user's purpose.",
+            )
+        return (
+            "low",
+            f"IAM user {user_name!r} was created.",
+        )
+
+    if ct == "removed":
+        level = "medium" if sensitive else "low"
+        return (
+            level,
+            f"IAM user {user_name!r} was removed. "
+            "Verify that any active credentials belonging to this user "
+            "have been revoked.",
+        )
+
+    # ── MFA ───────────────────────────────────────────────────────────────────
+    if fp == "mfa_enabled":
+        if nv is False and pv is True:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"MFA was disabled for IAM user {user_name!r}. "
+                "This user can now authenticate without a second factor. "
+                "Verify this change was intentional.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"MFA was enabled for IAM user {user_name!r}. "
+                "This is a security improvement.",
+            )
+        return ("low", f"MFA status changed for IAM user {user_name!r}.")
+
+    if fp == "mfa_device_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv < pv and nv == 0:
+            return (
+                "high" if sensitive else "medium",
+                f"IAM user {user_name!r} no longer has any MFA devices. "
+                "This user can authenticate without a second factor.",
+            )
+        return ("low", f"MFA device count changed for IAM user {user_name!r}.")
+
+    # ── Access keys ───────────────────────────────────────────────────────────
+    if fp == "active_key_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return (
+                "medium",
+                f"The number of active access keys for IAM user {user_name!r} "
+                f"increased from {pv} to {nv}. "
+                "Verify the new key was intentionally created.",
+            )
+        if isinstance(nv, int) and isinstance(pv, int) and nv < pv:
+            return (
+                "low",
+                f"The number of active access keys for IAM user {user_name!r} "
+                f"decreased from {pv} to {nv}.",
+            )
+        return ("low", f"Active access key count changed for IAM user {user_name!r}.")
+
+    if fp == "inactive_key_count":
+        return (
+            "low",
+            f"Inactive access key count changed for IAM user {user_name!r}. "
+            "Consider removing unused inactive keys.",
+        )
+
+    if fp == "last_key_used_age_days":
+        if isinstance(nv, int) and nv > 90:
+            return (
+                "low",
+                f"IAM user {user_name!r} has not used any access key in "
+                f"{nv} days. Consider rotating or deactivating stale keys.",
+            )
+        return ("low", f"Access key last-used age changed for IAM user {user_name!r}.")
+
+    # ── Policy membership ─────────────────────────────────────────────────────
+    if fp == "attached_policy_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"The number of managed policies attached to IAM user "
+                f"{user_name!r} increased from {pv} to {nv}. "
+                "Review the new policy attachments for permission changes.",
+            )
+        return ("low", f"Managed policy count changed for IAM user {user_name!r}.")
+
+    if fp == "inline_policy_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"The number of inline policies on IAM user {user_name!r} "
+                f"increased from {pv} to {nv}. "
+                "Review new inline policies for broad permissions.",
+            )
+        return ("low", f"Inline policy count changed for IAM user {user_name!r}.")
+
+    if fp == "group_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return (
+                "low",
+                f"IAM user {user_name!r} was added to more groups "
+                f"({pv} → {nv}). Group membership may grant additional permissions.",
+            )
+        return ("low", f"Group membership count changed for IAM user {user_name!r}.")
+
+    return (
+        "low",
+        f"IAM user {user_name!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── aws_iam_access_key ────────────────────────────────────────────────────────
+
+
+def _classify_iam_access_key_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    record_id: str = (
+        (pm.get("record_id") or pm.get("record_name") or "")
+        if isinstance(pm, dict) else ""
+    )
+
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        if (nv_dict.get("status") or "").lower() == "active":
+            return (
+                "medium",
+                f"A new active IAM access key {record_id!r} was created. "
+                "Verify this key was intentionally issued and belongs to the "
+                "expected user.",
+            )
+        return (
+            "low",
+            f"IAM access key {record_id!r} appeared in monitoring.",
+        )
+
+    if ct == "removed":
+        return (
+            "low",
+            f"IAM access key {record_id!r} was removed. "
+            "If this key was active, ensure dependent services are updated.",
+        )
+
+    if fp == "status":
+        nv_str = (nv or "").lower() if isinstance(nv, str) else ""
+        pv_str = (pv or "").lower() if isinstance(pv, str) else ""
+        if nv_str == "inactive" and pv_str == "active":
+            return (
+                "low",
+                f"IAM access key {record_id!r} was deactivated. "
+                "Services using this key will lose access.",
+            )
+        if nv_str == "active" and pv_str == "inactive":
+            return (
+                "medium",
+                f"IAM access key {record_id!r} was re-activated. "
+                "Verify this reactivation was intentional.",
+            )
+        return ("low", f"IAM access key {record_id!r} status changed.")
+
+    if fp == "last_used_age_days":
+        if isinstance(nv, int) and nv > 90:
+            return (
+                "low",
+                f"IAM access key {record_id!r} has not been used in "
+                f"{nv} days. Consider deactivating or removing stale keys.",
+            )
+        return ("low", f"IAM access key {record_id!r} last-used age changed.")
+
+    return (
+        "low",
+        f"IAM access key {record_id!r} metadata changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── aws_iam_group ─────────────────────────────────────────────────────────────
+
+
+def _classify_iam_group_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    group_name: str = (
+        (pm.get("record_name") or pm.get("record_id") or "")
+        if isinstance(pm, dict) else ""
+    )
+    sensitive = _is_sensitive_principal(group_name)
+
+    if ct == "added":
+        return ("low", f"IAM group {group_name!r} appeared in monitoring.")
+    if ct == "removed":
+        return (
+            "low",
+            f"IAM group {group_name!r} was removed. "
+            "Users that were members may have lost associated permissions.",
+        )
+
+    if fp == "member_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"IAM group {group_name!r} membership increased from {pv} to {nv}. "
+                "New members inherit all group permissions.",
+            )
+        return ("low", f"IAM group {group_name!r} membership changed ({pv!r} → {nv!r}).")
+
+    if fp == "attached_policy_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"More managed policies were attached to IAM group {group_name!r} "
+                f"({pv} → {nv}). All group members may have gained additional permissions.",
+            )
+        return ("low", f"Managed policy count changed for IAM group {group_name!r}.")
+
+    if fp == "inline_policy_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"More inline policies were added to IAM group {group_name!r} "
+                f"({pv} → {nv}). Review new inline policies for broad permissions.",
+            )
+        return ("low", f"Inline policy count changed for IAM group {group_name!r}.")
+
+    return (
+        "low",
+        f"IAM group {group_name!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── aws_iam_role ──────────────────────────────────────────────────────────────
+
+
+def _classify_iam_role_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    role_name: str = (
+        (pm.get("record_name") or pm.get("record_id") or "")
+        if isinstance(pm, dict) else ""
+    )
+    sensitive = _is_sensitive_principal(role_name)
+
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        ts = nv_dict.get("trust_summary") or {}
+        if isinstance(ts, dict) and ts.get("has_external_account_trust"):
+            return (
+                "medium",
+                f"IAM role {role_name!r} appeared with trust for an external AWS "
+                "account. Verify that cross-account access is intentional.",
+            )
+        if isinstance(ts, dict) and ts.get("has_wildcard_principal"):
+            return (
+                "high",
+                f"IAM role {role_name!r} appeared with a wildcard (*) trust principal. "
+                "Any AWS principal may be able to assume this role.",
+            )
+        return ("low", f"IAM role {role_name!r} appeared in monitoring.")
+
+    if ct == "removed":
+        return (
+            "medium" if sensitive else "low",
+            f"IAM role {role_name!r} was removed. "
+            "Services or principals that assumed this role will lose access.",
+        )
+
+    # ── Trust policy changes ──────────────────────────────────────────────────
+    if fp == "trust_summary":
+        prev_ts = pv if isinstance(pv, dict) else {}
+        new_ts  = nv if isinstance(nv, dict) else {}
+
+        # External account trust added
+        if new_ts.get("has_external_account_trust") and not prev_ts.get("has_external_account_trust"):
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"IAM role {role_name!r} now trusts an external AWS account. "
+                "Cross-account access could allow principals from another account "
+                "to assume this role. Verify the trust relationship is intentional "
+                "and uses appropriate conditions.",
+            )
+        # External account trust removed
+        if prev_ts.get("has_external_account_trust") and not new_ts.get("has_external_account_trust"):
+            return (
+                "low",
+                f"Cross-account trust was removed from IAM role {role_name!r}. "
+                "External accounts can no longer assume this role.",
+            )
+        # Wildcard principal added
+        if new_ts.get("has_wildcard_principal") and not prev_ts.get("has_wildcard_principal"):
+            return (
+                "critical",
+                f"IAM role {role_name!r} trust policy now includes a wildcard (*) "
+                "principal. Any AWS principal may be able to assume this role. "
+                "Remove the wildcard and restrict trust to specific principals.",
+            )
+        # Wildcard principal removed
+        if prev_ts.get("has_wildcard_principal") and not new_ts.get("has_wildcard_principal"):
+            return (
+                "low",
+                f"Wildcard principal was removed from the trust policy of "
+                f"IAM role {role_name!r}. This is a security improvement.",
+            )
+        # External ID condition removed
+        if prev_ts.get("has_external_id_condition") and not new_ts.get("has_external_id_condition"):
+            return (
+                "high",
+                f"The ExternalId condition was removed from IAM role {role_name!r} "
+                "trust policy. Removing ExternalId on a cross-account role may allow "
+                "'confused deputy' attacks. Verify this change is intentional.",
+            )
+        # MFA condition removed
+        if prev_ts.get("has_mfa_condition") and not new_ts.get("has_mfa_condition"):
+            return (
+                "medium",
+                f"The MFA condition was removed from IAM role {role_name!r} "
+                "trust policy. Role assumption no longer requires MFA.",
+            )
+        # Service principals changed
+        prev_svcs = set(prev_ts.get("service_principals") or [])
+        new_svcs  = set(new_ts.get("service_principals") or [])
+        if new_svcs - prev_svcs:
+            added = sorted(new_svcs - prev_svcs)
+            return (
+                "medium",
+                f"IAM role {role_name!r} trust policy now allows additional AWS "
+                f"service principal(s): {added}. Verify this is intended.",
+            )
+        # Root account trust added
+        if new_ts.get("has_root_account_trust") and not prev_ts.get("has_root_account_trust"):
+            return (
+                "high",
+                f"IAM role {role_name!r} now trusts an AWS account root. "
+                "Root trust grants broad assume-role capability to the root identity.",
+            )
+        return (
+            "medium",
+            f"IAM role {role_name!r} trust policy changed. "
+            "Review the updated trust policy to confirm principals are expected.",
+        )
+
+    # ── Session duration ──────────────────────────────────────────────────────
+    if fp == "max_session_duration":
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)) and nv > pv:
+            nv_hrs = round(nv / 3600, 1)
+            pv_hrs = round(pv / 3600, 1)
+            level = "medium" if nv > 28800 else "low"  # > 8 hours is notable
+            return (
+                level,
+                f"Maximum session duration for IAM role {role_name!r} increased "
+                f"from {pv_hrs}h to {nv_hrs}h. Longer sessions may increase the "
+                "window of exposure if a session token is compromised.",
+            )
+        return ("low", f"Maximum session duration changed for IAM role {role_name!r}.")
+
+    # ── Policy counts ─────────────────────────────────────────────────────────
+    if fp == "attached_policy_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"More managed policies were attached to IAM role {role_name!r} "
+                f"({pv} → {nv}). The role may have gained additional permissions.",
+            )
+        return ("low", f"Managed policy count changed for IAM role {role_name!r}.")
+
+    if fp == "inline_policy_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"More inline policies were added to IAM role {role_name!r} "
+                f"({pv} → {nv}). Review new inline policies for broad permissions.",
+            )
+        return ("low", f"Inline policy count changed for IAM role {role_name!r}.")
+
+    return (
+        "low",
+        f"IAM role {role_name!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── aws_iam_policy ────────────────────────────────────────────────────────────
+
+
+def _classify_iam_policy_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    policy_name: str = (
+        (pm.get("record_name") or pm.get("record_id") or "")
+        if isinstance(pm, dict) else ""
+    )
+
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        ps = nv_dict.get("policy_summary") or {}
+        if _policy_summary_admin(ps):
+            return (
+                "high",
+                f"IAM managed policy {policy_name!r} was created with admin-level "
+                "permissions (Action: *, Resource: *). If attached to a principal, "
+                "this could allow full account access.",
+            )
+        return ("low", f"IAM managed policy {policy_name!r} was created.")
+
+    if ct == "removed":
+        return (
+            "low",
+            f"IAM managed policy {policy_name!r} was removed. "
+            "Any principals that had this policy attached will have lost the "
+            "permissions it granted.",
+        )
+
+    if fp == "policy_summary":
+        prev_ps = pv if isinstance(pv, dict) else {}
+        new_ps  = nv if isinstance(nv, dict) else {}
+
+        prev_codes = set(prev_ps.get("finding_codes") or [])
+        new_codes  = set(new_ps.get("finding_codes") or [])
+
+        if "admin_access" in new_codes and "admin_access" not in prev_codes:
+            return (
+                "critical",
+                f"IAM managed policy {policy_name!r} was updated to grant "
+                "admin-level access (Action: *, Resource: *). Any principal with "
+                "this policy could now take any action in the account.",
+            )
+        if "admin_access" in prev_codes and "admin_access" not in new_codes:
+            return (
+                "low",
+                f"IAM managed policy {policy_name!r} no longer grants admin-level "
+                "access. This is a security improvement.",
+            )
+        if "privilege_escalation_risk" in new_codes and "privilege_escalation_risk" not in prev_codes:
+            return (
+                "high",
+                f"IAM managed policy {policy_name!r} was updated to include "
+                "privilege escalation actions (e.g. iam:PassRole, iam:CreateRole). "
+                "Principals with this policy could potentially escalate their privileges.",
+            )
+        if "iam_write_access" in new_codes and "iam_write_access" not in prev_codes:
+            return (
+                "high",
+                f"IAM managed policy {policy_name!r} was updated to include "
+                "IAM write actions. Principals with this policy could modify "
+                "other IAM users, roles, or policies.",
+            )
+        if "sts_assume_role" in new_codes and "sts_assume_role" not in prev_codes:
+            return (
+                "medium",
+                f"IAM managed policy {policy_name!r} now allows sts:AssumeRole. "
+                "Principals with this policy may be able to assume other roles.",
+            )
+        if "wildcard_action" in new_codes and "wildcard_action" not in prev_codes:
+            return (
+                "medium",
+                f"IAM managed policy {policy_name!r} was updated to include a "
+                "wildcard action (*) on a service. Review the policy document for "
+                "unintended broad access.",
+            )
+        # Policy hash changed but no new finding codes
+        prev_hash = prev_ps.get("policy_document_hash") or ""
+        new_hash  = new_ps.get("policy_document_hash") or ""
+        if prev_hash != new_hash:
+            return (
+                "medium",
+                f"IAM managed policy {policy_name!r} document was updated. "
+                "Review the change to verify permissions are as expected.",
+            )
+        return (
+            "low",
+            f"IAM managed policy {policy_name!r} summary changed.",
+        )
+
+    if fp == "attachment_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return (
+                "low",
+                f"IAM managed policy {policy_name!r} is now attached to "
+                f"{nv} principals (was {pv}). Policy changes will affect more principals.",
+            )
+        return ("low", f"IAM managed policy {policy_name!r} attachment count changed.")
+
+    if fp == "version_count":
+        return ("low", f"IAM managed policy {policy_name!r} version count changed.")
+
+    return (
+        "low",
+        f"IAM managed policy {policy_name!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── aws_iam_policy_attachment ─────────────────────────────────────────────────
+
+
+def _classify_iam_policy_attachment_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    record_id: str = (
+        (pm.get("record_id") or "")
+        if isinstance(pm, dict) else ""
+    )
+
+    def _extract_attachment(d: object) -> tuple[str, str, str]:
+        """Return (principal_name, policy_name, principal_type) from dict."""
+        if isinstance(d, dict):
+            return (
+                d.get("principal_name") or "",
+                d.get("policy_name") or "",
+                d.get("principal_type") or "",
+            )
+        return ("", "", "")
+
+    if ct == "added":
+        principal_name, policy_name, principal_type = _extract_attachment(nv)
+        sensitive = _is_sensitive_principal(principal_name)
+        # Classify known high-risk managed policies
+        pn_lower = policy_name.lower()
+        if pn_lower in ("administratoraccess", "administrator access"):
+            return (
+                "critical",
+                f"AdministratorAccess policy was attached to {principal_type} "
+                f"{principal_name!r}. This grants unrestricted access to all AWS "
+                "services and resources.",
+            )
+        if "poweruser" in pn_lower or "fullaccess" in pn_lower:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"Policy {policy_name!r} was attached to {principal_type} "
+                f"{principal_name!r}. This may grant broad access to AWS services. "
+                "Verify this attachment is intentional.",
+            )
+        if "iamfull" in pn_lower or "iam" in pn_lower and "write" in pn_lower:
+            return (
+                "high",
+                f"IAM-related policy {policy_name!r} was attached to {principal_type} "
+                f"{principal_name!r}. IAM permissions could allow privilege escalation.",
+            )
+        level = "medium" if sensitive else "low"
+        return (
+            level,
+            f"Managed policy {policy_name!r} was attached to {principal_type} "
+            f"{principal_name!r}. The principal has gained the permissions in this policy.",
+        )
+
+    if ct == "removed":
+        principal_name, policy_name, principal_type = _extract_attachment(pv)
+        sensitive = _is_sensitive_principal(principal_name)
+        level = "medium" if sensitive else "low"
+        return (
+            level,
+            f"Managed policy {policy_name!r} was removed from {principal_type} "
+            f"{principal_name!r}. The principal has lost the permissions in this policy. "
+            "Verify dependent services still have required access.",
+        )
+
+    # Modified (policy_name field changed — unusual structural change)
+    return (
+        "low",
+        f"IAM policy attachment {record_id!r} configuration changed.",
+    )
+
+
+# ── aws_iam_inline_policy ─────────────────────────────────────────────────────
+
+
+def _classify_iam_inline_policy_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    record_name: str = (
+        (pm.get("record_name") or pm.get("record_id") or "")
+        if isinstance(pm, dict) else ""
+    )
+
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        ps = nv_dict.get("policy_summary") or {}
+        if _policy_summary_admin(ps):
+            return (
+                "critical",
+                f"Inline policy {record_name!r} was added with admin-level "
+                "permissions (Action: *, Resource: *). The attached principal "
+                "may now be able to take any action in the account.",
+            )
+        if _policy_summary_priv_esc(ps):
+            return (
+                "high",
+                f"Inline policy {record_name!r} was added with privilege "
+                "escalation actions. Review the policy to confirm this is intended.",
+            )
+        return ("low", f"Inline policy {record_name!r} was added.")
+
+    if ct == "removed":
+        return (
+            "low",
+            f"Inline policy {record_name!r} was removed. "
+            "The principal has lost any permissions it granted.",
+        )
+
+    if fp == "policy_summary":
+        prev_ps = pv if isinstance(pv, dict) else {}
+        new_ps  = nv if isinstance(nv, dict) else {}
+        prev_codes = set(prev_ps.get("finding_codes") or [])
+        new_codes  = set(new_ps.get("finding_codes") or [])
+
+        if "admin_access" in new_codes and "admin_access" not in prev_codes:
+            return (
+                "critical",
+                f"Inline policy {record_name!r} was updated to grant admin-level "
+                "access. The principal could now take any action in the account.",
+            )
+        if "privilege_escalation_risk" in new_codes and "privilege_escalation_risk" not in prev_codes:
+            return (
+                "high",
+                f"Inline policy {record_name!r} was updated to include privilege "
+                "escalation actions. Review the policy document for unintended access.",
+            )
+        if "iam_write_access" in new_codes and "iam_write_access" not in prev_codes:
+            return (
+                "high",
+                f"Inline policy {record_name!r} was updated to include IAM write "
+                "actions. The principal may be able to modify other IAM entities.",
+            )
+        if "wildcard_action" in new_codes and "wildcard_action" not in prev_codes:
+            return (
+                "medium",
+                f"Inline policy {record_name!r} was updated to include a wildcard "
+                "action. Review the policy for unintended broad permissions.",
+            )
+        # Any other policy_summary change
+        return (
+            "medium",
+            f"Inline policy {record_name!r} document was updated. "
+            "Review the change to verify permissions are as expected.",
+        )
+
+    return (
+        "low",
+        f"Inline policy {record_name!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── aws_iam_identity_provider ─────────────────────────────────────────────────
+
+
+def _classify_iam_identity_provider_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    provider_name: str = (
+        (pm.get("record_name") or pm.get("record_id") or "")
+        if isinstance(pm, dict) else ""
+    )
+    nv_dict = nv if isinstance(nv, dict) else {}
+    provider_type = nv_dict.get("provider_type") or "identity"
+
+    if ct == "added":
+        return (
+            "medium",
+            f"{provider_type.upper()} identity provider {provider_name!r} was added. "
+            "Federation grants external identities the ability to assume IAM roles. "
+            "Verify this provider was intentionally configured.",
+        )
+
+    if ct == "removed":
+        return (
+            "medium",
+            f"{provider_type.upper()} identity provider {provider_name!r} was removed. "
+            "External identities that authenticated via this provider will lose access.",
+        )
+
+    if fp == "oidc_client_id_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return (
+                "medium",
+                f"OIDC provider {provider_name!r} now has more allowed client IDs "
+                f"({pv} → {nv}). Additional client applications may be able to "
+                "authenticate through this provider.",
+            )
+        return ("low", f"OIDC provider {provider_name!r} client ID count changed.")
+
+    if fp == "oidc_thumbprint_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv < pv and nv == 0:
+            return (
+                "high",
+                f"OIDC provider {provider_name!r} has no thumbprints configured. "
+                "Without thumbprint verification, the provider certificate is not "
+                "validated. Review the OIDC provider configuration.",
+            )
+        return ("low", f"OIDC provider {provider_name!r} thumbprint count changed.")
+
+    if fp == "saml_valid_until":
+        if nv is None and pv is not None:
+            return (
+                "medium",
+                f"SAML provider {provider_name!r} expiration date was cleared. "
+                "Verify the SAML metadata certificate is still valid.",
+            )
+        return (
+            "low",
+            f"SAML provider {provider_name!r} validity date changed.",
+        )
+
+    return (
+        "low",
+        f"IAM identity provider {provider_name!r} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -1353,6 +2325,25 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_igw_change(change)
     if record_type == AWS_NETWORK_ACL:
         return _classify_network_acl_change(change)
+    # ── M39 IAM ───────────────────────────────────────────────────────────────
+    if record_type == AWS_IAM_ACCOUNT_SUMMARY:
+        return _classify_iam_account_summary_change(change)
+    if record_type == AWS_IAM_USER:
+        return _classify_iam_user_change(change)
+    if record_type == AWS_IAM_ACCESS_KEY:
+        return _classify_iam_access_key_change(change)
+    if record_type == AWS_IAM_GROUP:
+        return _classify_iam_group_change(change)
+    if record_type == AWS_IAM_ROLE:
+        return _classify_iam_role_change(change)
+    if record_type == AWS_IAM_POLICY:
+        return _classify_iam_policy_change(change)
+    if record_type == AWS_IAM_POLICY_ATTACHMENT:
+        return _classify_iam_policy_attachment_change(change)
+    if record_type == AWS_IAM_INLINE_POLICY:
+        return _classify_iam_inline_policy_change(change)
+    if record_type == AWS_IAM_IDENTITY_PROVIDER:
+        return _classify_iam_identity_provider_change(change)
 
     # Unknown AWS record type — conservative default
     return (

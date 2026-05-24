@@ -367,6 +367,92 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "rule_count",
         "tag_keys",
     ),
+    # ── M39: IAM Identity, Permissions, Policy and Trust Risk ─────────────────
+    # aws_iam_account_summary — one record per AWS account.
+    # Tracks root security posture, password policy, and aggregate counts.
+    "aws_iam_account_summary": (
+        "user_count",
+        "group_count",
+        "role_count",
+        "policy_count",
+        "mfa_enabled_for_root",
+        "root_access_keys_present",
+        "password_policy_present",
+        "password_min_length",
+        "password_requires_symbols",
+        "password_requires_numbers",
+        "password_requires_uppercase",
+        "password_requires_lowercase",
+        "password_max_age",
+        "password_reuse_prevention",
+        "password_hard_expiry",
+    ),
+    # aws_iam_user — one record per IAM user.
+    # Key security signals: MFA enrollment, key counts, policy attachment.
+    "aws_iam_user": (
+        "mfa_enabled",
+        "mfa_device_count",
+        "active_key_count",
+        "inactive_key_count",
+        "last_key_used_age_days",
+        "group_count",
+        "attached_policy_count",
+        "inline_policy_count",
+        "tag_keys",
+    ),
+    # aws_iam_access_key — one record per IAM access key.
+    # status change (Active→Inactive) and last-used signal rotation/abandonment.
+    "aws_iam_access_key": (
+        "status",
+        "last_used_age_days",
+        "last_used_service",
+        "last_used_region",
+    ),
+    # aws_iam_group — one record per IAM group.
+    # member_count and policy counts track group permission drift.
+    "aws_iam_group": (
+        "member_count",
+        "attached_policy_count",
+        "inline_policy_count",
+    ),
+    # aws_iam_role — one record per IAM role.
+    # trust_summary tracks changes to who can assume this role.
+    # max_session_duration change can enable long-lived sessions.
+    "aws_iam_role": (
+        "max_session_duration",
+        "attached_policy_count",
+        "inline_policy_count",
+        "tag_keys",
+        "trust_summary",
+    ),
+    # aws_iam_policy — one record per customer-managed IAM policy.
+    # policy_summary tracks privilege escalation risk vectors.
+    "aws_iam_policy": (
+        "attachment_count",
+        "is_attachable",
+        "version_count",
+        "policy_summary",
+    ),
+    # aws_iam_policy_attachment — one record per principal↔managed-policy link.
+    # Added/removed events are the primary signals; no mutable fields to track.
+    "aws_iam_policy_attachment": (
+        # The attachment itself is structural: added = permission granted,
+        # removed = permission revoked. No fields change in place.
+        # Include policy_name so changes to the label are visible.
+        "policy_name",
+    ),
+    # aws_iam_inline_policy — one record per inline policy per principal.
+    # policy_summary tracks privilege escalation risk in the inline document.
+    "aws_iam_inline_policy": (
+        "policy_summary",
+    ),
+    # aws_iam_identity_provider — one record per OIDC/SAML provider.
+    # Federation configuration changes signal trust boundary changes.
+    "aws_iam_identity_provider": (
+        "oidc_client_id_count",
+        "oidc_thumbprint_count",
+        "saml_valid_until",
+    ),
 }
 
 
