@@ -510,6 +510,54 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "tag_keys",
         "config_fetch_warnings",
     ),
+    # ── M41: Secrets Manager + SSM Parameter Metadata ─────────────────────────
+    # aws_secretsmanager_secret — one record per Secrets Manager secret.
+    # Secret values are NEVER stored; only metadata and structural signals.
+    # kms_key_id_hash tracks KMS key changes without storing the raw ARN.
+    "aws_secretsmanager_secret": (
+        "description_present",
+        "kms_key_id_present",
+        "kms_key_id_hash",
+        "rotation_enabled",
+        "rotation_lambda_arn_present",
+        "rotation_rules_summary",
+        "last_changed_date",
+        "last_accessed_date",
+        "deleted_date",
+        "owning_service",
+        "primary_region",
+        "replica_region_count",
+        "replica_regions",
+        "version_count",
+        "active_version_count",
+        "deprecated_version_count",
+        "has_resource_policy",
+        "policy_summary",
+        "tag_keys",
+        "sensitive_name_category",
+        "config_fetch_warnings",
+    ),
+    # aws_ssm_parameter — one record per SSM Parameter.
+    # Parameter values are NEVER stored; only type/tier/policy metadata.
+    # key_id_hash tracks KMS key changes without storing the raw ARN.
+    "aws_ssm_parameter": (
+        "parameter_type",
+        "tier",
+        "data_type",
+        "key_id_present",
+        "key_id_hash",
+        "version",
+        "last_modified_date",
+        "last_modified_user_summary",
+        "allowed_pattern_present",
+        "policy_count",
+        "policies_summary",
+        "tag_keys",
+        "path_depth",
+        "path_prefix",
+        "sensitive_name_category",
+        "config_fetch_warnings",
+    ),
 }
 
 

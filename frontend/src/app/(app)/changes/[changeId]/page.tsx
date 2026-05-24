@@ -580,6 +580,26 @@ function getChangeSummary(change: ChangeDetail): string {
     if (fp === "viewer_certificate_summary") return `Viewer certificate / TLS settings changed on CloudFront distribution ${distName}.`;
     return `CloudFront distribution ${distName} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
+  if (rt === "aws_secretsmanager_secret") {
+    const secretName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Secrets Manager secret ${secretName} was removed.`;
+    if (change.change_type === "added")   return `New Secrets Manager secret ${secretName} was added.`;
+    if (fp === "rotation_enabled" && nv === false) return `Automatic rotation was disabled for secret ${secretName}.`;
+    if (fp === "rotation_enabled" && nv === true)  return `Automatic rotation was enabled for secret ${secretName}.`;
+    if (fp === "deleted_date" && nv !== null)       return `Secret ${secretName} was scheduled for deletion.`;
+    if (fp === "kms_key_id_present" && nv === false) return `KMS key was removed from secret ${secretName}.`;
+    if (fp === "policy_summary")                    return `Resource policy changed on secret ${secretName}.`;
+    return `Secrets Manager secret ${secretName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_ssm_parameter") {
+    const paramName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `SSM parameter ${paramName} was removed.`;
+    if (change.change_type === "added")   return `New SSM parameter ${paramName} was added.`;
+    if (fp === "parameter_type")          return `SSM parameter ${paramName} type changed from ${String(pv)} to ${String(nv)}.`;
+    if (fp === "key_id_present" && nv === false) return `KMS key was removed from SSM parameter ${paramName}.`;
+    if (fp === "version")                 return `SSM parameter ${paramName} was updated to version ${String(nv)}.`;
+    return `SSM parameter ${paramName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
 
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
@@ -1156,6 +1176,71 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Test the distribution URL to verify it serves the expected content.",
       "Review the CloudFront console for the current distribution configuration.",
       "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+
+  // AWS M41 — Secrets Manager + SSM
+  if (rt === "aws_secretsmanager_secret") {
+    const fp11 = change.field_path ?? "";
+    if (fp11 === "rotation_enabled" && change.new_value === false) {
+      return [
+        "Confirm rotation was intentionally disabled for this secret.",
+        "Review the rotation configuration in Secrets Manager → Rotation tab.",
+        "Re-enable automatic rotation if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+        "ConfigTrace does not read or store secret values.",
+      ];
+    }
+    if (fp11 === "deleted_date" || change.change_type === "removed") {
+      return [
+        "Confirm the secret deletion is intentional and no application still uses it.",
+        "Check AWS CloudTrail for who triggered the deletion.",
+        "Search your codebase for references to this secret name.",
+        "If deletion is scheduled, verify the deletion window gives enough time to update consumers.",
+        "ConfigTrace does not read or store secret values.",
+      ];
+    }
+    if (fp11 === "policy_summary") {
+      return [
+        "Review the resource policy in Secrets Manager → Resource permissions.",
+        "Confirm no wildcard principal (*) grants unintended access.",
+        "Check AWS CloudTrail for who modified the resource policy.",
+        "Confirm rotation settings match production requirements.",
+        "ConfigTrace does not read or store secret values.",
+      ];
+    }
+    return [
+      "Confirm rotation settings match production requirements.",
+      "If deletion is scheduled, confirm this secret is not still used.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read or store secret values.",
+    ];
+  }
+  if (rt === "aws_ssm_parameter") {
+    const fp12 = change.field_path ?? "";
+    if (fp12 === "parameter_type") {
+      return [
+        "If type changed from SecureString to String, review whether parameter should remain encrypted.",
+        "Check AWS CloudTrail for who changed the parameter type.",
+        "Search your codebase for consumers that may depend on the parameter type.",
+        "Re-encrypt the parameter if the type change was accidental.",
+        "ConfigTrace does not read or store parameter values.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the parameter deletion was intentional.",
+        "Search your codebase for references to this parameter name.",
+        "Check AWS CloudTrail for who deleted the parameter.",
+        "Recreate the parameter if it was removed accidentally.",
+        "ConfigTrace does not read or store parameter values.",
+      ];
+    }
+    return [
+      "If type changed from SecureString to String, review whether parameter should remain encrypted.",
+      "Check AWS CloudTrail for who made the change.",
+      "Verify consumer applications are updated if the parameter structure changed.",
+      "ConfigTrace does not read or store parameter values.",
     ];
   }
 

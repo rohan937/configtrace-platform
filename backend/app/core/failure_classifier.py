@@ -59,6 +59,13 @@ AWS Route53 (partial/per-API failures, via classify_aws_route53_failure):
 AWS CloudFront (partial/per-API failures, via classify_aws_cloudfront_failure):
   aws_cloudfront_access_denied, aws_cloudfront_rate_limited, aws_cloudfront_api_unavailable
   aws_cloudfront_distributions_unavailable, aws_cloudfront_distribution_config_unavailable
+AWS Secrets Manager (partial/per-API failures, via classify_aws_secretsmanager_failure):
+  aws_secretsmanager_access_denied, aws_secretsmanager_rate_limited, aws_secretsmanager_api_unavailable
+  aws_secretsmanager_list_unavailable, aws_secretsmanager_describe_unavailable
+  aws_secretsmanager_versions_unavailable, aws_secretsmanager_policy_unavailable
+AWS SSM (partial/per-API failures, via classify_aws_ssm_failure):
+  aws_ssm_access_denied, aws_ssm_rate_limited, aws_ssm_api_unavailable
+  aws_ssm_describe_parameters_unavailable, aws_ssm_tags_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -850,4 +857,191 @@ def classify_aws_cloudfront_failure(
         category="provider_unavailable",
         error_code=error_code,
         recommended_action=_CLOUDFRONT_PARTIAL_ACTION,
+    )
+
+
+# ── M41: Secrets Manager per-API failure classification ──────────────────────
+
+_AWS_SECRETSMANAGER_API_CODE: dict[str, str] = {
+    "ListSecrets":              "aws_secretsmanager_list_unavailable",
+    "DescribeSecret":           "aws_secretsmanager_describe_unavailable",
+    "ListSecretVersionIds":     "aws_secretsmanager_versions_unavailable",
+    "GetResourcePolicy":        "aws_secretsmanager_policy_unavailable",
+}
+
+_SECRETSMANAGER_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional Secrets Manager metadata; "
+    "other AWS checks may still work."
+)
+
+_SECRETSMANAGER_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace read-only Secrets Manager permissions. "
+    "Required: secretsmanager:ListSecrets, secretsmanager:DescribeSecret, "
+    "secretsmanager:ListSecretVersionIds, secretsmanager:GetResourcePolicy. "
+    "ConfigTrace never calls GetSecretValue. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_secretsmanager_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial Secrets Manager sync failure (per-API).
+
+    Used when an individual Secrets Manager API call fails inside
+    ``_fetch_secrets_in_region``.  The overall sync continues; the result
+    is logged as a structured warning.
+
+    Args:
+        api_name: The Secrets Manager API name (e.g. ``"ListSecrets"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+        Credentials and secret values are never included in returned strings.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_secretsmanager_access_denied",
+            recommended_action=_SECRETSMANAGER_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_secretsmanager_rate_limited",
+            recommended_action=(
+                "AWS throttled Secrets Manager API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented Secrets Manager API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_secretsmanager_api_unavailable",
+            recommended_action=(
+                "The Secrets Manager API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _AWS_SECRETSMANAGER_API_CODE.get(api_name, "aws_secretsmanager_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_SECRETSMANAGER_PARTIAL_ACTION,
+    )
+
+
+# ── M41: SSM Parameter Store per-API failure classification ──────────────────
+
+_AWS_SSM_API_CODE: dict[str, str] = {
+    "DescribeParameters":       "aws_ssm_describe_parameters_unavailable",
+    "ListTagsForResource":      "aws_ssm_tags_unavailable",
+}
+
+_SSM_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional SSM Parameter metadata; "
+    "other AWS checks may still work."
+)
+
+_SSM_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace read-only SSM permissions. "
+    "Required: ssm:DescribeParameters. "
+    "ConfigTrace never calls GetParameter, GetParameters, or GetParameterHistory. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_ssm_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial SSM Parameter Store sync failure (per-API).
+
+    Used when an individual SSM API call fails inside
+    ``_fetch_ssm_in_region``.  The overall sync continues; the result
+    is logged as a structured warning.
+
+    Args:
+        api_name: The SSM API name (e.g. ``"DescribeParameters"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+        Parameter values are never included in returned strings.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_ssm_access_denied",
+            recommended_action=_SSM_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_ssm_rate_limited",
+            recommended_action=(
+                "AWS throttled SSM API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented SSM API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_ssm_api_unavailable",
+            recommended_action=(
+                "The SSM API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _AWS_SSM_API_CODE.get(api_name, "aws_ssm_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_SSM_PARTIAL_ACTION,
     )

@@ -104,6 +104,8 @@ from app.core.failure_classifier import (
     classify_aws_iam_failure,
     classify_aws_route53_failure,
     classify_aws_cloudfront_failure,
+    classify_aws_secretsmanager_failure,
+    classify_aws_ssm_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -129,6 +131,8 @@ from app.connectors.aws_schema import (
     AWS_ROUTE53_HOSTED_ZONE,
     AWS_ROUTE53_RECORD,
     AWS_CLOUDFRONT_DISTRIBUTION,
+    AWS_SECRETSMANAGER_SECRET,
+    AWS_SSM_PARAMETER,
 )
 
 logger = logging.getLogger(__name__)
@@ -449,6 +453,184 @@ def _parse_partition(arn: str) -> str:
         return "aws"
     parts = arn.split(":")
     return parts[1] if len(parts) >= 2 else "aws"
+
+
+# ── M41: Secrets Manager + SSM helpers ───────────────────────────────────────
+
+
+def _hash_kms_key_id(key_id: str) -> str:
+    """Return a 12-character hex SHA-256 of a KMS key ID/ARN.
+
+    Used to detect KMS key changes without storing the raw ARN.
+
+    SECURITY: The raw key ID is never stored or returned.
+    """
+    return hashlib.sha256(key_id.encode("utf-8")).hexdigest()[:12]
+
+
+# Sensitivity categories and their keyword patterns for secret names.
+_SECRET_NAME_PATTERNS: dict[str, frozenset[str]] = {
+    "secret":      frozenset({"secret", "secrets", "secretkey", "secret_key"}),
+    "credential":  frozenset({"credential", "credentials", "cred", "creds", "passwd", "password", "pass"}),
+    "api_key":     frozenset({"apikey", "api_key", "api-key", "token", "access_key", "accesskey"}),
+    "auth":        frozenset({"auth", "oauth", "jwt", "cookie", "session", "sso", "saml", "oidc"}),
+    "payment":     frozenset({"payment", "stripe", "paypal", "billing", "invoice", "card"}),
+    "database":    frozenset({"db", "database", "rds", "postgres", "mysql", "mongo", "redis", "sql"}),
+    "production":  frozenset({"prod", "production", "live"}),
+    "config":      frozenset({"config", "configuration", "settings", "env", "environment"}),
+}
+
+
+def _classify_secret_name_sensitivity(name: str) -> str:
+    """Return sensitivity category for a Secrets Manager secret name.
+
+    Returns one of: secret, credential, api_key, auth, payment, database,
+    production, config, none.
+
+    SECURITY: The name is checked against known patterns; name itself is never
+    stored in risk messages beyond what's already in record_name.
+    """
+    lower = name.lower()
+    for category, patterns in _SECRET_NAME_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in lower:
+                return category
+    return "none"
+
+
+# SSM parameter name patterns (same categories).
+_SSM_NAME_PATTERNS: dict[str, frozenset[str]] = {
+    "secret":      frozenset({"secret", "secrets", "secretkey", "secret_key"}),
+    "credential":  frozenset({"credential", "credentials", "cred", "creds", "passwd", "password", "pass"}),
+    "api_key":     frozenset({"apikey", "api_key", "api-key", "token", "access_key", "accesskey"}),
+    "auth":        frozenset({"auth", "oauth", "jwt", "cookie", "session", "sso", "saml", "oidc"}),
+    "payment":     frozenset({"payment", "stripe", "paypal", "billing", "invoice", "card"}),
+    "database":    frozenset({"db", "database", "rds", "postgres", "mysql", "mongo", "redis", "sql"}),
+    "production":  frozenset({"prod", "production", "live"}),
+    "config":      frozenset({"config", "configuration", "settings", "env", "environment"}),
+}
+
+
+def _classify_ssm_name_sensitivity(name: str) -> str:
+    """Return sensitivity category for an SSM parameter name.
+
+    Returns one of: secret, credential, api_key, auth, payment, database,
+    production, config, none.
+    """
+    lower = name.lower()
+    for category, patterns in _SSM_NAME_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in lower:
+                return category
+    return "none"
+
+
+def _summarize_iam_arn(arn: str | None) -> str | None:
+    """Return a safe summary of an IAM ARN (no raw ARN stored).
+
+    Returns a structured string like "user/alice", "role/LambdaRole",
+    or None if the ARN is absent/invalid.
+
+    SECURITY: The full ARN is never stored; only the resource component.
+    """
+    if not arn:
+        return None
+    try:
+        # arn:aws:iam::account_id:user/alice  → "user/alice"
+        parts = arn.split(":", 5)
+        if len(parts) >= 6:
+            return parts[5][:128]  # cap length
+        return None
+    except Exception:
+        return None
+
+
+def _analyze_secret_resource_policy(policy_json: str, account_id: str) -> dict:
+    """Return a safe policy summary — no raw JSON stored.
+
+    Analyzes a Secrets Manager resource policy for key risk signals:
+    - Wildcard principal (*): any principal can access the secret
+    - Cross-account principals: principals from other accounts
+    - Service principals: AWS service access
+
+    SECURITY: The raw policy JSON is never stored or returned.
+    Only aggregate boolean/count signals are returned.
+    """
+    import json
+    summary: dict = {
+        "has_wildcard_principal": False,
+        "cross_account_principal_count": 0,
+        "service_principal_count": 0,
+        "statement_count": 0,
+        "allow_statement_count": 0,
+        "deny_statement_count": 0,
+    }
+    try:
+        policy = json.loads(policy_json)
+        statements = policy.get("Statement", [])
+        if isinstance(statements, dict):
+            statements = [statements]
+        summary["statement_count"] = len(statements)
+        for stmt in statements:
+            if not isinstance(stmt, dict):
+                continue
+            effect = stmt.get("Effect", "").upper()
+            if effect == "ALLOW":
+                summary["allow_statement_count"] += 1
+            elif effect == "DENY":
+                summary["deny_statement_count"] += 1
+            principal = stmt.get("Principal")
+            if principal == "*" or principal == {"AWS": "*"}:
+                summary["has_wildcard_principal"] = True
+            elif isinstance(principal, dict):
+                aws_p = principal.get("AWS", [])
+                if isinstance(aws_p, str):
+                    aws_p = [aws_p]
+                if "*" in aws_p:
+                    summary["has_wildcard_principal"] = True
+                else:
+                    for p in aws_p:
+                        if isinstance(p, str) and account_id and account_id not in p:
+                            summary["cross_account_principal_count"] += 1
+                svc_p = principal.get("Service", [])
+                if isinstance(svc_p, str):
+                    svc_p = [svc_p]
+                summary["service_principal_count"] += len(svc_p)
+    except Exception:
+        # Malformed policy — return empty summary; raw JSON is never stored
+        pass
+    return summary
+
+
+def _summarize_rotation_rules(rotation_rules: dict) -> dict | None:
+    """Return a safe summary of RotationRules dict.
+
+    Extracts only numeric/boolean fields; never stores raw configuration.
+    """
+    if not rotation_rules:
+        return None
+    return {
+        "automatically_after_days": rotation_rules.get("AutomaticallyAfterDays"),
+        "duration": rotation_rules.get("Duration"),
+        "schedule_expression_present": bool(rotation_rules.get("ScheduleExpression")),
+    }
+
+
+def _summarize_ssm_policies(policies: list) -> dict | None:
+    """Return a safe summary of SSM Parameter Store parameter policies.
+
+    Each policy has a Type (Expiration, ExpirationNotification, NoChangeNotification)
+    and a Status.
+
+    SECURITY: Raw policy content is never stored.
+    """
+    if not policies:
+        return None
+    counts: dict[str, int] = {}
+    for p in policies:
+        ptype = p.get("Type") or "Unknown"
+        counts[ptype] = counts.get(ptype, 0) + 1
+    return {"type_counts": counts, "total": len(policies)}
 
 
 # ── M39: IAM policy and trust analysis helpers ────────────────────────────────
@@ -936,7 +1118,7 @@ class AWSConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict) -> list[dict]:
-        """Fetch all AWS account/inventory, S3, network, and IAM records.
+        """Fetch all AWS account/inventory, S3, network, IAM, and secrets records.
 
         Returns a flat list of normalized records:
         - 1 × aws_account_identity  (M36)
@@ -957,6 +1139,8 @@ class AWSConnector(BaseConnector):
         - ZZZ4 × aws_route53_hosted_zone (M40, one per hosted zone)
         - ZZZ5 × aws_route53_record  (M40, one per resource record set)
         - ZZZ6 × aws_cloudfront_distribution (M40, one per distribution)
+        - A × aws_secretsmanager_secret (M41, one per secret per region)
+        - B × aws_ssm_parameter      (M41, one per SSM parameter per region)
         - 1 × aws_service_inventory (last — reflects all active surfaces)
 
         All resources use fail-soft behavior for optional endpoints.
@@ -964,6 +1148,10 @@ class AWSConnector(BaseConnector):
 
         SECURITY: Credentials are never included in returned records.
                   Raw policy documents are NEVER stored.
+                  Secret values are NEVER fetched or stored.
+                  SSM parameter values are NEVER fetched or stored.
+                  GetSecretValue is NEVER called.
+                  GetParameter / GetParameters / GetParameterHistory are NEVER called.
                   No write operations are performed.  No resource mutations.
         """
         logger.info(
@@ -1032,7 +1220,25 @@ class AWSConnector(BaseConnector):
             len(cloudfront_records),
         )
 
-        # 8. Service inventory (always last — reflects all active surfaces)
+        # 8. Secrets Manager secrets (M41) — regional; metadata only.
+        #    SECURITY: GetSecretValue is NEVER called.
+        secrets_records = self._fetch_secrets_resources(credentials, account_id)
+        records.extend(secrets_records)
+        logger.info(
+            "AWSConnector.fetch: secrets_resources fetched  count=%d",
+            len(secrets_records),
+        )
+
+        # 9. SSM parameters (M41) — regional; metadata only.
+        #    SECURITY: GetParameter / GetParameters / GetParameterHistory are NEVER called.
+        ssm_records = self._fetch_ssm_resources(credentials, account_id)
+        records.extend(ssm_records)
+        logger.info(
+            "AWSConnector.fetch: ssm_resources fetched  count=%d",
+            len(ssm_records),
+        )
+
+        # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
             if r.get("record_type") == AWS_SECURITY_GROUP
@@ -1057,6 +1263,14 @@ class AWSConnector(BaseConnector):
             1 for r in cloudfront_records
             if r.get("record_type") == AWS_CLOUDFRONT_DISTRIBUTION
         )
+        secrets_count = sum(
+            1 for r in secrets_records
+            if r.get("record_type") == AWS_SECRETSMANAGER_SECRET
+        )
+        ssm_parameter_count = sum(
+            1 for r in ssm_records
+            if r.get("record_type") == AWS_SSM_PARAMETER
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -1066,6 +1280,8 @@ class AWSConnector(BaseConnector):
             iam_role_count=iam_role_count,
             route53_zone_count=route53_zone_count,
             cloudfront_distribution_count=cloudfront_dist_count,
+            secrets_count=secrets_count,
+            ssm_parameter_count=ssm_parameter_count,
         )
         records.append(inventory_record)
 
@@ -1171,6 +1387,8 @@ class AWSConnector(BaseConnector):
         iam_role_count: int = 0,
         route53_zone_count: int = 0,
         cloudfront_distribution_count: int = 0,
+        secrets_count: int = 0,
+        ssm_parameter_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -1181,7 +1399,7 @@ class AWSConnector(BaseConnector):
             "selected_regions":               selected,
             "enabled_surfaces":               [
                 "account_inventory", "s3", "security_groups", "vpc",
-                "iam", "route53", "cloudfront",
+                "iam", "route53", "cloudfront", "secrets_manager", "ssm",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -1190,8 +1408,10 @@ class AWSConnector(BaseConnector):
             "iam_role_count":                 iam_role_count,
             "route53_zone_count":             route53_zone_count,
             "cloudfront_distribution_count":  cloudfront_distribution_count,
+            "secrets_count":                  secrets_count,
+            "ssm_parameter_count":            ssm_parameter_count,
             "future_surfaces": [
-                "secrets", "rds", "lambda", "api_gateway", "load_balancers",
+                "rds", "lambda", "api_gateway", "load_balancers",
                 "waf", "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations", "cloudwatch",
@@ -3699,6 +3919,360 @@ class AWSConnector(BaseConnector):
 
             if dist_list.get("IsTruncated"):
                 kwargs = {"Marker": dist_list.get("NextMarker", "")}
+            else:
+                break
+
+        return records
+
+    # ── M41: Secrets Manager fetch methods ────────────────────────────────────
+
+    def _fetch_secrets_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch Secrets Manager secret metadata across all selected regions.
+
+        Iterates over each selected region, calling ``_fetch_secrets_in_region``.
+        Fail-soft: per-region failures are logged but do not abort the sync.
+
+        SECURITY: GetSecretValue is NEVER called.  Secret values are never
+        fetched, stored, logged, or returned in any form.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("secretsmanager", credentials, region=region)
+                region_records = self._fetch_secrets_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: secrets fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except ConnectorError as exc:
+                fc = classify_aws_secretsmanager_failure("ListSecrets", exc)
+                logger.warning(
+                    "aws: secrets fetch failed  region=%s  code=%s  action=%s",
+                    region, fc.error_code, fc.recommended_action,
+                )
+            except Exception:
+                logger.warning(
+                    "aws: secrets fetch failed  region=%s  (unexpected error)",
+                    region,
+                )
+
+        return all_records
+
+    def _fetch_secrets_in_region(
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize Secrets Manager secrets in a single region.
+
+        Calls:
+          - ListSecrets (paginated) — discovers all secrets
+          - GetResourcePolicy (per secret, optional) — resource policy metadata
+          - ListSecretVersionIds (per secret, optional) — version count signals
+
+        SECURITY:
+          - GetSecretValue is NEVER called.
+          - Secret values are NEVER fetched, stored, or logged.
+          - Raw resource policy JSON is parsed in memory only; never stored.
+          - KMS key IDs are hashed; raw ARNs are never stored.
+        """
+        records: list[dict] = []
+        kwargs: dict = {"MaxResults": 100, "SortOrder": "asc"}
+
+        while True:
+            try:
+                response = self._call_aws(client.list_secrets, **kwargs)
+            except ConnectorError as exc:
+                fc = classify_aws_secretsmanager_failure("ListSecrets", exc)
+                logger.warning(
+                    "aws: ListSecrets failed  region=%s  code=%s",
+                    region, fc.error_code,
+                )
+                break
+
+            secret_list = response.get("SecretList") or []
+            for secret in secret_list:
+                name: str = secret.get("Name") or ""
+                arn: str = secret.get("ARN") or ""
+                description: str | None = secret.get("Description")
+                kms_key_id: str | None = secret.get("KmsKeyId")
+                rotation_enabled: bool = bool(secret.get("RotationEnabled", False))
+                rotation_lambda_arn: str | None = secret.get("RotationLambdaARN")
+                rotation_rules: dict | None = secret.get("RotationRules")
+                last_changed_date = secret.get("LastChangedDate")
+                last_accessed_date = secret.get("LastAccessedDate")
+                created_date = secret.get("CreatedDate")
+                deleted_date = secret.get("DeletedDate")
+                owning_service: str | None = secret.get("OwningService")
+                primary_region: str | None = secret.get("PrimaryRegion")
+                replica_statuses: list = secret.get("ReplicationStatus") or []
+                tags: list = secret.get("Tags") or []
+                tag_keys: list[str] | None = sorted({t["Key"] for t in tags if "Key" in t}) or None
+
+                warnings: list[str] = []
+
+                # Resource policy — optional
+                has_resource_policy = False
+                policy_summary: dict | None = None
+                try:
+                    policy_response = self._call_aws(
+                        client.get_resource_policy,
+                        SecretId=arn,
+                    )
+                    raw_policy = policy_response.get("ResourcePolicy")
+                    if raw_policy:
+                        has_resource_policy = True
+                        # SECURITY: raw_policy is analyzed in memory; never stored
+                        policy_summary = _analyze_secret_resource_policy(
+                            raw_policy, account_id
+                        )
+                except ConnectorError as exc:
+                    fc = classify_aws_secretsmanager_failure("GetResourcePolicy", exc)
+                    if fc.error_code != "aws_secretsmanager_policy_unavailable":
+                        # Access denied — note it
+                        warnings.append(f"GetResourcePolicy: {fc.error_code}")
+                    # ResourceNotFoundException means no policy — that's fine
+                except Exception:
+                    warnings.append("GetResourcePolicy: unexpected error")
+
+                # Version IDs — optional, for version count signals
+                version_count = 0
+                active_version_count = 0
+                deprecated_version_count = 0
+                try:
+                    versions_response = self._call_aws(
+                        client.list_secret_version_ids,
+                        SecretId=arn,
+                        IncludeDeprecated=True,
+                    )
+                    version_items = versions_response.get("Versions") or []
+                    version_count = len(version_items)
+                    for v in version_items:
+                        stages = v.get("VersionStages") or []
+                        if "AWSCURRENT" in stages or "AWSPENDING" in stages:
+                            active_version_count += 1
+                        elif not stages or stages == ["AWSDEPRECATED"]:
+                            deprecated_version_count += 1
+                except ConnectorError as exc:
+                    fc = classify_aws_secretsmanager_failure(
+                        "ListSecretVersionIds", exc
+                    )
+                    warnings.append(f"ListSecretVersionIds: {fc.error_code}")
+                except Exception:
+                    warnings.append("ListSecretVersionIds: unexpected error")
+
+                # Date normalization — store as ISO strings, not raw datetime
+                def _iso(dt: Any) -> str | None:
+                    if dt is None:
+                        return None
+                    try:
+                        return dt.isoformat()
+                    except AttributeError:
+                        return str(dt)
+
+                stable_id = f"{account_id}/{region}/{name}"
+
+                records.append({
+                    "record_type":              AWS_SECRETSMANAGER_SECRET,
+                    "record_id":                stable_id,
+                    "external_id":              stable_id,
+                    "name":                     name,
+                    "account_id":               account_id,
+                    "region":                   region,
+                    "arn":                      arn,
+                    "description_present":      bool(description),
+                    "kms_key_id_present":       bool(kms_key_id),
+                    "kms_key_id_hash":          _hash_kms_key_id(kms_key_id) if kms_key_id else None,
+                    "rotation_enabled":         rotation_enabled,
+                    "rotation_lambda_arn_present": bool(rotation_lambda_arn),
+                    "rotation_rules_summary":   _summarize_rotation_rules(rotation_rules or {}),
+                    "last_changed_date":        _iso(last_changed_date),
+                    "last_accessed_date":       _iso(last_accessed_date),
+                    "created_date":             _iso(created_date),
+                    "deleted_date":             _iso(deleted_date),
+                    "owning_service":           owning_service,
+                    "primary_region":           primary_region,
+                    "replica_region_count":     len(replica_statuses),
+                    "replica_regions":          [r.get("Region") for r in replica_statuses] or None,
+                    "version_count":            version_count,
+                    "active_version_count":     active_version_count,
+                    "deprecated_version_count": deprecated_version_count,
+                    "has_resource_policy":      has_resource_policy,
+                    "policy_summary":           policy_summary,
+                    "tag_keys":                 tag_keys,
+                    "sensitive_name_category":  _classify_secret_name_sensitivity(name),
+                    "config_fetch_warnings":    warnings or None,
+                })
+
+            next_token = response.get("NextToken")
+            if next_token:
+                kwargs["NextToken"] = next_token
+            else:
+                break
+
+        return records
+
+    # ── M41: SSM Parameter Store fetch methods ────────────────────────────────
+
+    def _fetch_ssm_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch SSM Parameter Store metadata across all selected regions.
+
+        Iterates over each selected region, calling ``_fetch_ssm_in_region``.
+        Fail-soft: per-region failures are logged but do not abort the sync.
+
+        SECURITY: GetParameter, GetParameters, and GetParameterHistory are
+        NEVER called.  Parameter values are never fetched, stored, or logged.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("ssm", credentials, region=region)
+                region_records = self._fetch_ssm_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: ssm fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except ConnectorError as exc:
+                fc = classify_aws_ssm_failure("DescribeParameters", exc)
+                logger.warning(
+                    "aws: ssm fetch failed  region=%s  code=%s  action=%s",
+                    region, fc.error_code, fc.recommended_action,
+                )
+            except Exception:
+                logger.warning(
+                    "aws: ssm fetch failed  region=%s  (unexpected error)",
+                    region,
+                )
+
+        return all_records
+
+    def _fetch_ssm_in_region(
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize SSM parameters in a single region.
+
+        Calls:
+          - DescribeParameters (paginated) — discovers all parameters + metadata
+          - ListTagsForResource (per parameter, optional) — tag keys
+
+        SECURITY:
+          - GetParameter, GetParameters, and GetParameterHistory are NEVER called.
+          - Parameter values are NEVER fetched, stored, or logged.
+          - KMS key IDs are hashed; raw ARNs are never stored.
+          - LastModifiedUser ARN is summarized, not stored in full.
+        """
+        records: list[dict] = []
+        kwargs: dict = {"MaxResults": 50}
+
+        while True:
+            try:
+                response = self._call_aws(client.describe_parameters, **kwargs)
+            except ConnectorError as exc:
+                fc = classify_aws_ssm_failure("DescribeParameters", exc)
+                logger.warning(
+                    "aws: DescribeParameters failed  region=%s  code=%s",
+                    region, fc.error_code,
+                )
+                break
+
+            param_list = response.get("Parameters") or []
+            for param in param_list:
+                name: str = param.get("Name") or ""
+                param_type: str = param.get("Type") or "String"
+                tier: str = param.get("Tier") or "Standard"
+                data_type: str = param.get("DataType") or "text"
+                key_id: str | None = param.get("KeyId")
+                version: int = param.get("Version") or 0
+                last_modified_date = param.get("LastModifiedDate")
+                last_modified_user: str | None = param.get("LastModifiedUser")
+                allowed_pattern: str | None = param.get("AllowedPattern")
+                policies: list = param.get("Policies") or []
+
+                warnings: list[str] = []
+
+                # Tags — optional
+                tag_keys: list[str] | None = None
+                try:
+                    tags_response = self._call_aws(
+                        client.list_tags_for_resource,
+                        ResourceType="Parameter",
+                        ResourceId=name,
+                    )
+                    tag_list = tags_response.get("TagList") or []
+                    tag_keys = sorted({t["Key"] for t in tag_list if "Key" in t}) or None
+                except ConnectorError as exc:
+                    fc = classify_aws_ssm_failure("ListTagsForResource", exc)
+                    warnings.append(f"ListTagsForResource: {fc.error_code}")
+                except Exception:
+                    warnings.append("ListTagsForResource: unexpected error")
+
+                # Path analysis — safe metadata, no value access
+                path_parts = name.strip("/").split("/")
+                path_depth = len(path_parts)
+                # Store only the first two path components as prefix (no values)
+                path_prefix = "/" + "/".join(path_parts[:2]) if path_depth > 1 else "/"
+
+                # Date normalization
+                def _iso(dt: Any) -> str | None:
+                    if dt is None:
+                        return None
+                    try:
+                        return dt.isoformat()
+                    except AttributeError:
+                        return str(dt)
+
+                stable_id = f"{account_id}/{region}/{name}"
+
+                records.append({
+                    "record_type":              AWS_SSM_PARAMETER,
+                    "record_id":                stable_id,
+                    "external_id":              stable_id,
+                    "name":                     name,
+                    "account_id":               account_id,
+                    "region":                   region,
+                    "parameter_type":           param_type,
+                    "tier":                     tier,
+                    "data_type":                data_type,
+                    "key_id_present":           bool(key_id),
+                    "key_id_hash":              _hash_kms_key_id(key_id) if key_id else None,
+                    "version":                  version,
+                    "last_modified_date":       _iso(last_modified_date),
+                    "last_modified_user_summary": _summarize_iam_arn(last_modified_user),
+                    "allowed_pattern_present":  bool(allowed_pattern),
+                    "policy_count":             len(policies),
+                    "policies_summary":         _summarize_ssm_policies(policies),
+                    "tag_keys":                 tag_keys,
+                    "path_depth":               path_depth,
+                    "path_prefix":              path_prefix,
+                    "sensitive_name_category":  _classify_ssm_name_sensitivity(name),
+                    "config_fetch_warnings":    warnings or None,
+                })
+
+            next_token = response.get("NextToken")
+            if next_token:
+                kwargs["NextToken"] = next_token
             else:
                 break
 

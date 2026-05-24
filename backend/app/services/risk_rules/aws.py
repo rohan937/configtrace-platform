@@ -62,6 +62,8 @@ from app.connectors.aws_schema import (
     AWS_ROUTE53_HOSTED_ZONE,
     AWS_ROUTE53_RECORD,
     AWS_CLOUDFRONT_DISTRIBUTION,
+    AWS_SECRETSMANAGER_SECRET,
+    AWS_SSM_PARAMETER,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -2817,6 +2819,471 @@ def _classify_cloudfront_distribution_change(change: object) -> tuple[str, str]:
     )
 
 
+# ── M41: Secrets Manager secret changes ──────────────────────────────────────
+
+# Sensitivity categories that warrant elevated risk.
+_SENSITIVE_SECRET_CATEGORIES: frozenset[str] = frozenset({
+    "secret", "credential", "api_key", "auth", "payment", "database", "production",
+})
+
+
+def _secret_name_is_sensitive(name: str) -> bool:
+    """Return True if the secret name suggests production/sensitive content."""
+    # Import inline to avoid circular imports with the connector.
+    from app.connectors.aws import _classify_secret_name_sensitivity
+    return _classify_secret_name_sensitivity(name) in _SENSITIVE_SECRET_CATEGORIES
+
+
+def _classify_secretsmanager_secret_change(change: object) -> tuple[str, str]:
+    """Classify a single aws_secretsmanager_secret change."""
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+
+    pm: dict = _get(change, "provider_metadata") or {}
+    secret_name: str = pm.get("record_name") or ""
+    is_sensitive = _secret_name_is_sensitive(secret_name)
+
+    # ── Added: new secret appeared ────────────────────────────────────────────
+    if ct == "added":
+        record: dict = nv if isinstance(nv, dict) else {}
+        sensitive_cat = record.get("sensitive_name_category", "none")
+        rotation_enabled = record.get("rotation_enabled", False)
+        has_policy = record.get("has_resource_policy", False)
+        policy_summary = record.get("policy_summary") or {}
+        wildcard_principal = policy_summary.get("has_wildcard_principal", False)
+        if wildcard_principal:
+            return (
+                "critical",
+                f"New Secrets Manager secret {secret_name!r} has a resource policy "
+                "with a wildcard principal (*). Any AWS principal may be able to read "
+                "this secret. Review the resource policy immediately.",
+            )
+        if sensitive_cat in _SENSITIVE_SECRET_CATEGORIES:
+            if not rotation_enabled:
+                return (
+                    "high",
+                    f"New Secrets Manager secret {secret_name!r} (sensitive category: "
+                    f"{sensitive_cat!r}) was added without rotation enabled. "
+                    "Consider enabling automatic rotation.",
+                )
+            return (
+                "medium",
+                f"New Secrets Manager secret {secret_name!r} (sensitive category: "
+                f"{sensitive_cat!r}) was added with rotation enabled.",
+            )
+        return (
+            "low",
+            f"New Secrets Manager secret {secret_name!r} was added.",
+        )
+
+    # ── Removed: secret disappeared ───────────────────────────────────────────
+    if ct == "removed":
+        record = pv if isinstance(pv, dict) else {}
+        sensitive_cat = record.get("sensitive_name_category", "none")
+        if sensitive_cat in _SENSITIVE_SECRET_CATEGORIES:
+            return (
+                "critical",
+                f"Secrets Manager secret {secret_name!r} (sensitive category: "
+                f"{sensitive_cat!r}) was removed. Verify this secret is no longer in "
+                "use before accepting this change.",
+            )
+        return (
+            "high",
+            f"Secrets Manager secret {secret_name!r} was removed. "
+            "Verify no application still depends on this secret.",
+        )
+
+    # ── Modified: individual field changed ────────────────────────────────────
+    if fp == "rotation_enabled":
+        if pv is True and nv is False:
+            if is_sensitive:
+                return (
+                    "critical",
+                    f"Secrets Manager secret {secret_name!r} had automatic rotation "
+                    "disabled. This is a sensitive secret — disabling rotation may "
+                    "leave stale credentials active indefinitely.",
+                )
+            return (
+                "high",
+                f"Secrets Manager secret {secret_name!r} had automatic rotation "
+                "disabled. Static secrets are at higher risk of credential compromise.",
+            )
+        if pv is False and nv is True:
+            return (
+                "low",
+                f"Secrets Manager secret {secret_name!r} had automatic rotation "
+                "enabled. This is a security improvement.",
+            )
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} rotation_enabled changed.",
+        )
+
+    if fp == "kms_key_id_present":
+        if pv is True and nv is False:
+            if is_sensitive:
+                return (
+                    "critical",
+                    f"Secrets Manager secret {secret_name!r} lost its KMS customer-managed "
+                    "key. This is a sensitive secret — removal of a CMK may indicate "
+                    "a downgrade to AWS-managed encryption.",
+                )
+            return (
+                "high",
+                f"Secrets Manager secret {secret_name!r} lost its KMS customer-managed key. "
+                "The secret may now use only AWS-managed encryption.",
+            )
+        if pv is False and nv is True:
+            return (
+                "low",
+                f"Secrets Manager secret {secret_name!r} gained a KMS customer-managed key. "
+                "This is a security improvement.",
+            )
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} KMS key presence changed.",
+        )
+
+    if fp == "kms_key_id_hash":
+        return (
+            "medium",
+            f"Secrets Manager secret {secret_name!r} KMS encryption key changed. "
+            "Verify the new key is correct and accessible.",
+        )
+
+    if fp == "deleted_date":
+        if pv is None and nv is not None:
+            if is_sensitive:
+                return (
+                    "critical",
+                    f"Secrets Manager secret {secret_name!r} was scheduled for deletion "
+                    f"(deletion date: {nv}). This is a sensitive secret — confirm it is "
+                    "not still used by any application.",
+                )
+            return (
+                "high",
+                f"Secrets Manager secret {secret_name!r} was scheduled for deletion "
+                f"(deletion date: {nv}). Verify no application still depends on it.",
+            )
+        if pv is not None and nv is None:
+            return (
+                "low",
+                f"Secrets Manager secret {secret_name!r} deletion was cancelled "
+                "and the secret was restored.",
+            )
+        return (
+            "medium",
+            f"Secrets Manager secret {secret_name!r} deletion date changed.",
+        )
+
+    if fp == "policy_summary":
+        prev_wildcard = (pv or {}).get("has_wildcard_principal", False) if isinstance(pv, dict) else False
+        new_wildcard = (nv or {}).get("has_wildcard_principal", False) if isinstance(nv, dict) else False
+        if new_wildcard and not prev_wildcard:
+            return (
+                "critical",
+                f"Secrets Manager secret {secret_name!r} resource policy was changed to "
+                "include a wildcard principal (*). Any AWS principal may be able to read "
+                "this secret. Review the policy immediately.",
+            )
+        if prev_wildcard and not new_wildcard:
+            return (
+                "low",
+                f"Secrets Manager secret {secret_name!r} resource policy wildcard principal "
+                "was removed. This is a security improvement.",
+            )
+        return (
+            "medium",
+            f"Secrets Manager secret {secret_name!r} resource policy changed. "
+            "Verify the new policy grants only intended access.",
+        )
+
+    if fp == "has_resource_policy":
+        if pv is True and nv is False:
+            return (
+                "medium",
+                f"Secrets Manager secret {secret_name!r} resource policy was removed. "
+                "Verify IAM identity-based policies still restrict access appropriately.",
+            )
+        if pv is False and nv is True:
+            return (
+                "low",
+                f"Secrets Manager secret {secret_name!r} gained a resource policy.",
+            )
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} resource policy presence changed.",
+        )
+
+    if fp == "rotation_rules_summary":
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} rotation schedule changed.",
+        )
+
+    if fp in ("rotation_lambda_arn_present",):
+        if pv is True and nv is False:
+            return (
+                "medium",
+                f"Secrets Manager secret {secret_name!r} rotation Lambda ARN was removed. "
+                "Automatic rotation may no longer function.",
+            )
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} rotation Lambda ARN changed.",
+        )
+
+    if fp == "replica_region_count":
+        if isinstance(pv, int) and isinstance(nv, int) and nv < pv:
+            return (
+                "medium",
+                f"Secrets Manager secret {secret_name!r} replica region count decreased "
+                f"from {pv} to {nv}. Verify cross-region availability is not impacted.",
+            )
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} replica region count changed.",
+        )
+
+    if fp == "tag_keys":
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} tags changed.",
+        )
+
+    if fp in (
+        "description_present", "owning_service", "primary_region",
+        "replica_regions", "last_changed_date", "last_accessed_date",
+        "created_date", "version_count", "active_version_count",
+        "deprecated_version_count", "sensitive_name_category",
+    ):
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} {fp.replace('_', ' ')} changed.",
+        )
+
+    if fp == "config_fetch_warnings":
+        return (
+            "low",
+            f"Secrets Manager secret {secret_name!r} fetch warnings changed.",
+        )
+
+    return (
+        "low",
+        f"Secrets Manager secret {secret_name!r} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ── M41: SSM Parameter changes ───────────────────────────────────────────────
+
+_SENSITIVE_SSM_CATEGORIES: frozenset[str] = frozenset({
+    "secret", "credential", "api_key", "auth", "payment", "database", "production",
+})
+
+
+def _ssm_name_is_sensitive(name: str) -> bool:
+    """Return True if the SSM parameter name suggests sensitive content."""
+    from app.connectors.aws import _classify_ssm_name_sensitivity
+    return _classify_ssm_name_sensitivity(name) in _SENSITIVE_SSM_CATEGORIES
+
+
+def _classify_ssm_parameter_change(change: object) -> tuple[str, str]:
+    """Classify a single aws_ssm_parameter change."""
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+
+    pm: dict = _get(change, "provider_metadata") or {}
+    param_name: str = pm.get("record_name") or ""
+    is_sensitive = _ssm_name_is_sensitive(param_name)
+
+    # ── Added: new parameter appeared ────────────────────────────────────────
+    if ct == "added":
+        record: dict = nv if isinstance(nv, dict) else {}
+        sensitive_cat = record.get("sensitive_name_category", "none")
+        param_type = record.get("parameter_type", "String")
+        key_id_present = record.get("key_id_present", False)
+
+        if sensitive_cat in _SENSITIVE_SSM_CATEGORIES and param_type != "SecureString":
+            return (
+                "critical",
+                f"New SSM parameter {param_name!r} (sensitive category: "
+                f"{sensitive_cat!r}) was added as type {param_type!r} without "
+                "SecureString encryption. Sensitive parameters should be SecureString.",
+            )
+        if sensitive_cat in _SENSITIVE_SSM_CATEGORIES:
+            return (
+                "medium",
+                f"New SSM parameter {param_name!r} (sensitive category: "
+                f"{sensitive_cat!r}) was added as SecureString.",
+            )
+        return (
+            "low",
+            f"New SSM parameter {param_name!r} was added (type: {param_type!r}).",
+        )
+
+    # ── Removed: parameter disappeared ───────────────────────────────────────
+    if ct == "removed":
+        record = pv if isinstance(pv, dict) else {}
+        sensitive_cat = record.get("sensitive_name_category", "none")
+        if sensitive_cat in _SENSITIVE_SSM_CATEGORIES:
+            return (
+                "critical",
+                f"SSM parameter {param_name!r} (sensitive category: "
+                f"{sensitive_cat!r}) was removed. Verify no application still "
+                "depends on this parameter.",
+            )
+        return (
+            "medium",
+            f"SSM parameter {param_name!r} was removed. "
+            "Verify no application still depends on this parameter.",
+        )
+
+    # ── Modified: individual field changed ────────────────────────────────────
+    if fp == "parameter_type":
+        prev_str = str(pv) if pv is not None else ""
+        new_str = str(nv) if nv is not None else ""
+        if prev_str == "SecureString" and new_str != "SecureString":
+            if is_sensitive:
+                return (
+                    "critical",
+                    f"SSM parameter {param_name!r} type changed from SecureString to "
+                    f"{new_str!r}. This is a sensitive parameter — the value is now "
+                    "stored unencrypted. Review immediately.",
+                )
+            return (
+                "high",
+                f"SSM parameter {param_name!r} type changed from SecureString to "
+                f"{new_str!r}. The value is now stored unencrypted.",
+            )
+        if prev_str != "SecureString" and new_str == "SecureString":
+            return (
+                "low",
+                f"SSM parameter {param_name!r} type changed from {prev_str!r} to "
+                "SecureString. This is a security improvement.",
+            )
+        return (
+            "medium",
+            f"SSM parameter {param_name!r} type changed from {prev_str!r} to {new_str!r}. "
+            "Verify all consumers are updated.",
+        )
+
+    if fp == "key_id_present":
+        if pv is True and nv is False:
+            if is_sensitive:
+                return (
+                    "critical",
+                    f"SSM parameter {param_name!r} lost its KMS customer-managed key. "
+                    "This is a sensitive parameter — removal of a CMK may indicate "
+                    "a downgrade to AWS-managed encryption.",
+                )
+            return (
+                "high",
+                f"SSM parameter {param_name!r} lost its KMS customer-managed key. "
+                "The parameter may now use only AWS-managed encryption.",
+            )
+        if pv is False and nv is True:
+            return (
+                "low",
+                f"SSM parameter {param_name!r} gained a KMS customer-managed key. "
+                "This is a security improvement.",
+            )
+        return (
+            "low",
+            f"SSM parameter {param_name!r} KMS key presence changed.",
+        )
+
+    if fp == "key_id_hash":
+        return (
+            "medium",
+            f"SSM parameter {param_name!r} KMS encryption key changed. "
+            "Verify the new key is correct and accessible.",
+        )
+
+    if fp == "tier":
+        return (
+            "low",
+            f"SSM parameter {param_name!r} tier changed from {pv!r} to {nv!r}.",
+        )
+
+    if fp == "version":
+        return (
+            "low",
+            f"SSM parameter {param_name!r} version changed from {pv} to {nv}. "
+            "Verify consumer applications will use the updated value.",
+        )
+
+    if fp == "policy_count":
+        if isinstance(pv, int) and isinstance(nv, int):
+            if nv > pv:
+                return (
+                    "low",
+                    f"SSM parameter {param_name!r} gained {nv - pv} parameter "
+                    "policy(ies). Parameter lifecycle policies are now active.",
+                )
+            if nv < pv:
+                return (
+                    "medium",
+                    f"SSM parameter {param_name!r} lost {pv - nv} parameter "
+                    "policy(ies). Verify expiration/notification policies are "
+                    "still in place if required.",
+                )
+        return (
+            "low",
+            f"SSM parameter {param_name!r} policy count changed.",
+        )
+
+    if fp == "policies_summary":
+        return (
+            "low",
+            f"SSM parameter {param_name!r} parameter policies changed. "
+            "Verify expiration and notification policies are correct.",
+        )
+
+    if fp == "allowed_pattern_present":
+        if pv is True and nv is False:
+            return (
+                "medium",
+                f"SSM parameter {param_name!r} allowed value pattern was removed. "
+                "Input validation is no longer enforced for this parameter.",
+            )
+        return (
+            "low",
+            f"SSM parameter {param_name!r} allowed value pattern changed.",
+        )
+
+    if fp == "tag_keys":
+        return (
+            "low",
+            f"SSM parameter {param_name!r} tags changed.",
+        )
+
+    if fp in (
+        "data_type", "last_modified_date", "last_modified_user_summary",
+        "path_depth", "path_prefix", "sensitive_name_category",
+    ):
+        return (
+            "low",
+            f"SSM parameter {param_name!r} {fp.replace('_', ' ')} changed.",
+        )
+
+    if fp == "config_fetch_warnings":
+        return (
+            "low",
+            f"SSM parameter {param_name!r} fetch warnings changed.",
+        )
+
+    return (
+        "low",
+        f"SSM parameter {param_name!r} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -2881,6 +3348,11 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_route53_record_change(change)
     if record_type == AWS_CLOUDFRONT_DISTRIBUTION:
         return _classify_cloudfront_distribution_change(change)
+    # ── M41 Secrets Manager + SSM ─────────────────────────────────────────────
+    if record_type == AWS_SECRETSMANAGER_SECRET:
+        return _classify_secretsmanager_secret_change(change)
+    if record_type == AWS_SSM_PARAMETER:
+        return _classify_ssm_parameter_change(change)
 
     # Unknown AWS record type — conservative default
     return (

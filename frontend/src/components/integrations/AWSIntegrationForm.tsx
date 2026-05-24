@@ -381,6 +381,37 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* Secrets Manager — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              Secrets Manager metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ secretsmanager:ListSecrets &nbsp;○ secretsmanager:DescribeSecret
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ secretsmanager:ListSecretVersionIds &nbsp;○ secretsmanager:GetResourcePolicy
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls GetSecretValue. Secret values are never read or stored.
+            </span>
+            <br />
+
+            {/* SSM — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              SSM Parameter Store metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ ssm:DescribeParameters
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls GetParameter, GetParameters, or GetParameterHistory.
+              Parameter values are never read or stored.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.
