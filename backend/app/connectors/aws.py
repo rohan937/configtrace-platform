@@ -616,8 +616,14 @@ class AWSConnector(BaseConnector):
     ) -> dict:
         """Assemble a complete aws_s3_bucket record for one bucket.
 
-        Calls all per-field helpers in sequence. Optional helpers append to
-        ``warnings`` on permission errors rather than raising.
+        Each optional sub-helper is wrapped with a fail-soft handler so that
+        an unexpected exception (e.g. wrong boto3 method name, API shape change,
+        network hiccup on a single field) adds a ``*_error`` entry to
+        ``config_fetch_warnings`` and returns None-valued fallback fields
+        instead of skipping the bucket entirely.
+
+        Expected permission errors (403) and "not configured" states
+        (NoSuch*) are handled inside each sub-helper before they reach here.
 
         SECURITY: credentials are only forwarded to _make_client for regional
         clients; they are never placed in the returned record.
@@ -635,16 +641,79 @@ class AWSConnector(BaseConnector):
             except AttributeError:
                 creation_date_str = str(creation_date)
 
+        # ── Fail-soft wrapper ──────────────────────────────────────────────────
+        # Calls fn(); on any unexpected exception logs a warning, appends
+        # ``warning_key + "_error"`` to the shared warnings list, and returns
+        # fallback so the caller always gets a usable dict.
+        def _safe(fn: Any, fallback: dict, warning_key: str) -> dict:
+            try:
+                return fn()
+            except Exception:
+                logger.warning(
+                    "aws._fetch_bucket_config: unexpected error fetching %s "
+                    "for bucket %r — using safe fallback",
+                    warning_key, bucket_name, exc_info=True,
+                )
+                warnings.append(warning_key + "_error")
+                return fallback
+
         # ── Per-field config (all optional / fail-soft) ────────────────────────
-        bpa          = self._fetch_bucket_public_access_block(client, bucket_name, warnings)
-        policy_info  = self._fetch_bucket_policy_info(client, bucket_name, warnings)
-        policy_stat  = self._fetch_bucket_policy_status(client, bucket_name, warnings)
-        acl_info     = self._fetch_bucket_acl(client, bucket_name, warnings)
-        enc_info     = self._fetch_bucket_encryption(client, bucket_name, warnings)
-        ver_info     = self._fetch_bucket_versioning(client, bucket_name, warnings)
-        log_info     = self._fetch_bucket_logging(client, bucket_name, warnings)
-        lifecycle    = self._fetch_bucket_lifecycle(client, bucket_name, warnings)
-        tag_info     = self._fetch_bucket_tags(client, bucket_name, warnings)
+        bpa = _safe(
+            lambda: self._fetch_bucket_public_access_block(client, bucket_name, warnings),
+            {
+                "block_public_acls":              None,
+                "ignore_public_acls":             None,
+                "block_public_policy":            None,
+                "restrict_public_buckets":        None,
+                "public_access_block_configured": None,
+            },
+            "s3_public_access_block",
+        )
+        policy_info = _safe(
+            lambda: self._fetch_bucket_policy_info(client, bucket_name, warnings),
+            {"policy_present": None, "policy_hash": None, "public_principals_detected": None},
+            "s3_policy",
+        )
+        policy_stat = _safe(
+            lambda: self._fetch_bucket_policy_status(client, bucket_name, warnings),
+            {"policy_status_is_public": None},
+            "s3_policy_status",
+        )
+        acl_info = _safe(
+            lambda: self._fetch_bucket_acl(client, bucket_name, warnings),
+            {
+                "acl_all_users_read":             None,
+                "acl_all_users_write":            None,
+                "acl_authenticated_users_read":   None,
+                "acl_authenticated_users_write":  None,
+            },
+            "s3_acl",
+        )
+        enc_info = _safe(
+            lambda: self._fetch_bucket_encryption(client, bucket_name, warnings),
+            {"encryption_enabled": None, "encryption_algorithm": None, "bucket_key_enabled": None},
+            "s3_encryption",
+        )
+        ver_info = _safe(
+            lambda: self._fetch_bucket_versioning(client, bucket_name, warnings),
+            {"versioning_status": None, "mfa_delete_status": None},
+            "s3_versioning",
+        )
+        log_info = _safe(
+            lambda: self._fetch_bucket_logging(client, bucket_name, warnings),
+            {"logging_enabled": None, "logging_target_bucket": None},
+            "s3_logging",
+        )
+        lifecycle = _safe(
+            lambda: self._fetch_bucket_lifecycle(client, bucket_name, warnings),
+            {"lifecycle_rule_count": None},
+            "s3_lifecycle",
+        )
+        tag_info = _safe(
+            lambda: self._fetch_bucket_tags(client, bucket_name, warnings),
+            {"tag_keys": None},
+            "s3_tagging",
+        )
 
         record: dict[str, Any] = {
             "record_type":   AWS_S3_BUCKET,
@@ -699,7 +768,7 @@ class AWSConnector(BaseConnector):
         """
         try:
             response = self._call_aws(
-                client.get_bucket_public_access_block, Bucket=bucket_name
+                client.get_public_access_block, Bucket=bucket_name
             )
             cfg = response.get("PublicAccessBlockConfiguration") or {}
             return {

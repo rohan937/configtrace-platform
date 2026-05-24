@@ -148,6 +148,7 @@ SECURITY invariants verified throughout:
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -440,6 +441,20 @@ class TestFetchBucketPublicAccessBlock:
         assert result["public_access_block_configured"] is None
         assert result["block_public_acls"] is None
         assert "s3_public_access_block_unavailable" in warnings
+
+    def test_calls_get_public_access_block_not_bucket_variant(self):
+        """Regression M37-bug: boto3 S3 method is get_public_access_block, NOT get_bucket_public_access_block."""
+        with patch.object(self.connector, "_call_aws",
+                          return_value={"PublicAccessBlockConfiguration": {}}) as mock_call:
+            self.connector._fetch_bucket_public_access_block(self.client, "my-bucket", [])
+        called_fn = mock_call.call_args[0][0]
+        # Must be the correct boto3 method — MagicMock caches attrs so identity check works
+        assert called_fn is self.client.get_public_access_block, (
+            "Expected client.get_public_access_block; got something else. "
+            "Check for typo: get_bucket_public_access_block is not a valid boto3 S3 method."
+        )
+        # Belt-and-suspenders: confirm it is NOT the incorrect variant
+        assert called_fn is not self.client.get_bucket_public_access_block
 
 
 # ── 6. _fetch_bucket_policy_info ─────────────────────────────────────────────
@@ -922,6 +937,104 @@ class TestFetchBucketConfig:
                 self.client, "my-bucket", None, _CREDS
             )
         assert "s3_public_access_block_unavailable" in record["config_fetch_warnings"]
+
+    def _all_sub_patches(self, **overrides):
+        """Return a dict of default sub-helper patch kwargs for _fetch_bucket_config."""
+        defaults = dict(
+            _fetch_bucket_region=("return_value", "us-east-1"),
+            _fetch_bucket_public_access_block=("return_value",
+                {"block_public_acls": True, "ignore_public_acls": True,
+                 "block_public_policy": True, "restrict_public_buckets": True,
+                 "public_access_block_configured": True}),
+            _fetch_bucket_policy_info=("return_value",
+                {"policy_present": False, "policy_hash": None, "public_principals_detected": False}),
+            _fetch_bucket_policy_status=("return_value", {"policy_status_is_public": False}),
+            _fetch_bucket_acl=("return_value",
+                {"acl_all_users_read": False, "acl_all_users_write": False,
+                 "acl_authenticated_users_read": False, "acl_authenticated_users_write": False}),
+            _fetch_bucket_encryption=("return_value",
+                {"encryption_enabled": True, "encryption_algorithm": "AES256", "bucket_key_enabled": False}),
+            _fetch_bucket_versioning=("return_value",
+                {"versioning_status": "disabled", "mfa_delete_status": None}),
+            _fetch_bucket_logging=("return_value",
+                {"logging_enabled": False, "logging_target_bucket": None}),
+            _fetch_bucket_lifecycle=("return_value", {"lifecycle_rule_count": 0}),
+            _fetch_bucket_tags=("return_value", {"tag_keys": None}),
+        )
+        defaults.update(overrides)
+        return defaults
+
+    def test_unexpected_error_in_bpa_adds_warning_and_record_still_returned(self):
+        """Regression M37-bug: AttributeError (wrong boto3 method) must NOT skip the bucket.
+
+        Before the fix, an AttributeError propagated from the sub-helper through
+        _fetch_bucket_config and was caught by _fetch_s3_buckets which skipped
+        the whole bucket. After the fix, _fetch_bucket_config catches it, adds
+        a ``_error`` warning, and returns the record with None fields.
+        """
+        attr_err = AttributeError("'S3' object has no attribute 'get_bucket_public_access_block'")
+        patches = self._all_sub_patches(
+            _fetch_bucket_public_access_block=("side_effect", attr_err),
+        )
+        ctx = [
+            patch.object(self.connector, name, **{kw: val})
+            for name, (kw, val) in patches.items()
+        ]
+        with contextlib.ExitStack() as stack:
+            for p in ctx:
+                stack.enter_context(p)
+            record = self.connector._fetch_bucket_config(self.client, "my-bucket", None, _CREDS)
+
+        # Record must still be emitted — bucket is NOT skipped
+        assert record["record_type"] == AWS_S3_BUCKET
+        assert record["bucket_name"] == "my-bucket"
+        # BPA fields are None (safe fallback)
+        assert record["block_public_acls"] is None
+        assert record["public_access_block_configured"] is None
+        # Error warning added to record
+        assert "s3_public_access_block_error" in record["config_fetch_warnings"]
+        # Other successful sub-helpers still contributed their fields
+        assert record["encryption_enabled"] is True
+        assert record["versioning_status"] == "disabled"
+
+    def test_all_optional_fields_failing_still_emits_record(self):
+        """All optional sub-helpers raising AttributeError must still produce a record."""
+        attr_err = AttributeError("wrong method name")
+        patches = self._all_sub_patches(
+            # region always works
+            _fetch_bucket_public_access_block=("side_effect", attr_err),
+            _fetch_bucket_policy_info=("side_effect", attr_err),
+            _fetch_bucket_policy_status=("side_effect", attr_err),
+            _fetch_bucket_acl=("side_effect", attr_err),
+            _fetch_bucket_encryption=("side_effect", attr_err),
+            _fetch_bucket_versioning=("side_effect", attr_err),
+            _fetch_bucket_logging=("side_effect", attr_err),
+            _fetch_bucket_lifecycle=("side_effect", attr_err),
+            _fetch_bucket_tags=("side_effect", attr_err),
+        )
+        ctx = [
+            patch.object(self.connector, name, **{kw: val})
+            for name, (kw, val) in patches.items()
+        ]
+        with contextlib.ExitStack() as stack:
+            for p in ctx:
+                stack.enter_context(p)
+            record = self.connector._fetch_bucket_config(self.client, "disaster-bucket", None, _CREDS)
+
+        assert record["record_type"] == AWS_S3_BUCKET
+        assert record["bucket_name"] == "disaster-bucket"
+        assert record["bucket_region"] == "us-east-1"
+        # All optional fields are None
+        assert record["block_public_acls"] is None
+        assert record["encryption_enabled"] is None
+        assert record["versioning_status"] is None
+        # All nine error warnings present
+        expected_warnings = {
+            "s3_public_access_block_error", "s3_policy_error", "s3_policy_status_error",
+            "s3_acl_error", "s3_encryption_error", "s3_versioning_error",
+            "s3_logging_error", "s3_lifecycle_error", "s3_tagging_error",
+        }
+        assert expected_warnings.issubset(set(record["config_fetch_warnings"]))
 
 
 # ── 16. Service inventory ─────────────────────────────────────────────────────
