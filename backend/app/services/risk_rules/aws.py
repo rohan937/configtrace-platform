@@ -69,6 +69,14 @@ from app.connectors.aws_schema import (
     AWS_RDS_DB_SUBNET_GROUP,
     AWS_RDS_DB_SNAPSHOT,
     AWS_RDS_DB_CLUSTER_SNAPSHOT,
+    AWS_LAMBDA_FUNCTION,
+    AWS_LAMBDA_ALIAS,
+    AWS_LAMBDA_EVENT_SOURCE_MAPPING,
+    AWS_LAMBDA_FUNCTION_URL,
+    AWS_APIGATEWAY_REST_API,
+    AWS_APIGATEWAY_REST_STAGE,
+    AWS_APIGATEWAYV2_API,
+    AWS_APIGATEWAYV2_STAGE,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -3890,6 +3898,775 @@ def _classify_rds_db_cluster_snapshot_change(change: object) -> tuple[str, str]:
     )
 
 
+# ── M43 Lambda + API Gateway helpers ──────────────────────────────────────────
+
+_SENSITIVE_LAMBDA_CATEGORIES: frozenset[str] = frozenset({
+    "production", "credential", "api_key", "auth", "payment",
+    "database", "internal", "config", "secure", "admin", "customer",
+})
+
+
+def _lambda_is_sensitive(name: str) -> bool:
+    """Return True if the Lambda/API name suggests a sensitive/production resource."""
+    from app.connectors.aws import _classify_lambda_name_sensitivity
+    return _classify_lambda_name_sensitivity(name) in _SENSITIVE_LAMBDA_CATEGORIES
+
+
+# ── aws_lambda_function ────────────────────────────────────────────────────────
+
+def _classify_lambda_function_change(change: object) -> tuple[str, str]:  # noqa: C901
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    fn_name: str = pm.get("record_name") or ""
+    sensitive = _lambda_is_sensitive(fn_name)
+
+    if ct == "added":
+        return "low", f"Lambda function '{fn_name}' was added to monitoring."
+    if ct == "removed":
+        level = "high" if sensitive else "medium"
+        return level, f"Lambda function '{fn_name}' is no longer visible to ConfigTrace."
+
+    # Role changes — execution role determines all AWS permissions the function has
+    if fp == "role_arn_present" and new_val is False:
+        return (
+            "high",
+            f"Lambda function '{fn_name}' no longer has an execution role. "
+            "The function may be unable to access AWS resources.",
+        )
+
+    if fp == "role_arn_hash":
+        return (
+            "medium",
+            f"Lambda function '{fn_name}' execution role changed. "
+            "Verify the new role grants only the intended permissions.",
+        )
+
+    # KMS key for environment variable encryption
+    if fp == "kms_key_arn_present":
+        if prev_val is True and new_val is False:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"Lambda function '{fn_name}' lost its KMS customer-managed key. "
+                "Environment variables may now use only default AWS encryption.",
+            )
+        if prev_val is False and new_val is True:
+            return (
+                "low",
+                f"Lambda function '{fn_name}' gained a KMS customer-managed key. "
+                "This is a security improvement.",
+            )
+        return "low", f"Lambda function '{fn_name}' KMS key presence changed."
+
+    if fp == "kms_key_arn_hash":
+        return (
+            "medium",
+            f"Lambda function '{fn_name}' KMS encryption key changed. "
+            "Verify the new key is correct and accessible.",
+        )
+
+    # Environment variable key changes (NEVER values — keys only)
+    if fp == "environment_key_names":
+        old_keys = set(prev_val) if isinstance(prev_val, list) else set()
+        new_keys = set(new_val) if isinstance(new_val, list) else set()
+        added_keys = new_keys - old_keys
+        if added_keys:
+            return (
+                "medium",
+                f"Lambda function '{fn_name}' gained new environment variable key(s): "
+                f"{sorted(added_keys)}. "
+                "Verify no sensitive values were added without appropriate KMS encryption.",
+            )
+        return (
+            "low",
+            f"Lambda function '{fn_name}' environment variable keys changed. "
+            "ConfigTrace stores key names only; values are never accessed.",
+        )
+
+    if fp == "environment_sensitive_key_count":
+        if isinstance(new_val, int) and isinstance(prev_val, int) and new_val > prev_val:
+            return (
+                "medium",
+                f"Lambda function '{fn_name}' has more environment variable keys with "
+                f"sensitive-sounding names ({prev_val} → {new_val}). "
+                "Verify these are encrypted with a KMS CMK.",
+            )
+        return "low", f"Lambda function '{fn_name}' sensitive environment key count changed."
+
+    if fp == "environment_key_count":
+        return "low", f"Lambda function '{fn_name}' environment variable count changed."
+
+    # VPC configuration — removal means function can reach internet by default
+    if fp == "vpc_config_present":
+        if prev_val is True and new_val is False:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"Lambda function '{fn_name}' was removed from its VPC. "
+                "The function can now access the public internet by default.",
+            )
+        if prev_val is False and new_val is True:
+            return (
+                "low",
+                f"Lambda function '{fn_name}' was placed in a VPC. "
+                "Verify subnet and security group configuration.",
+            )
+        return "low", f"Lambda function '{fn_name}' VPC configuration changed."
+
+    if fp in ("subnet_ids", "security_group_ids"):
+        return (
+            "medium",
+            f"Lambda function '{fn_name}' VPC network configuration changed ({fp}). "
+            "Verify the new subnets/security groups are correct.",
+        )
+
+    # Concurrency — zero means fully throttled
+    if fp == "reserved_concurrent_executions":
+        if new_val == 0:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"Lambda function '{fn_name}' reserved concurrency was set to 0. "
+                "The function is now fully throttled and will not execute.",
+            )
+        if isinstance(new_val, int) and isinstance(prev_val, int) and prev_val != 0 and new_val < prev_val:
+            return (
+                "medium",
+                f"Lambda function '{fn_name}' reserved concurrency decreased "
+                f"from {prev_val} to {new_val}. Verify the function capacity is sufficient.",
+            )
+        return "low", f"Lambda function '{fn_name}' reserved concurrency changed."
+
+    # Runtime change — may introduce incompatibilities or remove security patches
+    if fp == "runtime":
+        return (
+            "medium",
+            f"Lambda function '{fn_name}' runtime changed from '{prev_val}' to '{new_val}'. "
+            "Verify the new runtime is supported and dependencies are compatible.",
+        )
+
+    # X-Ray tracing
+    if fp == "tracing_mode":
+        if str(new_val or "").lower() == "passthrough":
+            return (
+                "medium",
+                f"Lambda function '{fn_name}' X-Ray tracing was set to PassThrough. "
+                "Active tracing has been disabled.",
+            )
+        return "low", f"Lambda function '{fn_name}' tracing mode changed."
+
+    # Dead-letter queue removal — failed async invocations are silently dropped
+    if fp == "dead_letter_target_present":
+        if prev_val is True and new_val is False:
+            level = "medium" if sensitive else "low"
+            return (
+                level,
+                f"Lambda function '{fn_name}' lost its dead-letter queue/topic. "
+                "Failed asynchronous invocations will no longer be captured.",
+            )
+        return "low", f"Lambda function '{fn_name}' dead-letter target changed."
+
+    if fp in ("layers_count", "layer_arn_hashes"):
+        return "low", f"Lambda function '{fn_name}' Lambda layer configuration changed."
+
+    if fp in (
+        "handler_present", "timeout", "memory_size", "ephemeral_storage_size",
+        "code_size", "last_modified", "version", "architectures",
+        "snap_start_apply_on", "package_type", "dead_letter_target_type",
+        "subnet_count", "security_group_count",
+    ):
+        return "low", f"Lambda function '{fn_name}' {fp.replace('_', ' ')} changed."
+
+    if fp == "tag_keys":
+        return "low", f"Lambda function '{fn_name}' tags changed."
+
+    if fp == "config_fetch_warnings":
+        return "low", f"Lambda function '{fn_name}' fetch warnings changed."
+
+    return (
+        "low",
+        f"Lambda function '{fn_name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_lambda_alias ───────────────────────────────────────────────────────────
+
+def _classify_lambda_alias_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    alias_id: str = pm.get("record_name") or pm.get("record_id") or ""
+
+    if ct == "added":
+        return "low", f"Lambda alias '{alias_id}' was added."
+    if ct == "removed":
+        return "low", f"Lambda alias '{alias_id}' was removed."
+
+    if fp == "function_version":
+        return (
+            "medium",
+            f"Lambda alias '{alias_id}' now points to function version '{new_val}' "
+            f"(was '{prev_val}'). Traffic will be routed to the new version.",
+        )
+
+    if fp == "routing_config_present":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"Lambda alias '{alias_id}' weighted routing configuration was removed. "
+                "All traffic now goes to the primary version.",
+            )
+        return "low", f"Lambda alias '{alias_id}' routing configuration changed."
+
+    if fp in ("additional_version_weights_count", "additional_version_weights_summary"):
+        return "low", f"Lambda alias '{alias_id}' traffic weights changed."
+
+    return "low", f"Lambda alias '{alias_id}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── aws_lambda_event_source_mapping ───────────────────────────────────────────
+
+def _classify_lambda_event_source_mapping_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    esm_id: str = pm.get("record_id") or ""
+
+    if ct == "added":
+        return "low", f"Lambda event source mapping '{esm_id}' was added."
+    if ct == "removed":
+        return (
+            "medium",
+            f"Lambda event source mapping '{esm_id}' was removed. "
+            "Verify the trigger is no longer needed.",
+        )
+
+    if fp == "state":
+        nv_str = str(new_val or "").lower()
+        if nv_str in ("disabled", "disabling"):
+            return (
+                "medium",
+                f"Lambda event source mapping '{esm_id}' state changed to '{new_val}'. "
+                "The trigger is no longer active.",
+            )
+        return "low", f"Lambda event source mapping '{esm_id}' state changed to '{new_val}'."
+
+    if fp == "enabled":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"Lambda event source mapping '{esm_id}' was disabled. "
+                "The function will no longer be invoked by this trigger.",
+            )
+        return "low", f"Lambda event source mapping '{esm_id}' enabled state changed."
+
+    if fp == "event_source_arn_present" and new_val is False:
+        return (
+            "high",
+            f"Lambda event source mapping '{esm_id}' lost its event source ARN. "
+            "The trigger may be broken.",
+        )
+
+    if fp == "event_source_arn_hash":
+        return (
+            "medium",
+            f"Lambda event source mapping '{esm_id}' event source changed. "
+            "Verify the new source is correct.",
+        )
+
+    if fp == "function_name":
+        return (
+            "medium",
+            f"Lambda event source mapping '{esm_id}' target function changed "
+            f"(was '{prev_val}', now '{new_val}'). "
+            "Verify the new function handles the event stream correctly.",
+        )
+
+    if fp == "filter_criteria_present":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"Lambda event source mapping '{esm_id}' filter criteria were removed. "
+                "All events will now invoke the function, potentially increasing the invocation rate.",
+            )
+        return "low", f"Lambda event source mapping '{esm_id}' filter criteria changed."
+
+    if fp == "batch_size":
+        if isinstance(new_val, int) and isinstance(prev_val, int) and new_val > prev_val:
+            return (
+                "medium",
+                f"Lambda event source mapping '{esm_id}' batch size increased "
+                f"from {prev_val} to {new_val}. Each invocation will process more records.",
+            )
+        return "low", f"Lambda event source mapping '{esm_id}' batch size changed."
+
+    if fp in (
+        "maximum_batching_window_seconds", "starting_position",
+        "destination_config_present", "function_response_types",
+    ):
+        return "low", f"Lambda event source mapping '{esm_id}' {fp.replace('_', ' ')} changed."
+
+    return (
+        "low",
+        f"Lambda event source mapping '{esm_id}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_lambda_function_url ────────────────────────────────────────────────────
+
+def _classify_lambda_function_url_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    fn_name: str = pm.get("record_name") or pm.get("record_id") or ""
+
+    if ct == "added":
+        nv_dict = new_val if isinstance(new_val, dict) else {}
+        auth = (nv_dict.get("auth_type") or "").upper()
+        if auth == "NONE":
+            return (
+                "critical",
+                f"Lambda function URL for '{fn_name}' was created with auth_type=NONE. "
+                "The function is now publicly invokable by anyone on the internet "
+                "without authentication. Verify this is intentional.",
+            )
+        return (
+            "medium",
+            f"Lambda function URL for '{fn_name}' was created "
+            f"(auth_type={auth or 'unknown'}). "
+            "Verify the authentication setting is appropriate.",
+        )
+
+    if ct == "removed":
+        return (
+            "low",
+            f"Lambda function URL for '{fn_name}' was removed. "
+            "The public endpoint is no longer accessible.",
+        )
+
+    if fp == "auth_type":
+        prev_str = (str(prev_val or "")).upper()
+        new_str = (str(new_val or "")).upper()
+        if new_str == "NONE":
+            return (
+                "critical",
+                f"Lambda function URL for '{fn_name}' auth type changed to NONE. "
+                "The function is now publicly invokable without authentication. "
+                "Set auth_type to AWS_IAM to require authentication.",
+            )
+        if prev_str == "NONE" and new_str != "NONE":
+            return (
+                "low",
+                f"Lambda function URL for '{fn_name}' auth type changed from NONE "
+                f"to {new_str}. Authentication is now required. "
+                "This is a security improvement.",
+            )
+        return (
+            "high",
+            f"Lambda function URL for '{fn_name}' auth type changed "
+            f"from {prev_str!r} to {new_str!r}. Verify the new auth setting is correct.",
+        )
+
+    if fp == "cors_wildcard_origin_present":
+        if prev_val is not True and new_val is True:
+            return (
+                "high",
+                f"Lambda function URL for '{fn_name}' CORS now allows wildcard origin (*). "
+                "Any website can make cross-origin requests to this function URL. "
+                "Verify this is intentional and consider restricting allowed origins.",
+            )
+        if prev_val is True and new_val is not True:
+            return "low", f"Lambda function URL for '{fn_name}' CORS wildcard origin was removed."
+        return "low", f"Lambda function URL for '{fn_name}' CORS wildcard origin status changed."
+
+    if fp == "cors_allow_credentials":
+        if new_val is True:
+            return (
+                "high",
+                f"Lambda function URL for '{fn_name}' CORS now allows credentials. "
+                "If wildcard origin is also enabled, this is a critical CORS misconfiguration.",
+            )
+        return "low", f"Lambda function URL for '{fn_name}' CORS allow-credentials changed."
+
+    if fp in ("cors_present", "cors_allow_origins_count", "cors_allow_methods", "invoke_mode"):
+        return "low", f"Lambda function URL for '{fn_name}' {fp.replace('_', ' ')} changed."
+
+    return (
+        "low",
+        f"Lambda function URL for '{fn_name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_apigateway_rest_api ────────────────────────────────────────────────────
+
+def _classify_apigateway_rest_api_change(change: object) -> tuple[str, str]:  # noqa: C901
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    api_name: str = pm.get("record_name") or ""
+    sensitive = _lambda_is_sensitive(api_name)
+
+    if ct == "added":
+        nv_dict = new_val if isinstance(new_val, dict) else {}
+        unauth = nv_dict.get("unauthenticated_method_count") or 0
+        if sensitive and unauth > 0:
+            return (
+                "high",
+                f"API Gateway REST API '{api_name}' appeared with {unauth} unauthenticated "
+                "method(s). Verify all endpoints require authentication.",
+            )
+        return "low", f"API Gateway REST API '{api_name}' was added to monitoring."
+
+    if ct == "removed":
+        level = "high" if sensitive else "medium"
+        return level, f"API Gateway REST API '{api_name}' is no longer visible to ConfigTrace."
+
+    if fp == "unauthenticated_method_count":
+        if isinstance(new_val, int) and isinstance(prev_val, int) and new_val > prev_val:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"API Gateway REST API '{api_name}' unauthenticated method count increased "
+                f"from {prev_val} to {new_val}. "
+                "New methods may be accessible without authentication.",
+            )
+        if isinstance(new_val, int) and isinstance(prev_val, int) and new_val < prev_val:
+            return (
+                "low",
+                f"API Gateway REST API '{api_name}' unauthenticated method count decreased "
+                f"from {prev_val} to {new_val}.",
+            )
+        return "low", f"API Gateway REST API '{api_name}' unauthenticated method count changed."
+
+    if fp == "authorizer_count":
+        if isinstance(new_val, int) and new_val == 0 and isinstance(prev_val, int) and prev_val > 0:
+            return (
+                "high",
+                f"API Gateway REST API '{api_name}' has no authorizers. "
+                "All authorizers were removed — endpoints may be accessible without authentication.",
+            )
+        return "low", f"API Gateway REST API '{api_name}' authorizer count changed."
+
+    if fp == "policy_summary":
+        prev_ps = prev_val if isinstance(prev_val, dict) else {}
+        new_ps = new_val if isinstance(new_val, dict) else {}
+        prev_wildcard = prev_ps.get("has_wildcard_principal", False)
+        new_wildcard = new_ps.get("has_wildcard_principal", False)
+        if new_wildcard and not prev_wildcard:
+            return (
+                "critical",
+                f"API Gateway REST API '{api_name}' resource policy now includes a wildcard "
+                "principal (*). Any AWS principal may be able to invoke this API. "
+                "Review the resource policy immediately.",
+            )
+        if prev_wildcard and not new_wildcard:
+            return (
+                "low",
+                f"API Gateway REST API '{api_name}' resource policy wildcard principal "
+                "was removed.",
+            )
+        return (
+            "medium",
+            f"API Gateway REST API '{api_name}' resource policy changed. "
+            "Verify the updated policy grants only intended access.",
+        )
+
+    if fp == "endpoint_configuration_types":
+        return (
+            "medium",
+            f"API Gateway REST API '{api_name}' endpoint type changed "
+            f"(was {prev_val!r}, now {new_val!r}). "
+            "Verify the API is still accessible from intended locations.",
+        )
+
+    if fp == "disable_execute_api_endpoint":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"API Gateway REST API '{api_name}' default execute-api endpoint was "
+                "re-enabled. The API is now accessible via the default AWS-managed URL.",
+            )
+        if prev_val is False and new_val is True:
+            return (
+                "low",
+                f"API Gateway REST API '{api_name}' default execute-api endpoint was "
+                "disabled. The API must be accessed via a custom domain.",
+            )
+        return "low", f"API Gateway REST API '{api_name}' execute-api endpoint setting changed."
+
+    if fp == "api_key_source":
+        return (
+            "medium",
+            f"API Gateway REST API '{api_name}' API key source changed "
+            f"(was {prev_val!r}, now {new_val!r}). Verify API key usage plans are correct.",
+        )
+
+    if fp in ("method_count", "resource_count", "integration_type_counts",
+              "binary_media_types_count", "minimum_compression_size"):
+        return "low", f"API Gateway REST API '{api_name}' {fp.replace('_', ' ')} changed."
+
+    if fp == "tag_keys":
+        return "low", f"API Gateway REST API '{api_name}' tags changed."
+
+    return (
+        "low",
+        f"API Gateway REST API '{api_name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_apigateway_rest_stage ──────────────────────────────────────────────────
+
+def _classify_apigateway_rest_stage_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    stage_id: str = pm.get("record_name") or pm.get("record_id") or ""
+
+    if ct == "added":
+        return "low", f"API Gateway REST stage '{stage_id}' was added."
+    if ct == "removed":
+        return "medium", f"API Gateway REST stage '{stage_id}' was removed."
+
+    if fp == "deployment_id_present":
+        if prev_val is True and new_val is False:
+            return (
+                "high",
+                f"API Gateway REST stage '{stage_id}' is no longer linked to a deployment. "
+                "The stage may be serving stale or undefined API configuration.",
+            )
+        return "low", f"API Gateway REST stage '{stage_id}' deployment presence changed."
+
+    if fp == "deployment_id_hash":
+        return (
+            "medium",
+            f"API Gateway REST stage '{stage_id}' was redeployed. "
+            "Verify the new deployment reflects the intended API configuration.",
+        )
+
+    if fp == "tracing_enabled":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"X-Ray tracing was disabled for API Gateway REST stage '{stage_id}'.",
+            )
+        return "low", f"API Gateway REST stage '{stage_id}' tracing setting changed."
+
+    if fp == "access_logging_enabled":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"Access logging was disabled for API Gateway REST stage '{stage_id}'. "
+                "API request logs will no longer be collected.",
+            )
+        return "low", f"API Gateway REST stage '{stage_id}' access logging setting changed."
+
+    if fp == "metrics_enabled_count":
+        if isinstance(new_val, int) and isinstance(prev_val, int) and new_val < prev_val:
+            return (
+                "medium",
+                f"API Gateway REST stage '{stage_id}' CloudWatch metrics count decreased "
+                f"({prev_val} → {new_val}). Some route metrics may no longer be collected.",
+            )
+        return "low", f"API Gateway REST stage '{stage_id}' metrics configuration changed."
+
+    if fp == "web_acl_arn_present":
+        if prev_val is True and new_val is False:
+            return (
+                "high",
+                f"API Gateway REST stage '{stage_id}' WAF Web ACL was removed. "
+                "The stage is no longer protected by AWS WAF.",
+            )
+        return "low", f"API Gateway REST stage '{stage_id}' WAF configuration changed."
+
+    if fp in (
+        "cache_cluster_enabled", "cache_cluster_size", "logging_level_summary",
+        "variables_key_count", "variables_key_names", "canary_settings_present",
+        "throttling_present",
+    ):
+        return "low", f"API Gateway REST stage '{stage_id}' {fp.replace('_', ' ')} changed."
+
+    return (
+        "low",
+        f"API Gateway REST stage '{stage_id}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_apigatewayv2_api ───────────────────────────────────────────────────────
+
+def _classify_apigatewayv2_api_change(change: object) -> tuple[str, str]:  # noqa: C901
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    api_name: str = pm.get("record_name") or ""
+    sensitive = _lambda_is_sensitive(api_name)
+
+    if ct == "added":
+        nv_dict = new_val if isinstance(new_val, dict) else {}
+        unauth = nv_dict.get("unauthenticated_route_count") or 0
+        if sensitive and unauth > 0:
+            return (
+                "high",
+                f"API Gateway V2 API '{api_name}' appeared with {unauth} unauthenticated "
+                "route(s). Verify all routes require authentication.",
+            )
+        return "low", f"API Gateway V2 API '{api_name}' was added to monitoring."
+
+    if ct == "removed":
+        level = "high" if sensitive else "medium"
+        return level, f"API Gateway V2 API '{api_name}' is no longer visible to ConfigTrace."
+
+    if fp == "unauthenticated_route_count":
+        if isinstance(new_val, int) and isinstance(prev_val, int) and new_val > prev_val:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"API Gateway V2 API '{api_name}' unauthenticated route count increased "
+                f"from {prev_val} to {new_val}. "
+                "New routes may be accessible without authentication.",
+            )
+        if isinstance(new_val, int) and isinstance(prev_val, int) and new_val < prev_val:
+            return (
+                "low",
+                f"API Gateway V2 API '{api_name}' unauthenticated route count decreased "
+                f"from {prev_val} to {new_val}.",
+            )
+        return "low", f"API Gateway V2 API '{api_name}' unauthenticated route count changed."
+
+    if fp == "authorizer_count":
+        if isinstance(new_val, int) and new_val == 0 and isinstance(prev_val, int) and prev_val > 0:
+            return (
+                "high",
+                f"API Gateway V2 API '{api_name}' has no authorizers. "
+                "All authorizers were removed — routes may be accessible without authentication.",
+            )
+        return "low", f"API Gateway V2 API '{api_name}' authorizer count changed."
+
+    if fp == "cors_wildcard_origin_present":
+        if prev_val is not True and new_val is True:
+            return (
+                "high",
+                f"API Gateway V2 API '{api_name}' CORS now allows wildcard origin (*). "
+                "Any website can make cross-origin requests to this API. "
+                "Consider restricting allowed origins.",
+            )
+        if prev_val is True and new_val is not True:
+            return "low", f"API Gateway V2 API '{api_name}' CORS wildcard origin was removed."
+        return "low", f"API Gateway V2 API '{api_name}' CORS wildcard origin status changed."
+
+    if fp == "cors_allow_credentials":
+        if new_val is True:
+            return (
+                "high",
+                f"API Gateway V2 API '{api_name}' CORS now allows credentials. "
+                "If wildcard origin is also enabled, this is a critical CORS misconfiguration.",
+            )
+        return "low", f"API Gateway V2 API '{api_name}' CORS allow-credentials changed."
+
+    if fp == "cors_present":
+        if prev_val is True and new_val is False:
+            return "low", f"API Gateway V2 API '{api_name}' CORS configuration was removed."
+        return "low", f"API Gateway V2 API '{api_name}' CORS configuration changed."
+
+    if fp == "disable_execute_api_endpoint":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"API Gateway V2 API '{api_name}' default execute-api endpoint was re-enabled.",
+            )
+        return "low", f"API Gateway V2 API '{api_name}' execute-api endpoint setting changed."
+
+    if fp in ("route_count", "integration_type_counts", "route_selection_expression_present",
+              "api_endpoint_present", "protocol_type"):
+        return "low", f"API Gateway V2 API '{api_name}' {fp.replace('_', ' ')} changed."
+
+    if fp == "tag_keys":
+        return "low", f"API Gateway V2 API '{api_name}' tags changed."
+
+    return (
+        "low",
+        f"API Gateway V2 API '{api_name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_apigatewayv2_stage ─────────────────────────────────────────────────────
+
+def _classify_apigatewayv2_stage_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    pm: dict = _get(change, "provider_metadata") or {}
+    stage_id: str = pm.get("record_name") or pm.get("record_id") or ""
+
+    if ct == "added":
+        return "low", f"API Gateway V2 stage '{stage_id}' was added."
+    if ct == "removed":
+        return "medium", f"API Gateway V2 stage '{stage_id}' was removed."
+
+    if fp == "deployment_id_present":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"API Gateway V2 stage '{stage_id}' is no longer linked to a deployment.",
+            )
+        return "low", f"API Gateway V2 stage '{stage_id}' deployment presence changed."
+
+    if fp == "deployment_id_hash":
+        return "low", f"API Gateway V2 stage '{stage_id}' deployment changed."
+
+    if fp == "auto_deploy":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"API Gateway V2 stage '{stage_id}' auto-deploy was disabled. "
+                "API changes will no longer be automatically deployed to this stage.",
+            )
+        return "low", f"API Gateway V2 stage '{stage_id}' auto-deploy setting changed."
+
+    if fp == "access_logging_enabled":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"Access logging was disabled for API Gateway V2 stage '{stage_id}'. "
+                "API request logs will no longer be collected.",
+            )
+        return "low", f"API Gateway V2 stage '{stage_id}' access logging setting changed."
+
+    if fp == "detailed_metrics_enabled":
+        if prev_val is True and new_val is False:
+            return (
+                "medium",
+                f"Detailed CloudWatch metrics were disabled for API Gateway V2 stage '{stage_id}'.",
+            )
+        return "low", f"API Gateway V2 stage '{stage_id}' metrics setting changed."
+
+    if fp in (
+        "stage_variables_key_count", "stage_variables_key_names",
+        "default_route_settings_summary",
+    ):
+        return "low", f"API Gateway V2 stage '{stage_id}' {fp.replace('_', ' ')} changed."
+
+    return (
+        "low",
+        f"API Gateway V2 stage '{stage_id}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
 def classify_aws_change(change: object) -> tuple[str, str]:
     """Route an AWS change to the appropriate risk rule.
 
@@ -3967,6 +4744,23 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_rds_db_snapshot_change(change)
     if record_type == AWS_RDS_DB_CLUSTER_SNAPSHOT:
         return _classify_rds_db_cluster_snapshot_change(change)
+    # ── M43 Lambda + API Gateway ──────────────────────────────────────────────
+    if record_type == AWS_LAMBDA_FUNCTION:
+        return _classify_lambda_function_change(change)
+    if record_type == AWS_LAMBDA_ALIAS:
+        return _classify_lambda_alias_change(change)
+    if record_type == AWS_LAMBDA_EVENT_SOURCE_MAPPING:
+        return _classify_lambda_event_source_mapping_change(change)
+    if record_type == AWS_LAMBDA_FUNCTION_URL:
+        return _classify_lambda_function_url_change(change)
+    if record_type == AWS_APIGATEWAY_REST_API:
+        return _classify_apigateway_rest_api_change(change)
+    if record_type == AWS_APIGATEWAY_REST_STAGE:
+        return _classify_apigateway_rest_stage_change(change)
+    if record_type == AWS_APIGATEWAYV2_API:
+        return _classify_apigatewayv2_api_change(change)
+    if record_type == AWS_APIGATEWAYV2_STAGE:
+        return _classify_apigatewayv2_stage_change(change)
 
     # Unknown AWS record type — conservative default
     return (

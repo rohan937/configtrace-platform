@@ -434,6 +434,54 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* Lambda — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              Lambda metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ lambda:ListFunctions &nbsp;○ lambda:GetFunctionConfiguration
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ lambda:ListAliases &nbsp;○ lambda:ListVersionsByFunction
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ lambda:ListEventSourceMappings &nbsp;○ lambda:GetEventSourceMapping
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ lambda:ListFunctionUrlConfigs &nbsp;○ lambda:GetFunctionUrlConfig
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ lambda:ListTags
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never invokes Lambda functions or downloads function code.
+              Environment variable values are never read or stored — only key names are collected.
+            </span>
+            <br />
+
+            {/* API Gateway — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              API Gateway metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ apigateway:GET (read-only) — REST APIs, stages, resources, methods, integrations
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ apigateway:GET (read-only) — HTTP/WebSocket APIs, routes, authorizers, integrations
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never reads API traffic, invokes endpoints, or accesses request or response contents.
+              Stage variable values are never read or stored — only key names are collected.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.

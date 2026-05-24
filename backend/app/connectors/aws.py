@@ -107,6 +107,8 @@ from app.core.failure_classifier import (
     classify_aws_secretsmanager_failure,
     classify_aws_ssm_failure,
     classify_aws_rds_failure,
+    classify_aws_lambda_failure,
+    classify_aws_apigateway_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -139,6 +141,14 @@ from app.connectors.aws_schema import (
     AWS_RDS_DB_SUBNET_GROUP,
     AWS_RDS_DB_SNAPSHOT,
     AWS_RDS_DB_CLUSTER_SNAPSHOT,
+    AWS_LAMBDA_FUNCTION,
+    AWS_LAMBDA_ALIAS,
+    AWS_LAMBDA_EVENT_SOURCE_MAPPING,
+    AWS_LAMBDA_FUNCTION_URL,
+    AWS_APIGATEWAY_REST_API,
+    AWS_APIGATEWAY_REST_STAGE,
+    AWS_APIGATEWAYV2_API,
+    AWS_APIGATEWAYV2_STAGE,
 )
 
 logger = logging.getLogger(__name__)
@@ -745,6 +755,129 @@ def _rds_sorted_option_group_names(option_groups: list) -> list[str]:
         if name:
             names.append(str(name))
     return sorted(names)
+
+
+# ── M43: Lambda + API Gateway helpers ────────────────────────────────────────
+
+# Lambda/API Gateway name sensitivity categories and keywords.
+_LAMBDA_NAME_PATTERNS: dict[str, frozenset[str]] = {
+    "production":  frozenset({"prod", "production", "live"}),
+    "payment":     frozenset({"payment", "payments", "checkout", "stripe", "billing", "invoice"}),
+    "auth":        frozenset({"auth", "login", "oauth", "sso", "token", "session", "jwt"}),
+    "admin":       frozenset({"admin", "dashboard", "portal"}),
+    "database":    frozenset({"database", "db", "sql", "postgres", "mysql", "mongo", "redis"}),
+    "internal":    frozenset({"internal", "private", "backend", "worker", "config"}),
+    "secure":      frozenset({"secrets", "secret", "secure"}),
+    "customer":    frozenset({"customer", "customers", "user", "users"}),
+    "api":         frozenset({"api", "app"}),
+}
+
+
+def _classify_lambda_name_sensitivity(name: str) -> str:
+    """Return sensitivity category for a Lambda function or API Gateway name.
+
+    Returns one of: production, payment, auth, admin, database, internal,
+    secure, customer, api, none.
+
+    Same structure as _classify_rds_name_sensitivity.
+    SECURITY: The name is checked against patterns; the raw name is already
+    stored as the record name so this adds no new data exposure.
+    """
+    lower = name.lower()
+    for category, patterns in _LAMBDA_NAME_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in lower:
+                return category
+    return "none"
+
+
+# Sensitive environment variable key name patterns (lower-case substrings).
+_SENSITIVE_ENV_KEY_PATTERNS: frozenset[str] = frozenset({
+    "secret", "password", "passwd", "pass", "token", "key", "api_key", "apikey",
+    "access_key", "auth", "credential", "cred", "private", "cert", "certificate",
+    "jwt", "oauth", "stripe", "payment", "billing", "database_url", "db_url",
+    "connection_string", "dsn",
+})
+
+
+def _lambda_env_key_info(env_vars: dict) -> tuple[list[str], int, int]:
+    """Extract safe key info from Lambda env vars dict.
+
+    Returns (sorted_key_names, key_count, sensitive_key_count).
+
+    SECURITY: env_vars values are NEVER accessed or stored.
+    Only key names are inspected.
+    """
+    if not env_vars:
+        return [], 0, 0
+    key_names = sorted(env_vars.keys())
+    sensitive_count = 0
+    for k in key_names:
+        k_lower = k.lower()
+        if any(pat in k_lower for pat in _SENSITIVE_ENV_KEY_PATTERNS):
+            sensitive_count += 1
+    return key_names, len(key_names), sensitive_count
+
+
+def _lambda_event_source_type(arn: str) -> str:
+    """Classify Lambda event source type from its ARN prefix.
+
+    Returns one of: dynamodb, sqs, kinesis, msk, mq, documentdb, unknown.
+    """
+    if not arn:
+        return "unknown"
+    lower = arn.lower()
+    if ":dynamodb:" in lower:
+        return "dynamodb"
+    if ":sqs:" in lower:
+        return "sqs"
+    if ":kinesis:" in lower:
+        return "kinesis"
+    if ":kafka:" in lower or ":msk:" in lower:
+        return "msk"
+    if ":mq:" in lower:
+        return "mq"
+    if ":docdb:" in lower or ":rds:" in lower:
+        return "documentdb"
+    return "unknown"
+
+
+def _lambda_dlq_type(arn: str) -> str | None:
+    """Classify DLQ target type from its ARN (SQS or SNS)."""
+    if not arn:
+        return None
+    lower = arn.lower()
+    if ":sqs:" in lower:
+        return "sqs"
+    if ":sns:" in lower:
+        return "sns"
+    return "other"
+
+
+def _lambda_function_name_from_arn(arn: str) -> str:
+    """Extract function name from a Lambda ARN.
+
+    arn:aws:lambda:region:account:function:name → "name"
+    Falls back to the full ARN if parsing fails.
+    """
+    if not arn:
+        return ""
+    parts = arn.split(":")
+    if len(parts) >= 7:
+        return parts[6]
+    return arn.split(":")[-1]
+
+
+def _apigw_policy_summary(policy_json: str, account_id: str) -> dict | None:
+    """Return a safe summary of an API Gateway resource policy.
+
+    Reuses the Secrets Manager policy analysis logic — same IAM structure.
+    SECURITY: Raw policy JSON is never stored or returned.
+    Only aggregate boolean/count signals are returned.
+    """
+    if not policy_json:
+        return None
+    return _analyze_secret_resource_policy(policy_json, account_id)
 
 
 # ── M39: IAM policy and trust analysis helpers ────────────────────────────────
@@ -1362,6 +1495,36 @@ class AWSConnector(BaseConnector):
             len(rds_records),
         )
 
+        # 12. Lambda functions, aliases, event source mappings, function URLs (M43).
+        #     SECURITY: Function code is NEVER accessed.  GetFunction is NOT called.
+        #     Environment variable values are NEVER stored — keys only.
+        #     lambda:InvokeFunction is NEVER called.
+        lambda_records = self._fetch_lambda_resources(credentials, account_id)
+        records.extend(lambda_records)
+        logger.info(
+            "AWSConnector.fetch: lambda_resources fetched  count=%d",
+            len(lambda_records),
+        )
+
+        # 13. API Gateway REST APIs + stages (M43) — regional; metadata only.
+        #     SECURITY: No request/response bodies, logs, or API traffic is read.
+        #     Stage variable values are NEVER stored — keys only.
+        apigw_records = self._fetch_apigateway_resources(credentials, account_id)
+        records.extend(apigw_records)
+        logger.info(
+            "AWSConnector.fetch: apigateway_resources fetched  count=%d",
+            len(apigw_records),
+        )
+
+        # 14. API Gateway V2 (HTTP/WebSocket) APIs + stages (M43) — regional.
+        #     SECURITY: Same guarantees as REST API Gateway above.
+        apigwv2_records = self._fetch_apigatewayv2_resources(credentials, account_id)
+        records.extend(apigwv2_records)
+        logger.info(
+            "AWSConnector.fetch: apigatewayv2_resources fetched  count=%d",
+            len(apigwv2_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -1403,6 +1566,18 @@ class AWSConnector(BaseConnector):
             1 for r in rds_records
             if r.get("record_type") == AWS_RDS_DB_CLUSTER
         )
+        lambda_function_count = sum(
+            1 for r in lambda_records
+            if r.get("record_type") == AWS_LAMBDA_FUNCTION
+        )
+        apigw_rest_api_count = sum(
+            1 for r in apigw_records
+            if r.get("record_type") == AWS_APIGATEWAY_REST_API
+        )
+        apigwv2_api_count = sum(
+            1 for r in apigwv2_records
+            if r.get("record_type") == AWS_APIGATEWAYV2_API
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -1416,6 +1591,9 @@ class AWSConnector(BaseConnector):
             ssm_parameter_count=ssm_parameter_count,
             rds_instance_count=rds_instance_count,
             rds_cluster_count=rds_cluster_count,
+            lambda_function_count=lambda_function_count,
+            apigw_rest_api_count=apigw_rest_api_count,
+            apigwv2_api_count=apigwv2_api_count,
         )
         records.append(inventory_record)
 
@@ -1525,6 +1703,9 @@ class AWSConnector(BaseConnector):
         ssm_parameter_count: int = 0,
         rds_instance_count: int = 0,
         rds_cluster_count: int = 0,
+        lambda_function_count: int = 0,
+        apigw_rest_api_count: int = 0,
+        apigwv2_api_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -1535,7 +1716,8 @@ class AWSConnector(BaseConnector):
             "selected_regions":               selected,
             "enabled_surfaces":               [
                 "account_inventory", "s3", "security_groups", "vpc",
-                "iam", "route53", "cloudfront", "secrets_manager", "ssm", "rds",
+                "iam", "route53", "cloudfront", "secrets_manager", "ssm",
+                "rds", "lambda", "api_gateway",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -1548,9 +1730,11 @@ class AWSConnector(BaseConnector):
             "ssm_parameter_count":            ssm_parameter_count,
             "rds_instance_count":             rds_instance_count,
             "rds_cluster_count":              rds_cluster_count,
+            "lambda_function_count":          lambda_function_count,
+            "apigw_rest_api_count":           apigw_rest_api_count,
+            "apigwv2_api_count":              apigwv2_api_count,
             "future_surfaces": [
-                "lambda", "api_gateway", "load_balancers",
-                "waf", "cloudtrail", "guardduty", "security_hub",
+                "load_balancers", "waf", "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations", "cloudwatch",
             ],
@@ -4955,6 +5139,1086 @@ class AWSConnector(BaseConnector):
         except Exception:
             logger.warning(
                 "aws: DescribeDBClusterSnapshots unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        return records
+
+    # ── M43: Lambda fetch methods ─────────────────────────────────────────────
+
+    def _fetch_lambda_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch Lambda metadata across all selected regions.
+
+        SECURITY:
+        - lambda:GetFunction is NEVER called (avoids Code.Location signed URLs).
+        - lambda:InvokeFunction is NEVER called.
+        - Function code and deployment packages are NEVER accessed or stored.
+        - Environment variable values are NEVER stored (keys only).
+        - Role/KMS/layer/event-source ARNs are hashed, never stored raw.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("lambda", credentials, region=region)
+                region_records = self._fetch_lambda_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: lambda fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except ConnectorError as exc:
+                fc = classify_aws_lambda_failure("ListFunctions", exc)
+                logger.warning(
+                    "aws: lambda fetch failed  region=%s  code=%s",
+                    region, fc.error_code,
+                )
+            except Exception:
+                logger.warning(
+                    "aws: lambda fetch failed  region=%s  (unexpected error)",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_lambda_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize Lambda resources in a single region.
+
+        Calls (fail-soft per API):
+          - ListFunctions (paginated) → aws_lambda_function records
+          - ListAliases per function → aws_lambda_alias records
+          - ListFunctionUrlConfigs per function → aws_lambda_function_url records
+          - ListEventSourceMappings → aws_lambda_event_source_mapping records
+
+        SECURITY:
+        - GetFunction is NEVER called.
+        - InvokeFunction is NEVER called.
+        - Function code/packages are NEVER accessed.
+        - Environment variable values are NEVER stored.
+        - Role, KMS, and layer ARNs are hashed before storage.
+        """
+        records: list[dict] = []
+        # Maps function_name → function_arn for per-function calls below.
+        fn_name_to_arn: dict[str, str] = {}
+
+        # ── ListFunctions (paginated) ─────────────────────────────────────────
+        try:
+            lf_kwargs: dict = {}
+            while True:
+                try:
+                    response = self._call_aws(client.list_functions, **lf_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_lambda_failure("ListFunctions", exc)
+                    logger.warning(
+                        "aws: ListFunctions failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for fn in response.get("Functions") or []:
+                    fn_name: str = fn.get("FunctionName") or ""
+                    fn_arn: str = fn.get("FunctionArn") or ""
+                    if not fn_name:
+                        continue
+
+                    fn_name_to_arn[fn_name] = fn_arn
+
+                    runtime: str = fn.get("Runtime") or ""
+                    handler_present: bool = bool(fn.get("Handler"))
+                    package_type: str = fn.get("PackageType") or "Zip"
+                    architectures: list[str] = sorted(
+                        fn.get("Architectures") or ["x86_64"]
+                    )
+                    memory_size: int | None = fn.get("MemorySize")
+                    timeout: int | None = fn.get("Timeout")
+                    code_size: int | None = fn.get("CodeSize")
+                    last_modified: str | None = fn.get("LastModified")
+                    version: str = fn.get("Version") or "$LATEST"
+
+                    # Role ARN — hash only; NEVER store raw
+                    role_arn: str = fn.get("Role") or ""
+                    role_arn_present: bool = bool(role_arn)
+                    role_arn_hash: str | None = _hash_kms_key_id(role_arn) if role_arn else None
+
+                    # KMS key ARN — hash only
+                    kms_key_arn: str = fn.get("KMSKeyArn") or ""
+                    kms_key_arn_present: bool = bool(kms_key_arn)
+                    kms_key_arn_hash: str | None = (
+                        _hash_kms_key_id(kms_key_arn) if kms_key_arn else None
+                    )
+
+                    # Ephemeral storage
+                    eph_storage: dict = fn.get("EphemeralStorage") or {}
+                    ephemeral_storage_size: int | None = eph_storage.get("Size")
+
+                    # Environment variables — SECURITY: keys only, NEVER values
+                    env_config: dict = fn.get("Environment") or {}
+                    env_vars: dict = env_config.get("Variables") or {}
+                    env_key_names, env_key_count, env_sensitive_count = (
+                        _lambda_env_key_info(env_vars)
+                    )
+
+                    # VPC config
+                    vpc_config: dict = fn.get("VpcConfig") or {}
+                    subnet_ids: list[str] = sorted(
+                        vpc_config.get("SubnetIds") or []
+                    )
+                    sg_ids_lambda: list[str] = sorted(
+                        vpc_config.get("SecurityGroupIds") or []
+                    )
+                    vpc_config_present: bool = bool(subnet_ids or sg_ids_lambda)
+                    subnet_count: int = len(subnet_ids)
+                    security_group_count: int = len(sg_ids_lambda)
+
+                    # Tracing
+                    tracing_config: dict = fn.get("TracingConfig") or {}
+                    tracing_mode: str = tracing_config.get("Mode") or "PassThrough"
+
+                    # Dead letter config
+                    dlq_config: dict = fn.get("DeadLetterConfig") or {}
+                    dlq_arn: str = dlq_config.get("TargetArn") or ""
+                    dlq_present: bool = bool(dlq_arn)
+                    dlq_type: str | None = _lambda_dlq_type(dlq_arn) if dlq_arn else None
+
+                    # Layers — hash each ARN
+                    layers: list = fn.get("Layers") or []
+                    layers_count: int = len(layers)
+                    layer_arn_hashes: list[str] = [
+                        _hash_kms_key_id(la.get("Arn") or "")
+                        for la in layers if la.get("Arn")
+                    ]
+
+                    # SnapStart
+                    snap_start: dict = fn.get("SnapStart") or {}
+                    snap_start_apply_on: str | None = snap_start.get("ApplyOn")
+
+                    # Tags — Lambda tags are a plain dict {key: value}; extract key names only.
+                    # ListFunctions does not officially return Tags, but handle them if present
+                    # (e.g. from mock data, custom SDKs, or future API changes).
+                    raw_tags_fn: dict = fn.get("Tags") or {}
+                    tag_keys_fn: list[str] | None = sorted(raw_tags_fn.keys()) or None
+
+                    sensitive_category: str = _classify_lambda_name_sensitivity(fn_name)
+
+                    stable_id = f"{account_id}/{region}/{fn_arn}"
+                    records.append({
+                        "record_type":                      AWS_LAMBDA_FUNCTION,
+                        "record_id":                        stable_id,
+                        "external_id":                      stable_id,
+                        "name":                             fn_name,
+                        "account_id":                       account_id,
+                        "region":                           region,
+                        "function_name":                    fn_name,
+                        "function_arn":                     fn_arn,
+                        "runtime":                          runtime,
+                        "handler_present":                  handler_present,
+                        "package_type":                     package_type,
+                        "architectures":                    architectures,
+                        "memory_size":                      memory_size,
+                        "timeout":                          timeout,
+                        "ephemeral_storage_size":           ephemeral_storage_size,
+                        "code_size":                        code_size,
+                        "last_modified":                    last_modified,
+                        "version":                          version,
+                        "role_arn_present":                 role_arn_present,
+                        "role_arn_hash":                    role_arn_hash,
+                        "kms_key_arn_present":              kms_key_arn_present,
+                        "kms_key_arn_hash":                 kms_key_arn_hash,
+                        "environment_key_count":            env_key_count,
+                        "environment_key_names":            env_key_names or None,
+                        "environment_sensitive_key_count":  env_sensitive_count,
+                        "vpc_config_present":               vpc_config_present,
+                        "subnet_ids":                       subnet_ids or None,
+                        "subnet_count":                     subnet_count,
+                        "security_group_ids":               sg_ids_lambda or None,
+                        "security_group_count":             security_group_count,
+                        "tracing_mode":                     tracing_mode,
+                        "dead_letter_target_present":       dlq_present,
+                        "dead_letter_target_type":          dlq_type,
+                        "layers_count":                     layers_count,
+                        "layer_arn_hashes":                 layer_arn_hashes or None,
+                        "reserved_concurrent_executions":   fn.get("ReservedConcurrentExecutions"),
+                        "snap_start_apply_on":              snap_start_apply_on,
+                        "tag_keys":                         tag_keys_fn,
+                        "sensitive_name_category":          sensitive_category,
+                        "config_fetch_warnings":            None,
+                    })
+
+                next_marker = response.get("NextMarker")
+                if next_marker:
+                    lf_kwargs["Marker"] = next_marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: ListFunctions unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        # ── ListAliases per function ──────────────────────────────────────────
+        for fn_name, fn_arn in fn_name_to_arn.items():
+            try:
+                la_kwargs: dict = {"FunctionName": fn_name}
+                while True:
+                    try:
+                        response = self._call_aws(client.list_aliases, **la_kwargs)
+                    except ConnectorError as exc:
+                        fc = classify_aws_lambda_failure("ListAliases", exc)
+                        logger.warning(
+                            "aws: ListAliases failed  region=%s  fn=%s  code=%s",
+                            region, fn_name, fc.error_code,
+                        )
+                        break
+
+                    for alias in response.get("Aliases") or []:
+                        alias_name: str = alias.get("Name") or ""
+                        if not alias_name:
+                            continue
+                        alias_arn: str = alias.get("AliasArn") or ""
+                        fn_version_alias: str = alias.get("FunctionVersion") or ""
+                        routing: dict = alias.get("RoutingConfig") or {}
+                        add_versions: dict = routing.get("AdditionalVersionWeights") or {}
+                        routing_config_present: bool = bool(add_versions)
+                        additional_version_weights_count: int = len(add_versions)
+                        additional_version_weights_summary: dict | None = (
+                            {
+                                "version_count": len(add_versions),
+                                "versions": sorted(add_versions.keys())[:5],
+                            }
+                            if add_versions else None
+                        )
+                        description_present: bool = bool(alias.get("Description"))
+
+                        alias_stable_id = f"{account_id}/{region}/{alias_arn}"
+                        records.append({
+                            "record_type":                          AWS_LAMBDA_ALIAS,
+                            "record_id":                            alias_stable_id,
+                            "external_id":                          alias_stable_id,
+                            "name":                                 f"{fn_name}/{alias_name}",
+                            "account_id":                           account_id,
+                            "region":                               region,
+                            "function_name":                        fn_name,
+                            "function_arn":                         fn_arn,
+                            "alias_name":                           alias_name,
+                            "alias_arn":                            alias_arn,
+                            "function_version":                     fn_version_alias,
+                            "routing_config_present":               routing_config_present,
+                            "additional_version_weights_count":     additional_version_weights_count,
+                            "additional_version_weights_summary":   additional_version_weights_summary,
+                            "description_present":                  description_present,
+                            "config_fetch_warnings":                None,
+                        })
+
+                    next_marker_alias = response.get("NextMarker")
+                    if next_marker_alias:
+                        la_kwargs["Marker"] = next_marker_alias
+                    else:
+                        break
+            except Exception:
+                logger.warning(
+                    "aws: ListAliases unexpected error  region=%s  fn=%s",
+                    region, fn_name, exc_info=True,
+                )
+
+        # ── ListFunctionUrlConfigs per function ───────────────────────────────
+        for fn_name, fn_arn in fn_name_to_arn.items():
+            try:
+                url_kwargs: dict = {"FunctionName": fn_name}
+                while True:
+                    try:
+                        response = self._call_aws(
+                            client.list_function_url_configs, **url_kwargs
+                        )
+                    except ConnectorError as exc:
+                        fc = classify_aws_lambda_failure("ListFunctionUrlConfigs", exc)
+                        logger.warning(
+                            "aws: ListFunctionUrlConfigs failed  region=%s  fn=%s  code=%s",
+                            region, fn_name, fc.error_code,
+                        )
+                        break
+
+                    for url_cfg in response.get("FunctionUrlConfigs") or []:
+                        url_fn_arn: str = url_cfg.get("FunctionArn") or fn_arn
+                        fn_url: str = url_cfg.get("FunctionUrl") or ""
+                        auth_type_url: str = url_cfg.get("AuthType") or ""
+                        invoke_mode: str = url_cfg.get("InvokeMode") or "BUFFERED"
+
+                        # SECURITY: hash the URL, never store raw endpoint
+                        fn_url_hash: str | None = (
+                            _hash_kms_key_id(fn_url) if fn_url else None
+                        )
+
+                        # CORS config — summarize safely
+                        cors_cfg: dict = url_cfg.get("Cors") or {}
+                        cors_present: bool = bool(cors_cfg)
+                        cors_allow_credentials: bool | None = (
+                            cors_cfg.get("AllowCredentials") if cors_cfg else None
+                        )
+                        cors_origins: list = cors_cfg.get("AllowOrigins") or []
+                        cors_wildcard_origin_present: bool = any(
+                            o == "*" for o in cors_origins
+                        )
+                        cors_allow_origins_count: int = len(cors_origins)
+                        cors_allow_methods: list[str] | None = (
+                            sorted(cors_cfg.get("AllowMethods") or []) or None
+                        )
+
+                        url_stable_id = f"{account_id}/{region}/{fn_name}/url"
+                        records.append({
+                            "record_type":                  AWS_LAMBDA_FUNCTION_URL,
+                            "record_id":                    url_stable_id,
+                            "external_id":                  url_stable_id,
+                            "name":                         fn_name,
+                            "account_id":                   account_id,
+                            "region":                       region,
+                            "function_name":                fn_name,
+                            "function_arn":                 url_fn_arn,
+                            "function_url_hash":            fn_url_hash,
+                            "auth_type":                    auth_type_url,
+                            "invoke_mode":                  invoke_mode,
+                            "cors_present":                 cors_present,
+                            "cors_allow_credentials":       cors_allow_credentials,
+                            "cors_wildcard_origin_present": cors_wildcard_origin_present,
+                            "cors_allow_origins_count":     cors_allow_origins_count,
+                            "cors_allow_methods":           cors_allow_methods,
+                            "config_fetch_warnings":        None,
+                        })
+
+                    next_marker_url = response.get("NextMarker")
+                    if next_marker_url:
+                        url_kwargs["Marker"] = next_marker_url
+                    else:
+                        break
+            except Exception:
+                logger.warning(
+                    "aws: ListFunctionUrlConfigs unexpected error  region=%s  fn=%s",
+                    region, fn_name, exc_info=True,
+                )
+
+        # ── ListEventSourceMappings (all in region) ───────────────────────────
+        try:
+            esm_kwargs: dict = {}
+            while True:
+                try:
+                    response = self._call_aws(
+                        client.list_event_source_mappings, **esm_kwargs
+                    )
+                except ConnectorError as exc:
+                    fc = classify_aws_lambda_failure("ListEventSourceMappings", exc)
+                    logger.warning(
+                        "aws: ListEventSourceMappings failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for mapping in response.get("EventSourceMappings") or []:
+                    esm_uuid: str = mapping.get("UUID") or ""
+                    if not esm_uuid:
+                        continue
+
+                    esm_fn_arn: str = mapping.get("FunctionArn") or ""
+                    esm_fn_name: str = _lambda_function_name_from_arn(esm_fn_arn)
+
+                    # Event source ARN — hash, never store raw
+                    event_source_arn: str = mapping.get("EventSourceArn") or ""
+                    esm_arn_present: bool = bool(event_source_arn)
+                    esm_arn_hash: str | None = (
+                        _hash_kms_key_id(event_source_arn) if event_source_arn else None
+                    )
+                    esm_type: str = _lambda_event_source_type(event_source_arn)
+
+                    esm_state: str = mapping.get("State") or ""
+                    esm_enabled: bool = esm_state.upper() not in (
+                        "DISABLED", "DISABLING", "DISABLED_WITH_FAILED_CONCURRENT_EXECUTIONS"
+                    )
+
+                    batch_size: int | None = mapping.get("BatchSize")
+                    max_batch_window: int | None = mapping.get(
+                        "MaximumBatchingWindowInSeconds"
+                    )
+                    starting_position: str | None = mapping.get("StartingPosition")
+
+                    # Filter criteria — presence only, never store raw expressions
+                    filter_criteria: dict | None = mapping.get("FilterCriteria")
+                    filter_criteria_present: bool = bool(
+                        filter_criteria
+                        and filter_criteria.get("Filters")
+                    )
+
+                    # Destination config — presence only
+                    dest_config: dict = mapping.get("DestinationConfig") or {}
+                    destination_config_present: bool = bool(
+                        dest_config.get("OnSuccess") or dest_config.get("OnFailure")
+                    )
+
+                    fn_response_types: list[str] | None = (
+                        sorted(mapping.get("FunctionResponseTypes") or []) or None
+                    )
+
+                    esm_stable_id = f"{account_id}/{region}/{esm_uuid}"
+                    esm_display = (
+                        f"{esm_fn_name}/{esm_uuid[:8]}" if esm_fn_name else esm_uuid[:8]
+                    )
+                    records.append({
+                        "record_type":                  AWS_LAMBDA_EVENT_SOURCE_MAPPING,
+                        "record_id":                    esm_stable_id,
+                        "external_id":                  esm_stable_id,
+                        "name":                         esm_display,
+                        "account_id":                   account_id,
+                        "region":                       region,
+                        "uuid":                         esm_uuid,
+                        "function_name":                esm_fn_name,
+                        "event_source_arn_present":     esm_arn_present,
+                        "event_source_arn_hash":        esm_arn_hash,
+                        "event_source_type":            esm_type,
+                        "state":                        esm_state,
+                        "enabled":                      esm_enabled,
+                        "batch_size":                   batch_size,
+                        "maximum_batching_window_seconds": max_batch_window,
+                        "starting_position":            starting_position,
+                        "filter_criteria_present":      filter_criteria_present,
+                        "destination_config_present":   destination_config_present,
+                        "function_response_types":      fn_response_types,
+                        "config_fetch_warnings":        None,
+                    })
+
+                next_marker_esm = response.get("NextMarker")
+                if next_marker_esm:
+                    esm_kwargs["Marker"] = next_marker_esm
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: ListEventSourceMappings unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        return records
+
+    # ── M43: API Gateway REST fetch methods ───────────────────────────────────
+
+    def _fetch_apigateway_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch API Gateway REST API metadata across all selected regions.
+
+        SECURITY:
+        - No request/response bodies, logs, or API traffic is ever read.
+        - Stage variable values are NEVER stored (keys only).
+        - Integration URIs are NEVER stored (type counts only).
+        - Resource policies are summarized (no raw JSON stored).
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("apigateway", credentials, region=region)
+                region_records = self._fetch_apigateway_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: apigateway fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except ConnectorError as exc:
+                fc = classify_aws_apigateway_failure("GetRestApis", exc)
+                logger.warning(
+                    "aws: apigateway fetch failed  region=%s  code=%s",
+                    region, fc.error_code,
+                )
+            except Exception:
+                logger.warning(
+                    "aws: apigateway fetch failed  region=%s  (unexpected error)",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_apigateway_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize API Gateway REST resources in a single region.
+
+        Calls (fail-soft per API):
+          - GetRestApis (paginated)
+          - GetAuthorizers per REST API
+          - GetResources per REST API (with embedded methods for auth/integration counts)
+          - GetStages per REST API
+
+        SECURITY:
+        - No request/response bodies or logs are read.
+        - Integration URIs are never stored (type counts only).
+        - Stage variable values are never stored (keys only).
+        - Resource policies are summarized; raw JSON never stored.
+        """
+        records: list[dict] = []
+
+        try:
+            gra_kwargs: dict = {}
+            while True:
+                try:
+                    response = self._call_aws(client.get_rest_apis, **gra_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_apigateway_failure("GetRestApis", exc)
+                    logger.warning(
+                        "aws: GetRestApis failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for api in response.get("items") or []:
+                    api_id: str = api.get("id") or ""
+                    if not api_id:
+                        continue
+
+                    api_name: str = api.get("name") or ""
+                    description_present: bool = bool(api.get("description"))
+
+                    endpoint_config: dict = api.get("endpointConfiguration") or {}
+                    endpoint_types: list[str] = sorted(
+                        endpoint_config.get("types") or []
+                    )
+
+                    disable_execute: bool = bool(
+                        api.get("disableExecuteApiEndpoint", False)
+                    )
+                    min_compression_size: int | None = api.get("minimumCompressionSize")
+                    api_key_source: str = api.get("apiKeySource") or "HEADER"
+                    binary_media_types: list = api.get("binaryMediaTypes") or []
+                    binary_media_types_count: int = len(binary_media_types)
+
+                    # Resource policy — summarize safely, never store raw JSON
+                    policy_raw: str | None = api.get("policy")
+                    if policy_raw:
+                        try:
+                            from urllib.parse import unquote
+                            policy_raw = unquote(policy_raw)
+                        except Exception:
+                            pass
+                        policy_summary: dict | None = _apigw_policy_summary(
+                            policy_raw, account_id
+                        )
+                    else:
+                        policy_summary = None
+
+                    # Tags — keys only
+                    tags: dict = api.get("tags") or {}
+                    tag_keys_api: list[str] | None = sorted(tags.keys()) or None
+
+                    sensitive_cat: str = _classify_lambda_name_sensitivity(api_name)
+
+                    # ── Get authorizers (fail-soft) ───────────────────────────
+                    authorizer_count: int = 0
+                    try:
+                        auth_resp = self._call_aws(
+                            client.get_authorizers, restApiId=api_id
+                        )
+                        authorizer_count = len(auth_resp.get("items") or [])
+                    except Exception:
+                        logger.debug(
+                            "aws: GetAuthorizers failed  region=%s  api_id=%s",
+                            region, api_id,
+                        )
+
+                    # ── Get resources + methods (fail-soft) ───────────────────
+                    resource_count: int = 0
+                    method_count: int = 0
+                    unauthenticated_method_count: int = 0
+                    integration_type_counts: dict[str, int] = {}
+                    try:
+                        res_kwargs: dict = {
+                            "restApiId": api_id,
+                            "embed": ["methods"],
+                        }
+                        while True:
+                            res_resp = self._call_aws(
+                                client.get_resources, **res_kwargs
+                            )
+                            for res in res_resp.get("items") or []:
+                                resource_count += 1
+                                methods: dict = res.get("resourceMethods") or {}
+                                for _mname, mcfg in methods.items():
+                                    method_count += 1
+                                    auth_type_m: str = (mcfg or {}).get(
+                                        "authorizationType", "NONE"
+                                    )
+                                    if str(auth_type_m).upper() == "NONE":
+                                        unauthenticated_method_count += 1
+                                    # Integration type — NEVER store URI
+                                    integration: dict = (mcfg or {}).get(
+                                        "methodIntegration"
+                                    ) or {}
+                                    int_type: str = (
+                                        integration.get("type") or "UNKNOWN"
+                                    ).upper()
+                                    integration_type_counts[int_type] = (
+                                        integration_type_counts.get(int_type, 0) + 1
+                                    )
+                            position = res_resp.get("position")
+                            if position:
+                                res_kwargs["position"] = position
+                            else:
+                                break
+                    except Exception:
+                        logger.debug(
+                            "aws: GetResources failed  region=%s  api_id=%s",
+                            region, api_id,
+                        )
+
+                    api_stable_id = f"{account_id}/{region}/{api_id}"
+                    records.append({
+                        "record_type":                  AWS_APIGATEWAY_REST_API,
+                        "record_id":                    api_stable_id,
+                        "external_id":                  api_stable_id,
+                        "name":                         api_name,
+                        "account_id":                   account_id,
+                        "region":                       region,
+                        "api_id":                       api_id,
+                        "description_present":          description_present,
+                        "endpoint_configuration_types": endpoint_types,
+                        "disable_execute_api_endpoint": disable_execute,
+                        "minimum_compression_size":     min_compression_size,
+                        "api_key_source":               api_key_source,
+                        "binary_media_types_count":     binary_media_types_count,
+                        "policy_summary":               policy_summary,
+                        "authorizer_count":             authorizer_count,
+                        "resource_count":               resource_count,
+                        "method_count":                 method_count,
+                        "unauthenticated_method_count": unauthenticated_method_count,
+                        "integration_type_counts":      integration_type_counts or None,
+                        "tag_keys":                     tag_keys_api,
+                        "sensitive_name_category":      sensitive_cat,
+                        "config_fetch_warnings":        None,
+                    })
+
+                    # ── Get stages (fail-soft) ────────────────────────────────
+                    try:
+                        stages_resp = self._call_aws(
+                            client.get_stages, restApiId=api_id
+                        )
+                        for stage in stages_resp.get("item") or []:
+                            sn: str = stage.get("stageName") or ""
+                            if not sn:
+                                continue
+
+                            dep_id: str = stage.get("deploymentId") or ""
+                            dep_id_present: bool = bool(dep_id)
+                            dep_id_hash: str | None = (
+                                _hash_kms_key_id(dep_id) if dep_id else None
+                            )
+
+                            cache_enabled: bool = bool(
+                                stage.get("cacheClusterEnabled", False)
+                            )
+                            cache_size: str | None = stage.get("cacheClusterSize")
+
+                            tracing_enabled: bool = bool(
+                                stage.get("tracingEnabled", False)
+                            )
+
+                            access_log_settings: dict = (
+                                stage.get("accessLogSettings") or {}
+                            )
+                            access_logging_enabled: bool = bool(
+                                access_log_settings.get("destinationArn")
+                            )
+
+                            method_settings: dict = stage.get("methodSettings") or {}
+                            metrics_enabled_count: int = sum(
+                                1
+                                for ms in method_settings.values()
+                                if (ms or {}).get("metricsEnabled", False)
+                            )
+                            logging_level_counts: dict[str, int] = {}
+                            for ms in method_settings.values():
+                                lvl: str = (ms or {}).get("loggingLevel") or "OFF"
+                                logging_level_counts[lvl] = (
+                                    logging_level_counts.get(lvl, 0) + 1
+                                )
+
+                            throttling_present: bool = any(
+                                (ms or {}).get("throttlingBurstLimit")
+                                or (ms or {}).get("throttlingRateLimit")
+                                for ms in method_settings.values()
+                            )
+
+                            # Stage variables — keys only, NEVER values
+                            stage_vars: dict = stage.get("variables") or {}
+                            vars_key_count: int = len(stage_vars)
+                            vars_key_names: list[str] | None = (
+                                sorted(stage_vars.keys()) or None
+                            )
+
+                            canary_settings_present: bool = bool(
+                                stage.get("canarySettings")
+                            )
+                            web_acl_arn_present: bool = bool(
+                                stage.get("webAclArn")
+                            )
+
+                            stage_stable_id = (
+                                f"{account_id}/{region}/{api_id}/{sn}"
+                            )
+                            records.append({
+                                "record_type":              AWS_APIGATEWAY_REST_STAGE,
+                                "record_id":                stage_stable_id,
+                                "external_id":              stage_stable_id,
+                                "name":                     f"{api_name}/{sn}",
+                                "account_id":               account_id,
+                                "region":                   region,
+                                "api_id":                   api_id,
+                                "stage_name":               sn,
+                                "deployment_id_present":    dep_id_present,
+                                "deployment_id_hash":       dep_id_hash,
+                                "cache_cluster_enabled":    cache_enabled,
+                                "cache_cluster_size":       cache_size,
+                                "tracing_enabled":          tracing_enabled,
+                                "access_logging_enabled":   access_logging_enabled,
+                                "metrics_enabled_count":    metrics_enabled_count,
+                                "logging_level_summary":    logging_level_counts or None,
+                                "throttling_present":       throttling_present,
+                                "variables_key_count":      vars_key_count,
+                                "variables_key_names":      vars_key_names,
+                                "canary_settings_present":  canary_settings_present,
+                                "web_acl_arn_present":      web_acl_arn_present,
+                                "config_fetch_warnings":    None,
+                            })
+                    except Exception:
+                        logger.debug(
+                            "aws: GetStages failed  region=%s  api_id=%s",
+                            region, api_id,
+                        )
+
+                position = response.get("position")
+                if position:
+                    gra_kwargs["position"] = position
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: GetRestApis unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        return records
+
+    # ── M43: API Gateway V2 fetch methods ────────────────────────────────────
+
+    def _fetch_apigatewayv2_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch API Gateway V2 (HTTP/WebSocket) metadata across all selected regions.
+
+        SECURITY: Same guarantees as _fetch_apigateway_resources.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("apigatewayv2", credentials, region=region)
+                region_records = self._fetch_apigatewayv2_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: apigatewayv2 fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except ConnectorError as exc:
+                fc = classify_aws_apigateway_failure("GetApis", exc)
+                logger.warning(
+                    "aws: apigatewayv2 fetch failed  region=%s  code=%s",
+                    region, fc.error_code,
+                )
+            except Exception:
+                logger.warning(
+                    "aws: apigatewayv2 fetch failed  region=%s  (unexpected error)",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_apigatewayv2_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize API Gateway V2 resources in a single region.
+
+        Calls (fail-soft per API):
+          - GetApis (paginated)
+          - GetRoutes per API (unauthenticated route count)
+          - GetAuthorizers per API
+          - GetIntegrations per API (type count summary only)
+          - GetStages per API
+
+        SECURITY:
+        - Integration URIs are NEVER stored (type counts only).
+        - Stage variable values are NEVER stored (keys only).
+        - CORS origins are NEVER stored raw (wildcard detection + count only).
+        """
+        records: list[dict] = []
+
+        try:
+            ga_kwargs: dict = {}
+            while True:
+                try:
+                    response = self._call_aws(client.get_apis, **ga_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_apigateway_failure("GetApis", exc)
+                    logger.warning(
+                        "aws: GetApis (v2) failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for api in response.get("Items") or []:
+                    api_id_v2: str = api.get("ApiId") or ""
+                    if not api_id_v2:
+                        continue
+
+                    api_name_v2: str = api.get("Name") or ""
+                    protocol_type: str = api.get("ProtocolType") or ""
+
+                    api_endpoint_v2: str = api.get("ApiEndpoint") or ""
+                    api_endpoint_present: bool = bool(api_endpoint_v2)
+
+                    rse: str = api.get("RouteSelectionExpression") or ""
+                    rse_present: bool = bool(rse)
+
+                    disable_execute_v2: bool = bool(
+                        api.get("DisableExecuteApiEndpoint", False)
+                    )
+
+                    # CORS — summarize, never store raw origins
+                    cors_v2: dict = api.get("CorsConfiguration") or {}
+                    cors_present_v2: bool = bool(cors_v2)
+                    cors_allow_credentials_v2: bool | None = (
+                        cors_v2.get("AllowCredentials") if cors_v2 else None
+                    )
+                    cors_origins_v2: list = cors_v2.get("AllowOrigins") or []
+                    cors_wildcard_v2: bool = any(o == "*" for o in cors_origins_v2)
+
+                    # Tags — keys only
+                    tags_v2: dict = api.get("Tags") or {}
+                    tag_keys_v2: list[str] | None = sorted(tags_v2.keys()) or None
+
+                    sensitive_cat_v2: str = _classify_lambda_name_sensitivity(
+                        api_name_v2
+                    )
+
+                    # ── Get routes (fail-soft) ────────────────────────────────
+                    route_count: int = 0
+                    unauthenticated_route_count: int = 0
+                    try:
+                        gr_kwargs: dict = {"ApiId": api_id_v2}
+                        while True:
+                            gr_resp = self._call_aws(
+                                client.get_routes, **gr_kwargs
+                            )
+                            for route in gr_resp.get("Items") or []:
+                                route_count += 1
+                                auth_type_r: str = (
+                                    route.get("AuthorizationType") or "NONE"
+                                ).upper()
+                                if auth_type_r == "NONE":
+                                    unauthenticated_route_count += 1
+                            next_token_r = gr_resp.get("NextToken")
+                            if next_token_r:
+                                gr_kwargs["NextToken"] = next_token_r
+                            else:
+                                break
+                    except Exception:
+                        logger.debug(
+                            "aws: GetRoutes (v2) failed  region=%s  api_id=%s",
+                            region, api_id_v2,
+                        )
+
+                    # ── Get authorizers (fail-soft) ───────────────────────────
+                    authorizer_count_v2: int = 0
+                    try:
+                        ga2_resp = self._call_aws(
+                            client.get_authorizers, ApiId=api_id_v2
+                        )
+                        authorizer_count_v2 = len(ga2_resp.get("Items") or [])
+                    except Exception:
+                        logger.debug(
+                            "aws: GetAuthorizers (v2) failed  region=%s  api_id=%s",
+                            region, api_id_v2,
+                        )
+
+                    # ── Get integrations (fail-soft) — type counts only ───────
+                    integration_type_counts_v2: dict[str, int] = {}
+                    try:
+                        gi_kwargs: dict = {"ApiId": api_id_v2}
+                        while True:
+                            gi_resp = self._call_aws(
+                                client.get_integrations, **gi_kwargs
+                            )
+                            for intg in gi_resp.get("Items") or []:
+                                # NEVER store IntegrationUri — type only
+                                it: str = (
+                                    intg.get("IntegrationType") or "UNKNOWN"
+                                ).upper()
+                                integration_type_counts_v2[it] = (
+                                    integration_type_counts_v2.get(it, 0) + 1
+                                )
+                            next_token_i = gi_resp.get("NextToken")
+                            if next_token_i:
+                                gi_kwargs["NextToken"] = next_token_i
+                            else:
+                                break
+                    except Exception:
+                        logger.debug(
+                            "aws: GetIntegrations (v2) failed  region=%s  api_id=%s",
+                            region, api_id_v2,
+                        )
+
+                    api_stable_id_v2 = f"{account_id}/{region}/{api_id_v2}"
+                    records.append({
+                        "record_type":                      AWS_APIGATEWAYV2_API,
+                        "record_id":                        api_stable_id_v2,
+                        "external_id":                      api_stable_id_v2,
+                        "name":                             api_name_v2,
+                        "account_id":                       account_id,
+                        "region":                           region,
+                        "api_id":                           api_id_v2,
+                        "protocol_type":                    protocol_type,
+                        "api_endpoint_present":             api_endpoint_present,
+                        "route_selection_expression_present": rse_present,
+                        "disable_execute_api_endpoint":     disable_execute_v2,
+                        "cors_present":                     cors_present_v2,
+                        "cors_allow_credentials":           cors_allow_credentials_v2,
+                        "cors_wildcard_origin_present":     cors_wildcard_v2,
+                        "route_count":                      route_count,
+                        "unauthenticated_route_count":      unauthenticated_route_count,
+                        "authorizer_count":                 authorizer_count_v2,
+                        "integration_type_counts":          integration_type_counts_v2 or None,
+                        "tag_keys":                         tag_keys_v2,
+                        "sensitive_name_category":          sensitive_cat_v2,
+                        "config_fetch_warnings":            None,
+                    })
+
+                    # ── Get stages (fail-soft) ────────────────────────────────
+                    try:
+                        gs_kwargs: dict = {"ApiId": api_id_v2}
+                        while True:
+                            gs_resp = self._call_aws(
+                                client.get_stages, **gs_kwargs
+                            )
+                            for stage_v2 in gs_resp.get("Items") or []:
+                                sn_v2: str = stage_v2.get("StageName") or ""
+                                if not sn_v2:
+                                    continue
+
+                                dep_id_v2: str = stage_v2.get("DeploymentId") or ""
+                                dep_id_present_v2: bool = bool(dep_id_v2)
+                                dep_id_hash_v2: str | None = (
+                                    _hash_kms_key_id(dep_id_v2) if dep_id_v2 else None
+                                )
+
+                                auto_deploy: bool = bool(
+                                    stage_v2.get("AutoDeploy", False)
+                                )
+
+                                access_log_v2: dict = (
+                                    stage_v2.get("AccessLogSettings") or {}
+                                )
+                                access_logging_enabled_v2: bool = bool(
+                                    access_log_v2.get("DestinationArn")
+                                )
+
+                                drs: dict = (
+                                    stage_v2.get("DefaultRouteSettings") or {}
+                                )
+                                detailed_metrics_enabled: bool = bool(
+                                    drs.get("DetailedMetricsEnabled", False)
+                                )
+                                drs_summary: dict | None = (
+                                    {
+                                        "data_trace_enabled": drs.get("DataTraceEnabled"),
+                                        "logging_level": drs.get("LoggingLevel"),
+                                        "throttling_burst_limit_present": bool(
+                                            drs.get("ThrottlingBurstLimit")
+                                        ),
+                                        "throttling_rate_limit_present": bool(
+                                            drs.get("ThrottlingRateLimit")
+                                        ),
+                                    }
+                                    if drs else None
+                                )
+
+                                # Stage variables — keys only, NEVER values
+                                sv_v2: dict = stage_v2.get("StageVariables") or {}
+                                sv_key_count: int = len(sv_v2)
+                                sv_key_names: list[str] | None = (
+                                    sorted(sv_v2.keys()) or None
+                                )
+
+                                stage_stable_id_v2 = (
+                                    f"{account_id}/{region}/{api_id_v2}/{sn_v2}"
+                                )
+                                records.append({
+                                    "record_type":                      AWS_APIGATEWAYV2_STAGE,
+                                    "record_id":                        stage_stable_id_v2,
+                                    "external_id":                      stage_stable_id_v2,
+                                    "name":                             f"{api_name_v2}/{sn_v2}",
+                                    "account_id":                       account_id,
+                                    "region":                           region,
+                                    "api_id":                           api_id_v2,
+                                    "stage_name":                       sn_v2,
+                                    "deployment_id_present":            dep_id_present_v2,
+                                    "deployment_id_hash":               dep_id_hash_v2,
+                                    "auto_deploy":                      auto_deploy,
+                                    "access_logging_enabled":           access_logging_enabled_v2,
+                                    "detailed_metrics_enabled":         detailed_metrics_enabled,
+                                    "default_route_settings_summary":   drs_summary,
+                                    "stage_variables_key_count":        sv_key_count,
+                                    "stage_variables_key_names":        sv_key_names,
+                                    "config_fetch_warnings":            None,
+                                })
+                            next_token_s = gs_resp.get("NextToken")
+                            if next_token_s:
+                                gs_kwargs["NextToken"] = next_token_s
+                            else:
+                                break
+                    except Exception:
+                        logger.debug(
+                            "aws: GetStages (v2) failed  region=%s  api_id=%s",
+                            region, api_id_v2,
+                        )
+
+                next_token_api = response.get("NextToken")
+                if next_token_api:
+                    ga_kwargs["NextToken"] = next_token_api
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: GetApis (v2) unexpected error  region=%s",
                 region, exc_info=True,
             )
 

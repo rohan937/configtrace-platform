@@ -654,6 +654,115 @@ function getChangeSummary(change: ChangeDetail): string {
     return `RDS cluster snapshot ${csnapId} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
 
+  // M43 Lambda
+  if (rt === "aws_lambda_function") {
+    const fnName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Lambda function ${fnName} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `Lambda function ${fnName} was added to monitoring.`;
+    if (fp === "runtime")          return `Runtime changed for Lambda function ${fnName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "role_arn_hash")    return `Execution role changed for Lambda function ${fnName}.`;
+    if (fp === "kms_key_arn_present" && nv === false) return `KMS key was removed from Lambda function ${fnName}.`;
+    if (fp === "environment_key_names") return `Environment variable keys changed for Lambda function ${fnName}. ConfigTrace does not read variable values.`;
+    if (fp === "environment_key_count") return `Environment variable count changed for Lambda function ${fnName}.`;
+    if (fp === "vpc_config_present" && nv === false) return `VPC configuration was removed from Lambda function ${fnName}.`;
+    if (fp === "vpc_config_present" && nv === true)  return `Lambda function ${fnName} was added to a VPC.`;
+    if (fp === "tracing_mode")     return `X-Ray tracing mode changed for Lambda function ${fnName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "reserved_concurrent_executions") return `Reserved concurrency changed for Lambda function ${fnName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "dead_letter_target_present" && nv === false) return `Dead letter queue/topic was removed from Lambda function ${fnName}.`;
+    if (fp === "layer_arn_hashes") return `Lambda layer configuration changed for function ${fnName}.`;
+    if (fp === "layers_count")     return `Layer count changed for Lambda function ${fnName} (${String(pv)} → ${String(nv)}).`;
+    return `Lambda function ${fnName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_lambda_alias") {
+    const aliasName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Lambda alias ${aliasName} was deleted.`;
+    if (change.change_type === "added")   return `Lambda alias ${aliasName} was added.`;
+    if (fp === "function_version") return `Lambda alias ${aliasName} now points to version ${String(nv)}.`;
+    if (fp === "routing_config_present" && nv === false) return `Traffic routing was removed from Lambda alias ${aliasName}.`;
+    return `Lambda alias ${aliasName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_lambda_event_source_mapping") {
+    const esmName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Lambda event source mapping ${esmName} was deleted.`;
+    if (change.change_type === "added")   return `Lambda event source mapping ${esmName} was added.`;
+    if (fp === "enabled" && nv === false) return `Lambda event source mapping ${esmName} was disabled.`;
+    if (fp === "enabled" && nv === true)  return `Lambda event source mapping ${esmName} was re-enabled.`;
+    if (fp === "state")                   return `Lambda event source mapping ${esmName} state changed to ${String(nv)}.`;
+    if (fp === "event_source_arn_present" && nv === false) return `Event source ARN was removed from Lambda mapping ${esmName}.`;
+    if (fp === "function_name")           return `Lambda event source mapping ${esmName} now targets a different function.`;
+    if (fp === "batch_size")              return `Batch size changed for Lambda event source mapping ${esmName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "filter_criteria_present" && nv === false) return `Filter criteria were removed from Lambda event source mapping ${esmName}.`;
+    return `Lambda event source mapping ${esmName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_lambda_function_url") {
+    const urlName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Lambda function URL for ${urlName} was deleted.`;
+    if (change.change_type === "added") {
+      const authT = typeof nv === "object" && nv !== null
+        ? (nv as Record<string,unknown>).auth_type as string | undefined
+        : undefined;
+      if (authT === "NONE") return `Lambda function URL for ${urlName} was added with no authentication (publicly invokable).`;
+      return `Lambda function URL for ${urlName} was added.`;
+    }
+    if (fp === "auth_type" && nv === "NONE") return `Lambda function URL for ${urlName} authentication was changed to NONE — function is now publicly invokable.`;
+    if (fp === "auth_type")                  return `Lambda function URL for ${urlName} authentication changed to ${String(nv)}.`;
+    if (fp === "cors_wildcard_origin_present" && nv === true)   return `Wildcard CORS origin (*) was added to Lambda function URL for ${urlName}.`;
+    if (fp === "cors_allow_credentials" && nv === true)         return `CORS credentials were enabled on Lambda function URL for ${urlName}.`;
+    return `Lambda function URL for ${urlName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  // M43 API Gateway REST
+  if (rt === "aws_apigateway_rest_api") {
+    const apiName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `API Gateway REST API ${apiName} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `API Gateway REST API ${apiName} was added to monitoring.`;
+    if (fp === "unauthenticated_method_count") return `Unauthenticated method count changed for REST API ${apiName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "authorizer_count" && nv === 0) return `All authorizers were removed from REST API ${apiName}.`;
+    if (fp === "authorizer_count")             return `Authorizer count changed for REST API ${apiName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "policy_summary")               return `Resource policy changed on REST API ${apiName}.`;
+    if (fp === "disable_execute_api_endpoint" && nv === false) return `The default execute-api endpoint was re-enabled on REST API ${apiName}.`;
+    if (fp === "endpoint_configuration_types") return `Endpoint configuration type changed for REST API ${apiName}.`;
+    return `API Gateway REST API ${apiName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_apigateway_rest_stage") {
+    const stageName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `API Gateway REST stage ${stageName} was deleted.`;
+    if (change.change_type === "added")   return `API Gateway REST stage ${stageName} was added.`;
+    if (fp === "deployment_id_present" && nv === false) return `Deployment was detached from REST stage ${stageName}.`;
+    if (fp === "web_acl_arn_present" && nv === false)   return `WAF web ACL was removed from REST stage ${stageName}.`;
+    if (fp === "tracing_enabled" && nv === false)       return `X-Ray tracing was disabled for REST stage ${stageName}.`;
+    if (fp === "access_logging_enabled" && nv === false) return `Access logging was disabled for REST stage ${stageName}.`;
+    if (fp === "variables_key_names") return `Stage variable keys changed for REST stage ${stageName}. ConfigTrace does not read variable values.`;
+    if (fp === "canary_settings_present" && nv === true)  return `Canary deployment settings were added to REST stage ${stageName}.`;
+    if (fp === "canary_settings_present" && nv === false) return `Canary deployment settings were removed from REST stage ${stageName}.`;
+    return `API Gateway REST stage ${stageName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  // M43 API Gateway V2
+  if (rt === "aws_apigatewayv2_api") {
+    const v2Name = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `API Gateway V2 API ${v2Name} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `API Gateway V2 API ${v2Name} was added to monitoring.`;
+    if (fp === "unauthenticated_route_count") return `Unauthenticated route count changed for V2 API ${v2Name} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "authorizer_count" && nv === 0) return `All authorizers were removed from V2 API ${v2Name}.`;
+    if (fp === "authorizer_count")             return `Authorizer count changed for V2 API ${v2Name} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "cors_wildcard_origin_present" && nv === true) return `Wildcard CORS origin (*) was added to V2 API ${v2Name}.`;
+    if (fp === "cors_allow_credentials" && nv === true)       return `CORS credentials were enabled on V2 API ${v2Name}.`;
+    if (fp === "disable_execute_api_endpoint" && nv === false) return `The default execute-api endpoint was re-enabled on V2 API ${v2Name}.`;
+    return `API Gateway V2 API ${v2Name} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_apigatewayv2_stage") {
+    const v2Stage = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `API Gateway V2 stage ${v2Stage} was deleted.`;
+    if (change.change_type === "added")   return `API Gateway V2 stage ${v2Stage} was added.`;
+    if (fp === "auto_deploy" && nv === false) return `Auto-deploy was disabled for V2 stage ${v2Stage}.`;
+    if (fp === "auto_deploy" && nv === true)  return `Auto-deploy was enabled for V2 stage ${v2Stage}.`;
+    if (fp === "access_logging_enabled" && nv === false) return `Access logging was disabled for V2 stage ${v2Stage}.`;
+    if (fp === "detailed_metrics_enabled" && nv === false) return `Detailed metrics were disabled for V2 stage ${v2Stage}.`;
+    if (fp === "stage_variables_key_names") return `Stage variable keys changed for V2 stage ${v2Stage}. ConfigTrace does not read variable values.`;
+    return `API Gateway V2 stage ${v2Stage} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -1454,6 +1563,365 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the cluster snapshot configuration change was intentional.",
       "Check AWS CloudTrail for who made the change.",
       "ConfigTrace does not connect to databases or read database content.",
+    ];
+  }
+
+  // M43 Lambda
+  if (rt === "aws_lambda_function") {
+    const fpLambda = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the Lambda function was intentionally deleted or is no longer in this region.",
+        "Verify dependent services or event sources that called this function are updated.",
+        "Check AWS CloudTrail for who deleted the function.",
+        "ConfigTrace does not read function code or environment variable values.",
+      ];
+    }
+    if (fpLambda === "role_arn_hash") {
+      return [
+        "Confirm the execution role change was intentional.",
+        "Review the new role's IAM policies for least-privilege compliance.",
+        "Ensure the role does not have excessive permissions (e.g. AdministratorAccess).",
+        "Check AWS CloudTrail for who changed the execution role.",
+        "ConfigTrace does not read function code or environment variable values.",
+      ];
+    }
+    if (fpLambda === "environment_key_names" || fpLambda === "environment_key_count" || fpLambda === "environment_sensitive_key_count") {
+      return [
+        "Confirm the environment variable key names are expected.",
+        "Verify no sensitive keys were unexpectedly added or removed.",
+        "ConfigTrace stores only key names — variable values are never read or stored.",
+        "Check AWS CloudTrail for who updated the function configuration.",
+      ];
+    }
+    if (fpLambda === "vpc_config_present" && change.new_value === false) {
+      return [
+        "Confirm VPC attachment was intentionally removed.",
+        "Verify the function can still reach required private resources (databases, internal APIs).",
+        "Check if public endpoints are now exposed where previously protected by VPC.",
+        "Check AWS CloudTrail for who changed the VPC configuration.",
+        "ConfigTrace does not read function code or environment variable values.",
+      ];
+    }
+    if (fpLambda === "kms_key_arn_present" && change.new_value === false) {
+      return [
+        "Confirm KMS encryption was intentionally removed from this function.",
+        "Review whether environment variables contain sensitive data that should be encrypted.",
+        "Check AWS CloudTrail for who changed the KMS configuration.",
+        "ConfigTrace does not read function code or environment variable values.",
+      ];
+    }
+    if (fpLambda === "reserved_concurrent_executions" && change.new_value === 0) {
+      return [
+        "Confirm reserved concurrency of 0 is intentional — this throttles the function to zero invocations.",
+        "Verify no dependent services or event sources are blocked.",
+        "Re-enable concurrency if this was accidental.",
+        "Check AWS CloudTrail for who changed the concurrency setting.",
+        "ConfigTrace does not read function code or environment variable values.",
+      ];
+    }
+    return [
+      "Confirm the Lambda function configuration change was intentional.",
+      "Verify the function still exists in the expected region.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read function code or environment variable values.",
+    ];
+  }
+  if (rt === "aws_lambda_alias") {
+    const fpAlias = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the Lambda alias was intentionally deleted.",
+        "Verify services that invoke this alias have been updated to the correct version.",
+        "Check AWS CloudTrail for who deleted the alias.",
+      ];
+    }
+    if (fpAlias === "function_version") {
+      return [
+        "Confirm the alias was intentionally updated to a new function version.",
+        "Verify the new version has been tested and behaves as expected.",
+        "Check AWS CloudTrail for who updated the alias.",
+      ];
+    }
+    if (fpAlias === "routing_config_present" && change.new_value === false) {
+      return [
+        "Confirm traffic routing (weighted alias) was intentionally removed.",
+        "Verify 100% of traffic now routes to the primary version as expected.",
+        "Check AWS CloudTrail for who changed the routing configuration.",
+      ];
+    }
+    return [
+      "Confirm the Lambda alias configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_lambda_event_source_mapping") {
+    const fpEsm = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the event source mapping was intentionally deleted.",
+        "Verify the stream, queue, or topic still has a consumer if needed.",
+        "Check if messages are accumulating unprocessed in the source.",
+        "Check AWS CloudTrail for who deleted the mapping.",
+      ];
+    }
+    if (fpEsm === "enabled" && change.new_value === false) {
+      return [
+        "Confirm the event source mapping was intentionally disabled.",
+        "Verify messages or records are not accumulating unprocessed in the source.",
+        "Re-enable the mapping if this was accidental.",
+        "Check AWS CloudTrail for who disabled the mapping.",
+      ];
+    }
+    if (fpEsm === "event_source_arn_present" && change.new_value === false) {
+      return [
+        "Confirm the event source ARN was intentionally removed.",
+        "Verify the function still has a trigger if one is required.",
+        "Check AWS CloudTrail for who changed the event source mapping.",
+      ];
+    }
+    if (fpEsm === "filter_criteria_present" && change.new_value === false) {
+      return [
+        "Confirm event filter criteria were intentionally removed.",
+        "Verify the function is designed to handle all incoming events without filtering.",
+        "Check AWS CloudTrail for who changed the mapping.",
+      ];
+    }
+    return [
+      "Confirm the event source mapping configuration change was intentional.",
+      "Verify stream/queue processing is functioning as expected.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_lambda_function_url") {
+    const fpUrl = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the Lambda function URL was intentionally deleted.",
+        "Verify clients that used this URL have been updated.",
+        "Check AWS CloudTrail for who deleted the function URL.",
+      ];
+    }
+    if ((fpUrl === "auth_type" && change.new_value === "NONE") || change.change_type === "added") {
+      return [
+        "CRITICAL: Verify that public (unauthenticated) invocation is intentional for this function.",
+        "A Lambda function URL with auth_type=NONE is publicly accessible by anyone on the internet.",
+        "Confirm the function itself implements its own authorization logic if auth_type=NONE is intended.",
+        "Consider using AWS_IAM auth_type for all non-public function URLs.",
+        "Review the function code logic to ensure it cannot be exploited without authentication.",
+        "ConfigTrace does not invoke functions or read function code.",
+      ];
+    }
+    if (fpUrl === "cors_wildcard_origin_present" && change.new_value === true) {
+      return [
+        "Confirm wildcard CORS origin (*) is intentional for this function URL.",
+        "Wildcard CORS allows any browser origin to call this function URL.",
+        "Consider restricting cors_allow_origins to specific trusted domains.",
+        "If cors_allow_credentials is also enabled, this is a critical CORS misconfiguration.",
+        "ConfigTrace does not invoke functions or read function code.",
+      ];
+    }
+    if (fpUrl === "cors_allow_credentials" && change.new_value === true) {
+      return [
+        "Confirm CORS credentials are intentionally enabled on this function URL.",
+        "Credentials + wildcard origin is a critical CORS misconfiguration — browsers will reject this combination.",
+        "Ensure cors_allow_origins is restricted to specific trusted domains when credentials are enabled.",
+        "ConfigTrace does not invoke functions or read function code.",
+      ];
+    }
+    return [
+      "Confirm the Lambda function URL configuration change was intentional.",
+      "Verify the authentication and CORS settings are appropriate for the intended audience.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not invoke functions or read function code.",
+    ];
+  }
+
+  // M43 API Gateway REST
+  if (rt === "aws_apigateway_rest_api") {
+    const fpRestApi = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the REST API was intentionally deleted or is no longer in this region.",
+        "Verify dependent clients and services have been updated.",
+        "Check AWS CloudTrail for who deleted the API.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpRestApi === "unauthenticated_method_count") {
+      return [
+        "Confirm the increase in unauthenticated methods is intentional.",
+        "Review each newly open method to ensure public access is expected.",
+        "Verify no sensitive data or operations are exposed without authentication.",
+        "Check AWS CloudTrail for who changed the API resource/method configuration.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpRestApi === "authorizer_count" && change.new_value === 0) {
+      return [
+        "Confirm all authorizers were intentionally removed from this REST API.",
+        "Verify that all routes requiring authentication use another mechanism.",
+        "Check whether any routes are now publicly accessible without authentication.",
+        "Check AWS CloudTrail for who removed the authorizers.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpRestApi === "policy_summary") {
+      return [
+        "Confirm the resource policy change was intentional.",
+        "Verify the updated policy does not grant overly broad access (e.g. wildcard principals).",
+        "Check AWS CloudTrail for who modified the resource policy.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    return [
+      "Confirm the REST API configuration change was intentional.",
+      "Verify the API exists in the expected region and is correctly configured.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read API traffic or request/response content.",
+    ];
+  }
+  if (rt === "aws_apigateway_rest_stage") {
+    const fpRestStage = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the REST stage was intentionally deleted.",
+        "Verify clients using this stage URL have been updated.",
+        "Check AWS CloudTrail for who deleted the stage.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpRestStage === "deployment_id_present" && change.new_value === false) {
+      return [
+        "Confirm the deployment was intentionally detached from this stage.",
+        "A stage without a deployment will not serve requests.",
+        "Re-associate a deployment if this was accidental.",
+        "Check AWS CloudTrail for who changed the stage.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpRestStage === "web_acl_arn_present" && change.new_value === false) {
+      return [
+        "Confirm WAF protection was intentionally removed from this REST stage.",
+        "Without WAF, the stage is now unprotected from common web attacks.",
+        "Re-attach a WAF web ACL if this was accidental.",
+        "Check AWS CloudTrail for who removed WAF protection.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpRestStage === "tracing_enabled" && change.new_value === false) {
+      return [
+        "Confirm X-Ray tracing was intentionally disabled for this stage.",
+        "Review your observability requirements and incident response capabilities.",
+        "Re-enable tracing if needed.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpRestStage === "access_logging_enabled" && change.new_value === false) {
+      return [
+        "Confirm access logging was intentionally disabled for this stage.",
+        "Access logs are important for security investigation and audit.",
+        "Re-enable access logging and ensure logs are stored in a secure, monitored S3 bucket.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    return [
+      "Confirm the REST stage configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read API traffic or request/response content.",
+    ];
+  }
+
+  // M43 API Gateway V2
+  if (rt === "aws_apigatewayv2_api") {
+    const fpV2Api = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the HTTP/WebSocket API was intentionally deleted or is no longer in this region.",
+        "Verify dependent clients and services have been updated.",
+        "Check AWS CloudTrail for who deleted the API.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpV2Api === "unauthenticated_route_count") {
+      return [
+        "Confirm the increase in unauthenticated routes is intentional.",
+        "Review each newly open route to ensure public access is expected.",
+        "Verify no sensitive operations are exposed without authentication.",
+        "Check AWS CloudTrail for who changed the API route configuration.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpV2Api === "authorizer_count" && change.new_value === 0) {
+      return [
+        "Confirm all authorizers were intentionally removed from this V2 API.",
+        "Verify that routes requiring authentication use another mechanism.",
+        "Check whether any routes are now publicly accessible without authentication.",
+        "Check AWS CloudTrail for who removed the authorizers.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpV2Api === "cors_wildcard_origin_present" && change.new_value === true) {
+      return [
+        "Confirm wildcard CORS origin (*) is intentional for this API.",
+        "Wildcard CORS allows any browser origin to make cross-origin requests.",
+        "Consider restricting to specific trusted domains.",
+        "If cors_allow_credentials is also true, this is a critical CORS misconfiguration.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpV2Api === "cors_allow_credentials" && change.new_value === true) {
+      return [
+        "Confirm CORS credentials are intentionally enabled on this API.",
+        "Credentials + wildcard origin is a critical CORS misconfiguration.",
+        "Ensure cors_allow_origins is restricted to specific domains when credentials are enabled.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    return [
+      "Confirm the V2 API configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read API traffic or request/response content.",
+    ];
+  }
+  if (rt === "aws_apigatewayv2_stage") {
+    const fpV2Stage = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the V2 stage was intentionally deleted.",
+        "Verify clients using this stage URL have been updated.",
+        "Check AWS CloudTrail for who deleted the stage.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpV2Stage === "auto_deploy" && change.new_value === false) {
+      return [
+        "Confirm auto-deploy was intentionally disabled for this stage.",
+        "Future API changes will require manual deployment to take effect on this stage.",
+        "Check AWS CloudTrail for who changed the auto-deploy setting.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpV2Stage === "access_logging_enabled" && change.new_value === false) {
+      return [
+        "Confirm access logging was intentionally disabled for this stage.",
+        "Access logs support security investigation and audit requirements.",
+        "Re-enable logging and store logs in a secure, monitored destination.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    if (fpV2Stage === "detailed_metrics_enabled" && change.new_value === false) {
+      return [
+        "Confirm detailed CloudWatch metrics were intentionally disabled for this stage.",
+        "Review your observability and alerting requirements.",
+        "Re-enable metrics if needed for monitoring or SLA tracking.",
+        "ConfigTrace does not read API traffic or request/response content.",
+      ];
+    }
+    return [
+      "Confirm the V2 stage configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read API traffic or request/response content.",
     ];
   }
 

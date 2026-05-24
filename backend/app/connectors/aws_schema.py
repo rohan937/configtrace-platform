@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -64,6 +64,24 @@ AWS_RDS_DB_SNAPSHOT = "aws_rds_db_snapshot"
 # One per RDS DB cluster snapshot — metadata only.
 AWS_RDS_DB_CLUSTER_SNAPSHOT = "aws_rds_db_cluster_snapshot"
 
+# ── M43 record types — Lambda + API Gateway Runtime/API Config ───────────────
+# One per Lambda function — metadata only; function code is NEVER accessed.
+AWS_LAMBDA_FUNCTION = "aws_lambda_function"
+# One per Lambda alias — routing/traffic split metadata.
+AWS_LAMBDA_ALIAS = "aws_lambda_alias"
+# One per Lambda event source mapping — trigger/stream metadata.
+AWS_LAMBDA_EVENT_SOURCE_MAPPING = "aws_lambda_event_source_mapping"
+# One per Lambda function URL — public endpoint auth/CORS metadata.
+AWS_LAMBDA_FUNCTION_URL = "aws_lambda_function_url"
+# One per API Gateway REST API — metadata; no request/response bodies or logs.
+AWS_APIGATEWAY_REST_API = "aws_apigateway_rest_api"
+# One per API Gateway REST API stage — deployment/logging/throttling metadata.
+AWS_APIGATEWAY_REST_STAGE = "aws_apigateway_rest_stage"
+# One per API Gateway V2 (HTTP/WebSocket) API — metadata only.
+AWS_APIGATEWAYV2_API = "aws_apigatewayv2_api"
+# One per API Gateway V2 stage — deployment/logging/routing metadata.
+AWS_APIGATEWAYV2_STAGE = "aws_apigatewayv2_stage"
+
 AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_ACCOUNT_IDENTITY,
     AWS_REGION,
@@ -101,4 +119,13 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_RDS_DB_SUBNET_GROUP,
     AWS_RDS_DB_SNAPSHOT,
     AWS_RDS_DB_CLUSTER_SNAPSHOT,
+    # M43
+    AWS_LAMBDA_FUNCTION,
+    AWS_LAMBDA_ALIAS,
+    AWS_LAMBDA_EVENT_SOURCE_MAPPING,
+    AWS_LAMBDA_FUNCTION_URL,
+    AWS_APIGATEWAY_REST_API,
+    AWS_APIGATEWAY_REST_STAGE,
+    AWS_APIGATEWAYV2_API,
+    AWS_APIGATEWAYV2_STAGE,
 })

@@ -71,6 +71,17 @@ AWS RDS (partial/per-API failures, via classify_aws_rds_failure):
   aws_rds_instances_unavailable, aws_rds_clusters_unavailable
   aws_rds_subnet_groups_unavailable, aws_rds_snapshots_unavailable
   aws_rds_cluster_snapshots_unavailable
+AWS Lambda (partial/per-API failures, via classify_aws_lambda_failure):
+  aws_lambda_access_denied, aws_lambda_rate_limited, aws_lambda_api_unavailable
+  aws_lambda_functions_unavailable, aws_lambda_aliases_unavailable
+  aws_lambda_event_sources_unavailable, aws_lambda_function_urls_unavailable
+  aws_lambda_policy_unavailable
+AWS API Gateway (partial/per-API failures, via classify_aws_apigateway_failure):
+  aws_apigateway_access_denied, aws_apigateway_rate_limited, aws_apigateway_api_unavailable
+  aws_apigateway_rest_apis_unavailable, aws_apigateway_rest_stages_unavailable
+  aws_apigateway_resources_unavailable, aws_apigateway_authorizers_unavailable
+  aws_apigatewayv2_apis_unavailable, aws_apigatewayv2_stages_unavailable
+  aws_apigatewayv2_routes_unavailable, aws_apigatewayv2_integrations_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -1150,4 +1161,204 @@ def classify_aws_rds_failure(
         category="provider_unavailable",
         error_code=error_code,
         recommended_action=_RDS_PARTIAL_ACTION,
+    )
+
+
+# ── M43: Lambda per-API failure classification ────────────────────────────────
+
+_AWS_LAMBDA_API_CODE: dict[str, str] = {
+    "ListFunctions":              "aws_lambda_functions_unavailable",
+    "ListAliases":                "aws_lambda_aliases_unavailable",
+    "ListEventSourceMappings":    "aws_lambda_event_sources_unavailable",
+    "GetEventSourceMapping":      "aws_lambda_event_sources_unavailable",
+    "ListFunctionUrlConfigs":     "aws_lambda_function_urls_unavailable",
+    "GetFunctionUrlConfig":       "aws_lambda_function_urls_unavailable",
+    "GetPolicy":                  "aws_lambda_policy_unavailable",
+    "ListTags":                   "aws_lambda_api_unavailable",
+}
+
+_LAMBDA_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional Lambda metadata; "
+    "other AWS checks may still work."
+)
+
+_LAMBDA_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace metadata-only Lambda read permissions. "
+    "Required: lambda:ListFunctions, lambda:ListAliases, "
+    "lambda:ListEventSourceMappings, lambda:ListFunctionUrlConfigs. "
+    "ConfigTrace reads configuration metadata only; function code is never accessed. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_lambda_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial Lambda sync failure (per-API, per-region).
+
+    Used when an individual Lambda API call fails inside
+    ``_fetch_lambda_in_region``.  The overall sync continues; the result
+    is logged as a structured warning.
+
+    Args:
+        api_name: The Lambda API name (e.g. ``"ListFunctions"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+        Function code, environment variable values, and secrets are never
+        included in returned strings.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_lambda_access_denied",
+            recommended_action=_LAMBDA_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_lambda_rate_limited",
+            recommended_action=(
+                "AWS throttled Lambda metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented Lambda API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_lambda_api_unavailable",
+            recommended_action=(
+                "The Lambda API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _AWS_LAMBDA_API_CODE.get(api_name, "aws_lambda_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_LAMBDA_PARTIAL_ACTION,
+    )
+
+
+# ── M43: API Gateway per-API failure classification ───────────────────────────
+
+_AWS_APIGATEWAY_API_CODE: dict[str, str] = {
+    "GetRestApis":          "aws_apigateway_rest_apis_unavailable",
+    "GetRestApi":           "aws_apigateway_rest_apis_unavailable",
+    "GetStages":            "aws_apigateway_rest_stages_unavailable",
+    "GetResources":         "aws_apigateway_resources_unavailable",
+    "GetAuthorizers":       "aws_apigateway_authorizers_unavailable",
+    "GetApis":              "aws_apigatewayv2_apis_unavailable",
+    "GetApi":               "aws_apigatewayv2_apis_unavailable",
+    "GetRoutes":            "aws_apigatewayv2_routes_unavailable",
+    "GetIntegrations":      "aws_apigatewayv2_integrations_unavailable",
+}
+
+_APIGATEWAY_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional API Gateway metadata; "
+    "other AWS checks may still work."
+)
+
+_APIGATEWAY_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace read-only API Gateway metadata permissions. "
+    "For REST APIs: apigateway:GET on /restapis/* and /stages/*. "
+    "For HTTP/WebSocket APIs: apigateway:GET on /apis/* and /stages/*. "
+    "ConfigTrace reads configuration metadata only; API traffic and logs are never accessed. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_apigateway_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial API Gateway sync failure (per-API, per-region).
+
+    Used when an individual API Gateway API call fails inside
+    ``_fetch_apigateway_in_region`` or ``_fetch_apigatewayv2_in_region``.
+    The overall sync continues; the result is logged as a structured warning.
+
+    Args:
+        api_name: The API Gateway API name (e.g. ``"GetRestApis"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+        API traffic, logs, and request data are never included.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_apigateway_access_denied",
+            recommended_action=_APIGATEWAY_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_apigateway_rate_limited",
+            recommended_action=(
+                "AWS throttled API Gateway metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented API Gateway API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_apigateway_api_unavailable",
+            recommended_action=(
+                "The API Gateway API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _AWS_APIGATEWAY_API_CODE.get(api_name, "aws_apigateway_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_APIGATEWAY_PARTIAL_ACTION,
     )
