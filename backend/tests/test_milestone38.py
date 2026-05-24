@@ -1563,6 +1563,20 @@ class TestSGRuleRiskAdded:
         level, _ = self._added(rule)
         assert level == "critical"
 
+    def test_redis_still_critical(self) -> None:
+        """Redis 6379 public inbound is database-category → critical.
+
+        Redis exposure to the public internet is as dangerous as Postgres.
+        Confirming that the web-port Medium fix did not accidentally reclassify
+        database ports.
+        """
+        rule = _sg_rule_dict(
+            from_port=6379, to_port=6379, port_category="database",
+        )
+        level, reason = self._added(rule)
+        assert level == "critical"
+        assert "database" in reason.lower()
+
     def test_public_other_port_medium(self) -> None:
         rule = _sg_rule_dict(
             from_port=9090, to_port=9090, port_category="other",

@@ -7,6 +7,9 @@ Covers:
 4.  Cleanup is called BEFORE has_in_flight_sync (order guarantee).
 5.  Completion log includes skipped_not_due and stale_cleaned (observability).
 6.  store_snapshot receives triggered_by from the SyncRun, not hardcoded 'manual'.
+7.  Backward-compat eligibility: scheduled_sync_enabled=False with a configured
+    interval is still eligible (covers integrations created before the flag
+    defaulted to True).
 
 Security notes:
 - No credentials, tokens, or API keys are logged or inspected in any test.
@@ -562,4 +565,105 @@ class TestTriggeredByPassThrough:
         called_triggered_by = store_snapshot_calls[0].get("triggered_by")
         assert called_triggered_by == "manual", (
             f"Manual sync should still pass triggered_by='manual', got {called_triggered_by!r}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Backward-compat eligibility (production seen=0 regression)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestScheduledSyncEligibilityBackwardCompat:
+    """Regression tests for the 'seen=0' production bug.
+
+    Root cause:
+        The eligibility query filtered on ``scheduled_sync_enabled IS TRUE``.
+        All integrations created before ``scheduled_sync_enabled`` defaulted
+        to ``True`` have the value ``False`` (the old server_default).  After
+        that filter was introduced, ``seen`` dropped from N to 0 in production.
+
+    Fix:
+        The eligibility condition is now:
+            scheduled_sync_enabled IS TRUE
+            OR sync_interval_minutes IS NOT NULL
+        This provides backward compatibility for pre-existing integrations that
+        have a configured interval but the old default flag value.
+
+    These tests verify the scheduler's in-Python eligibility filter by passing
+    mock Integration objects with different flag/interval combinations directly
+    to the scheduler via the _run_scheduler helper.
+    """
+
+    def test_flag_true_with_interval_is_eligible(self):
+        """Standard case: scheduled_sync_enabled=True + interval → enqueued."""
+        i = _make_integration(scheduled_sync_enabled=True, sync_interval_minutes=60)
+        result = _run_scheduler([i])
+        assert result["enqueued"] == 1
+        assert result["integrations_seen"] == 1
+
+    def test_flag_false_with_interval_is_eligible_backward_compat(self):
+        """Backward compat: scheduled_sync_enabled=False + interval IS NOT NULL → enqueued.
+
+        This is the exact scenario that caused 'seen=0' in production:
+        existing integrations have the old False default but a valid interval.
+        They must be included in the eligibility scan without a data migration.
+        """
+        i = _make_integration(scheduled_sync_enabled=False, sync_interval_minutes=60)
+        result = _run_scheduler([i])
+        assert result["enqueued"] == 1, (
+            "Integration with scheduled_sync_enabled=False but sync_interval_minutes=60 "
+            "was not enqueued.  The backward-compat eligibility fix is not working."
+        )
+        assert result["integrations_seen"] == 1
+
+    def test_flag_false_no_interval_is_not_eligible(self):
+        """Explicit exclusion: scheduled_sync_enabled=False + no interval → not enqueued.
+
+        An integration with neither an explicit flag nor a configured cadence
+        should remain excluded.  This protects integrations that were never
+        intended to be scheduled.
+        """
+        i = _make_integration(scheduled_sync_enabled=False, sync_interval_minutes=None)
+        result = _run_scheduler([i])
+        assert result["enqueued"] == 0, (
+            "Integration with scheduled_sync_enabled=False and no interval was "
+            "unexpectedly enqueued."
+        )
+        assert result["integrations_seen"] == 0
+
+    def test_flag_true_no_interval_is_eligible(self):
+        """Explicit opt-in: scheduled_sync_enabled=True, no interval → uses default cadence."""
+        i = _make_integration(scheduled_sync_enabled=True, sync_interval_minutes=None)
+        result = _run_scheduler([i])
+        assert result["enqueued"] == 1
+
+    def test_mixed_old_and_new_integrations(self):
+        """Mixed batch: old-default (False+interval) and new (True+interval) both enqueued."""
+        old_style = _make_integration(scheduled_sync_enabled=False, sync_interval_minutes=60)
+        new_style = _make_integration(scheduled_sync_enabled=True, sync_interval_minutes=60)
+        result = _run_scheduler([old_style, new_style])
+        assert result["enqueued"] == 2, (
+            f"Expected both old-style (flag=False, interval=60) and new-style "
+            f"(flag=True, interval=60) to be enqueued; got enqueued={result['enqueued']}"
+        )
+
+    def test_excluded_integration_does_not_affect_eligible_count(self):
+        """Ineligible integration (no flag, no interval) is silently skipped."""
+        eligible = _make_integration(scheduled_sync_enabled=True, sync_interval_minutes=60)
+        ineligible = _make_integration(scheduled_sync_enabled=False, sync_interval_minutes=None)
+        result = _run_scheduler([eligible, ineligible])
+        # Only the eligible one is seen and enqueued
+        assert result["enqueued"] == 1
+        assert result["integrations_seen"] == 1
+
+    def test_all_five_providers_backward_compat(self):
+        """All five providers with old-style False flag + interval are all enqueued."""
+        integrations = [
+            _make_integration(provider=p, scheduled_sync_enabled=False, sync_interval_minutes=60)
+            for p in ("cloudflare", "github", "vercel", "stripe", "aws")
+        ]
+        result = _run_scheduler(integrations)
+        assert result["enqueued"] == 5, (
+            f"Expected all 5 providers to be enqueued with backward-compat flag; "
+            f"got enqueued={result['enqueued']}"
         )

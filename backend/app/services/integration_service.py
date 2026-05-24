@@ -621,6 +621,10 @@ def update_integration(
         integration.display_name = display_name
     if sync_interval_minutes is not None:
         integration.sync_interval_minutes = sync_interval_minutes
+        # Setting an interval expresses intent to schedule.  Ensure the flag
+        # is True so the integration is included in the eligibility scan even
+        # if it was created before scheduled_sync_enabled defaulted to True.
+        integration.scheduled_sync_enabled = True
     if status is not None:
         integration.status = status
 

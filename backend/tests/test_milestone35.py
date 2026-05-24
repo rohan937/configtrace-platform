@@ -1666,8 +1666,10 @@ class TestScheduledSyncProviderCoverage:
     AWS (M36/M37) were never included, so their scheduled syncs never fired.
 
     Fix: the filter now includes all five supported providers.
-    Also: Integration.scheduled_sync_enabled must be True for an integration
-    to be picked up — this respects the user's explicit opt-in.
+    Eligibility rule (backward-compat): an integration is eligible when
+    scheduled_sync_enabled IS True OR sync_interval_minutes IS NOT NULL.
+    This handles integrations created before scheduled_sync_enabled defaulted
+    to True — those rows have flag=False but a valid interval.
     """
 
     def _make_integration(self, provider: str, scheduled_sync_enabled: bool = True):
@@ -1793,17 +1795,33 @@ class TestScheduledSyncProviderCoverage:
         assert result["enqueued"] == 1
 
     def test_scheduled_sync_disabled_skips_integration(self):
-        """An integration with scheduled_sync_enabled=False must not be returned
-        by the DB query.  We verify the scheduler correctly handles the case where
-        the query only returns enabled integrations.
+        """An integration with no interval AND scheduled_sync_enabled=False is excluded.
 
-        Note: the actual DB-level filtering is done by Integration.scheduled_sync_enabled.is_(True)
-        in the SQLAlchemy query.  This test simulates that the DB returns an empty
-        list when only disabled integrations exist."""
-        # DB returns no integrations (all had scheduled_sync_enabled=False)
-        result = self._run_scheduler([])
+        With the backward-compat eligibility rule (flag=True OR interval IS NOT NULL),
+        an integration with scheduled_sync_enabled=False AND sync_interval_minutes=None
+        is ineligible.  This test simulates that scenario by passing such an
+        integration and confirming it is filtered out in Python before the loop runs.
+        """
+        ineligible = self._make_integration("aws", scheduled_sync_enabled=False)
+        ineligible.sync_interval_minutes = None  # no interval → ineligible
+        result = self._run_scheduler([ineligible])
         assert result["enqueued"] == 0
         assert result["integrations_seen"] == 0
+
+    def test_flag_false_with_interval_enqueued_backward_compat(self):
+        """Backward compat: scheduled_sync_enabled=False + interval=60 is eligible.
+
+        Regression guard for the production 'seen=0' bug.  Existing integrations
+        created before scheduled_sync_enabled defaulted to True have flag=False
+        but a valid interval.  The eligibility filter must include them.
+        """
+        old_style = self._make_integration("aws", scheduled_sync_enabled=False)
+        old_style.sync_interval_minutes = 60
+        result = self._run_scheduler([old_style])
+        assert result["enqueued"] == 1, (
+            "Integration with scheduled_sync_enabled=False and sync_interval_minutes=60 "
+            "was not enqueued.  The backward-compat eligibility fix is missing or broken."
+        )
 
     def test_stripe_result_dict_has_all_keys(self):
         """Result dict must always contain all expected keys."""

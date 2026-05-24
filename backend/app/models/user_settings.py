@@ -99,11 +99,15 @@ class UserSettings(BaseMixin, Base):
     )
 
     # ── Sync defaults (new integrations only) ────────────────────────────────
+    # Default is True so new users get scheduled sync out of the box.
+    # Existing UserSettings rows already have False from the old server_default;
+    # those users are covered by the backward-compat eligibility filter in
+    # create_scheduled_syncs_for_active_integrations (interval IS NOT NULL).
     default_sync_enabled: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
-        default=False,
-        server_default="false",
+        default=True,
+        server_default="true",
     )
     default_sync_interval_minutes: Mapped[int] = mapped_column(
         Integer,

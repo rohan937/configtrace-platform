@@ -265,20 +265,65 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "cloudflare", "github", "vercel", "stripe", "aws",
     )
 
-    integrations = (
+    # ── Diagnostic pre-scan ────────────────────────────────────────────────
+    # Fetch ALL active integrations for this provider set so we can emit a
+    # detailed breakdown before applying the eligibility filter.  A single
+    # query is used; in-Python counting avoids extra round-trips and keeps
+    # the mock interface unchanged for unit tests.
+    _all_active = (
         db.query(Integration)
         .filter(
             Integration.provider.in_(_SUPPORTED_PROVIDERS),
             Integration.status == "active",
-            Integration.scheduled_sync_enabled.is_(True),
         )
         .all()
     )
 
+    _total_active   = len(_all_active)
+    _enabled_true   = sum(1 for i in _all_active if i.scheduled_sync_enabled is True)
+    _enabled_false  = sum(1 for i in _all_active if i.scheduled_sync_enabled is False)
+    _enabled_null   = _total_active - _enabled_true - _enabled_false
+    _with_interval  = sum(1 for i in _all_active if i.sync_interval_minutes is not None)
+    _interval_null  = _total_active - _with_interval
+
     logger.info(
-        "enqueue_scheduled_syncs: scanning providers=%s seen=%d",
+        "enqueue_scheduled_syncs: diagnostics  "
+        "total_active=%d  enabled_true=%d  enabled_false=%d  enabled_null=%d  "
+        "with_interval=%d  interval_null=%d  providers=%s",
+        _total_active,
+        _enabled_true,
+        _enabled_false,
+        _enabled_null,
+        _with_interval,
+        _interval_null,
+        _SUPPORTED_PROVIDERS,
+    )
+
+    # ── Eligibility filter ─────────────────────────────────────────────────
+    # An integration is eligible for scheduling when:
+    #   (a) scheduled_sync_enabled is explicitly True, OR
+    #   (b) sync_interval_minutes is set (backward compatibility).
+    #
+    # Condition (b) handles integrations created before scheduled_sync_enabled
+    # defaulted to True.  Those rows have scheduled_sync_enabled=False (the
+    # old server_default) but a configured interval, which is sufficient
+    # signal that the user intends scheduled syncs.  This avoids a data
+    # migration while restoring correct behaviour for all existing integrations.
+    #
+    # Integrations with scheduled_sync_enabled=False AND no interval are
+    # intentionally excluded — they have neither explicit opt-in nor a
+    # configured cadence.
+    integrations = [
+        i for i in _all_active
+        if i.scheduled_sync_enabled is True or i.sync_interval_minutes is not None
+    ]
+
+    logger.info(
+        "enqueue_scheduled_syncs: scanning providers=%s  "
+        "eligible=%d  total_active=%d",
         _SUPPORTED_PROVIDERS,
         len(integrations),
+        _total_active,
     )
 
     for integration in integrations:
