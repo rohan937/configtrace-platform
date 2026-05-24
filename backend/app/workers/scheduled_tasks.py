@@ -66,10 +66,12 @@ def enqueue_scheduled_syncs() -> dict:
         result = create_scheduled_syncs_for_active_integrations(db)
         logger.info(
             "enqueue_scheduled_syncs completed  seen=%d enqueued=%d "
-            "skipped_in_flight=%d errors=%d",
+            "skipped_not_due=%d skipped_in_flight=%d stale_cleaned=%d errors=%d",
             result["integrations_seen"],
             result["enqueued"],
+            result["skipped_not_due"],
             result["skipped_in_flight"],
+            result["stale_cleaned"],
             result["errors"],
         )
         return result

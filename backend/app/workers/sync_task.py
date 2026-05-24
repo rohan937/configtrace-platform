@@ -141,8 +141,10 @@ def sync_integration(
             )
 
         logger.info(
-            "sync_integration running  provider=%s  display_name=%r",
+            "sync_integration running  sync_run_id=%s  provider=%s  source=%s  display_name=%r",
+            sync_run_id,
             integration.provider,
+            _triggered_by,
             integration.display_name,
         )
 
@@ -264,7 +266,7 @@ def sync_integration(
                 integration_id=_integration_uuid,
                 user_id=resource.user_id,
                 state=records,
-                triggered_by="manual",
+                triggered_by=_triggered_by,
                 sync_run_id=_sync_run_uuid,
                 db=db,
             )
@@ -384,9 +386,11 @@ def sync_integration(
                 )
 
         logger.info(
-            "sync_integration completed  sync_run_id=%s  "
+            "sync_integration completed  sync_run_id=%s  provider=%s  source=%s  "
             "snapshots=%d  changes=%d",
             sync_run_id,
+            integration.provider if integration is not None else "unknown",
+            _triggered_by,
             snapshot_count,
             change_count,
         )

@@ -1702,8 +1702,9 @@ class TestScheduledSyncProviderCoverage:
                 # Main integration listing query
                 q.filter.return_value.all.return_value = integrations
             else:
-                # SyncRun.id in-flight check — return None so nothing is in-flight
+                # SyncRun queries — no in-flight runs and no stale runs
                 q.filter.return_value.first.return_value = None
+                q.filter.return_value.all.return_value = []
             return q
 
         db = MagicMock()
@@ -1812,4 +1813,5 @@ class TestScheduledSyncProviderCoverage:
         assert "enqueued" in result
         assert "skipped_not_due" in result
         assert "skipped_in_flight" in result
+        assert "stale_cleaned" in result
         assert "errors" in result

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -49,6 +49,19 @@ _ALLOWED_INTERVALS = frozenset({5, 10, 15, 30, 60})
 # configured interval.  Prevents a sync that completed at 12:00:02 from being
 # skipped at the 12:05:00 tick because only 4m58s elapsed.
 _INTERVAL_GRACE_SECONDS = 30
+
+# SyncRuns that have been in ``pending`` or ``running`` for longer than this
+# threshold are considered stale — the Celery worker was most likely killed
+# mid-task (e.g. a Render deploy or OOM restart) and the row was never
+# transitioned to a terminal state.  Stale runs are marked ``failed`` before
+# the duplicate-prevention in-flight check so they don't permanently block
+# future scheduled syncs for the affected integration.
+#
+# 30 minutes is deliberately conservative: even the heaviest AWS syncs
+# (M36–M38, multi-region EC2 + S3 + IAM) complete in under 10 minutes on
+# a single worker.  A run still in-flight after 30 minutes is definitively
+# stuck, not just slow.
+_STALE_SYNC_THRESHOLD_MINUTES = 30
 
 
 def create_sync_run(
@@ -101,6 +114,62 @@ def has_in_flight_sync(integration_id: uuid.UUID, db: Session) -> bool:
         .first()
         is not None
     )
+
+
+def _cleanup_stale_in_flight(
+    integration_id: uuid.UUID,
+    db: Session,
+    now: datetime,
+) -> int:
+    """Mark stale in-flight SyncRuns as ``failed`` and return the count cleaned.
+
+    A SyncRun in ``pending`` or ``running`` is considered stale when its
+    ``started_at`` timestamp is older than ``_STALE_SYNC_THRESHOLD_MINUTES``.
+    ``started_at`` is set by ``server_default=now()`` at insert time (when the
+    row is created in *pending* state), so it is reliable as a staleness clock
+    even if the worker never transitions the row to *running*.
+
+    This handles the common deploy/OOM scenario: Render kills the Celery worker
+    mid-task, the SyncRun row stays in ``running`` forever, and every subsequent
+    Beat tick finds it via ``has_in_flight_sync()`` and silently skips the
+    integration.  Without this cleanup, one bad deploy permanently disables
+    scheduled syncs for the affected integration.
+
+    Called *before* ``has_in_flight_sync()`` in the scheduler loop so that
+    genuinely stale rows are cleared first and the duplicate-prevention guard
+    only fires on legitimately-active syncs.
+
+    Returns:
+        The number of SyncRuns that were transitioned to ``failed``.
+    """
+    cutoff = now - timedelta(minutes=_STALE_SYNC_THRESHOLD_MINUTES)
+    stale_runs = (
+        db.query(SyncRun)
+        .filter(
+            SyncRun.integration_id == integration_id,
+            SyncRun.status.in_(_IN_FLIGHT_STATUSES),
+            SyncRun.started_at < cutoff,
+        )
+        .all()
+    )
+    for run in stale_runs:
+        run.status = "failed"
+        run.completed_at = now
+        run.error_message = (
+            f"Sync timed out — marked stale after "
+            f"{_STALE_SYNC_THRESHOLD_MINUTES}m without completion "
+            f"(worker likely restarted during this sync)"
+        )
+        logger.warning(
+            "scheduled_sync: stale SyncRun detected and failed  "
+            "sync_run_id=%s integration_id=%s started_at=%s",
+            run.id,
+            integration_id,
+            run.started_at,
+        )
+    if stale_runs:
+        db.commit()
+    return len(stale_runs)
 
 
 def _is_integration_due(integration: Integration, now: datetime) -> bool:
@@ -173,6 +242,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
           - ``enqueued``: number of scheduled SyncRuns created and queued
           - ``skipped_not_due``: skipped because interval has not elapsed
           - ``skipped_in_flight``: skipped because a pending/running sync existed
+          - ``stale_cleaned``: in-flight SyncRuns that were stale and marked failed
           - ``errors``: non-fatal per-integration failures (logged, counted)
     """
     # Deferred import — keeps the module importable in test environments
@@ -184,6 +254,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     enqueued = 0
     skipped_not_due = 0
     skipped_in_flight = 0
+    stale_cleaned = 0
     errors = 0
 
     now = datetime.now(timezone.utc)
@@ -213,15 +284,33 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     for integration in integrations:
         seen += 1
         try:
+            # ── Stale in-flight cleanup (reliability fix) ──────────────────
+            # Must run BEFORE has_in_flight_sync so stale rows don't
+            # permanently block the duplicate-prevention guard.
+            stale_cleaned += _cleanup_stale_in_flight(integration.id, db, now)
+
             # ── Per-integration interval due-check (M29) ───────────────────
             if not _is_integration_due(integration, now):
                 skipped_not_due += 1
-                logger.debug(
+                # Compute next_due_at for diagnostic observability at INFO
+                # level — visible in Render logs without log-level changes.
+                _interval = integration.sync_interval_minutes
+                if _interval is None or _interval not in _ALLOWED_INTERVALS:
+                    _interval = _DEFAULT_INTERVAL_MINUTES
+                _next_due = (
+                    integration.last_synced_at + timedelta(minutes=_interval)
+                    if integration.last_synced_at
+                    else now
+                )
+                logger.info(
                     "scheduled_sync skipped — interval not elapsed  "
-                    "integration_id=%s interval_minutes=%s last_synced_at=%s",
+                    "integration_id=%s provider=%s interval_minutes=%s "
+                    "last_synced_at=%s next_due_at=%s",
                     integration.id,
-                    integration.sync_interval_minutes or _DEFAULT_INTERVAL_MINUTES,
+                    integration.provider,
+                    _interval,
                     integration.last_synced_at,
+                    _next_due,
                 )
                 continue
 
@@ -250,9 +339,10 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
             enqueued += 1
             logger.info(
                 "scheduled_sync enqueued  sync_run_id=%s integration_id=%s "
-                "user_id=%s interval_minutes=%s",
+                "provider=%s user_id=%s interval_minutes=%s",
                 sync_run.id,
                 integration.id,
+                integration.provider,
                 integration.user_id,
                 integration.sync_interval_minutes or _DEFAULT_INTERVAL_MINUTES,
             )
@@ -271,6 +361,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "enqueued": enqueued,
         "skipped_not_due": skipped_not_due,
         "skipped_in_flight": skipped_in_flight,
+        "stale_cleaned": stale_cleaned,
         "errors": errors,
     }
 
