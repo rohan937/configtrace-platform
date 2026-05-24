@@ -59,6 +59,9 @@ from app.connectors.aws_schema import (
     AWS_IAM_POLICY_ATTACHMENT,
     AWS_IAM_INLINE_POLICY,
     AWS_IAM_IDENTITY_PROVIDER,
+    AWS_ROUTE53_HOSTED_ZONE,
+    AWS_ROUTE53_RECORD,
+    AWS_CLOUDFRONT_DISTRIBUTION,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -2287,6 +2290,533 @@ def _classify_iam_identity_provider_change(change: object) -> tuple[str, str]:
     )
 
 
+# ── M40: Sensitive routing name patterns ─────────────────────────────────────
+
+_SENSITIVE_ROUTING_PATTERNS: frozenset[str] = frozenset({
+    # Production/live infrastructure
+    "prod", "production", "live", "app", "api",
+    # CDN / static delivery
+    "cdn", "static", "assets", "media",
+    # Payment / checkout / auth critical paths
+    "checkout", "payments", "pay", "billing",
+    "auth", "login", "sso", "secure",
+    # Customer-facing
+    "customer", "users", "portal",
+    # Sensitive S3 patterns inherited
+    "uploads", "invoices",
+})
+
+
+def _is_sensitive_routing_name(name: str) -> bool:
+    """Return True if a DNS name or CloudFront alias suggests a sensitive service.
+
+    Covers production, CDN, payment, auth, and customer-facing patterns.
+    """
+    n = name.lower()
+    return any(pattern in n for pattern in _SENSITIVE_ROUTING_PATTERNS)
+
+
+# ── M40: Route53 hosted zone classifier ──────────────────────────────────────
+
+
+def _classify_route53_hosted_zone_change(change: object) -> tuple[str, str]:
+    """Classify risk for aws_route53_hosted_zone record changes.
+
+    Risk matrix:
+    - Hosted zone deleted (removed event)    → critical
+    - NS changed                             → critical
+    - zone_type changed public→private       → high
+    - private_zone changed False→True        → high (opposite: low)
+    - resource_record_set_count decreased    → high
+    - linked_vpc_count decreased             → medium
+    - comment changed                        → low
+    - tag_keys changed                       → low
+    """
+    pm: dict = _get(change, "provider_metadata") or {}
+    change_type: str = (_get(change, "change_type") or "").lower()
+    fp: str = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "previous_value")
+    zone_name: str = pm.get("name") or pm.get("zone_name") or "unknown zone"
+
+    # Deletion is always critical — zone removed means DNS stops resolving
+    if change_type == "removed":
+        return (
+            "critical",
+            f"Route53 hosted zone {zone_name!r} was deleted. "
+            "DNS resolution for all records in this zone will fail. "
+            "Verify this was intentional.",
+        )
+
+    if fp == "name_servers":
+        return (
+            "critical",
+            f"Route53 hosted zone {zone_name!r} name servers changed. "
+            "Unauthorised NS changes can redirect all DNS traffic for the domain. "
+            "Verify the new name servers are correct.",
+        )
+
+    if fp == "zone_type":
+        if pv == "public" and nv == "private":
+            return (
+                "high",
+                f"Route53 hosted zone {zone_name!r} changed from public to private. "
+                "The zone is no longer resolvable from the public internet.",
+            )
+        if pv == "private" and nv == "public":
+            return (
+                "high",
+                f"Route53 hosted zone {zone_name!r} changed from private to public. "
+                "Internal DNS records may now be visible to the public internet.",
+            )
+        return (
+            "medium",
+            f"Route53 hosted zone {zone_name!r} zone type changed.",
+        )
+
+    if fp == "private_zone":
+        if pv is False and nv is True:
+            return (
+                "high",
+                f"Route53 hosted zone {zone_name!r} is now private. "
+                "Public DNS resolution for this zone has been disabled.",
+            )
+        return (
+            "low",
+            f"Route53 hosted zone {zone_name!r} private flag changed.",
+        )
+
+    if fp == "resource_record_set_count":
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)) and nv < pv:
+            return (
+                "high",
+                f"Route53 hosted zone {zone_name!r} record count decreased "
+                f"({pv} → {nv}). DNS records may have been removed.",
+            )
+        return (
+            "low",
+            f"Route53 hosted zone {zone_name!r} record count changed ({pv} → {nv}).",
+        )
+
+    if fp == "linked_vpc_count":
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)) and nv < pv:
+            return (
+                "medium",
+                f"Route53 hosted zone {zone_name!r} linked VPC count decreased "
+                f"({pv} → {nv}). Private DNS resolution may be affected.",
+            )
+        return (
+            "low",
+            f"Route53 hosted zone {zone_name!r} linked VPC count changed.",
+        )
+
+    if fp == "comment":
+        return (
+            "low",
+            f"Route53 hosted zone {zone_name!r} comment changed.",
+        )
+
+    if fp == "tag_keys":
+        return (
+            "low",
+            f"Route53 hosted zone {zone_name!r} tags changed.",
+        )
+
+    return (
+        "low",
+        f"Route53 hosted zone {zone_name!r} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ── M40: Route53 record classifier ───────────────────────────────────────────
+
+
+def _classify_route53_record_change(change: object) -> tuple[str, str]:
+    """Classify risk for aws_route53_record record changes.
+
+    Risk matrix:
+    - Record removed (apex A/ALIAS)              → critical
+    - MX record removed                          → critical
+    - NS record changed                          → critical
+    - DMARC none policy                          → critical
+    - value_hash changed (apex A/ALIAS sensitive)→ critical
+    - value_hash changed (sensitive name)        → high
+    - alias_target_dns_name changed (sensitive)  → critical / high
+    - value_hash changed (any)                   → medium
+    - ttl changed                                → low/medium
+    - routing_policy changed                     → medium
+    - failover changed                           → medium
+    - evaluate_target_health changed             → medium
+    - weight/region changed                      → low
+    - health_check_id changed                    → medium
+    - dmarc_policy changed to weaker             → high
+    - dmarc_policy changed                       → medium
+    """
+    pm: dict = _get(change, "provider_metadata") or {}
+    change_type: str = (_get(change, "change_type") or "").lower()
+    fp: str = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "previous_value")
+    record_name: str = pm.get("record_name") or pm.get("name") or "unknown"
+    dns_type: str = pm.get("dns_record_type") or ""
+    zone_name: str = pm.get("zone_name") or ""
+    is_sensitive = _is_sensitive_routing_name(record_name) or _is_sensitive_routing_name(zone_name)
+
+    # Apex/root record: name matches zone_name (or is @ or empty)
+    is_apex = (
+        record_name == zone_name or
+        record_name == zone_name.rstrip(".") or
+        record_name in ("@", "")
+    )
+
+    if change_type == "removed":
+        if dns_type == "MX":
+            return (
+                "critical",
+                f"MX record {record_name!r} was removed from zone {zone_name!r}. "
+                "Email delivery to this domain will fail.",
+            )
+        if dns_type in ("A", "AAAA") and is_apex:
+            return (
+                "critical",
+                f"Apex DNS record {record_name!r} ({dns_type}) was removed from "
+                f"zone {zone_name!r}. The domain may become unreachable.",
+            )
+        if is_sensitive:
+            return (
+                "high",
+                f"DNS record {record_name!r} ({dns_type}) was removed from "
+                f"zone {zone_name!r}. This record serves a sensitive path.",
+            )
+        return (
+            "medium",
+            f"DNS record {record_name!r} ({dns_type}) was removed from zone {zone_name!r}.",
+        )
+
+    if fp == "value_hash":
+        if dns_type == "NS":
+            return (
+                "critical",
+                f"NS record values changed for {record_name!r} in zone {zone_name!r}. "
+                "Nameserver changes can redirect all DNS traffic for the domain.",
+            )
+        if is_apex and dns_type in ("A", "AAAA"):
+            return (
+                "critical",
+                f"Apex DNS record {record_name!r} ({dns_type}) value changed in "
+                f"zone {zone_name!r}. The domain now points to a different destination.",
+            )
+        if is_sensitive:
+            return (
+                "high",
+                f"DNS record {record_name!r} ({dns_type}) value changed in "
+                f"zone {zone_name!r}. This record serves a sensitive path.",
+            )
+        return (
+            "medium",
+            f"DNS record {record_name!r} ({dns_type}) value changed in zone {zone_name!r}.",
+        )
+
+    if fp == "alias_target_dns_name":
+        if is_apex or is_sensitive:
+            return (
+                "critical",
+                f"Alias target for DNS record {record_name!r} ({dns_type}) changed "
+                f"in zone {zone_name!r} ({pv!r} → {nv!r}). "
+                "Traffic may now be routed to a different destination.",
+            )
+        return (
+            "high",
+            f"Alias target for DNS record {record_name!r} ({dns_type}) changed "
+            f"in zone {zone_name!r} ({pv!r} → {nv!r}).",
+        )
+
+    if fp == "dmarc_policy":
+        if nv == "none":
+            return (
+                "critical",
+                f"DMARC policy for {zone_name!r} is set to 'none'. "
+                "Phishing/spoofing emails will not be quarantined or rejected.",
+            )
+        # reject → quarantine: explicit downgrade (quarantine is weaker than reject)
+        if pv == "reject" and nv == "quarantine":
+            return (
+                "high",
+                f"DMARC policy for {zone_name!r} weakened from 'reject' to 'quarantine'. "
+                "Email domain spoofing protection has been reduced.",
+            )
+        if pv in ("reject", "quarantine") and nv not in ("reject", "quarantine"):
+            return (
+                "high",
+                f"DMARC policy for {zone_name!r} weakened from {pv!r} to {nv!r}. "
+                "Email domain spoofing protection has been reduced.",
+            )
+        if pv == "none" and nv in ("quarantine", "reject"):
+            return (
+                "low",
+                f"DMARC policy for {zone_name!r} strengthened from {pv!r} to {nv!r}.",
+            )
+        return (
+            "medium",
+            f"DMARC policy for {zone_name!r} changed from {pv!r} to {nv!r}.",
+        )
+
+    if fp == "ttl":
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)):
+            if nv < 60 and pv >= 60:
+                return (
+                    "medium",
+                    f"TTL for DNS record {record_name!r} ({dns_type}) decreased below "
+                    f"60 seconds ({pv}s → {nv}s). Very short TTLs can indicate "
+                    "preparation for a DNS change.",
+                )
+        return (
+            "low",
+            f"TTL for DNS record {record_name!r} ({dns_type}) changed ({pv} → {nv}).",
+        )
+
+    if fp == "routing_policy":
+        return (
+            "medium",
+            f"Routing policy for DNS record {record_name!r} ({dns_type}) changed "
+            f"from {pv!r} to {nv!r} in zone {zone_name!r}.",
+        )
+
+    if fp == "failover":
+        return (
+            "medium",
+            f"Failover setting for DNS record {record_name!r} ({dns_type}) changed "
+            f"in zone {zone_name!r}.",
+        )
+
+    if fp == "evaluate_target_health":
+        return (
+            "medium",
+            f"EvaluateTargetHealth for DNS record {record_name!r} ({dns_type}) "
+            f"changed in zone {zone_name!r}. Health-check routing may be affected.",
+        )
+
+    if fp == "health_check_id":
+        if nv is None and pv is not None:
+            return (
+                "medium",
+                f"Health check removed from DNS record {record_name!r} ({dns_type}) "
+                f"in zone {zone_name!r}. Failover routing may no longer work.",
+            )
+        return (
+            "low",
+            f"Health check ID changed for DNS record {record_name!r} ({dns_type}).",
+        )
+
+    if fp in ("weight", "region", "geo_location_summary"):
+        return (
+            "low",
+            f"Routing weight/region metadata changed for DNS record "
+            f"{record_name!r} ({dns_type}) in zone {zone_name!r}.",
+        )
+
+    return (
+        "low",
+        f"DNS record {record_name!r} ({dns_type}) configuration changed "
+        f"({fp or 'unknown field'}) in zone {zone_name!r}.",
+    )
+
+
+# ── M40: CloudFront distribution classifier ───────────────────────────────────
+
+
+def _classify_cloudfront_distribution_change(change: object) -> tuple[str, str]:
+    """Classify risk for aws_cloudfront_distribution record changes.
+
+    Risk matrix:
+    - Distribution removed                       → critical
+    - enabled changed True→False                 → critical
+    - viewer_protocol_policy = allow-all         → critical
+    - origins_summary changed (sensitive alias)  → critical / high
+    - web_acl_id removed                         → high
+    - TLS minimum_protocol_version weakened      → high
+    - aliases changed                            → high
+    - default_cache_behavior_summary changed     → high
+    - status changed to Disabled                 → high
+    - logging_enabled changed True→False         → medium
+    - price_class changed                        → low
+    - ipv6_enabled changed                       → low
+    - default_root_object changed                → low
+    - tag_keys changed                           → low
+    """
+    pm: dict = _get(change, "provider_metadata") or {}
+    change_type: str = (_get(change, "change_type") or "").lower()
+    fp: str = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "previous_value")
+    dist_name: str = pm.get("name") or pm.get("domain_name") or pm.get("distribution_id") or "unknown"
+    aliases: list = pm.get("aliases") or []
+    is_sensitive = (
+        _is_sensitive_routing_name(dist_name) or
+        any(_is_sensitive_routing_name(a) for a in aliases)
+    )
+
+    if change_type == "removed":
+        return (
+            "critical",
+            f"CloudFront distribution {dist_name!r} was removed. "
+            "CDN delivery for associated aliases will fail.",
+        )
+
+    if fp == "enabled":
+        if pv is True and nv is False:
+            if is_sensitive:
+                return (
+                    "critical",
+                    f"CloudFront distribution {dist_name!r} was disabled. "
+                    "This distribution serves a sensitive or production endpoint.",
+                )
+            return (
+                "high",
+                f"CloudFront distribution {dist_name!r} was disabled. "
+                "CDN delivery for this distribution has stopped.",
+            )
+        return (
+            "low",
+            f"CloudFront distribution {dist_name!r} enabled state changed.",
+        )
+
+    if fp == "default_cache_behavior_summary":
+        # Detect viewer_protocol_policy weakening
+        new_vpp: str = ""
+        if isinstance(nv, dict):
+            new_vpp = nv.get("viewer_protocol_policy") or ""
+        elif isinstance(nv, str):
+            new_vpp = nv
+        if new_vpp == "allow-all":
+            return (
+                "critical",
+                f"CloudFront distribution {dist_name!r} now allows HTTP (allow-all). "
+                "Visitors may be served over unencrypted connections. "
+                "Set viewer protocol policy to redirect-to-https or https-only.",
+            )
+        return (
+            "high",
+            f"CloudFront distribution {dist_name!r} default cache behavior changed. "
+            "Verify the viewer protocol policy and caching settings are correct.",
+        )
+
+    if fp == "viewer_certificate_summary":
+        # Detect TLS minimum_protocol_version weakening
+        _WEAK_TLS = {"SSLv3", "TLSv1", "TLSv1_2016", "TLSv1.1_2016"}
+        new_mpv: str = ""
+        old_mpv: str = ""
+        if isinstance(nv, dict):
+            new_mpv = nv.get("minimum_protocol_version") or ""
+        if isinstance(pv, dict):
+            old_mpv = pv.get("minimum_protocol_version") or ""
+        if new_mpv in _WEAK_TLS and old_mpv not in _WEAK_TLS:
+            return (
+                "high",
+                f"CloudFront distribution {dist_name!r} TLS minimum protocol version "
+                f"weakened from {old_mpv!r} to {new_mpv!r}. "
+                "Older, weaker TLS versions are now permitted.",
+            )
+        return (
+            "medium",
+            f"CloudFront distribution {dist_name!r} viewer certificate changed.",
+        )
+
+    if fp == "web_acl_id":
+        if (nv is None or nv == "") and (pv is not None and pv != ""):
+            return (
+                "high",
+                f"CloudFront distribution {dist_name!r} WAF web ACL was removed. "
+                "The distribution is no longer protected by AWS WAF.",
+            )
+        return (
+            "medium",
+            f"CloudFront distribution {dist_name!r} WAF web ACL changed.",
+        )
+
+    if fp == "origins_summary":
+        if is_sensitive:
+            return (
+                "critical",
+                f"CloudFront distribution {dist_name!r} origin configuration changed. "
+                "This distribution serves a sensitive or production endpoint. "
+                "Verify the new origin is correct.",
+            )
+        return (
+            "high",
+            f"CloudFront distribution {dist_name!r} origin configuration changed. "
+            "Verify the new origin is correct.",
+        )
+
+    if fp == "aliases":
+        return (
+            "high",
+            f"CloudFront distribution {dist_name!r} domain aliases changed "
+            f"({pv!r} → {nv!r}). Verify CNAME records are still correct.",
+        )
+
+    if fp == "alias_count":
+        if isinstance(nv, (int, float)) and isinstance(pv, (int, float)) and nv < pv:
+            return (
+                "high",
+                f"CloudFront distribution {dist_name!r} alias count decreased "
+                f"({pv} → {nv}). A domain alias may have been removed.",
+            )
+        return (
+            "low",
+            f"CloudFront distribution {dist_name!r} alias count changed.",
+        )
+
+    if fp == "status":
+        if isinstance(nv, str) and "disabled" in nv.lower():
+            return (
+                "high",
+                f"CloudFront distribution {dist_name!r} status changed to {nv!r}.",
+            )
+        return (
+            "low",
+            f"CloudFront distribution {dist_name!r} status changed to {nv!r}.",
+        )
+
+    if fp == "logging_enabled":
+        if pv is True and nv is False:
+            return (
+                "medium",
+                f"CloudFront distribution {dist_name!r} access logging was disabled. "
+                "CDN request logs will no longer be collected.",
+            )
+        return (
+            "low",
+            f"CloudFront distribution {dist_name!r} logging setting changed.",
+        )
+
+    if fp == "ordered_cache_behaviors_summary":
+        return (
+            "medium",
+            f"CloudFront distribution {dist_name!r} ordered cache behavior changed. "
+            "Verify path-based routing is still correct.",
+        )
+
+    if fp in ("price_class", "http_version", "ipv6_enabled", "default_root_object"):
+        return (
+            "low",
+            f"CloudFront distribution {dist_name!r} {fp.replace('_', ' ')} changed.",
+        )
+
+    if fp == "tag_keys":
+        return (
+            "low",
+            f"CloudFront distribution {dist_name!r} tags changed.",
+        )
+
+    return (
+        "low",
+        f"CloudFront distribution {dist_name!r} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -2344,6 +2874,13 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_iam_inline_policy_change(change)
     if record_type == AWS_IAM_IDENTITY_PROVIDER:
         return _classify_iam_identity_provider_change(change)
+    # ── M40 Route53 + CloudFront ──────────────────────────────────────────────
+    if record_type == AWS_ROUTE53_HOSTED_ZONE:
+        return _classify_route53_hosted_zone_change(change)
+    if record_type == AWS_ROUTE53_RECORD:
+        return _classify_route53_record_change(change)
+    if record_type == AWS_CLOUDFRONT_DISTRIBUTION:
+        return _classify_cloudfront_distribution_change(change)
 
     # Unknown AWS record type — conservative default
     return (

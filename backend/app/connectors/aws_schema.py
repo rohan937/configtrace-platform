@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -38,6 +38,14 @@ AWS_IAM_INLINE_POLICY = "aws_iam_inline_policy"
 # One per OIDC or SAML identity provider registered in the account.
 AWS_IAM_IDENTITY_PROVIDER = "aws_iam_identity_provider"
 
+# ── M40 record types — Route53 DNS + CloudFront CDN Routing Config ────────────
+# One per Route53 hosted zone — zone-level posture (public/private, NS, VPC links).
+AWS_ROUTE53_HOSTED_ZONE = "aws_route53_hosted_zone"
+# One per Route53 resource record set — individual DNS record (A, CNAME, MX, TXT, …).
+AWS_ROUTE53_RECORD = "aws_route53_record"
+# One per CloudFront distribution — CDN config, origins, protocol, aliases, WAF.
+AWS_CLOUDFRONT_DISTRIBUTION = "aws_cloudfront_distribution"
+
 AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_ACCOUNT_IDENTITY,
     AWS_REGION,
@@ -62,4 +70,8 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_IAM_POLICY_ATTACHMENT,
     AWS_IAM_INLINE_POLICY,
     AWS_IAM_IDENTITY_PROVIDER,
+    # M40
+    AWS_ROUTE53_HOSTED_ZONE,
+    AWS_ROUTE53_RECORD,
+    AWS_CLOUDFRONT_DISTRIBUTION,
 })

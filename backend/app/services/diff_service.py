@@ -453,6 +453,63 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "oidc_thumbprint_count",
         "saml_valid_until",
     ),
+    # ── M40: Route53 DNS + CloudFront CDN Routing Config ──────────────────────
+    # aws_route53_hosted_zone — one record per Route53 hosted zone.
+    # Tracks zone type, VPC linkage, NS changes, and comment drift.
+    "aws_route53_hosted_zone": (
+        "zone_type",
+        "private_zone",
+        "resource_record_set_count",
+        "linked_vpc_count",
+        "comment",
+        "name_servers",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+    # aws_route53_record — one record per DNS resource record set.
+    # value_hash tracks record value changes without storing raw values.
+    # dmarc_policy specifically tracks DMARC enforcement posture.
+    "aws_route53_record": (
+        "ttl",
+        "value_hash",
+        "alias_target_dns_name",
+        "alias_hosted_zone_id",
+        "evaluate_target_health",
+        "routing_policy",
+        "weight",
+        "region",
+        "failover",
+        "geo_location_summary",
+        "health_check_id",
+        "dmarc_policy",
+        "config_fetch_warnings",
+    ),
+    # aws_cloudfront_distribution — one record per CloudFront distribution.
+    # Tracks security-critical CDN configuration: viewer protocol, WAF, TLS,
+    # origins, and operational state.
+    "aws_cloudfront_distribution": (
+        "enabled",
+        "status",
+        "aliases",
+        "alias_count",
+        "default_root_object",
+        "price_class",
+        "http_version",
+        "ipv6_enabled",
+        "web_acl_id",
+        "viewer_certificate_summary",
+        "origin_count",
+        "origins_summary",
+        "default_cache_behavior_summary",
+        "ordered_cache_behavior_count",
+        "ordered_cache_behaviors_summary",
+        "logging_enabled",
+        "logging_bucket_domain",
+        "custom_error_response_count",
+        "restrictions_summary",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
 }
 
 

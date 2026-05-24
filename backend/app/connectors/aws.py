@@ -99,7 +99,12 @@ from app.connectors.exceptions import (
     NetworkError,
     RateLimitError,
 )
-from app.core.failure_classifier import classify_aws_ec2_failure, classify_aws_iam_failure
+from app.core.failure_classifier import (
+    classify_aws_ec2_failure,
+    classify_aws_iam_failure,
+    classify_aws_route53_failure,
+    classify_aws_cloudfront_failure,
+)
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
     AWS_REGION,
@@ -121,6 +126,9 @@ from app.connectors.aws_schema import (
     AWS_IAM_POLICY_ATTACHMENT,
     AWS_IAM_INLINE_POLICY,
     AWS_IAM_IDENTITY_PROVIDER,
+    AWS_ROUTE53_HOSTED_ZONE,
+    AWS_ROUTE53_RECORD,
+    AWS_CLOUDFRONT_DISTRIBUTION,
 )
 
 logger = logging.getLogger(__name__)
@@ -280,6 +288,99 @@ def _extract_tag_keys(tags: list[dict]) -> list[str] | None:
         return None
     keys = sorted(t["Key"] for t in tags if "Key" in t)
     return keys if keys else None
+
+
+# ── M40: Route53 + CloudFront helpers ────────────────────────────────────────
+
+
+def _hash_dns_values(values: list[str]) -> str:
+    """Return a 16-hex-character SHA-256 of sorted DNS record values.
+
+    Used for TXT and other record types to detect value changes without
+    storing raw record data.  Sorted for stability across API response ordering.
+
+    SECURITY: Raw DNS values (e.g. TXT record content) are never stored.
+    """
+    import hashlib
+    canonical = "|".join(sorted(values))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _values_summary(values: list[str], max_items: int = 3, max_len: int = 80) -> list[str]:
+    """Return a truncated summary list of DNS record values.
+
+    Used for non-sensitive record types (A, AAAA, MX, NS, CNAME).
+    TXT records use _hash_dns_values instead.
+
+    Each value is truncated to max_len characters.  At most max_items values
+    are returned; if there are more, the last entry is replaced with a count.
+    """
+    truncated = [v[:max_len] for v in values[:max_items]]
+    if len(values) > max_items:
+        truncated.append(f"... +{len(values) - max_items} more")
+    return truncated
+
+
+def _detect_routing_policy(rrset: dict) -> str:
+    """Detect Route53 routing policy from a resource record set dict.
+
+    Returns one of: simple, weighted, latency, failover, geolocation,
+    geoproximity, multivalue, or simple (default fallback).
+    """
+    if "Weight" in rrset:
+        return "weighted"
+    if "Region" in rrset:
+        return "latency"
+    if "Failover" in rrset:
+        return "failover"
+    if "GeoLocation" in rrset:
+        return "geolocation"
+    if "GeoProximityLocation" in rrset:
+        return "geoproximity"
+    if rrset.get("MultiValueAnswer"):
+        return "multivalue"
+    return "simple"
+
+
+def _classify_cf_origin_type(domain: str) -> str:
+    """Classify a CloudFront origin domain as s3/custom/load_balancer/api_gateway/mediastore.
+
+    Uses a best-effort heuristic on the domain name.
+    """
+    d = domain.lower()
+    if ".s3." in d or d.endswith(".s3.amazonaws.com") or ".s3-" in d:
+        return "s3"
+    if "elb.amazonaws.com" in d or "alb.amazonaws.com" in d:
+        return "load_balancer"
+    if "execute-api" in d and "amazonaws.com" in d:
+        return "api_gateway"
+    if "mediastore" in d and "amazonaws.com" in d:
+        return "mediastore"
+    return "custom"
+
+
+def _extract_dmarc_policy(txt_values: list[str]) -> str | None:
+    """Extract the DMARC 'p=' policy tag from TXT record values.
+
+    Searches all values for one that starts with "v=DMARC1" (case-insensitive).
+    Returns "none", "quarantine", "reject", or "unknown" if found; None if
+    no DMARC record is present.
+
+    SECURITY: Raw TXT values are never stored; only the extracted policy tag.
+    """
+    for val in txt_values:
+        stripped = val.strip().strip('"')
+        if stripped.lower().startswith("v=dmarc1"):
+            for part in stripped.split(";"):
+                part = part.strip()
+                if part.lower().startswith("p="):
+                    policy_val = part[2:].strip().lower()
+                    if policy_val in ("none", "quarantine", "reject"):
+                        return policy_val
+                    return "unknown"
+            # v=DMARC1 found but no p= tag — treat as "unknown"
+            return "unknown"
+    return None
 
 
 def _parse_bucket_policy_public(policy_json: str) -> bool:
@@ -853,6 +954,9 @@ class AWSConnector(BaseConnector):
         - Z × aws_iam_policy_attachment (M39, one per principal↔policy link)
         - ZZ × aws_iam_inline_policy (M39, one per inline policy per principal)
         - ZZZ × aws_iam_identity_provider (M39, OIDC/SAML providers)
+        - ZZZ4 × aws_route53_hosted_zone (M40, one per hosted zone)
+        - ZZZ5 × aws_route53_record  (M40, one per resource record set)
+        - ZZZ6 × aws_cloudfront_distribution (M40, one per distribution)
         - 1 × aws_service_inventory (last — reflects all active surfaces)
 
         All resources use fail-soft behavior for optional endpoints.
@@ -912,7 +1016,23 @@ class AWSConnector(BaseConnector):
             len(iam_records),
         )
 
-        # 6. Service inventory (always last — reflects all active surfaces)
+        # 6. Route53 DNS resources (M40) — global; fetched once per account.
+        route53_records = self._fetch_route53_resources(credentials, account_id)
+        records.extend(route53_records)
+        logger.info(
+            "AWSConnector.fetch: route53_resources fetched  count=%d",
+            len(route53_records),
+        )
+
+        # 7. CloudFront CDN resources (M40) — global; fetched once per account.
+        cloudfront_records = self._fetch_cloudfront_resources(credentials, account_id)
+        records.extend(cloudfront_records)
+        logger.info(
+            "AWSConnector.fetch: cloudfront_resources fetched  count=%d",
+            len(cloudfront_records),
+        )
+
+        # 8. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
             if r.get("record_type") == AWS_SECURITY_GROUP
@@ -929,6 +1049,14 @@ class AWSConnector(BaseConnector):
             1 for r in iam_records
             if r.get("record_type") == AWS_IAM_ROLE
         )
+        route53_zone_count = sum(
+            1 for r in route53_records
+            if r.get("record_type") == AWS_ROUTE53_HOSTED_ZONE
+        )
+        cloudfront_dist_count = sum(
+            1 for r in cloudfront_records
+            if r.get("record_type") == AWS_CLOUDFRONT_DISTRIBUTION
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -936,6 +1064,8 @@ class AWSConnector(BaseConnector):
             vpc_count=vpc_count,
             iam_user_count=iam_user_count,
             iam_role_count=iam_role_count,
+            route53_zone_count=route53_zone_count,
+            cloudfront_distribution_count=cloudfront_dist_count,
         )
         records.append(inventory_record)
 
@@ -1039,22 +1169,28 @@ class AWSConnector(BaseConnector):
         vpc_count: int = 0,
         iam_user_count: int = 0,
         iam_role_count: int = 0,
+        route53_zone_count: int = 0,
+        cloudfront_distribution_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
         return {
-            "record_type":           AWS_SERVICE_INVENTORY,
-            "record_id":             "service_inventory",
-            "name":                  "AWS Service Inventory",
-            "selected_regions":      selected,
-            "enabled_surfaces":      ["account_inventory", "s3", "security_groups", "vpc", "iam"],
-            "s3_bucket_count":       s3_count,
-            "security_group_count":  security_group_count,
-            "vpc_count":             vpc_count,
-            "iam_user_count":        iam_user_count,
-            "iam_role_count":        iam_role_count,
+            "record_type":                    AWS_SERVICE_INVENTORY,
+            "record_id":                      "service_inventory",
+            "name":                           "AWS Service Inventory",
+            "selected_regions":               selected,
+            "enabled_surfaces":               [
+                "account_inventory", "s3", "security_groups", "vpc",
+                "iam", "route53", "cloudfront",
+            ],
+            "s3_bucket_count":                s3_count,
+            "security_group_count":           security_group_count,
+            "vpc_count":                      vpc_count,
+            "iam_user_count":                 iam_user_count,
+            "iam_role_count":                 iam_role_count,
+            "route53_zone_count":             route53_zone_count,
+            "cloudfront_distribution_count":  cloudfront_distribution_count,
             "future_surfaces": [
-                "route53", "cloudfront",
                 "secrets", "rds", "lambda", "api_gateway", "load_balancers",
                 "waf", "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
@@ -3126,5 +3262,444 @@ class AWSConnector(BaseConnector):
                 "aws: SAML provider listing failed  error_code=%s",
                 fc.error_code,
             )
+
+        return records
+
+    # ── M40: Route53 DNS fetch methods ────────────────────────────────────────
+
+    def _fetch_route53_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch Route53 hosted zones and their resource record sets.
+
+        Route53 is a global service — a single us-east-1 client covers all
+        hosted zones regardless of the selected_regions list.
+
+        Fail-soft: if route53:ListHostedZones is denied (403), logs a warning
+        and returns an empty list so the rest of the sync still succeeds.
+
+        SECURITY: Raw TXT record values are NEVER stored — only value_hash.
+        """
+        client = self._make_client("route53", credentials, region="us-east-1")
+        try:
+            zones = self._fetch_hosted_zones(client, account_id)
+        except ConnectorError as exc:
+            if exc.status_code == 403:
+                logger.warning(
+                    "aws: route53:ListHostedZones not permitted — "
+                    "skipping Route53 monitoring for this sync  "
+                    "error_code=%s",
+                    classify_aws_route53_failure("ListHostedZones", exc).error_code,
+                )
+                return []
+            fc = classify_aws_route53_failure("ListHostedZones", exc)
+            logger.warning(
+                "aws: Route53 hosted zones unavailable  error_code=%s",
+                fc.error_code,
+            )
+            return []
+        except Exception as exc:
+            fc = classify_aws_route53_failure("ListHostedZones", exc)
+            logger.warning(
+                "aws: Route53 listing failed  error_code=%s",
+                fc.error_code,
+            )
+            return []
+
+        records: list[dict] = list(zones)
+        for zone in zones:
+            zone_id = zone.get("_zone_id") or ""
+            zone_name = zone.get("name") or ""
+            if not zone_id:
+                continue
+            try:
+                rrs_records = self._fetch_zone_records(
+                    client, zone_id, zone_name, account_id
+                )
+                records.extend(rrs_records)
+            except Exception as exc:
+                fc = classify_aws_route53_failure("ListResourceRecordSets", exc)
+                logger.warning(
+                    "aws: Route53 record set listing failed  zone_id=%s  error_code=%s",
+                    zone_id,
+                    fc.error_code,
+                )
+                # Mark zone with fetch warning and continue
+                zone["config_fetch_warnings"] = (
+                    zone.get("config_fetch_warnings") or []
+                ) + [f"records_unavailable:{fc.error_code}"]
+
+        # Strip internal helper fields before returning
+        for zone in zones:
+            zone.pop("_zone_id", None)
+
+        return records
+
+    def _fetch_hosted_zones(self, client: Any, account_id: str) -> list[dict]:
+        """Fetch all hosted zones via ListHostedZones (paginated).
+
+        Returns one aws_route53_hosted_zone record per zone.
+        """
+        records: list[dict] = []
+        kwargs: dict[str, Any] = {}
+
+        while True:
+            resp = self._call_aws(client.list_hosted_zones, **kwargs)
+            zones = resp.get("HostedZones") or []
+            for zone in zones:
+                zone_id_full: str = zone.get("Id") or ""
+                # Strip /hostedzone/ prefix → bare zone ID
+                zone_id = zone_id_full.split("/")[-1] if zone_id_full else ""
+                if not zone_id:
+                    continue
+                zone_name: str = (zone.get("Name") or "").rstrip(".")
+                config = zone.get("Config") or {}
+                private_zone: bool = bool(config.get("PrivateZone", False))
+                comment: str | None = config.get("Comment") or None
+                rrs_count: int | None = zone.get("ResourceRecordSetCount")
+
+                # Stable record ID: account_id/zone_id (zone IDs are globally unique)
+                stable_id = f"{account_id}/{zone_id}"
+
+                records.append({
+                    "record_type":               AWS_ROUTE53_HOSTED_ZONE,
+                    "record_id":                  stable_id,
+                    "external_id":               stable_id,
+                    "name":                      zone_name,
+                    "zone_id":                   zone_id,
+                    "zone_type":                 "private" if private_zone else "public",
+                    "private_zone":              private_zone,
+                    "resource_record_set_count": rrs_count,
+                    "linked_vpc_count":          None,   # not in list response
+                    "comment":                   comment,
+                    "name_servers":              None,   # fetched separately if needed
+                    "tag_keys":                  None,
+                    "config_fetch_warnings":     None,
+                    # Internal helper — stripped before returning
+                    "_zone_id":                  zone_id,
+                })
+
+            if resp.get("IsTruncated"):
+                kwargs = {"Marker": resp.get("NextMarker", "")}
+            else:
+                break
+
+        return records
+
+    def _fetch_zone_records(
+        self,
+        client: Any,
+        zone_id: str,
+        zone_name: str,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch resource record sets for a single hosted zone (paginated).
+
+        Returns one aws_route53_record record per resource record set.
+
+        SECURITY: TXT record values are hashed (value_hash); raw values are
+        never stored.  For DMARC TXT records, only the p= policy tag is
+        extracted and stored (dmarc_policy).
+        """
+        records: list[dict] = []
+        kwargs: dict[str, Any] = {"HostedZoneId": zone_id}
+
+        while True:
+            resp = self._call_aws(
+                client.list_resource_record_sets,
+                **kwargs,
+            )
+            rrsets = resp.get("ResourceRecordSets") or []
+            for rrset in rrsets:
+                record_name: str = (rrset.get("Name") or "").rstrip(".")
+                record_type: str = rrset.get("Type") or ""
+                set_identifier: str | None = rrset.get("SetIdentifier") or None
+                ttl: int | None = rrset.get("TTL")
+
+                # Stable ID: account_id/zone_id/name/type[/set_identifier]
+                name_norm = record_name.lower().rstrip(".")
+                id_parts = [account_id, zone_id, name_norm, record_type.upper()]
+                if set_identifier:
+                    id_parts.append(set_identifier)
+                stable_id = "/".join(id_parts)
+
+                # Routing policy detection
+                routing_policy = _detect_routing_policy(rrset)
+                weight: int | None = rrset.get("Weight")
+                region: str | None = rrset.get("Region")
+                failover: str | None = rrset.get("Failover")
+                geo_loc = rrset.get("GeoLocation")
+                geo_location_summary: str | None = None
+                if isinstance(geo_loc, dict):
+                    geo_parts = []
+                    if geo_loc.get("ContinentCode"):
+                        geo_parts.append(f"continent={geo_loc['ContinentCode']}")
+                    if geo_loc.get("CountryCode"):
+                        geo_parts.append(f"country={geo_loc['CountryCode']}")
+                    if geo_loc.get("SubdivisionCode"):
+                        geo_parts.append(f"subdivision={geo_loc['SubdivisionCode']}")
+                    geo_location_summary = ",".join(geo_parts) or None
+
+                health_check_id: str | None = rrset.get("HealthCheckId") or None
+
+                # Alias vs value records
+                alias_target = rrset.get("AliasTarget") or {}
+                alias_dns_name: str | None = None
+                alias_hz_id: str | None = None
+                evaluate_target_health: bool | None = None
+                value_hash: str | None = None
+
+                if alias_target:
+                    alias_dns_name = (alias_target.get("DNSName") or "").rstrip(".")
+                    alias_hz_id = alias_target.get("HostedZoneId") or None
+                    evaluate_target_health = alias_target.get("EvaluateTargetHealth")
+                else:
+                    # Extract raw values (NEVER stored for TXT)
+                    raw_values = [
+                        rr.get("Value", "")
+                        for rr in (rrset.get("ResourceRecords") or [])
+                        if rr.get("Value")
+                    ]
+                    if raw_values:
+                        value_hash = _hash_dns_values(raw_values)
+
+                # DMARC policy extraction (TXT records only)
+                dmarc_policy: str | None = None
+                if record_type == "TXT" and not alias_target:
+                    raw_values_for_dmarc = [
+                        rr.get("Value", "")
+                        for rr in (rrset.get("ResourceRecords") or [])
+                        if rr.get("Value")
+                    ]
+                    if record_name.lower().startswith("_dmarc"):
+                        dmarc_policy = _extract_dmarc_policy(raw_values_for_dmarc)
+
+                records.append({
+                    "record_type":          AWS_ROUTE53_RECORD,
+                    "record_id":            stable_id,
+                    "external_id":          stable_id,
+                    "name":                 f"{record_type} {record_name}",
+                    "zone_id":              zone_id,
+                    "zone_name":            zone_name,
+                    "record_name":          record_name,
+                    "dns_record_type":      record_type,
+                    "set_identifier":       set_identifier,
+                    "ttl":                  ttl,
+                    "value_hash":           value_hash,
+                    "alias_target_dns_name": alias_dns_name,
+                    "alias_hosted_zone_id":  alias_hz_id,
+                    "evaluate_target_health": evaluate_target_health,
+                    "routing_policy":       routing_policy,
+                    "weight":               weight,
+                    "region":               region,
+                    "failover":             failover,
+                    "geo_location_summary": geo_location_summary,
+                    "health_check_id":      health_check_id,
+                    "dmarc_policy":         dmarc_policy,
+                    "config_fetch_warnings": None,
+                })
+
+            if resp.get("IsTruncated"):
+                kwargs = {
+                    "HostedZoneId":        zone_id,
+                    "StartRecordName":     resp.get("NextRecordName", ""),
+                    "StartRecordType":     resp.get("NextRecordType", ""),
+                }
+                if resp.get("NextRecordIdentifier"):
+                    kwargs["StartRecordIdentifier"] = resp["NextRecordIdentifier"]
+            else:
+                break
+
+        return records
+
+    # ── M40: CloudFront CDN fetch methods ─────────────────────────────────────
+
+    def _fetch_cloudfront_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch CloudFront distribution configuration records.
+
+        CloudFront is a global service — a single us-east-1 client covers all
+        distributions regardless of the selected_regions list.
+
+        Fail-soft: if cloudfront:ListDistributions is denied (403), logs a
+        warning and returns an empty list.
+
+        SECURITY: No distribution content or user data is fetched.
+                  Only configuration metadata is stored.
+        """
+        client = self._make_client("cloudfront", credentials, region="us-east-1")
+        try:
+            return self._fetch_distributions(client, account_id)
+        except ConnectorError as exc:
+            if exc.status_code == 403:
+                logger.warning(
+                    "aws: cloudfront:ListDistributions not permitted — "
+                    "skipping CloudFront monitoring for this sync  "
+                    "error_code=%s",
+                    classify_aws_cloudfront_failure("ListDistributions", exc).error_code,
+                )
+                return []
+            fc = classify_aws_cloudfront_failure("ListDistributions", exc)
+            logger.warning(
+                "aws: CloudFront distribution listing failed  error_code=%s",
+                fc.error_code,
+            )
+            return []
+        except Exception as exc:
+            fc = classify_aws_cloudfront_failure("ListDistributions", exc)
+            logger.warning(
+                "aws: CloudFront fetch failed  error_code=%s",
+                fc.error_code,
+            )
+            return []
+
+    def _fetch_distributions(self, client: Any, account_id: str) -> list[dict]:
+        """Fetch all CloudFront distributions via ListDistributions (paginated).
+
+        Returns one aws_cloudfront_distribution record per distribution.
+        """
+        records: list[dict] = []
+        kwargs: dict[str, Any] = {}
+
+        while True:
+            resp = self._call_aws(client.list_distributions, **kwargs)
+            dist_list = (resp.get("DistributionList") or {})
+            items = dist_list.get("Items") or []
+
+            for item in items:
+                dist_id: str = item.get("Id") or ""
+                if not dist_id:
+                    continue
+
+                domain_name: str = item.get("DomainName") or ""
+                enabled: bool = bool(item.get("Enabled", False))
+                status: str = item.get("Status") or "unknown"
+                last_modified = item.get("LastModifiedTime")
+
+                # Aliases
+                aliases_obj = item.get("Aliases") or {}
+                aliases: list[str] = aliases_obj.get("Items") or []
+                alias_count: int = aliases_obj.get("Quantity") or len(aliases)
+
+                # Origins
+                origins_obj = item.get("Origins") or {}
+                origin_items = origins_obj.get("Items") or []
+                origin_count: int = origins_obj.get("Quantity") or len(origin_items)
+                origins_summary: list[dict] = []
+                for orig in origin_items[:5]:  # cap at 5 for storage
+                    orig_domain = orig.get("DomainName") or ""
+                    origins_summary.append({
+                        "id":            orig.get("Id") or "",
+                        "domain":        orig_domain,
+                        "origin_type":   _classify_cf_origin_type(orig_domain),
+                        "path":          orig.get("OriginPath") or "",
+                    })
+
+                # Default cache behavior
+                dcb = item.get("DefaultCacheBehavior") or {}
+                viewer_protocol_policy: str = dcb.get("ViewerProtocolPolicy") or "unknown"
+                default_cache_behavior_summary: dict = {
+                    "viewer_protocol_policy": viewer_protocol_policy,
+                    "compress":               dcb.get("Compress", False),
+                    "cached_methods":         (
+                        (dcb.get("AllowedMethods") or {}).get("CachedMethods", {}).get("Items") or []
+                    ),
+                }
+
+                # Ordered cache behaviors
+                ocb_obj = item.get("CacheBehaviors") or {}
+                ocb_items = ocb_obj.get("Items") or []
+                ordered_cache_behavior_count: int = ocb_obj.get("Quantity") or len(ocb_items)
+                ordered_cache_behaviors_summary: list[dict] = [
+                    {
+                        "path_pattern":           b.get("PathPattern") or "",
+                        "viewer_protocol_policy": b.get("ViewerProtocolPolicy") or "unknown",
+                    }
+                    for b in ocb_items[:5]  # cap at 5
+                ]
+
+                # Viewer certificate
+                cert = item.get("ViewerCertificate") or {}
+                viewer_certificate_summary: dict = {
+                    "cloudfront_default_certificate": cert.get("CloudFrontDefaultCertificate", False),
+                    "minimum_protocol_version":       cert.get("MinimumProtocolVersion") or "unknown",
+                    "ssl_support_method":             cert.get("SSLSupportMethod") or "unknown",
+                    "certificate_source":             cert.get("CertificateSource") or "unknown",
+                }
+
+                # WAF
+                web_acl_id: str | None = item.get("WebACLId") or None
+
+                # Price class, HTTP version, IPv6
+                price_class: str = item.get("PriceClass") or "unknown"
+                http_version: str = item.get("HttpVersion") or "unknown"
+                ipv6_enabled: bool = bool(item.get("IsIPV6Enabled", False))
+
+                # Default root object
+                default_root_object: str | None = item.get("DefaultRootObject") or None
+
+                # Logging (not in summary list — would need GetDistributionConfig)
+                # We use what's available in the list response
+                logging_enabled: bool | None = None
+                logging_bucket_domain: str | None = None
+
+                # Custom error responses
+                custom_error_obj = item.get("CustomErrorResponses") or {}
+                custom_error_response_count: int = (
+                    custom_error_obj.get("Quantity") or
+                    len(custom_error_obj.get("Items") or [])
+                )
+
+                # Geo restrictions
+                restrictions_obj = (item.get("Restrictions") or {}).get("GeoRestriction") or {}
+                restrictions_summary: dict | None = None
+                if restrictions_obj:
+                    restrictions_summary = {
+                        "restriction_type": restrictions_obj.get("RestrictionType") or "none",
+                        "quantity":         restrictions_obj.get("Quantity") or 0,
+                    }
+
+                # Stable ID: account_id/dist_id
+                stable_id = f"{account_id}/{dist_id}"
+
+                records.append({
+                    "record_type":                    AWS_CLOUDFRONT_DISTRIBUTION,
+                    "record_id":                      stable_id,
+                    "external_id":                    stable_id,
+                    "name":                           domain_name or dist_id,
+                    "distribution_id":                dist_id,
+                    "domain_name":                    domain_name,
+                    "enabled":                        enabled,
+                    "status":                         status,
+                    "aliases":                        aliases or None,
+                    "alias_count":                    alias_count,
+                    "default_root_object":            default_root_object,
+                    "price_class":                    price_class,
+                    "http_version":                   http_version,
+                    "ipv6_enabled":                   ipv6_enabled,
+                    "web_acl_id":                     web_acl_id,
+                    "viewer_certificate_summary":     viewer_certificate_summary,
+                    "origin_count":                   origin_count,
+                    "origins_summary":                origins_summary or None,
+                    "default_cache_behavior_summary": default_cache_behavior_summary,
+                    "ordered_cache_behavior_count":   ordered_cache_behavior_count,
+                    "ordered_cache_behaviors_summary": ordered_cache_behaviors_summary or None,
+                    "logging_enabled":                logging_enabled,
+                    "logging_bucket_domain":          logging_bucket_domain,
+                    "custom_error_response_count":    custom_error_response_count,
+                    "restrictions_summary":           restrictions_summary,
+                    "tag_keys":                       None,
+                    "config_fetch_warnings":          None,
+                })
+
+            if dist_list.get("IsTruncated"):
+                kwargs = {"Marker": dist_list.get("NextMarker", "")}
+            else:
+                break
 
         return records

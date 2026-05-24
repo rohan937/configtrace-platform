@@ -53,6 +53,12 @@ AWS IAM (partial/per-API failures, via classify_aws_iam_failure):
   aws_iam_policies_unavailable, aws_iam_policy_versions_unavailable
   aws_iam_inline_policies_unavailable, aws_iam_access_keys_unavailable
   aws_iam_mfa_unavailable
+AWS Route53 (partial/per-API failures, via classify_aws_route53_failure):
+  aws_route53_access_denied, aws_route53_rate_limited, aws_route53_api_unavailable
+  aws_route53_hosted_zones_unavailable, aws_route53_records_unavailable
+AWS CloudFront (partial/per-API failures, via classify_aws_cloudfront_failure):
+  aws_cloudfront_access_denied, aws_cloudfront_rate_limited, aws_cloudfront_api_unavailable
+  aws_cloudfront_distributions_unavailable, aws_cloudfront_distribution_config_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -658,4 +664,190 @@ def classify_aws_iam_failure(
         category="provider_unavailable",
         error_code=error_code,
         recommended_action=_IAM_PARTIAL_ACTION,
+    )
+
+
+# ── M40: Route53 per-API failure classification ───────────────────────────────
+
+_AWS_ROUTE53_API_CODE: dict[str, str] = {
+    "ListHostedZones":          "aws_route53_hosted_zones_unavailable",
+    "GetHostedZone":            "aws_route53_hosted_zones_unavailable",
+    "ListResourceRecordSets":   "aws_route53_records_unavailable",
+    "ListTagsForResource":      "aws_route53_api_unavailable",
+    "ListQueryLoggingConfigs":  "aws_route53_api_unavailable",
+}
+
+_ROUTE53_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional Route53 metadata; "
+    "other AWS checks may still work."
+)
+
+_ROUTE53_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace read-only Route53 permissions. "
+    "Required: route53:ListHostedZones, route53:GetHostedZone, "
+    "route53:ListResourceRecordSets. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_route53_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial Route53 sync failure (per-API).
+
+    Used when an individual Route53 API call fails inside
+    ``_fetch_route53_resources``.  The overall sync continues; the result
+    is logged as a structured warning.
+
+    Args:
+        api_name: The Route53 API name that failed (e.g. ``"ListHostedZones"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+        Credentials are never included in returned strings.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_route53_access_denied",
+            recommended_action=_ROUTE53_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_route53_rate_limited",
+            recommended_action=(
+                "AWS throttled Route53 API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented Route53 API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_route53_api_unavailable",
+            recommended_action=(
+                "The Route53 API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _AWS_ROUTE53_API_CODE.get(api_name, "aws_route53_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_ROUTE53_PARTIAL_ACTION,
+    )
+
+
+# ── M40: CloudFront per-API failure classification ────────────────────────────
+
+_AWS_CLOUDFRONT_API_CODE: dict[str, str] = {
+    "ListDistributions":        "aws_cloudfront_distributions_unavailable",
+    "GetDistribution":          "aws_cloudfront_distributions_unavailable",
+    "GetDistributionConfig":    "aws_cloudfront_distribution_config_unavailable",
+    "ListTagsForResource":      "aws_cloudfront_api_unavailable",
+}
+
+_CLOUDFRONT_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional CloudFront metadata; "
+    "other AWS checks may still work."
+)
+
+_CLOUDFRONT_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace read-only CloudFront permissions. "
+    "Required: cloudfront:ListDistributions, cloudfront:GetDistributionConfig. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_cloudfront_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial CloudFront sync failure (per-API).
+
+    Used when an individual CloudFront API call fails inside
+    ``_fetch_cloudfront_resources``.  The overall sync continues.
+
+    Args:
+        api_name: The CloudFront API name that failed.
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_cloudfront_access_denied",
+            recommended_action=_CLOUDFRONT_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_cloudfront_rate_limited",
+            recommended_action=(
+                "AWS throttled CloudFront API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented CloudFront API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_cloudfront_api_unavailable",
+            recommended_action=(
+                "The CloudFront API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _AWS_CLOUDFRONT_API_CODE.get(api_name, "aws_cloudfront_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_CLOUDFRONT_PARTIAL_ACTION,
     )

@@ -363,6 +363,24 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* Route53 — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              Route53 DNS monitoring — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ route53:ListHostedZones &nbsp;○ route53:ListResourceRecordSets
+            </span>
+            <br />
+
+            {/* CloudFront — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              CloudFront CDN monitoring — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ cloudfront:ListDistributions
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.

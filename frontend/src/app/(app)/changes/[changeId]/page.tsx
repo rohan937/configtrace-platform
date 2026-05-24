@@ -543,6 +543,44 @@ function getChangeSummary(change: ChangeDetail): string {
   if (rt === "aws_iam_inline_policy") return `Inline Policy: ${rn || change.record_identifier || ""}`;
   if (rt === "aws_iam_identity_provider") return `Identity Provider: ${rn || change.record_identifier || ""}`;
 
+  if (rt === "aws_route53_hosted_zone") {
+    const zoneName = (change.provider_metadata?.name as string | undefined) ?? change.record_identifier ?? "unknown";
+    if (change.change_type === "removed") return `Route53 hosted zone ${zoneName} was deleted.`;
+    if (change.change_type === "added")   return `Route53 hosted zone ${zoneName} was added to monitoring.`;
+    if (fp === "name_servers")            return `Name servers changed for Route53 zone ${zoneName}.`;
+    if (fp === "zone_type")               return `Zone type changed for Route53 zone ${zoneName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "private_zone")            return `Route53 zone ${zoneName} private flag changed.`;
+    if (fp === "resource_record_set_count") return `Record count changed to ${String(nv)} in Route53 zone ${zoneName}.`;
+    return `Route53 hosted zone ${zoneName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_route53_record") {
+    const recName = (change.provider_metadata?.record_name as string | undefined) ?? change.record_identifier ?? "unknown";
+    const dnsType = (change.provider_metadata?.dns_record_type as string | undefined) ?? "";
+    const zoneName2 = (change.provider_metadata?.zone_name as string | undefined) ?? "";
+    if (change.change_type === "removed") return `DNS record ${recName} (${dnsType}) was removed from zone ${zoneName2}.`;
+    if (change.change_type === "added")   return `DNS record ${recName} (${dnsType}) was added to zone ${zoneName2}.`;
+    if (fp === "value_hash")              return `DNS record ${recName} (${dnsType}) value changed in zone ${zoneName2}.`;
+    if (fp === "alias_target_dns_name")   return `Alias target for ${recName} (${dnsType}) changed to ${String(nv)} in zone ${zoneName2}.`;
+    if (fp === "dmarc_policy")            return `DMARC policy for zone ${zoneName2} changed from ${String(pv)} to ${String(nv)}.`;
+    if (fp === "ttl")                     return `TTL for DNS record ${recName} (${dnsType}) changed from ${String(pv)} to ${String(nv)}s.`;
+    if (fp === "routing_policy")          return `Routing policy for ${recName} (${dnsType}) changed to ${String(nv)}.`;
+    return `DNS record ${recName} (${dnsType}) configuration changed${fp ? ` (${fp})` : ""} in zone ${zoneName2}.`;
+  }
+  if (rt === "aws_cloudfront_distribution") {
+    const distName = (change.provider_metadata?.name as string | undefined) ?? change.record_identifier ?? "unknown";
+    if (change.change_type === "removed") return `CloudFront distribution ${distName} was removed.`;
+    if (change.change_type === "added")   return `CloudFront distribution ${distName} was added to monitoring.`;
+    if (fp === "enabled" && nv === false) return `CloudFront distribution ${distName} was disabled.`;
+    if (fp === "enabled" && nv === true)  return `CloudFront distribution ${distName} was enabled.`;
+    if (fp === "web_acl_id" && (nv === null || nv === "")) return `WAF web ACL was removed from CloudFront distribution ${distName}.`;
+    if (fp === "web_acl_id")              return `WAF web ACL changed on CloudFront distribution ${distName}.`;
+    if (fp === "origins_summary")         return `Origin configuration changed on CloudFront distribution ${distName}.`;
+    if (fp === "aliases")                 return `Domain aliases changed on CloudFront distribution ${distName}.`;
+    if (fp === "default_cache_behavior_summary") return `Default cache behavior changed on CloudFront distribution ${distName}.`;
+    if (fp === "viewer_certificate_summary") return `Viewer certificate / TLS settings changed on CloudFront distribution ${distName}.`;
+    return `CloudFront distribution ${distName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -1012,6 +1050,112 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the access key change was intentional.",
       "Review the IAM user's access keys in the AWS Console → IAM → Users → Security credentials.",
       "Check AWS CloudTrail for recent API calls using this key.",
+    ];
+  }
+
+  // AWS M40 — Route53 + CloudFront
+  if (rt === "aws_route53_hosted_zone") {
+    if (change.field_path === "name_servers") {
+      return [
+        "Confirm the name server change was intentional.",
+        "Verify the new NS records match what your domain registrar expects.",
+        "Check Route53 console → Hosted Zones for current NS records.",
+        "If name servers were changed without intent, revert immediately — incorrect NS records make the domain unreachable.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the hosted zone deletion was intentional.",
+        "Verify DNS is resolving correctly for all subdomains that were in this zone.",
+        "If accidental, recreate the hosted zone and re-add all records.",
+        "Update the domain registrar NS records if they still point to Route53.",
+        "Check AWS CloudTrail for who deleted the zone.",
+      ];
+    }
+    return [
+      "Confirm the Route53 hosted zone change was intentional.",
+      "Verify DNS resolution is working correctly for records in this zone.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_route53_record") {
+    const fp9 = change.field_path ?? "";
+    if (fp9 === "dmarc_policy" && change.new_value === "none") {
+      return [
+        "Update the DMARC policy from 'none' to 'quarantine' or 'reject' to protect against email spoofing.",
+        "Test email delivery before switching to 'reject' to avoid legitimate email being dropped.",
+        "Use a DMARC analyzer tool to verify your SPF and DKIM records are correctly configured.",
+        "Review your email authentication setup in Route53 and your email provider.",
+        "Check AWS CloudTrail for who modified the DMARC record.",
+      ];
+    }
+    if (fp9 === "value_hash" || fp9 === "alias_target_dns_name") {
+      return [
+        "Confirm the DNS record change was intentional.",
+        "Test the affected hostname (dig, nslookup, or browser) to verify it resolves correctly.",
+        "Verify the new target or IP address is under your control.",
+        "Check AWS CloudTrail for who modified the record.",
+        "Restore the previous value if this was accidental.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the DNS record removal was intentional.",
+        "Test the affected hostname to verify the service is still reachable.",
+        "Recreate the record if it was removed accidentally.",
+        "Check AWS CloudTrail for who deleted the record.",
+      ];
+    }
+    return [
+      "Confirm the DNS record change was intentional.",
+      "Test DNS resolution for the affected hostname.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_cloudfront_distribution") {
+    const fp10 = change.field_path ?? "";
+    if (fp10 === "enabled" && change.new_value === false) {
+      return [
+        "Confirm the distribution was intentionally disabled.",
+        "Verify the origin (S3, ALB, or custom) is still available if you plan to re-enable.",
+        "Check if any CNAME/alias DNS records still point to this distribution's domain.",
+        "Re-enable the distribution in the CloudFront console if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    if (fp10 === "web_acl_id") {
+      return [
+        "Confirm the WAF web ACL change was intentional.",
+        "Verify the distribution is still protected against common web attacks.",
+        "Re-attach the WAF web ACL in the CloudFront console if it was removed accidentally.",
+        "Review AWS WAF logs for any attack traffic during the unprotected window.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    if (fp10 === "origins_summary") {
+      return [
+        "Confirm the origin change was intentional.",
+        "Verify the new origin is under your control and returning the expected content.",
+        "Test the distribution URL to confirm it serves the correct response.",
+        "Revert the origin if it was changed accidentally.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    if (fp10 === "default_cache_behavior_summary") {
+      return [
+        "Confirm the cache behavior change was intentional.",
+        "Verify the viewer protocol policy enforces HTTPS (redirect-to-https or https-only).",
+        "Test the distribution URL to confirm the expected protocol policy is in effect.",
+        "Review the CloudFront console → Behaviors for the current settings.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    return [
+      "Confirm the CloudFront distribution change was intentional.",
+      "Test the distribution URL to verify it serves the expected content.",
+      "Review the CloudFront console for the current distribution configuration.",
+      "Check AWS CloudTrail for who made the change.",
     ];
   }
 
