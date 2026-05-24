@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -64,6 +64,22 @@ AWS_RDS_DB_SNAPSHOT = "aws_rds_db_snapshot"
 # One per RDS DB cluster snapshot — metadata only.
 AWS_RDS_DB_CLUSTER_SNAPSHOT = "aws_rds_db_cluster_snapshot"
 
+# ── M44 record types — Load Balancers + WAF Config ───────────────────────────
+# One per ELBv2 load balancer (Application, Network, Gateway) — metadata only.
+AWS_ELBV2_LOAD_BALANCER = "aws_elbv2_load_balancer"
+# One per ELBv2 target group — metadata only; no target contents.
+AWS_ELBV2_TARGET_GROUP = "aws_elbv2_target_group"
+# One per ELBv2 listener — metadata only; no request/response traffic.
+AWS_ELBV2_LISTENER = "aws_elbv2_listener"
+# One per ELBv2 listener rule — metadata only; no rule-matched traffic.
+AWS_ELBV2_LISTENER_RULE = "aws_elbv2_listener_rule"
+# One per Classic (v1) ELB — metadata only; no access log objects.
+AWS_ELB_CLASSIC_LOAD_BALANCER = "aws_elb_classic_load_balancer"
+# One per WAFv2 Web ACL — metadata only; sampled requests NEVER accessed.
+AWS_WAFV2_WEB_ACL = "aws_wafv2_web_acl"
+# One per WAFv2 Web ACL association — maps Web ACL to a protected resource.
+AWS_WAFV2_WEB_ACL_ASSOCIATION = "aws_wafv2_web_acl_association"
+
 # ── M43 record types — Lambda + API Gateway Runtime/API Config ───────────────
 # One per Lambda function — metadata only; function code is NEVER accessed.
 AWS_LAMBDA_FUNCTION = "aws_lambda_function"
@@ -128,4 +144,12 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_APIGATEWAY_REST_STAGE,
     AWS_APIGATEWAYV2_API,
     AWS_APIGATEWAYV2_STAGE,
+    # M44
+    AWS_ELBV2_LOAD_BALANCER,
+    AWS_ELBV2_TARGET_GROUP,
+    AWS_ELBV2_LISTENER,
+    AWS_ELBV2_LISTENER_RULE,
+    AWS_ELB_CLASSIC_LOAD_BALANCER,
+    AWS_WAFV2_WEB_ACL,
+    AWS_WAFV2_WEB_ACL_ASSOCIATION,
 })

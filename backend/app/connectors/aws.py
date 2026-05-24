@@ -109,6 +109,9 @@ from app.core.failure_classifier import (
     classify_aws_rds_failure,
     classify_aws_lambda_failure,
     classify_aws_apigateway_failure,
+    classify_aws_elbv2_failure,
+    classify_aws_elb_classic_failure,
+    classify_aws_wafv2_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -149,6 +152,13 @@ from app.connectors.aws_schema import (
     AWS_APIGATEWAY_REST_STAGE,
     AWS_APIGATEWAYV2_API,
     AWS_APIGATEWAYV2_STAGE,
+    AWS_ELBV2_LOAD_BALANCER,
+    AWS_ELBV2_TARGET_GROUP,
+    AWS_ELBV2_LISTENER,
+    AWS_ELBV2_LISTENER_RULE,
+    AWS_ELB_CLASSIC_LOAD_BALANCER,
+    AWS_WAFV2_WEB_ACL,
+    AWS_WAFV2_WEB_ACL_ASSOCIATION,
 )
 
 logger = logging.getLogger(__name__)
@@ -880,6 +890,243 @@ def _apigw_policy_summary(policy_json: str, account_id: str) -> dict | None:
     return _analyze_secret_resource_policy(policy_json, account_id)
 
 
+# ── M44: Load Balancer + WAF helpers ─────────────────────────────────────────
+
+# Name sensitivity classification reuses the Lambda name classifier patterns.
+# Sensitive categories include: production, credential, api_key, auth, payment,
+# database, internal, config, secure, admin, customer.
+
+def _classify_elb_name_sensitivity(name: str) -> str:
+    """Return sensitivity category string for an ELB/WAF name.
+
+    Reuses _classify_lambda_name_sensitivity — same pattern vocabulary.
+    """
+    return _classify_lambda_name_sensitivity(name)
+
+
+def _elb_dns_name_suffix(dns_name: str) -> str | None:
+    """Return a safe suffix of the DNS name (last 24 chars) for display.
+
+    Full DNS name is never stored to avoid leaking internal topology.
+    Returns None if the name is empty.
+    """
+    if not dns_name:
+        return None
+    # Return last segment that uniquely identifies the LB without full topology
+    return dns_name[-24:] if len(dns_name) > 24 else dns_name
+
+
+def _hash_elb_arn(arn: str) -> str | None:
+    """Return 12-char SHA-256 hex prefix of an ARN.
+
+    Re-uses _hash_kms_key_id convention — same 12-char prefix, same purpose.
+    """
+    return _hash_kms_key_id(arn) if arn else None
+
+
+def _summarize_elbv2_attributes(attrs: list[dict]) -> dict:
+    """Extract safe ELBv2 load balancer attribute values from the raw list.
+
+    Raw attribute list format: [{"Key": "...", "Value": "..."}, ...]
+    SECURITY: Only known safe fields are extracted by key name.
+    Unknown attributes are counted but values never stored.
+    """
+    result: dict = {}
+    for attr in attrs:
+        k = attr.get("Key") or ""
+        v = attr.get("Value") or ""
+        if k == "deletion_protection.enabled":
+            result["deletion_protection_enabled"] = v.lower() == "true"
+        elif k == "access_logs.s3.enabled":
+            result["access_logs_enabled"] = v.lower() == "true"
+        elif k == "access_logs.s3.bucket":
+            # Never store full bucket name — suffix only
+            result["access_logs_bucket_suffix"] = v[-20:] if v else None
+        elif k == "idle_timeout.timeout_seconds":
+            try:
+                result["idle_timeout_seconds"] = int(v)
+            except (ValueError, TypeError):
+                pass
+        elif k == "routing.http2.enabled":
+            result["routing_http2_enabled"] = v.lower() == "true"
+        elif k == "routing.http.desync_mitigation_mode":
+            result["desync_mitigation_mode"] = v  # safe enum: strictest/defensive/monitor
+        elif k == "routing.http.drop_invalid_header_fields.enabled":
+            result["drop_invalid_header_fields_enabled"] = v.lower() == "true"
+        elif k == "routing.http.preserve_host_header.enabled":
+            result["preserve_host_header_enabled"] = v.lower() == "true"
+        elif k == "routing.http.xff_header_processing.mode":
+            result["xff_header_processing_mode"] = v  # safe enum: append/preserve/remove
+    return result
+
+
+def _summarize_target_group_attributes(attrs: list[dict]) -> dict:
+    """Extract safe target group attribute values.
+
+    SECURITY: Only known safe fields are extracted. Values for unknown keys
+    are never stored.
+    """
+    result: dict = {}
+    for attr in attrs:
+        k = attr.get("Key") or ""
+        v = attr.get("Value") or ""
+        if k == "deregistration_delay.timeout_seconds":
+            try:
+                result["deregistration_delay_seconds"] = int(v)
+            except (ValueError, TypeError):
+                pass
+        elif k == "stickiness.enabled":
+            result["stickiness_enabled"] = v.lower() == "true"
+        elif k == "slow_start.duration_seconds":
+            try:
+                result["slow_start_duration_seconds"] = int(v)
+            except (ValueError, TypeError):
+                pass
+    return result
+
+
+def _summarize_listener_actions(actions: list[dict]) -> dict:
+    """Return safe summaries of listener default actions.
+
+    SECURITY: Target group ARNs are hashed. Redirect/fixed-response
+    values (status codes, bodies, URIs) are summarised as booleans only.
+    Never stores raw target URIs, headers, bodies, or query strings.
+    """
+    action_types: list[str] = []
+    tg_hashes: list[str] = []
+    auth_present = False
+    redirect_present = False
+    fixed_response_present = False
+
+    for action in actions:
+        atype = (action.get("Type") or "").lower()
+        action_types.append(atype)
+        if atype == "forward":
+            # Single TG forward
+            tg_arn = action.get("TargetGroupArn") or ""
+            if tg_arn:
+                h = _hash_elb_arn(tg_arn)
+                if h:
+                    tg_hashes.append(h)
+            # Multi TG forward
+            tg_config = action.get("ForwardConfig") or {}
+            for tg in tg_config.get("TargetGroups") or []:
+                tg_arn2 = tg.get("TargetGroupArn") or ""
+                if tg_arn2:
+                    h2 = _hash_elb_arn(tg_arn2)
+                    if h2:
+                        tg_hashes.append(h2)
+        elif atype in ("authenticate-cognito", "authenticate-oidc"):
+            auth_present = True
+        elif atype == "redirect":
+            redirect_present = True
+        elif atype == "fixed-response":
+            fixed_response_present = True
+
+    return {
+        "action_types":                   sorted(set(action_types)) or None,
+        "target_group_arn_hashes":        sorted(set(tg_hashes)) or None,
+        "auth_action_present":            auth_present,
+        "redirect_action_present":        redirect_present,
+        "fixed_response_action_present":  fixed_response_present,
+    }
+
+
+def _summarize_listener_rule_conditions(conditions: list[dict]) -> dict:
+    """Return safe condition type presence flags for a listener rule.
+
+    SECURITY: Condition VALUES (hostnames, paths, HTTP header values,
+    source IPs, query string values) are NEVER stored — only field type
+    presence booleans and counts are returned.
+    """
+    field_counts: dict[str, int] = {}
+    host_header = False
+    path_pattern = False
+    source_ip = False
+    http_header = False
+    query_string = False
+
+    for cond in conditions:
+        field = (cond.get("Field") or "").lower()
+        field_counts[field] = field_counts.get(field, 0) + 1
+        if field == "host-header":
+            host_header = True
+        elif field == "path-pattern":
+            path_pattern = True
+        elif field == "source-ip":
+            source_ip = True
+        elif field == "http-header":
+            http_header = True
+        elif field == "query-string":
+            query_string = True
+
+    return {
+        "condition_field_counts":         field_counts or None,
+        "host_header_condition_present":  host_header,
+        "path_pattern_condition_present": path_pattern,
+        "source_ip_condition_present":    source_ip,
+        "http_header_condition_present":  http_header,
+        "query_string_condition_present": query_string,
+    }
+
+
+def _summarize_wafv2_rules(rules: list[dict]) -> dict:
+    """Summarise WAFv2 Web ACL rules by count/type.
+
+    SECURITY: Rule statements (byte match strings, regex, IP sets) are
+    NEVER stored. GetSampledRequests is NEVER called.
+    Only aggregate count/type signals are returned.
+    """
+    rule_count = len(rules)
+    managed_count = 0
+    custom_count = 0
+    rate_based_count = 0
+    allow_count = 0
+    block_count = 0
+    count_count = 0
+    captcha_count = 0
+    override_count_count = 0
+
+    for rule in rules:
+        stmt = rule.get("Statement") or {}
+        action = rule.get("Action") or {}
+        override_action = rule.get("OverrideAction") or {}
+
+        # Classify rule type
+        if "ManagedRuleGroupStatement" in stmt:
+            managed_count += 1
+        elif "RateBasedStatement" in stmt:
+            rate_based_count += 1
+        else:
+            custom_count += 1
+
+        # Classify terminal action
+        if "Allow" in action:
+            allow_count += 1
+        elif "Block" in action:
+            block_count += 1
+        elif "Count" in action:
+            count_count += 1
+        elif "Captcha" in action or "Challenge" in action:
+            captcha_count += 1
+
+        # Count override-to-count (suppresses managed rule blocks)
+        if "Count" in override_action:
+            override_count_count += 1
+
+    return {
+        "rule_count":                   rule_count,
+        "managed_rule_group_count":     managed_count,
+        "custom_rule_count":            custom_count,
+        "rate_based_rule_count":        rate_based_count,
+        "allow_action_count":           allow_count,
+        "block_action_count":           block_count,
+        "count_action_count":           count_count,
+        "captcha_challenge_action_count": captcha_count,
+        "override_count_action_count":  override_count_count,
+    }
+
+
 # ── M39: IAM policy and trust analysis helpers ────────────────────────────────
 
 # Services whose actions in a policy are considered sensitive for privilege
@@ -1525,6 +1772,33 @@ class AWSConnector(BaseConnector):
             len(apigwv2_records),
         )
 
+        # 15. ELBv2 load balancers, listeners, rules, target groups (M44) — regional.
+        #     SECURITY: Access log objects NEVER read. Request/response traffic NEVER accessed.
+        elbv2_records = self._fetch_elbv2_resources(credentials, account_id)
+        records.extend(elbv2_records)
+        logger.info(
+            "AWSConnector.fetch: elbv2_resources fetched  count=%d",
+            len(elbv2_records),
+        )
+
+        # 16. Classic ELB load balancers (M44) — regional; metadata only.
+        #     SECURITY: Access log objects NEVER read.
+        elb_classic_records = self._fetch_elb_classic_resources(credentials, account_id)
+        records.extend(elb_classic_records)
+        logger.info(
+            "AWSConnector.fetch: elb_classic_resources fetched  count=%d",
+            len(elb_classic_records),
+        )
+
+        # 17. WAFv2 REGIONAL Web ACLs (M44) — regional; metadata only.
+        #     SECURITY: GetSampledRequests NEVER called. Rule statement values NEVER stored.
+        wafv2_records = self._fetch_wafv2_resources(credentials, account_id)
+        records.extend(wafv2_records)
+        logger.info(
+            "AWSConnector.fetch: wafv2_resources fetched  count=%d",
+            len(wafv2_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -1578,6 +1852,18 @@ class AWSConnector(BaseConnector):
             1 for r in apigwv2_records
             if r.get("record_type") == AWS_APIGATEWAYV2_API
         )
+        elbv2_lb_count = sum(
+            1 for r in elbv2_records
+            if r.get("record_type") == AWS_ELBV2_LOAD_BALANCER
+        )
+        elb_classic_count = sum(
+            1 for r in elb_classic_records
+            if r.get("record_type") == AWS_ELB_CLASSIC_LOAD_BALANCER
+        )
+        wafv2_acl_count = sum(
+            1 for r in wafv2_records
+            if r.get("record_type") == AWS_WAFV2_WEB_ACL
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -1594,6 +1880,9 @@ class AWSConnector(BaseConnector):
             lambda_function_count=lambda_function_count,
             apigw_rest_api_count=apigw_rest_api_count,
             apigwv2_api_count=apigwv2_api_count,
+            elbv2_lb_count=elbv2_lb_count,
+            elb_classic_count=elb_classic_count,
+            wafv2_acl_count=wafv2_acl_count,
         )
         records.append(inventory_record)
 
@@ -1706,6 +1995,9 @@ class AWSConnector(BaseConnector):
         lambda_function_count: int = 0,
         apigw_rest_api_count: int = 0,
         apigwv2_api_count: int = 0,
+        elbv2_lb_count: int = 0,
+        elb_classic_count: int = 0,
+        wafv2_acl_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -1717,7 +2009,7 @@ class AWSConnector(BaseConnector):
             "enabled_surfaces":               [
                 "account_inventory", "s3", "security_groups", "vpc",
                 "iam", "route53", "cloudfront", "secrets_manager", "ssm",
-                "rds", "lambda", "api_gateway",
+                "rds", "lambda", "api_gateway", "load_balancers", "waf",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -1733,8 +2025,11 @@ class AWSConnector(BaseConnector):
             "lambda_function_count":          lambda_function_count,
             "apigw_rest_api_count":           apigw_rest_api_count,
             "apigwv2_api_count":              apigwv2_api_count,
+            "elbv2_lb_count":                 elbv2_lb_count,
+            "elb_classic_count":              elb_classic_count,
+            "wafv2_acl_count":                wafv2_acl_count,
             "future_surfaces": [
-                "load_balancers", "waf", "cloudtrail", "guardduty", "security_hub",
+                "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations", "cloudwatch",
             ],
@@ -6220,6 +6515,903 @@ class AWSConnector(BaseConnector):
             logger.warning(
                 "aws: GetApis (v2) unexpected error  region=%s",
                 region, exc_info=True,
+            )
+
+        return records
+
+    # ── M44: ELBv2 fetch methods ───────────────────────────────────────────────
+
+    def _fetch_elbv2_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch ELBv2 metadata across all selected regions.
+
+        SECURITY:
+        - Access log objects are NEVER read.
+        - Request/response traffic is NEVER accessed.
+        - elasticloadbalancing:RegisterTargets / DeregisterTargets NEVER called.
+        - Only configuration metadata is collected.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("elbv2", credentials, region=region)
+                region_records = self._fetch_elbv2_in_region(client, account_id, region)
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: elbv2 fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: elbv2 fetch failed  region=%s  (unexpected error)",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_elbv2_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize ELBv2 resources in a single region.
+
+        Calls (fail-soft per API):
+          - DescribeLoadBalancers (paginated) → aws_elbv2_load_balancer records
+          - DescribeLoadBalancerAttributes per LB → attribute fields
+          - DescribeTags per batch → tag_keys (keys only, never values)
+          - DescribeListeners per LB → aws_elbv2_listener records
+          - DescribeRules per listener → aws_elbv2_listener_rule records
+          - DescribeTargetGroups (paginated) → aws_elbv2_target_group records
+          - DescribeTargetGroupAttributes per TG → attribute fields
+          - DescribeTargetHealth per TG → healthy/unhealthy counts only
+
+        SECURITY:
+        - Access log objects NEVER read.
+        - Request/response bodies NEVER accessed.
+        - Only metadata counts from DescribeTargetHealth (healthy/unhealthy count).
+        """
+        records: list[dict] = []
+        # Maps lb_arn → lb_name for listener records
+        lb_arn_to_name: dict[str, str] = {}
+
+        # ── DescribeLoadBalancers (paginated) ─────────────────────────────────
+        try:
+            dlb_kwargs: dict = {}
+            while True:
+                try:
+                    response = self._call_aws(client.describe_load_balancers, **dlb_kwargs)
+                except Exception as exc:
+                    fc = classify_aws_elbv2_failure("DescribeLoadBalancers", exc)
+                    logger.warning(
+                        "aws: DescribeLoadBalancers failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for lb in response.get("LoadBalancers") or []:
+                    lb_arn: str = lb.get("LoadBalancerArn") or ""
+                    lb_name: str = lb.get("LoadBalancerName") or ""
+                    if not lb_arn:
+                        continue
+
+                    lb_arn_to_name[lb_arn] = lb_name
+
+                    lb_type: str = lb.get("Type") or ""
+                    scheme: str = lb.get("Scheme") or ""
+                    state_code: str = (lb.get("State") or {}).get("Code") or ""
+                    dns_name: str = lb.get("DNSName") or ""
+                    vpc_id: str = lb.get("VpcId") or ""
+                    ip_type: str = lb.get("IpAddressType") or ""
+                    hosted_zone_id: str = lb.get("CanonicalHostedZoneId") or ""
+
+                    # AZs + subnets
+                    az_list = lb.get("AvailabilityZones") or []
+                    az_count: int = len(az_list)
+                    subnet_ids: list[str] = sorted(
+                        az.get("SubnetId") or "" for az in az_list if az.get("SubnetId")
+                    )
+                    subnet_count: int = len(subnet_ids)
+
+                    # Security groups (ALBs only; NLBs/GLBs have none)
+                    sg_ids: list[str] = sorted(lb.get("SecurityGroups") or [])
+                    sg_count: int = len(sg_ids)
+
+                    sensitive_cat = _classify_elb_name_sensitivity(lb_name)
+
+                    # Fetch attributes (fail-soft)
+                    attr_data: dict = {}
+                    try:
+                        attr_resp = self._call_aws(
+                            client.describe_load_balancer_attributes,
+                            LoadBalancerArn=lb_arn,
+                        )
+                        attr_data = _summarize_elbv2_attributes(
+                            attr_resp.get("Attributes") or []
+                        )
+                    except Exception as exc:
+                        fc = classify_aws_elbv2_failure("DescribeLoadBalancerAttributes", exc)
+                        logger.debug(
+                            "aws: DescribeLoadBalancerAttributes failed  region=%s  lb=%s  code=%s",
+                            region, lb_name, fc.error_code,
+                        )
+
+                    # Fetch tags (fail-soft) — keys only, never values
+                    tag_keys: list[str] | None = None
+                    try:
+                        tags_resp = self._call_aws(
+                            client.describe_tags,
+                            ResourceArns=[lb_arn],
+                        )
+                        for tag_desc in tags_resp.get("TagDescriptions") or []:
+                            if tag_desc.get("ResourceArn") == lb_arn:
+                                raw_tags = tag_desc.get("Tags") or []
+                                keys = sorted(t["Key"] for t in raw_tags if "Key" in t)
+                                tag_keys = keys or None
+                    except Exception:
+                        pass  # Tags are best-effort
+
+                    stable_id = f"{account_id}/{region}/{lb_arn}"
+                    records.append({
+                        "record_type":                   AWS_ELBV2_LOAD_BALANCER,
+                        "record_id":                     stable_id,
+                        "external_id":                   stable_id,
+                        "name":                          lb_name,
+                        "account_id":                    account_id,
+                        "region":                        region,
+                        "lb_arn":                        lb_arn,
+                        "type":                          lb_type,
+                        "scheme":                        scheme,
+                        "state":                         state_code,
+                        "dns_name_hash":                 _hash_elb_arn(dns_name) if dns_name else None,
+                        "hosted_zone_id_present":        bool(hosted_zone_id),
+                        "vpc_id":                        vpc_id or None,
+                        "availability_zone_count":       az_count,
+                        "subnet_ids":                    subnet_ids or None,
+                        "subnet_count":                  subnet_count,
+                        "security_group_ids":            sg_ids or None,
+                        "security_group_count":          sg_count,
+                        "ip_address_type":               ip_type or None,
+                        "deletion_protection_enabled":   attr_data.get("deletion_protection_enabled"),
+                        "access_logs_enabled":           attr_data.get("access_logs_enabled"),
+                        "access_logs_bucket_suffix":     attr_data.get("access_logs_bucket_suffix"),
+                        "idle_timeout_seconds":          attr_data.get("idle_timeout_seconds"),
+                        "routing_http2_enabled":         attr_data.get("routing_http2_enabled"),
+                        "desync_mitigation_mode":        attr_data.get("desync_mitigation_mode"),
+                        "drop_invalid_header_fields_enabled": attr_data.get("drop_invalid_header_fields_enabled"),
+                        "preserve_host_header_enabled":  attr_data.get("preserve_host_header_enabled"),
+                        "xff_header_processing_mode":    attr_data.get("xff_header_processing_mode"),
+                        "tag_keys":                      tag_keys,
+                        "sensitive_name_category":       sensitive_cat,
+                        "config_fetch_warnings":         None,
+                    })
+
+                next_marker = response.get("NextMarker")
+                if next_marker:
+                    dlb_kwargs["Marker"] = next_marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: DescribeLoadBalancers unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        # ── DescribeListeners + DescribeRules per LB ──────────────────────────
+        for lb_arn, lb_name in lb_arn_to_name.items():
+            try:
+                dl_kwargs: dict = {"LoadBalancerArn": lb_arn}
+                while True:
+                    try:
+                        listener_resp = self._call_aws(
+                            client.describe_listeners, **dl_kwargs
+                        )
+                    except Exception as exc:
+                        fc = classify_aws_elbv2_failure("DescribeListeners", exc)
+                        logger.debug(
+                            "aws: DescribeListeners failed  region=%s  lb=%s  code=%s",
+                            region, lb_name, fc.error_code,
+                        )
+                        break
+
+                    for lst in listener_resp.get("Listeners") or []:
+                        lst_arn: str = lst.get("ListenerArn") or ""
+                        if not lst_arn:
+                            continue
+
+                        port: int | None = lst.get("Port")
+                        protocol: str = lst.get("Protocol") or ""
+                        ssl_policy: str | None = lst.get("SslPolicy") or None
+
+                        # Certificate count (never store raw cert ARNs)
+                        certs = lst.get("Certificates") or []
+                        cert_count: int = len(certs)
+
+                        # Summarize default actions
+                        default_actions = lst.get("DefaultActions") or []
+                        action_summary = _summarize_listener_actions(default_actions)
+
+                        lst_stable_id = f"{account_id}/{region}/{lst_arn}"
+                        records.append({
+                            "record_type":                   AWS_ELBV2_LISTENER,
+                            "record_id":                     lst_stable_id,
+                            "external_id":                   lst_stable_id,
+                            "name":                          f"{lb_name}:{port or '?'}/{protocol}",
+                            "account_id":                    account_id,
+                            "region":                        region,
+                            "listener_arn":                  lst_arn,
+                            "load_balancer_name":            lb_name,
+                            "load_balancer_arn_hash":        _hash_elb_arn(lb_arn),
+                            "port":                          port,
+                            "protocol":                      protocol,
+                            "ssl_policy":                    ssl_policy,
+                            "certificate_count":             cert_count,
+                            "default_action_types":          action_summary["action_types"],
+                            "default_target_group_arn_hashes": action_summary["target_group_arn_hashes"],
+                            "auth_action_present":           action_summary["auth_action_present"],
+                            "redirect_action_present":       action_summary["redirect_action_present"],
+                            "fixed_response_action_present": action_summary["fixed_response_action_present"],
+                            "config_fetch_warnings":         None,
+                        })
+
+                        # Fetch rules for this listener (fail-soft)
+                        try:
+                            dr_kwargs: dict = {"ListenerArn": lst_arn}
+                            while True:
+                                rules_resp = self._call_aws(
+                                    client.describe_rules, **dr_kwargs
+                                )
+                                for rule in rules_resp.get("Rules") or []:
+                                    rule_arn: str = rule.get("RuleArn") or ""
+                                    if not rule_arn:
+                                        continue
+
+                                    priority: str = str(rule.get("Priority") or "")
+                                    is_default: bool = priority.lower() == "default"
+
+                                    cond_summary = _summarize_listener_rule_conditions(
+                                        rule.get("Conditions") or []
+                                    )
+                                    rule_action_summary = _summarize_listener_actions(
+                                        rule.get("Actions") or []
+                                    )
+
+                                    rule_stable_id = f"{account_id}/{region}/{rule_arn}"
+                                    records.append({
+                                        "record_type":                   AWS_ELBV2_LISTENER_RULE,
+                                        "record_id":                     rule_stable_id,
+                                        "external_id":                   rule_stable_id,
+                                        "name":                          f"{lb_name}/{protocol}/rule-{priority}",
+                                        "account_id":                    account_id,
+                                        "region":                        region,
+                                        "rule_arn":                      rule_arn,
+                                        "listener_arn_hash":             _hash_elb_arn(lst_arn),
+                                        "load_balancer_name":            lb_name,
+                                        "priority":                      priority,
+                                        "is_default":                    is_default,
+                                        "condition_field_counts":        cond_summary["condition_field_counts"],
+                                        "host_header_condition_present": cond_summary["host_header_condition_present"],
+                                        "path_pattern_condition_present": cond_summary["path_pattern_condition_present"],
+                                        "source_ip_condition_present":   cond_summary["source_ip_condition_present"],
+                                        "http_header_condition_present": cond_summary["http_header_condition_present"],
+                                        "query_string_condition_present": cond_summary["query_string_condition_present"],
+                                        "action_types":                  rule_action_summary["action_types"],
+                                        "target_group_arn_hashes":       rule_action_summary["target_group_arn_hashes"],
+                                        "auth_action_present":           rule_action_summary["auth_action_present"],
+                                        "redirect_action_present":       rule_action_summary["redirect_action_present"],
+                                        "fixed_response_action_present": rule_action_summary["fixed_response_action_present"],
+                                        "config_fetch_warnings":         None,
+                                    })
+
+                                next_rules_marker = rules_resp.get("NextMarker")
+                                if next_rules_marker:
+                                    dr_kwargs["Marker"] = next_rules_marker
+                                else:
+                                    break
+                        except Exception as exc:
+                            fc = classify_aws_elbv2_failure("DescribeRules", exc)
+                            logger.debug(
+                                "aws: DescribeRules failed  region=%s  lb=%s  lst=%s  code=%s",
+                                region, lb_name, lst_arn, fc.error_code,
+                            )
+
+                    next_lst_marker = listener_resp.get("NextMarker")
+                    if next_lst_marker:
+                        dl_kwargs["Marker"] = next_lst_marker
+                    else:
+                        break
+            except Exception:
+                logger.debug(
+                    "aws: Listeners fetch unexpected error  region=%s  lb=%s",
+                    region, lb_name, exc_info=True,
+                )
+
+        # ── DescribeTargetGroups (paginated) ──────────────────────────────────
+        try:
+            dtg_kwargs: dict = {}
+            while True:
+                try:
+                    tg_response = self._call_aws(
+                        client.describe_target_groups, **dtg_kwargs
+                    )
+                except Exception as exc:
+                    fc = classify_aws_elbv2_failure("DescribeTargetGroups", exc)
+                    logger.warning(
+                        "aws: DescribeTargetGroups failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for tg in tg_response.get("TargetGroups") or []:
+                    tg_arn: str = tg.get("TargetGroupArn") or ""
+                    tg_name: str = tg.get("TargetGroupName") or ""
+                    if not tg_arn:
+                        continue
+
+                    tg_protocol: str = tg.get("Protocol") or ""
+                    tg_port: int | None = tg.get("Port")
+                    tg_proto_ver: str = tg.get("ProtocolVersion") or ""
+                    tg_type: str = tg.get("TargetType") or ""
+                    tg_vpc: str = tg.get("VpcId") or ""
+
+                    hc = tg.get("HealthCheckEnabled") if tg.get("HealthCheckEnabled") is not None else True
+                    hc_protocol: str = tg.get("HealthCheckProtocol") or ""
+                    hc_port: str = tg.get("HealthCheckPort") or ""
+                    hc_path: str = tg.get("HealthCheckPath") or ""
+                    hc_interval: int | None = tg.get("HealthCheckIntervalSeconds")
+                    hc_timeout: int | None = tg.get("HealthCheckTimeoutSeconds")
+                    healthy_t: int | None = tg.get("HealthyThresholdCount")
+                    unhealthy_t: int | None = tg.get("UnhealthyThresholdCount")
+
+                    # Matcher: only the summary value (e.g. "200-299"), not raw
+                    matcher = tg.get("Matcher") or {}
+                    matcher_summary: str | None = (
+                        matcher.get("HttpCode") or matcher.get("GrpcCode") or None
+                    )
+
+                    lb_arns = tg.get("LoadBalancerArns") or []
+                    lb_arn_count = len(lb_arns)
+
+                    tg_sensitive_cat = _classify_elb_name_sensitivity(tg_name)
+
+                    # Fetch target group attributes (fail-soft)
+                    tg_attr_data: dict = {}
+                    try:
+                        tga_resp = self._call_aws(
+                            client.describe_target_group_attributes,
+                            TargetGroupArn=tg_arn,
+                        )
+                        tg_attr_data = _summarize_target_group_attributes(
+                            tga_resp.get("Attributes") or []
+                        )
+                    except Exception:
+                        pass
+
+                    # Fetch target health — count only, no target IDs or IPs
+                    target_count: int = 0
+                    healthy_count: int = 0
+                    unhealthy_count: int = 0
+                    try:
+                        health_resp = self._call_aws(
+                            client.describe_target_health,
+                            TargetGroupArn=tg_arn,
+                        )
+                        health_descs = health_resp.get("TargetHealthDescriptions") or []
+                        target_count = len(health_descs)
+                        for h in health_descs:
+                            state = (h.get("TargetHealth") or {}).get("State") or ""
+                            if state == "healthy":
+                                healthy_count += 1
+                            elif state in ("unhealthy", "draining", "unavailable"):
+                                unhealthy_count += 1
+                    except Exception as exc:
+                        fc = classify_aws_elbv2_failure("DescribeTargetHealth", exc)
+                        logger.debug(
+                            "aws: DescribeTargetHealth failed  region=%s  tg=%s  code=%s",
+                            region, tg_name, fc.error_code,
+                        )
+
+                    # Tags (fail-soft)
+                    tg_tag_keys: list[str] | None = None
+                    try:
+                        tg_tags_resp = self._call_aws(
+                            client.describe_tags, ResourceArns=[tg_arn]
+                        )
+                        for td in tg_tags_resp.get("TagDescriptions") or []:
+                            if td.get("ResourceArn") == tg_arn:
+                                raw = td.get("Tags") or []
+                                tg_tag_keys = sorted(t["Key"] for t in raw if "Key" in t) or None
+                    except Exception:
+                        pass
+
+                    tg_stable_id = f"{account_id}/{region}/{tg_arn}"
+                    records.append({
+                        "record_type":                  AWS_ELBV2_TARGET_GROUP,
+                        "record_id":                    tg_stable_id,
+                        "external_id":                  tg_stable_id,
+                        "name":                         tg_name,
+                        "account_id":                   account_id,
+                        "region":                       region,
+                        "tg_arn":                       tg_arn,
+                        "protocol":                     tg_protocol or None,
+                        "port":                         tg_port,
+                        "protocol_version":             tg_proto_ver or None,
+                        "target_type":                  tg_type or None,
+                        "vpc_id":                       tg_vpc or None,
+                        "health_check_enabled":         hc,
+                        "health_check_protocol":        hc_protocol or None,
+                        "health_check_port":            hc_port or None,
+                        "health_check_path_present":    bool(hc_path),
+                        "health_check_interval_seconds": hc_interval,
+                        "health_check_timeout_seconds": hc_timeout,
+                        "healthy_threshold_count":      healthy_t,
+                        "unhealthy_threshold_count":    unhealthy_t,
+                        "matcher_summary":              matcher_summary,
+                        "load_balancer_arn_count":      lb_arn_count,
+                        "target_count":                 target_count,
+                        "healthy_target_count":         healthy_count,
+                        "unhealthy_target_count":       unhealthy_count,
+                        "deregistration_delay_seconds": tg_attr_data.get("deregistration_delay_seconds"),
+                        "stickiness_enabled":           tg_attr_data.get("stickiness_enabled"),
+                        "slow_start_duration_seconds":  tg_attr_data.get("slow_start_duration_seconds"),
+                        "tag_keys":                     tg_tag_keys,
+                        "sensitive_name_category":      tg_sensitive_cat,
+                        "config_fetch_warnings":        None,
+                    })
+
+                next_tg_marker = tg_response.get("NextMarker")
+                if next_tg_marker:
+                    dtg_kwargs["Marker"] = next_tg_marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: DescribeTargetGroups unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        return records
+
+    # ── M44: Classic ELB fetch methods ────────────────────────────────────────
+
+    def _fetch_elb_classic_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch Classic ELB metadata across all selected regions.
+
+        SECURITY:
+        - Access log objects are NEVER read.
+        - Request/response traffic is NEVER accessed.
+        - elasticloadbalancing:RegisterInstancesWithLoadBalancer NEVER called.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("elb", credentials, region=region)
+                region_records = self._fetch_elb_classic_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: elb_classic fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: elb_classic fetch failed  region=%s  (unexpected error)",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_elb_classic_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize Classic ELB resources in a single region.
+
+        SECURITY:
+        - Access log objects NEVER read.
+        - Request/response traffic NEVER accessed.
+        - DNS name is hashed, never stored raw.
+        - Tag values never stored (keys only).
+        """
+        records: list[dict] = []
+
+        try:
+            dlb_kwargs: dict = {}
+            while True:
+                try:
+                    response = self._call_aws(
+                        client.describe_load_balancers, **dlb_kwargs
+                    )
+                except Exception as exc:
+                    fc = classify_aws_elb_classic_failure("DescribeLoadBalancers", exc)
+                    logger.warning(
+                        "aws: Classic DescribeLoadBalancers failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for lb in response.get("LoadBalancerDescriptions") or []:
+                    lb_name: str = lb.get("LoadBalancerName") or ""
+                    if not lb_name:
+                        continue
+
+                    dns_name: str = lb.get("DNSName") or ""
+                    scheme: str = lb.get("Scheme") or ""
+                    vpc_id: str = lb.get("VPCId") or ""
+
+                    # Subnets + AZs
+                    subnet_ids: list[str] = sorted(lb.get("Subnets") or [])
+                    az_list = lb.get("AvailabilityZones") or []
+                    az_count: int = len(az_list)
+
+                    # Security groups
+                    sg_ids: list[str] = sorted(lb.get("SecurityGroups") or [])
+
+                    # Listeners — protocol names only (never port contents)
+                    listeners = lb.get("ListenerDescriptions") or []
+                    listener_count: int = len(listeners)
+                    listener_protocols: list[str] = sorted(set(
+                        ld.get("Listener", {}).get("Protocol") or ""
+                        for ld in listeners
+                        if ld.get("Listener", {}).get("Protocol")
+                    ))
+
+                    # Instance count (no IPs or IDs stored)
+                    instances = lb.get("Instances") or []
+                    instance_count: int = len(instances)
+
+                    sensitive_cat = _classify_elb_name_sensitivity(lb_name)
+
+                    # Fetch attributes (fail-soft)
+                    cross_zone: bool | None = None
+                    access_logs: bool | None = None
+                    conn_draining: bool | None = None
+                    idle_timeout: int | None = None
+                    try:
+                        attr_resp = self._call_aws(
+                            client.describe_load_balancer_attributes,
+                            LoadBalancerName=lb_name,
+                        )
+                        attrs = attr_resp.get("LoadBalancerAttributes") or {}
+                        czlb = attrs.get("CrossZoneLoadBalancing") or {}
+                        cross_zone = czlb.get("Enabled")
+                        al = attrs.get("AccessLog") or {}
+                        access_logs = al.get("Enabled")
+                        cd = attrs.get("ConnectionDraining") or {}
+                        conn_draining = cd.get("Enabled")
+                        ci = attrs.get("ConnectionSettings") or {}
+                        idle_timeout = ci.get("IdleTimeout")
+                    except Exception:
+                        pass
+
+                    # Instance health — count only
+                    healthy_inst: int = 0
+                    unhealthy_inst: int = 0
+                    try:
+                        health_resp = self._call_aws(
+                            client.describe_instance_health,
+                            LoadBalancerName=lb_name,
+                        )
+                        for inst_state in health_resp.get("InstanceStates") or []:
+                            if inst_state.get("State") == "InService":
+                                healthy_inst += 1
+                            else:
+                                unhealthy_inst += 1
+                    except Exception:
+                        pass
+
+                    # Tags (fail-soft) — keys only, never values
+                    tag_keys: list[str] | None = None
+                    try:
+                        tags_resp = self._call_aws(
+                            client.describe_tags, LoadBalancerNames=[lb_name]
+                        )
+                        for td in tags_resp.get("TagDescriptions") or []:
+                            if td.get("LoadBalancerName") == lb_name:
+                                raw = td.get("Tags") or []
+                                tag_keys = sorted(t["Key"] for t in raw if "Key" in t) or None
+                    except Exception:
+                        pass
+
+                    stable_id = f"{account_id}/{region}/{lb_name}"
+                    records.append({
+                        "record_type":                    AWS_ELB_CLASSIC_LOAD_BALANCER,
+                        "record_id":                      stable_id,
+                        "external_id":                    stable_id,
+                        "name":                           lb_name,
+                        "account_id":                     account_id,
+                        "region":                         region,
+                        "scheme":                         scheme or None,
+                        "dns_name_hash":                  _hash_elb_arn(dns_name) if dns_name else None,
+                        "vpc_id":                         vpc_id or None,
+                        "subnet_ids":                     subnet_ids or None,
+                        "security_group_ids":             sg_ids or None,
+                        "listener_count":                 listener_count,
+                        "listener_protocols":             listener_protocols or None,
+                        "availability_zone_count":        az_count,
+                        "instance_count":                 instance_count,
+                        "healthy_instance_count":         healthy_inst,
+                        "unhealthy_instance_count":       unhealthy_inst,
+                        "cross_zone_load_balancing_enabled": cross_zone,
+                        "access_logs_enabled":            access_logs,
+                        "connection_draining_enabled":    conn_draining,
+                        "idle_timeout_seconds":           idle_timeout,
+                        "tag_keys":                       tag_keys,
+                        "sensitive_name_category":        sensitive_cat,
+                        "config_fetch_warnings":          None,
+                    })
+
+                next_marker = response.get("NextPageToken")
+                if next_marker:
+                    dlb_kwargs["Marker"] = next_marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: Classic DescribeLoadBalancers unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        return records
+
+    # ── M44: WAFv2 fetch methods ──────────────────────────────────────────────
+
+    def _fetch_wafv2_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch WAFv2 REGIONAL Web ACL metadata across all selected regions.
+
+        SECURITY:
+        - GetSampledRequests is NEVER called.
+        - Request/response traffic and sampled request bodies NEVER accessed.
+        - Only Web ACL configuration metadata (counts, default action, rules
+          by type) is collected.
+        - Rule statement values (byte match strings, regex patterns, IP sets)
+          are NEVER stored — only aggregate type counts.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                waf_client = self._make_client("wafv2", credentials, region=region)
+                region_records = self._fetch_wafv2_in_region(
+                    waf_client, account_id, region, scope="REGIONAL"
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: wafv2 fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: wafv2 fetch failed  region=%s  (unexpected error)",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_wafv2_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+        scope: str = "REGIONAL",
+    ) -> list[dict]:
+        """Fetch and normalize WAFv2 Web ACLs in a single region/scope.
+
+        SECURITY:
+        - GetSampledRequests NEVER called.
+        - Sampled request bodies/headers/URIs NEVER accessed.
+        - Rule statement values (regexes, byte strings, IPs) NEVER stored.
+        - Tag values NEVER stored — only key names collected.
+        """
+        records: list[dict] = []
+
+        # ── ListWebACLs (paginated) ────────────────────────────────────────────
+        try:
+            lwa_kwargs: dict = {"Scope": scope}
+            while True:
+                try:
+                    list_resp = self._call_aws(client.list_web_acls, **lwa_kwargs)
+                except Exception as exc:
+                    fc = classify_aws_wafv2_failure("ListWebACLs", exc)
+                    logger.warning(
+                        "aws: ListWebACLs failed  region=%s  scope=%s  code=%s",
+                        region, scope, fc.error_code,
+                    )
+                    break
+
+                for acl_summary in list_resp.get("WebACLs") or []:
+                    acl_name: str = acl_summary.get("Name") or ""
+                    acl_id: str = acl_summary.get("Id") or ""
+                    acl_arn: str = acl_summary.get("ARN") or ""
+                    if not acl_id:
+                        continue
+
+                    sensitive_cat = _classify_elb_name_sensitivity(acl_name)
+
+                    # GetWebACL for full rule details (fail-soft)
+                    rule_summary: dict = {
+                        "rule_count": 0,
+                        "managed_rule_group_count": 0,
+                        "custom_rule_count": 0,
+                        "rate_based_rule_count": 0,
+                        "allow_action_count": 0,
+                        "block_action_count": 0,
+                        "count_action_count": 0,
+                        "captcha_challenge_action_count": 0,
+                        "override_count_action_count": 0,
+                    }
+                    default_action: str = "unknown"
+                    description_present: bool = False
+                    try:
+                        get_resp = self._call_aws(
+                            client.get_web_acl,
+                            Name=acl_name,
+                            Scope=scope,
+                            Id=acl_id,
+                        )
+                        acl_detail = get_resp.get("WebACL") or {}
+                        description_present = bool(acl_detail.get("Description"))
+                        default_action_raw = acl_detail.get("DefaultAction") or {}
+                        if "Allow" in default_action_raw:
+                            default_action = "allow"
+                        elif "Block" in default_action_raw:
+                            default_action = "block"
+                        else:
+                            default_action = "other"
+                        rules = acl_detail.get("Rules") or []
+                        rule_summary = _summarize_wafv2_rules(rules)
+                    except Exception as exc:
+                        fc = classify_aws_wafv2_failure("GetWebACL", exc)
+                        logger.debug(
+                            "aws: GetWebACL failed  region=%s  acl=%s  code=%s",
+                            region, acl_name, fc.error_code,
+                        )
+
+                    # GetLoggingConfiguration — only check if logging is enabled
+                    logging_enabled: bool = False
+                    try:
+                        log_resp = self._call_aws(
+                            client.get_logging_configuration,
+                            ResourceArn=acl_arn,
+                        )
+                        logging_enabled = bool(
+                            log_resp.get("LoggingConfiguration") or {}
+                        )
+                    except Exception:
+                        # Not configured or no permission → logging disabled or unknown
+                        pass
+
+                    # ListResourcesForWebACL — count + hash only, never raw ARNs
+                    assoc_resource_arns: list[str] = []
+                    try:
+                        lr_resp = self._call_aws(
+                            client.list_resources_for_web_acl,
+                            WebACLArn=acl_arn,
+                        )
+                        assoc_resource_arns = lr_resp.get("ResourceArns") or []
+                    except Exception as exc:
+                        fc = classify_aws_wafv2_failure("ListResourcesForWebACL", exc)
+                        logger.debug(
+                            "aws: ListResourcesForWebACL failed  region=%s  acl=%s  code=%s",
+                            region, acl_name, fc.error_code,
+                        )
+
+                    assoc_count = len(assoc_resource_arns)
+                    assoc_hashes = sorted(
+                        _hash_elb_arn(r) for r in assoc_resource_arns if r
+                    )
+
+                    # Tags (fail-soft) — keys only, never values
+                    waf_tag_keys: list[str] | None = None
+                    if acl_arn:
+                        try:
+                            tags_resp = self._call_aws(
+                                client.list_tags_for_resource,
+                                ResourceARN=acl_arn,
+                            )
+                            tag_list = (
+                                (tags_resp.get("TagInfoForResource") or {}).get("TagList") or []
+                            )
+                            waf_tag_keys = sorted(t["Key"] for t in tag_list if "Key" in t) or None
+                        except Exception:
+                            pass
+
+                    acl_stable_id = f"{account_id}/{region}/{scope}/{acl_arn or acl_id}"
+                    records.append({
+                        "record_type":                    AWS_WAFV2_WEB_ACL,
+                        "record_id":                      acl_stable_id,
+                        "external_id":                    acl_stable_id,
+                        "name":                           acl_name,
+                        "account_id":                     account_id,
+                        "region":                         region,
+                        "scope":                          scope,
+                        "acl_id":                         acl_id,
+                        "acl_arn":                        acl_arn,
+                        "description_present":            description_present,
+                        "default_action":                 default_action,
+                        "rule_count":                     rule_summary["rule_count"],
+                        "managed_rule_group_count":       rule_summary["managed_rule_group_count"],
+                        "custom_rule_count":              rule_summary["custom_rule_count"],
+                        "rate_based_rule_count":          rule_summary["rate_based_rule_count"],
+                        "allow_action_count":             rule_summary["allow_action_count"],
+                        "block_action_count":             rule_summary["block_action_count"],
+                        "count_action_count":             rule_summary["count_action_count"],
+                        "captcha_challenge_action_count": rule_summary["captcha_challenge_action_count"],
+                        "override_count_action_count":    rule_summary["override_count_action_count"],
+                        "logging_enabled":                logging_enabled,
+                        "associated_resource_count":      assoc_count,
+                        "associated_resource_arn_hashes": assoc_hashes or None,
+                        "tag_keys":                       waf_tag_keys,
+                        "sensitive_name_category":        sensitive_cat,
+                        "config_fetch_warnings":          None,
+                    })
+
+                    # Create association records
+                    for res_arn in assoc_resource_arns:
+                        if not res_arn:
+                            continue
+                        # Determine resource type from ARN prefix
+                        res_type = "unknown"
+                        if ":elasticloadbalancing:" in res_arn and "loadbalancer/" in res_arn.lower():
+                            res_type = "alb"
+                        elif ":apigateway:" in res_arn or "/restapis/" in res_arn:
+                            res_type = "apigateway"
+                        elif ":cloudfront:" in res_arn:
+                            res_type = "cloudfront"
+                        elif ":appsync:" in res_arn:
+                            res_type = "appsync"
+                        elif ":cognito-idp:" in res_arn:
+                            res_type = "cognito_user_pool"
+
+                        acl_key = _hash_elb_arn(acl_arn) or acl_id
+                        assoc_stable_id = (
+                            f"{account_id}/{region}/{scope}/{acl_key}/"
+                            f"{_hash_elb_arn(res_arn)}"
+                        )
+                        records.append({
+                            "record_type":           AWS_WAFV2_WEB_ACL_ASSOCIATION,
+                            "record_id":             assoc_stable_id,
+                            "external_id":           assoc_stable_id,
+                            "name":                  f"{acl_name} → {res_type}",
+                            "account_id":            account_id,
+                            "region":                region,
+                            "web_acl_name":          acl_name,
+                            "web_acl_arn_hash":      _hash_elb_arn(acl_arn),
+                            "resource_arn_hash":     _hash_elb_arn(res_arn),
+                            "resource_type":         res_type,
+                            "scope":                 scope,
+                            "config_fetch_warnings": None,
+                        })
+
+                next_waf_token = list_resp.get("NextMarker")
+                if next_waf_token:
+                    lwa_kwargs["NextMarker"] = next_waf_token
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: WAFv2 ListWebACLs unexpected error  region=%s  scope=%s",
+                region, scope, exc_info=True,
             )
 
         return records

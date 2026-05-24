@@ -1292,6 +1292,277 @@ _APIGATEWAY_ACCESS_DENIED_ACTION = (
 )
 
 
+def classify_aws_elbv2_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial ELBv2 sync failure (per-API, per-region).
+
+    Used when an individual ELBv2 API call fails inside
+    ``_fetch_elbv2_in_region``.  The overall sync continues; the result
+    is logged as a structured warning.
+
+    SECURITY: Access log objects are NEVER read.  Request/response traffic
+    is NEVER accessed.  Only configuration metadata is collected.
+
+    Args:
+        api_name: The ELBv2 API name (e.g. ``"DescribeLoadBalancers"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _ELB_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only ELBv2 read permissions. "
+        "Required: elasticloadbalancing:DescribeLoadBalancers, "
+        "elasticloadbalancing:DescribeListeners, "
+        "elasticloadbalancing:DescribeRules, "
+        "elasticloadbalancing:DescribeTargetGroups, "
+        "elasticloadbalancing:DescribeTargetHealth, "
+        "elasticloadbalancing:DescribeLoadBalancerAttributes, "
+        "elasticloadbalancing:DescribeTargetGroupAttributes. "
+        "ConfigTrace reads configuration metadata only; access log objects "
+        "and request traffic are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _ELB_API_CODES: dict[str, str] = {
+        "DescribeLoadBalancers":       "aws_elbv2_load_balancers_unavailable",
+        "DescribeListeners":           "aws_elbv2_listeners_unavailable",
+        "DescribeRules":               "aws_elbv2_rules_unavailable",
+        "DescribeTargetGroups":        "aws_elbv2_target_groups_unavailable",
+        "DescribeTargetHealth":        "aws_elbv2_target_health_unavailable",
+        "DescribeLoadBalancerAttributes": "aws_elbv2_attributes_unavailable",
+        "DescribeTargetGroupAttributes":  "aws_elbv2_attributes_unavailable",
+        "DescribeTags":                "aws_elbv2_attributes_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_elbv2_access_denied",
+            recommended_action=_ELB_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_elbv2_rate_limited",
+            recommended_action=(
+                "AWS throttled ELBv2 metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented ELBv2 API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_elbv2_api_unavailable",
+            recommended_action=(
+                "The ELBv2 API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _ELB_API_CODES.get(api_name, "aws_elbv2_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional ELBv2 metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_elb_classic_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial Classic ELB sync failure (per-API, per-region).
+
+    SECURITY: Access log objects are NEVER read.  Only configuration
+    metadata is collected.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _CLASSIC_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only Classic ELB read permissions. "
+        "Required: elasticloadbalancing:DescribeLoadBalancers, "
+        "elasticloadbalancing:DescribeLoadBalancerAttributes, "
+        "elasticloadbalancing:DescribeInstanceHealth. "
+        "ConfigTrace reads configuration metadata only; access log objects "
+        "and request traffic are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_elb_classic_access_denied",
+            recommended_action=_CLASSIC_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_elb_classic_rate_limited",
+            recommended_action=(
+                "AWS throttled Classic ELB metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented Classic ELB API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_elb_classic_api_unavailable",
+            recommended_action=(
+                "The Classic ELB API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    _CLASSIC_CODES: dict[str, str] = {
+        "DescribeLoadBalancers":          "aws_elb_classic_unavailable",
+        "DescribeLoadBalancerAttributes": "aws_elb_classic_unavailable",
+        "DescribeInstanceHealth":         "aws_elb_classic_unavailable",
+        "DescribeTags":                   "aws_elb_classic_unavailable",
+    }
+    error_code = _CLASSIC_CODES.get(api_name, "aws_elb_classic_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional Classic ELB metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_wafv2_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial WAFv2 sync failure (per-API, per-region).
+
+    SECURITY: GetSampledRequests is NEVER called.
+    Only Web ACL configuration metadata is collected.
+
+    Args:
+        api_name: The WAFv2 API name (e.g. ``"ListWebACLs"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _WAF_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only WAFv2 read permissions. "
+        "Required: wafv2:ListWebACLs, wafv2:GetWebACL, "
+        "wafv2:ListResourcesForWebACL, wafv2:GetLoggingConfiguration. "
+        "ConfigTrace reads Web ACL configuration metadata only; "
+        "request traffic and request contents are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _WAF_API_CODES: dict[str, str] = {
+        "ListWebACLs":              "aws_wafv2_web_acls_unavailable",
+        "GetWebACL":                "aws_wafv2_web_acls_unavailable",
+        "ListResourcesForWebACL":   "aws_wafv2_associations_unavailable",
+        "GetLoggingConfiguration":  "aws_wafv2_logging_unavailable",
+        "ListTagsForResource":      "aws_wafv2_web_acls_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_wafv2_access_denied",
+            recommended_action=_WAF_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_wafv2_rate_limited",
+            recommended_action=(
+                "AWS throttled WAFv2 metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented WAFv2 API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_wafv2_api_unavailable",
+            recommended_action=(
+                "The WAFv2 API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _WAF_API_CODES.get(api_name, "aws_wafv2_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional WAFv2 metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
 def classify_aws_apigateway_failure(
     api_name: str,
     exc: Exception,

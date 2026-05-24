@@ -763,6 +763,85 @@ function getChangeSummary(change: ChangeDetail): string {
     return `API Gateway V2 stage ${v2Stage} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
 
+  // M44 Load Balancers
+  if (rt === "aws_elbv2_load_balancer") {
+    const lbName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Load balancer ${lbName} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `Load balancer ${lbName} was added to monitoring.`;
+    if (fp === "scheme" && pv === "internal" && nv === "internet-facing") return `Load balancer ${lbName} scheme changed from internal to internet-facing.`;
+    if (fp === "scheme" && pv === "internet-facing" && nv === "internal") return `Load balancer ${lbName} was internalized (internet-facing → internal).`;
+    if (fp === "security_group_ids" || fp === "security_group_count") return `Security groups changed on load balancer ${lbName}.`;
+    if (fp === "deletion_protection_enabled" && nv === false) return `Deletion protection was disabled on load balancer ${lbName}.`;
+    if (fp === "access_logs_enabled" && nv === false) return `Access logging was disabled for load balancer ${lbName}.`;
+    if (fp === "desync_mitigation_mode") return `HTTP desync mitigation mode changed on load balancer ${lbName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "drop_invalid_header_fields_enabled" && nv === false) return `Invalid header field dropping was disabled on load balancer ${lbName}.`;
+    if (fp === "state") return `Load balancer ${lbName} state changed to ${String(nv)}.`;
+    return `Load balancer ${lbName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_elbv2_target_group") {
+    const tgName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Target group ${tgName} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `Target group ${tgName} was added to monitoring.`;
+    if (fp === "protocol" || fp === "port" || fp === "target_type") return `Target group ${tgName} ${fp.replace(/_/g, " ")} changed (${String(pv)} → ${String(nv)}).`;
+    if (fp === "health_check_enabled" && nv === false) return `Health checks were disabled on target group ${tgName}.`;
+    if (fp === "target_count" && nv === 0) return `Target count dropped to zero on target group ${tgName}.`;
+    if (fp === "unhealthy_target_count") return `Unhealthy target count changed on target group ${tgName} (${String(pv)} → ${String(nv)}).`;
+    return `Target group ${tgName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_elbv2_listener") {
+    const lstLb = (change.provider_metadata?.load_balancer_name as string | undefined) || rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") {
+      const proto = (change.provider_metadata?.protocol as string | undefined) || "";
+      if (proto && ["HTTPS","TLS","SSL"].includes(proto.toUpperCase())) return `HTTPS/TLS listener was removed from load balancer ${lstLb}.`;
+      return `Listener was removed from load balancer ${lstLb}.`;
+    }
+    if (change.change_type === "added") return `Listener was added to load balancer ${lstLb}.`;
+    if (fp === "protocol") return `Listener protocol changed (${String(pv)} → ${String(nv)}) on ${lstLb}.`;
+    if (fp === "ssl_policy") return `SSL policy changed on listener for ${lstLb} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "certificate_count" && typeof nv === "number" && typeof pv === "number" && nv < pv) return `Certificate count decreased on listener for ${lstLb} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "default_target_group_arn_hashes") return `Default routing target changed on listener for ${lstLb}.`;
+    return `Listener configuration changed on ${lstLb}${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_elbv2_listener_rule") {
+    const ruleLb = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Listener rule was removed on ${ruleLb}.`;
+    if (change.change_type === "added")   return `Listener rule was added on ${ruleLb}.`;
+    if (fp === "target_group_arn_hashes") return `Listener rule routing target changed on ${ruleLb}.`;
+    if (fp === "action_types") return `Listener rule action types changed on ${ruleLb}.`;
+    return `Listener rule configuration changed on ${ruleLb}${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_elb_classic_load_balancer") {
+    const clbName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `Classic load balancer ${clbName} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `Classic load balancer ${clbName} was added to monitoring.`;
+    if (fp === "scheme" && pv === "internal" && nv === "internet-facing") return `Classic load balancer ${clbName} scheme changed from internal to internet-facing.`;
+    if (fp === "security_group_ids") return `Security groups changed on classic load balancer ${clbName}.`;
+    if (fp === "listener_protocols") return `Listener protocols changed on classic load balancer ${clbName}.`;
+    if (fp === "access_logs_enabled" && nv === false) return `Access logging was disabled for classic load balancer ${clbName}.`;
+    return `Classic load balancer ${clbName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  // M44 WAF
+  if (rt === "aws_wafv2_web_acl") {
+    const aclName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `WAF Web ACL ${aclName} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `WAF Web ACL ${aclName} was added to monitoring.`;
+    if (fp === "default_action" && nv === "allow") return `WAF Web ACL ${aclName} default action changed to allow — requests may pass through unfiltered.`;
+    if (fp === "default_action") return `WAF Web ACL ${aclName} default action changed (${String(pv)} → ${String(nv)}).`;
+    if (fp === "rule_count" && typeof nv === "number" && nv === 0) return `All WAF rules were removed from Web ACL ${aclName}.`;
+    if (fp === "rule_count") return `WAF rule count changed on Web ACL ${aclName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "managed_rule_group_count") return `Managed rule group count changed on WAF Web ACL ${aclName} (${String(pv)} → ${String(nv)}).`;
+    if (fp === "logging_enabled" && nv === false) return `WAF logging was disabled for Web ACL ${aclName}.`;
+    if (fp === "associated_resource_count") return `WAF Web ACL ${aclName} association count changed (${String(pv)} → ${String(nv)}).`;
+    return `WAF Web ACL ${aclName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_wafv2_web_acl_association") {
+    const assocName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `WAF Web ACL ${assocName} was disassociated from a protected resource.`;
+    if (change.change_type === "added")   return `WAF Web ACL ${assocName} was associated with a resource.`;
+    return `WAF Web ACL association changed for ${assocName}${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -1922,6 +2001,185 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the V2 stage configuration change was intentional.",
       "Check AWS CloudTrail for who made the change.",
       "ConfigTrace does not read API traffic or request/response content.",
+    ];
+  }
+
+  // M44 Load Balancers
+  if (rt === "aws_elbv2_load_balancer") {
+    const fpLb = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm this load balancer was intentionally deleted or is no longer in this region.",
+        "Verify dependent services have been updated to use an alternative endpoint.",
+        "Check AWS CloudTrail for who deleted the load balancer.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    if (fpLb === "scheme" && change.prev_value === "internal" && change.new_value === "internet-facing") {
+      return [
+        "If scheme changed to internet-facing, review listeners, security groups, and subnet routing.",
+        "Verify no internal-only services are now exposed to the public internet.",
+        "Confirm listener protocols and SSL/TLS policies are appropriate for public exposure.",
+        "Review security groups to ensure access is restricted to expected sources.",
+        "Check AWS CloudTrail for who changed the load balancer scheme.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    if (fpLb === "deletion_protection_enabled" && change.new_value === false) {
+      return [
+        "Confirm deletion protection was intentionally disabled.",
+        "Verify no automated process or deployment pipeline is about to delete this load balancer.",
+        "Re-enable deletion protection for production load balancers if this was accidental.",
+        "Check AWS CloudTrail for who changed the setting.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    if (fpLb === "access_logs_enabled" && change.new_value === false) {
+      return [
+        "Confirm access logging was intentionally disabled.",
+        "Access logs support security investigation and compliance requirements.",
+        "Re-enable access logging and store logs in a secure, monitored S3 bucket.",
+        "Check AWS CloudTrail for who disabled logging.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    return [
+      "Confirm this load balancer should exist in this region.",
+      "If listeners, security groups, or subnets changed, verify traffic routing.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read load balancer access logs or request traffic.",
+    ];
+  }
+  if (rt === "aws_elbv2_target_group") {
+    const fpTg = change.field_path ?? "";
+    if (fpTg === "target_count" && change.new_value === 0) {
+      return [
+        "Target count dropped to zero — all traffic to this target group may fail.",
+        "Verify application instances/tasks are healthy and registered.",
+        "Check AWS CloudTrail for recent deregistration events.",
+        "Confirm auto-scaling or ECS task replacement is functioning.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    if (fpTg === "health_check_enabled" && change.new_value === false) {
+      return [
+        "Confirm health checks were intentionally disabled on this target group.",
+        "Without health checks, unhealthy targets may receive traffic.",
+        "Re-enable health checks for production target groups.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    return [
+      "Confirm the target group change was intentional.",
+      "If target health changed, check application instances/tasks.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read load balancer access logs or request traffic.",
+    ];
+  }
+  if (rt === "aws_elbv2_listener") {
+    const fpLst = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm this listener was intentionally removed.",
+        "If HTTPS/TLS listener/certificate/SSL policy changed, confirm TLS requirements are still met.",
+        "Verify dependent clients are redirected or updated.",
+        "Check AWS CloudTrail for who removed the listener.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    if (fpLst === "protocol" || fpLst === "ssl_policy" || fpLst === "certificate_count") {
+      return [
+        "If HTTPS/TLS listener, certificate, or SSL policy changed, confirm TLS requirements.",
+        "Verify the SSL policy meets your minimum TLS version requirements.",
+        "Confirm certificate coverage is adequate for all expected hostnames.",
+        "Check AWS CloudTrail for who changed the listener.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    if (fpLst === "default_target_group_arn_hashes") {
+      return [
+        "Confirm the default routing target change was intentional.",
+        "Verify traffic routes to the expected target group.",
+        "Check AWS CloudTrail for who changed the listener default action.",
+        "ConfigTrace does not read load balancer access logs or request traffic.",
+      ];
+    }
+    return [
+      "Confirm the listener configuration change was intentional.",
+      "Verify listener protocol, port, and routing are correct.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read load balancer access logs or request traffic.",
+    ];
+  }
+  if (rt === "aws_elbv2_listener_rule" || rt === "aws_elb_classic_load_balancer") {
+    return [
+      "Confirm this load balancer should exist in this region.",
+      "If scheme changed to internet-facing, review listeners, security groups, and subnet routing.",
+      "If listener configuration changed, confirm traffic routing requirements.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read load balancer access logs or request traffic.",
+    ];
+  }
+
+  // M44 WAF
+  if (rt === "aws_wafv2_web_acl") {
+    const fpAcl = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm this Web ACL was intentionally deleted.",
+        "Verify associated resources (ALBs, API Gateways) have alternative WAF protection.",
+        "Check AWS CloudTrail for who deleted the Web ACL.",
+        "ConfigTrace does not read sampled requests or request contents.",
+      ];
+    }
+    if (fpAcl === "default_action" && change.new_value === "allow") {
+      return [
+        "Confirm the Web ACL should exist and be associated with the affected resource.",
+        "If default action changed to allow, review intended filtering posture.",
+        "Requests not matching explicit rules will now pass through unfiltered.",
+        "If managed rules were removed, confirm equivalent protection exists.",
+        "Check AWS CloudTrail for who changed the default action.",
+        "ConfigTrace does not read sampled requests or request contents.",
+      ];
+    }
+    if (fpAcl === "managed_rule_group_count" || fpAcl === "rule_count") {
+      return [
+        "If managed rules were removed, confirm equivalent protection exists.",
+        "Verify the remaining rule set covers expected attack patterns.",
+        "Check AWS CloudTrail for who changed the WAF rules.",
+        "ConfigTrace does not read sampled requests or request contents.",
+      ];
+    }
+    if (fpAcl === "logging_enabled" && change.new_value === false) {
+      return [
+        "If logging changed, confirm security monitoring requirements are still met.",
+        "WAF logs support security investigation, compliance, and threat detection.",
+        "Re-enable logging to a secure destination if this was accidental.",
+        "Check AWS CloudTrail for who disabled WAF logging.",
+        "ConfigTrace does not read sampled requests or request contents.",
+      ];
+    }
+    return [
+      "Confirm this Web ACL should be associated with the affected resource.",
+      "Review the current rule set to ensure adequate protection.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not read sampled requests or request contents.",
+    ];
+  }
+  if (rt === "aws_wafv2_web_acl_association") {
+    if (change.change_type === "removed") {
+      return [
+        "Confirm this Web ACL should be associated with the affected resource.",
+        "The resource may no longer have WAF protection — review your security posture.",
+        "If association was intentionally removed, confirm alternative protection exists.",
+        "Check AWS CloudTrail for who removed the WAF association.",
+        "ConfigTrace does not read sampled requests or request contents.",
+      ];
+    }
+    return [
+      "Confirm the Web ACL association is intentional.",
+      "Verify the Web ACL rules are appropriate for the associated resource.",
+      "ConfigTrace does not read sampled requests or request contents.",
     ];
   }
 

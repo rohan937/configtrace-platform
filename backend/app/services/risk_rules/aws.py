@@ -77,6 +77,13 @@ from app.connectors.aws_schema import (
     AWS_APIGATEWAY_REST_STAGE,
     AWS_APIGATEWAYV2_API,
     AWS_APIGATEWAYV2_STAGE,
+    AWS_ELBV2_LOAD_BALANCER,
+    AWS_ELBV2_TARGET_GROUP,
+    AWS_ELBV2_LISTENER,
+    AWS_ELBV2_LISTENER_RULE,
+    AWS_ELB_CLASSIC_LOAD_BALANCER,
+    AWS_WAFV2_WEB_ACL,
+    AWS_WAFV2_WEB_ACL_ASSOCIATION,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -4667,6 +4674,597 @@ def _classify_apigatewayv2_stage_change(change: object) -> tuple[str, str]:
     )
 
 
+# ── M44: ELB + WAF sensitivity ────────────────────────────────────────────────
+
+_SENSITIVE_ELB_CATEGORIES: frozenset[str] = frozenset({
+    "production", "credential", "api_key", "auth", "payment", "database",
+    "internal", "config", "secure", "admin", "customer",
+})
+
+
+def _elb_is_sensitive(name: str) -> bool:
+    """Return True if the LB/WAF name suggests a production/sensitive workload."""
+    from app.connectors.aws import _classify_lambda_name_sensitivity
+    return _classify_lambda_name_sensitivity(name) in _SENSITIVE_ELB_CATEGORIES
+
+
+# ── M44: aws_elbv2_load_balancer ──────────────────────────────────────────────
+
+def _classify_elbv2_load_balancer_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    name = str(_get(change, "provider_metadata") or {}).lower()
+    # Try to extract record_name from provider_metadata
+    pm = _get(change, "provider_metadata")
+    if isinstance(pm, dict):
+        name = str(pm.get("record_name") or "").lower()
+    is_sensitive = _elb_is_sensitive(name)
+
+    if ct == "added":
+        scheme = None
+        if isinstance(nv, dict):
+            scheme = nv.get("scheme")
+        elif fp == "scheme":
+            scheme = nv
+        if scheme == "internet-facing" and is_sensitive:
+            return (
+                "high",
+                f"Internet-facing load balancer '{name}' was added to monitoring. "
+                "Verify listeners, security groups, and target groups are correctly restricted.",
+            )
+        return (
+            "medium",
+            f"Load balancer '{name}' was added to monitoring.",
+        )
+
+    if ct == "removed":
+        if is_sensitive:
+            return (
+                "high",
+                f"Load balancer '{name}' is no longer visible to ConfigTrace. "
+                "Confirm the load balancer was intentionally deleted.",
+            )
+        return (
+            "medium",
+            f"Load balancer '{name}' is no longer visible to ConfigTrace.",
+        )
+
+    # modified
+    if fp == "scheme":
+        if pv == "internal" and nv == "internet-facing":
+            if is_sensitive:
+                return (
+                    "critical",
+                    f"Load balancer '{name}' scheme changed from internal to internet-facing. "
+                    "This may expose internal workloads to the public internet. "
+                    "Review listeners, security groups, and subnet routing immediately.",
+                )
+            return (
+                "high",
+                f"Load balancer '{name}' scheme changed from internal to internet-facing. "
+                "Review listeners, security groups, and subnet routing.",
+            )
+        if pv == "internet-facing" and nv == "internal":
+            return (
+                "low",
+                f"Load balancer '{name}' was internalized (internet-facing → internal).",
+            )
+        return (
+            "medium",
+            f"Load balancer '{name}' scheme changed ('{pv}' → '{nv}').",
+        )
+
+    if fp == "security_group_ids" or fp == "security_group_count":
+        return (
+            "high",
+            f"Security groups changed on load balancer '{name}'. "
+            "Review the updated groups to confirm access is appropriately restricted.",
+        )
+
+    if fp in ("subnet_ids", "subnet_count", "availability_zone_count"):
+        old_count = int(pv) if isinstance(pv, (int, float)) else None
+        new_count = int(nv) if isinstance(nv, (int, float)) else None
+        if old_count is not None and new_count is not None and new_count < old_count:
+            return (
+                "high",
+                f"Availability zone / subnet count decreased for load balancer '{name}' "
+                f"({old_count} → {new_count}). This may reduce availability.",
+            )
+        return (
+            "medium",
+            f"Subnet / availability zone configuration changed on load balancer '{name}'.",
+        )
+
+    if fp == "deletion_protection_enabled":
+        if nv is False:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"Deletion protection was disabled on load balancer '{name}'. "
+                "Confirm this was intentional for a production load balancer.",
+            )
+        return "low", f"Deletion protection was enabled on load balancer '{name}'."
+
+    if fp == "access_logs_enabled":
+        if nv is False:
+            return (
+                "high",
+                f"Access logging was disabled for load balancer '{name}'. "
+                "Review your security monitoring and audit logging requirements.",
+            )
+        return "low", f"Access logging was enabled for load balancer '{name}'."
+
+    if fp == "desync_mitigation_mode":
+        if nv in ("monitor", "defensive") and pv == "strictest":
+            return (
+                "high",
+                f"HTTP desync mitigation was weakened on load balancer '{name}' "
+                f"({pv} → {nv}). This may allow HTTP desync / request-smuggling attacks.",
+            )
+        return "medium", f"HTTP desync mitigation mode changed on load balancer '{name}'."
+
+    if fp == "drop_invalid_header_fields_enabled":
+        if nv is False:
+            return (
+                "high",
+                f"Invalid header field dropping was disabled on load balancer '{name}'. "
+                "This may increase exposure to header injection attacks.",
+            )
+        return "low", f"Invalid header field dropping was enabled on load balancer '{name}'."
+
+    if fp == "routing_http2_enabled":
+        return "medium", f"HTTP/2 routing setting changed on load balancer '{name}'."
+
+    if fp in ("preserve_host_header_enabled", "xff_header_processing_mode",
+              "idle_timeout_seconds", "ip_address_type"):
+        return "medium", f"Load balancer '{name}' attribute changed ({fp.replace('_', ' ')})."
+
+    if fp == "state":
+        if nv in ("failed", "provisioning_failed"):
+            return (
+                "high",
+                f"Load balancer '{name}' entered state '{nv}'. "
+                "Review load balancer health in the AWS console.",
+            )
+        return "low", f"Load balancer '{name}' state changed to '{nv}'."
+
+    if fp in ("tag_keys", "sensitive_name_category"):
+        return "low", f"Load balancer '{name}' {fp.replace('_', ' ')} changed."
+
+    return (
+        "low",
+        f"Load balancer '{name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── M44: aws_elbv2_target_group ───────────────────────────────────────────────
+
+def _classify_elbv2_target_group_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _elb_is_sensitive(name)
+
+    if ct == "added":
+        return "medium", f"Target group '{name}' was added to monitoring."
+    if ct == "removed":
+        if is_sensitive:
+            return (
+                "high",
+                f"Target group '{name}' is no longer visible to ConfigTrace. "
+                "Confirm the target group was intentionally deleted.",
+            )
+        return "medium", f"Target group '{name}' is no longer visible to ConfigTrace."
+
+    if fp in ("protocol", "port", "target_type", "protocol_version"):
+        return (
+            "high",
+            f"Target group '{name}' {fp.replace('_', ' ')} changed ({str(pv)} → {str(nv)}). "
+            "Confirm traffic still routes to the expected backend.",
+        )
+
+    if fp == "health_check_enabled" and nv is False:
+        return (
+            "high",
+            f"Health checks were disabled on target group '{name}'. "
+            "Unhealthy targets may receive traffic.",
+        )
+
+    if fp in ("health_check_protocol", "health_check_port", "health_check_path_present"):
+        return "medium", f"Health check {fp.replace('_', ' ')} changed on target group '{name}'."
+
+    if fp in ("healthy_threshold_count", "unhealthy_threshold_count",
+              "health_check_interval_seconds", "health_check_timeout_seconds"):
+        return "medium", f"Health check threshold/timing changed on target group '{name}'."
+
+    if fp == "unhealthy_target_count":
+        old_val = int(pv) if isinstance(pv, (int, float)) else 0
+        new_val = int(nv) if isinstance(nv, (int, float)) else 0
+        if new_val > old_val and new_val > 0:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"Unhealthy target count increased on target group '{name}' "
+                f"({old_val} → {new_val}). Application instances may be failing.",
+            )
+        if new_val == 0 and old_val > 0:
+            return "low", f"All targets in target group '{name}' are now healthy."
+        return "low", f"Unhealthy target count changed on target group '{name}'."
+
+    if fp == "target_count":
+        old_val = int(pv) if isinstance(pv, (int, float)) else None
+        new_val = int(nv) if isinstance(nv, (int, float)) else None
+        if new_val is not None and old_val is not None and new_val == 0:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"Target count dropped to zero on target group '{name}'. "
+                "No targets are registered — all traffic may fail.",
+            )
+        if new_val is not None and old_val is not None and new_val < old_val:
+            return "medium", f"Target count decreased on target group '{name}' ({old_val} → {new_val})."
+        return "low", f"Target count changed on target group '{name}'."
+
+    if fp == "stickiness_enabled":
+        return "medium", f"Stickiness was {'enabled' if nv else 'disabled'} on target group '{name}'."
+
+    if fp in ("deregistration_delay_seconds", "slow_start_duration_seconds",
+              "matcher_summary", "load_balancer_arn_count"):
+        return "low", f"Target group '{name}' attribute changed ({fp.replace('_', ' ')})."
+
+    if fp in ("tag_keys", "sensitive_name_category"):
+        return "low", f"Target group '{name}' {fp.replace('_', ' ')} changed."
+
+    return "low", f"Target group '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M44: aws_elbv2_listener ───────────────────────────────────────────────────
+
+def _classify_elbv2_listener_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    lb_name = str(pm.get("load_balancer_name") or pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _elb_is_sensitive(lb_name)
+
+    if ct == "added":
+        protocol = None
+        if isinstance(nv, dict):
+            protocol = (nv.get("protocol") or "").upper()
+        if protocol in ("HTTP",) and is_sensitive:
+            return (
+                "medium",
+                f"HTTP listener added to '{lb_name}'. "
+                "Confirm traffic is redirected to HTTPS where required.",
+            )
+        return "medium", f"Listener added to load balancer '{lb_name}'."
+
+    if ct == "removed":
+        proto = str(pv.get("protocol") or "") if isinstance(pv, dict) else str(pv or "")
+        if proto.upper() in ("HTTPS", "TLS", "SSL"):
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"HTTPS/TLS listener was removed from load balancer '{lb_name}'. "
+                "Confirm HTTPS termination is still handled appropriately.",
+            )
+        return "high", f"Listener was removed from load balancer '{lb_name}'."
+
+    if fp == "protocol":
+        old_proto = str(pv or "").upper()
+        new_proto = str(nv or "").upper()
+        if old_proto in ("HTTPS", "TLS") and new_proto in ("HTTP", "TCP"):
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"Listener protocol downgraded from {old_proto} to {new_proto} on '{lb_name}'. "
+                "Traffic may no longer be encrypted in transit.",
+            )
+        return "high", f"Listener protocol changed ({old_proto} → {new_proto}) on '{lb_name}'."
+
+    if fp == "port":
+        return "high", f"Listener port changed ({str(pv)} → {str(nv)}) on '{lb_name}'."
+
+    if fp == "ssl_policy":
+        # Weakening SSL policy is high; strengthening is low
+        old_p = str(pv or "").lower()
+        new_p = str(nv or "").lower()
+        # Older/weaker policies have lower TLS version in name
+        if "2016" in old_p or "2015" in old_p:
+            # already weak — change either way is medium
+            return "medium", f"SSL policy changed ({str(pv)} → {str(nv)}) on '{lb_name}'."
+        if "fs" not in new_p and "fs" in old_p:
+            return "high", f"SSL policy changed to one without forward secrecy on '{lb_name}'."
+        return "medium", f"SSL policy changed ({str(pv)} → {str(nv)}) on '{lb_name}'."
+
+    if fp == "certificate_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "high", f"Certificate count decreased on listener for '{lb_name}' ({old_c} → {new_c})."
+        return "low", f"Certificate count changed on listener for '{lb_name}'."
+
+    if fp == "default_target_group_arn_hashes":
+        sev = "critical" if is_sensitive else "high"
+        return (
+            sev,
+            f"Default routing target changed on listener for '{lb_name}'. "
+            "Confirm traffic routes to the expected target group.",
+        )
+
+    if fp == "default_action_types":
+        return "high", f"Listener default action type changed on '{lb_name}'."
+
+    if fp in ("auth_action_present", "redirect_action_present", "fixed_response_action_present"):
+        return "medium", f"Listener action configuration changed on '{lb_name}'."
+
+    return "low", f"Listener configuration changed on '{lb_name}' (field: {fp or 'unknown'})."
+
+
+# ── M44: aws_elbv2_listener_rule ──────────────────────────────────────────────
+
+def _classify_elbv2_listener_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    lb_name = str(pm.get("load_balancer_name") or pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _elb_is_sensitive(lb_name)
+
+    if ct == "added":
+        return "medium", f"Listener rule added on '{lb_name}'."
+    if ct == "removed":
+        return "medium", f"Listener rule removed on '{lb_name}'."
+
+    if fp == "target_group_arn_hashes":
+        sev = "high" if is_sensitive else "medium"
+        return sev, f"Listener rule routing target changed on '{lb_name}'."
+    if fp == "action_types":
+        return "medium", f"Listener rule action types changed on '{lb_name}'."
+    if fp in ("host_header_condition_present", "path_pattern_condition_present",
+              "source_ip_condition_present", "http_header_condition_present",
+              "query_string_condition_present", "condition_field_counts"):
+        return "medium", f"Listener rule conditions changed on '{lb_name}'."
+    if fp in ("auth_action_present", "redirect_action_present", "fixed_response_action_present"):
+        return "medium", f"Listener rule action changed on '{lb_name}'."
+
+    return "low", f"Listener rule configuration changed on '{lb_name}' (field: {fp or 'unknown'})."
+
+
+# ── M44: aws_elb_classic_load_balancer ────────────────────────────────────────
+
+def _classify_elb_classic_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _elb_is_sensitive(name)
+
+    if ct == "added":
+        return "medium", f"Classic load balancer '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, f"Classic load balancer '{name}' is no longer visible to ConfigTrace."
+
+    if fp == "scheme":
+        if pv == "internal" and nv == "internet-facing":
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"Classic load balancer '{name}' scheme changed from internal to internet-facing. "
+                "Review listeners and security groups immediately.",
+            )
+        if pv == "internet-facing" and nv == "internal":
+            return "low", f"Classic load balancer '{name}' was internalized."
+        return "medium", f"Classic load balancer '{name}' scheme changed."
+
+    if fp == "security_group_ids":
+        return "high", f"Security groups changed on classic load balancer '{name}'."
+
+    if fp in ("listener_count", "listener_protocols"):
+        return "high", f"Listener configuration changed on classic load balancer '{name}'."
+
+    if fp == "access_logs_enabled" and nv is False:
+        return "high", f"Access logging was disabled for classic load balancer '{name}'."
+    if fp == "access_logs_enabled" and nv is True:
+        return "low", f"Access logging was enabled for classic load balancer '{name}'."
+
+    if fp in ("cross_zone_load_balancing_enabled", "connection_draining_enabled",
+              "idle_timeout_seconds"):
+        return "medium", f"Classic load balancer '{name}' attribute changed ({fp.replace('_', ' ')})."
+
+    if fp in ("instance_count", "healthy_instance_count", "unhealthy_instance_count",
+              "availability_zone_count"):
+        old_val = int(pv) if isinstance(pv, (int, float)) else None
+        new_val = int(nv) if isinstance(nv, (int, float)) else None
+        if fp == "unhealthy_instance_count" and new_val is not None and new_val > (old_val or 0):
+            sev = "high" if is_sensitive else "medium"
+            return sev, f"Unhealthy instance count increased on classic load balancer '{name}'."
+        return "low", f"Classic load balancer '{name}' {fp.replace('_', ' ')} changed."
+
+    if fp in ("tag_keys", "sensitive_name_category"):
+        return "low", f"Classic load balancer '{name}' {fp.replace('_', ' ')} changed."
+
+    return "low", f"Classic load balancer '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M44: aws_wafv2_web_acl ────────────────────────────────────────────────────
+
+def _classify_wafv2_web_acl_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _elb_is_sensitive(name)
+
+    if ct == "added":
+        default_action = None
+        if isinstance(nv, dict):
+            default_action = str(nv.get("default_action") or "").lower()
+        if default_action == "allow" and is_sensitive:
+            return (
+                "high",
+                f"WAF Web ACL '{name}' was added with default action 'allow'. "
+                "Requests not matching explicit rules will pass through unfiltered.",
+            )
+        return "medium", f"WAF Web ACL '{name}' was added to monitoring."
+
+    if ct == "removed":
+        sev = "critical" if is_sensitive else "high"
+        return (
+            sev,
+            f"WAF Web ACL '{name}' is no longer visible to ConfigTrace. "
+            "Confirm the Web ACL was intentionally deleted.",
+        )
+
+    if fp == "default_action":
+        if str(pv or "").lower() in ("block", "count") and str(nv or "").lower() == "allow":
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"WAF Web ACL '{name}' default action changed to 'allow'. "
+                "Requests not matching explicit rules will pass through unfiltered. "
+                "Review whether this change was intentional.",
+            )
+        if str(pv or "").lower() == "allow" and str(nv or "").lower() in ("block", "count"):
+            return "low", f"WAF Web ACL '{name}' default action changed to '{str(nv)}'."
+        return "medium", f"WAF Web ACL '{name}' default action changed."
+
+    if fp == "rule_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c == 0 and old_c > 0:
+                sev = "critical" if is_sensitive else "high"
+                return (
+                    sev,
+                    f"All WAF rules were removed from Web ACL '{name}'. "
+                    "Only the default action now applies.",
+                )
+            if new_c < old_c:
+                return "high", f"WAF rule count decreased on Web ACL '{name}' ({old_c} → {new_c})."
+            return "medium", f"WAF rule count changed on Web ACL '{name}' ({old_c} → {new_c})."
+        return "medium", f"WAF rule count changed on Web ACL '{name}'."
+
+    if fp == "managed_rule_group_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            if new_c == 0 and is_sensitive:
+                return (
+                    "critical",
+                    f"All managed rule groups were removed from WAF Web ACL '{name}'. "
+                    "Confirm equivalent protection exists from custom rules.",
+                )
+            return (
+                "high",
+                f"Managed rule group count decreased on WAF Web ACL '{name}' ({old_c} → {new_c}).",
+            )
+        return "medium", f"Managed rule group count changed on WAF Web ACL '{name}'."
+
+    if fp == "rate_based_rule_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "high", f"Rate-based rule count decreased on WAF Web ACL '{name}' ({old_c} → {new_c})."
+        return "medium", f"Rate-based rule count changed on WAF Web ACL '{name}'."
+
+    if fp == "block_action_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "high", f"Block action count decreased on WAF Web ACL '{name}' ({old_c} → {new_c})."
+        return "low", f"Block action count increased on WAF Web ACL '{name}'."
+
+    if fp == "allow_action_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c > old_c:
+            return "high", f"Allow action count increased on WAF Web ACL '{name}' ({old_c} → {new_c})."
+        return "low", f"Allow action count changed on WAF Web ACL '{name}'."
+
+    if fp == "override_count_action_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c > old_c:
+            return (
+                "high",
+                f"Override-to-count actions increased on WAF Web ACL '{name}'. "
+                "More rules may now be counting rather than blocking.",
+            )
+        return "medium", f"Override count action count changed on WAF Web ACL '{name}'."
+
+    if fp == "logging_enabled":
+        if nv is False:
+            return (
+                "high",
+                f"WAF logging was disabled for Web ACL '{name}'. "
+                "Review your security monitoring requirements.",
+            )
+        return "low", f"WAF logging was enabled for Web ACL '{name}'."
+
+    if fp == "associated_resource_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "high", f"WAF Web ACL '{name}' is now associated with fewer resources ({old_c} → {new_c})."
+        return "medium", f"WAF Web ACL '{name}' associated resource count changed."
+
+    if fp in ("custom_rule_count", "count_action_count",
+              "captcha_challenge_action_count"):
+        return "medium", f"WAF Web ACL '{name}' rule action counts changed."
+
+    if fp == "description_present":
+        return "low", f"WAF Web ACL '{name}' description changed."
+
+    if fp in ("tag_keys", "sensitive_name_category"):
+        return "low", f"WAF Web ACL '{name}' {fp.replace('_', ' ')} changed."
+
+    return (
+        "low",
+        f"WAF Web ACL '{name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── M44: aws_wafv2_web_acl_association ────────────────────────────────────────
+
+def _classify_wafv2_web_acl_association_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or pm.get("web_acl_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _elb_is_sensitive(name)
+
+    if ct == "removed":
+        sev = "critical" if is_sensitive else "high"
+        return (
+            sev,
+            f"WAF Web ACL '{name}' was disassociated from a protected resource. "
+            "The resource may no longer have WAF protection.",
+        )
+    if ct == "added":
+        return "low", f"WAF Web ACL '{name}' was associated with a resource."
+
+    if fp in ("web_acl_arn_hash", "resource_arn_hash"):
+        return "high", f"WAF Web ACL association target changed for '{name}'."
+    if fp == "resource_type":
+        return "medium", f"WAF Web ACL association resource type changed for '{name}'."
+
+    return "low", f"WAF Web ACL association changed for '{name}' (field: {fp or 'unknown'})."
+
+
 def classify_aws_change(change: object) -> tuple[str, str]:
     """Route an AWS change to the appropriate risk rule.
 
@@ -4761,6 +5359,21 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_apigatewayv2_api_change(change)
     if record_type == AWS_APIGATEWAYV2_STAGE:
         return _classify_apigatewayv2_stage_change(change)
+    # ── M44 Load Balancers + WAF ──────────────────────────────────────────────
+    if record_type == AWS_ELBV2_LOAD_BALANCER:
+        return _classify_elbv2_load_balancer_change(change)
+    if record_type == AWS_ELBV2_TARGET_GROUP:
+        return _classify_elbv2_target_group_change(change)
+    if record_type == AWS_ELBV2_LISTENER:
+        return _classify_elbv2_listener_change(change)
+    if record_type == AWS_ELBV2_LISTENER_RULE:
+        return _classify_elbv2_listener_rule_change(change)
+    if record_type == AWS_ELB_CLASSIC_LOAD_BALANCER:
+        return _classify_elb_classic_change(change)
+    if record_type == AWS_WAFV2_WEB_ACL:
+        return _classify_wafv2_web_acl_change(change)
+    if record_type == AWS_WAFV2_WEB_ACL_ASSOCIATION:
+        return _classify_wafv2_web_acl_association_change(change)
 
     # Unknown AWS record type — conservative default
     return (

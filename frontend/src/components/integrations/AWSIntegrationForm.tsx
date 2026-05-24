@@ -482,6 +482,50 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* ELB — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              Elastic Load Balancing metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ elasticloadbalancing:DescribeLoadBalancers &nbsp;○ elasticloadbalancing:DescribeListeners
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ elasticloadbalancing:DescribeRules &nbsp;○ elasticloadbalancing:DescribeTargetGroups
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ elasticloadbalancing:DescribeTargetHealth &nbsp;○ elasticloadbalancing:DescribeLoadBalancerAttributes
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ elasticloadbalancing:DescribeTargetGroupAttributes &nbsp;○ elasticloadbalancing:DescribeTags
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never reads load balancer access logs or request traffic.
+              Only configuration metadata and target health counts are collected.
+            </span>
+            <br />
+
+            {/* WAF — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              WAFv2 metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ wafv2:ListWebACLs &nbsp;○ wafv2:GetWebACL
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ wafv2:ListResourcesForWebACL &nbsp;○ wafv2:GetLoggingConfiguration &nbsp;○ wafv2:ListTagsForResource
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never reads sampled requests or request traffic.
+              Only Web ACL configuration metadata (rule counts, default action, associations) is collected.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.
