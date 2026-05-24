@@ -453,6 +453,85 @@ function getChangeSummary(change: ChangeDetail): string {
     if (fp === "bucket_region") return `The recorded region for S3 bucket ${bucketName} changed.`;
     return `S3 bucket ${bucketName} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
+  // AWS M38 — Security Groups
+  if (rt === "aws_security_group") {
+    const sgName = (change.provider_metadata?.record_name as string | undefined) ?? change.record_identifier;
+    if (change.change_type === "added") {
+      const isPublic = change.new_value && typeof change.new_value === "object" && (change.new_value as Record<string, unknown>).has_public_inbound;
+      return isPublic
+        ? `Security group ${sgName} was added with publicly reachable inbound rules.`
+        : `Security group ${sgName} was added to monitoring.`;
+    }
+    if (change.change_type === "removed") return `Security group ${sgName} is no longer monitored.`;
+    if (fp === "has_public_ssh" && nv === true)  return `Security group ${sgName} now allows SSH (port 22) from the internet.`;
+    if (fp === "has_public_rdp" && nv === true)  return `Security group ${sgName} now allows RDP (port 3389) from the internet.`;
+    if (fp === "has_public_database_port" && nv === true) return `Security group ${sgName} now allows a database port from the internet.`;
+    if (fp === "has_public_inbound" && nv === true) return `Security group ${sgName} now permits inbound traffic from public CIDRs.`;
+    if (fp === "has_public_ssh" || fp === "has_public_rdp" || fp === "has_public_database_port" || fp === "has_public_inbound") {
+      return `Security group ${sgName} public exposure status changed (${fp}).`;
+    }
+    if (fp === "inbound_rule_count" || fp === "outbound_rule_count") return `The number of rules in security group ${sgName} changed to ${String(nv)}.`;
+    return `Security group ${sgName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_security_group_rule") {
+    if (change.change_type === "added") {
+      const isPublic = change.new_value && typeof change.new_value === "object" && (change.new_value as Record<string, unknown>).is_public;
+      return isPublic
+        ? `A new inbound rule allowing public traffic was added to a security group.`
+        : `A new security group rule was added.`;
+    }
+    if (change.change_type === "removed") return "A security group rule was removed.";
+    if (fp === "description") return "A security group rule description changed.";
+    return "A security group rule was modified.";
+  }
+
+  // AWS M38 — VPC Network
+  if (rt === "aws_vpc") {
+    const vpcId = change.record_identifier;
+    if (change.change_type === "added")   return `VPC ${vpcId} was added to monitoring.`;
+    if (change.change_type === "removed") return `VPC ${vpcId} is no longer monitored.`;
+    if (fp === "state" && nv !== "available") return `VPC ${vpcId} state changed to ${String(nv)}.`;
+    if (fp === "instance_tenancy") return `VPC ${vpcId} instance tenancy changed to ${String(nv)}.`;
+    if (fp === "cidr_block") return `The CIDR block for VPC ${vpcId} changed.`;
+    return `VPC ${vpcId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_subnet") {
+    const subnetId = change.record_identifier;
+    if (change.change_type === "added")   return `Subnet ${subnetId} was added to monitoring.`;
+    if (change.change_type === "removed") return `Subnet ${subnetId} is no longer monitored.`;
+    if (fp === "map_public_ip_on_launch" && nv === true)  return `Subnet ${subnetId} will now auto-assign public IPs to launched instances.`;
+    if (fp === "map_public_ip_on_launch" && nv === false) return `Subnet ${subnetId} no longer auto-assigns public IPs.`;
+    if (fp === "state") return `Subnet ${subnetId} state changed to ${String(nv)}.`;
+    return `Subnet ${subnetId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_route_table") {
+    const rtId = change.record_identifier;
+    if (change.change_type === "added")   return `Route table ${rtId} was added to monitoring.`;
+    if (change.change_type === "removed") return `Route table ${rtId} is no longer monitored.`;
+    if (fp === "has_igw_route" && nv === true)  return `Route table ${rtId} now routes traffic to an internet gateway.`;
+    if (fp === "has_igw_route" && nv === false) return `Route table ${rtId} no longer routes traffic to an internet gateway.`;
+    if (fp === "route_count") return `The number of routes in route table ${rtId} changed to ${String(nv)}.`;
+    return `Route table ${rtId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_internet_gateway") {
+    const igwId = change.record_identifier;
+    if (change.change_type === "added")   return `Internet gateway ${igwId} was added to monitoring.`;
+    if (change.change_type === "removed") return `Internet gateway ${igwId} is no longer monitored.`;
+    if (fp === "attached_vpc_id" && !pv && nv) return `Internet gateway ${igwId} was attached to a VPC.`;
+    if (fp === "attached_vpc_id" && pv && !nv) return `Internet gateway ${igwId} was detached from its VPC.`;
+    if (fp === "state") return `Internet gateway ${igwId} state changed to ${String(nv)}.`;
+    return `Internet gateway ${igwId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_network_acl") {
+    const naclId = change.record_identifier;
+    if (change.change_type === "added")   return `Network ACL ${naclId} was added to monitoring.`;
+    if (change.change_type === "removed") return `Network ACL ${naclId} is no longer monitored.`;
+    if (fp === "inbound_allow_all_count" && typeof nv === "number" && typeof pv === "number" && nv > (pv as number)) {
+      return `Network ACL ${naclId} now has more permissive inbound allow-all rules.`;
+    }
+    return `Network ACL ${naclId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -647,6 +726,87 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the Stripe configuration change was intentional.",
       "Review your Stripe Dashboard for related settings.",
       "Verify that checkout and payment flows still function correctly.",
+    ];
+  }
+
+  // AWS M38 — Security Groups + VPC Network
+  if (rt === "aws_security_group" || rt === "aws_security_group_rule") {
+    const fp6 = change.field_path ?? "";
+    const isPublicOpen = (
+      fp6 === "has_public_ssh" || fp6 === "has_public_rdp" || fp6 === "has_public_database_port"
+    ) && change.new_value === true;
+    if (isPublicOpen || change.change_type === "added") {
+      return [
+        "Confirm the security group change was intentional.",
+        "Verify only intended CIDR ranges or security group IDs are permitted.",
+        "Check the AWS VPC Console → Security Groups for the current ruleset.",
+        "Review whether this group is attached to internet-facing subnets or instances.",
+        "Remove or tighten the rule if this exposure was accidental.",
+        "Check AWS CloudTrail for who made the change and when.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the security group removal was intentional.",
+        "Verify any instances or services that referenced this group are unaffected.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    return [
+      "Confirm the security group change was intentional.",
+      "Review the AWS VPC Console → Security Groups for the current ruleset.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_subnet") {
+    if (change.field_path === "map_public_ip_on_launch" && change.new_value === true) {
+      return [
+        "Confirm that auto-assign public IP was intentionally enabled on this subnet.",
+        "Verify instances launched into this subnet should be internet-accessible.",
+        "Check that the subnet's route table routes to an internet gateway only if intended.",
+        "Review the AWS VPC Console → Subnets → Modify auto-assign IP settings.",
+        "Disable auto-assign public IP if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    return [
+      "Confirm the subnet configuration change was intentional.",
+      "Review the AWS VPC Console → Subnets for current settings.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_route_table") {
+    if (change.field_path === "has_igw_route" && change.new_value === true) {
+      return [
+        "Confirm that adding an internet gateway route to this route table was intentional.",
+        "Verify only intended subnets are associated with this route table.",
+        "Check that instances in associated subnets should be internet-accessible.",
+        "Review the AWS VPC Console → Route Tables → Routes.",
+        "Remove the internet gateway route if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    return [
+      "Confirm the route table change was intentional.",
+      "Review the AWS VPC Console → Route Tables for current routes.",
+      "Check AWS CloudTrail for who made the change.",
+    ];
+  }
+  if (rt === "aws_internet_gateway") {
+    if (change.field_path === "attached_vpc_id" && !change.prev_value && change.new_value) {
+      return [
+        "Confirm the internet gateway attachment was intentional.",
+        "Verify the VPC has route tables configured for the intended public/private subnet split.",
+        "Check that security groups and NACLs restrict traffic to intended sources.",
+        "Review the AWS VPC Console → Internet Gateways.",
+        "Detach the internet gateway if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+      ];
+    }
+    return [
+      "Confirm the internet gateway change was intentional.",
+      "Review the AWS VPC Console → Internet Gateways for current attachment.",
+      "Check AWS CloudTrail for who made the change.",
     ];
   }
 
@@ -1203,6 +1363,7 @@ export default function ChangeDetailPage() {
   const isGitHub      = providerLabel === "GitHub repo configuration";
   const isVercel      = providerLabel === "Vercel project configuration";
   const isStripe      = providerLabel === "Stripe account configuration";
+  const isAWS         = providerLabel === "AWS account configuration";
 
   return (
     <>
@@ -1378,15 +1539,15 @@ export default function ChangeDetailPage() {
             {change.change_type === "modified"
               ? "What changed"
               : change.change_type === "added"
-              ? (isGitHub || isVercel || isStripe) ? "Configuration added" : "DNS record added"
-              : (isGitHub || isVercel || isStripe) ? "Configuration removed" : "DNS record removed"}
+              ? (isGitHub || isVercel || isStripe || isAWS) ? "Configuration added" : "DNS record added"
+              : (isGitHub || isVercel || isStripe || isAWS) ? "Configuration removed" : "DNS record removed"}
           </SectionLabel>
 
           <Panel>
             {change.change_type === "modified" ? (
               <ModifiedDiffPanel change={change} />
             ) : (
-              <AddedRemovedPanel change={change} isGitHub={isGitHub || isVercel || isStripe} />
+              <AddedRemovedPanel change={change} isGitHub={isGitHub || isVercel || isStripe || isAWS} />
             )}
           </Panel>
         </div>

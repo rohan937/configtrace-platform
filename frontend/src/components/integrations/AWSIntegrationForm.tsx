@@ -279,20 +279,54 @@ export default function AWSIntegrationForm({
               lineHeight: 1.75,
             }}
           >
-            <span style={{ color: "#8b90a0", display: "block", marginBottom: "4px", fontWeight: 500 }}>
+            <span style={{ color: "#8b90a0", display: "block", marginBottom: "6px", fontWeight: 500 }}>
               Recommended: create a dedicated read-only IAM user for ConfigTrace
             </span>
+
+            {/* Required */}
             <span style={{ color: "#6b7080" }}>
               ✓ sts:GetCallerIdentity — Read{" "}
               <span style={{ color: "#4a5060", fontStyle: "italic" }}>(required)</span>
             </span>
             <br />
-            <span style={{ color: "#565b6e" }}>
-              ○ ec2:DescribeRegions — Read{" "}
-              <span style={{ color: "#3a3d4a", fontStyle: "italic" }}>(optional — skipped if unavailable)</span>
+
+            {/* EC2 / VPC — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              EC2 / VPC network monitoring — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#565b6e" }}>○ ec2:DescribeRegions</span>
+            <br />
+            <span style={{ color: "#565b6e" }}>○ ec2:DescribeSecurityGroups &nbsp;○ ec2:DescribeSecurityGroupRules</span>
+            <br />
+            <span style={{ color: "#565b6e" }}>○ ec2:DescribeVpcs &nbsp;○ ec2:DescribeSubnets &nbsp;○ ec2:DescribeRouteTables</span>
+            <br />
+            <span style={{ color: "#565b6e" }}>○ ec2:DescribeInternetGateways &nbsp;○ ec2:DescribeNatGateways</span>
+            <br />
+            <span style={{ color: "#565b6e" }}>○ ec2:DescribeNetworkAcls &nbsp;○ ec2:DescribeVpcEndpoints</span>
+            <br />
+
+            {/* S3 — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              S3 monitoring — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ s3:ListAllMyBuckets &nbsp;○ s3:GetBucketLocation &nbsp;○ s3:GetPublicAccessBlock
             </span>
             <br />
-            <span style={{ color: "#3a3d4a", marginTop: "4px", display: "block" }}>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ s3:GetBucketPolicy &nbsp;○ s3:GetBucketPolicyStatus &nbsp;○ s3:GetBucketAcl
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ s3:GetEncryptionConfiguration &nbsp;○ s3:GetBucketVersioning &nbsp;○ s3:GetBucketLogging
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ s3:GetLifecycleConfiguration &nbsp;○ s3:GetBucketTagging
+            </span>
+            <br />
+
+            <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.
             </span>

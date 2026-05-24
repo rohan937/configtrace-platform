@@ -40,8 +40,13 @@ Vercel:
   vercel_token_revoked, vercel_project_not_found, vercel_api_unavailable
 Stripe:
   stripe_key_revoked, stripe_permissions_insufficient, stripe_account_not_found, stripe_api_unavailable
-AWS:
+AWS (whole-integration failures, via classify_failure):
   aws_credentials_invalid, aws_access_denied, aws_resource_not_found, aws_api_unavailable
+AWS EC2/VPC (partial/per-API failures, via classify_aws_ec2_failure):
+  aws_ec2_access_denied, aws_ec2_region_disabled, aws_ec2_rate_limited, aws_ec2_api_unavailable
+  aws_security_groups_unavailable, aws_security_group_rules_unavailable
+  aws_vpc_unavailable, aws_subnets_unavailable, aws_route_tables_unavailable
+  aws_internet_gateways_unavailable, aws_network_acls_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -281,8 +286,12 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "The AWS IAM credentials do not have permission to call required "
                     "read-only APIs. Ensure the IAM user has at minimum: "
                     "sts:GetCallerIdentity (required). "
+                    "For EC2/VPC network monitoring (all optional): "
+                    "ec2:DescribeRegions, ec2:DescribeSecurityGroups, ec2:DescribeVpcs, "
+                    "ec2:DescribeSubnets, ec2:DescribeRouteTables, "
+                    "ec2:DescribeInternetGateways, ec2:DescribeNetworkAcls. "
                     "For S3 monitoring (all optional): s3:ListAllMyBuckets, "
-                    "s3:GetBucketLocation, s3:GetBucketPublicAccessBlock, "
+                    "s3:GetBucketLocation, s3:GetPublicAccessBlock, "
                     "s3:GetBucketPolicy, s3:GetBucketPolicyStatus, s3:GetBucketAcl, "
                     "s3:GetEncryptionConfiguration, s3:GetBucketVersioning, "
                     "s3:GetBucketLogging, s3:GetLifecycleConfiguration, "
@@ -391,4 +400,125 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
             "An unexpected error occurred while communicating with the provider. "
             "Check the server logs for details."
         ),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AWS EC2/VPC partial-failure classification — M38
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Maps EC2 API name to the stable error_code produced when that API fails for
+# a reason other than auth, rate-limiting, or a transient 5xx.
+_AWS_EC2_API_CODE: dict[str, str] = {
+    "DescribeSecurityGroups":     "aws_security_groups_unavailable",
+    "DescribeSecurityGroupRules": "aws_security_group_rules_unavailable",
+    "DescribeVpcs":               "aws_vpc_unavailable",
+    "DescribeSubnets":            "aws_subnets_unavailable",
+    "DescribeRouteTables":        "aws_route_tables_unavailable",
+    "DescribeInternetGateways":   "aws_internet_gateways_unavailable",
+    "DescribeNetworkAcls":        "aws_network_acls_unavailable",
+}
+
+# Recommended action returned for all per-API unavailability codes.
+_EC2_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional EC2/VPC network metadata; "
+    "other AWS checks may still work."
+)
+
+# Recommended action returned for EC2 access-denied errors.
+_EC2_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace read-only EC2/VPC describe permissions. "
+    "Required for network monitoring: ec2:DescribeSecurityGroups, ec2:DescribeVpcs, "
+    "ec2:DescribeSubnets, ec2:DescribeRouteTables, ec2:DescribeInternetGateways, "
+    "ec2:DescribeNetworkAcls. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_ec2_failure(
+    api_name: str,
+    exc: Exception,
+) -> FailureClassification:
+    """Classify a partial EC2/VPC sync failure (per-API, per-region).
+
+    Unlike :func:`classify_failure` (which classifies whole-integration
+    failures), this function is used when an individual EC2 describe call
+    fails inside ``_fetch_network_resources``.  The overall sync continues;
+    the result is logged as a structured warning.
+
+    Args:
+        api_name: The EC2 API name that failed (e.g. ``"DescribeSecurityGroups"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code`` and a
+        human-readable ``recommended_action``.  Credentials are never included
+        in the returned strings.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    # ── 403 / credentials rejected — check before api_name specificity ────────
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_ec2_access_denied",
+            recommended_action=_EC2_ACCESS_DENIED_ACTION,
+        )
+
+    # ── Rate limiting ─────────────────────────────────────────────────────────
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_ec2_rate_limited",
+            recommended_action=(
+                "AWS throttled EC2/VPC describe calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    # ── Network error ─────────────────────────────────────────────────────────
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented EC2/VPC describe calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    # ── 5xx: EC2 API temporarily unavailable ──────────────────────────────────
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_ec2_api_unavailable",
+            recommended_action=(
+                "The EC2/VPC API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    # ── Region disabled or other ConnectorError ───────────────────────────────
+    # If this is called for a region-client creation failure (no api_name
+    # known), or for a region-opt-in error, classify as region-disabled.
+    if isinstance(exc, ConnectorError) and not api_name:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_ec2_region_disabled",
+            recommended_action="Verify the selected AWS region is enabled in the AWS console.",
+        )
+
+    # ── Per-API codes for unexpected/generic failures ─────────────────────────
+    error_code = _AWS_EC2_API_CODE.get(api_name, "aws_ec2_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_EC2_PARTIAL_ACTION,
     )

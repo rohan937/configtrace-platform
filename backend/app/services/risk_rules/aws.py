@@ -1,4 +1,4 @@
-"""AWS risk classification rules — M36 + M37.
+"""AWS risk classification rules — M36 + M37 + M38.
 
 Entry point: classify_aws_change(change)
 
@@ -33,11 +33,23 @@ private, secrets, config, terraform, tfstate.
 """
 from __future__ import annotations
 
+from app.connectors.aws import (
+    _cidr_is_public,
+    _has_port_in_range,
+    _port_category,
+)
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
     AWS_REGION,
     AWS_SERVICE_INVENTORY,
     AWS_S3_BUCKET,
+    AWS_SECURITY_GROUP,
+    AWS_SECURITY_GROUP_RULE,
+    AWS_VPC,
+    AWS_SUBNET,
+    AWS_ROUTE_TABLE,
+    AWS_INTERNET_GATEWAY,
+    AWS_NETWORK_ACL,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -642,6 +654,667 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
     )
 
 
+# ── M38: Security group helpers ───────────────────────────────────────────────
+
+
+def _sg_group_name(change: object) -> str:
+    """Return a human-readable group label from provider_metadata."""
+    pm = _get(change, "provider_metadata") or {}
+    record_id: str = pm.get("record_id") or ""
+    record_name: str = pm.get("record_name") or ""
+    if record_name:
+        return record_name
+    # record_id format: "{region}/{group_id}"
+    parts = record_id.split("/")
+    return parts[-1] if parts else "unknown"
+
+
+def _sg_rule_context(rule: dict) -> tuple[str, str, str, int | None, int | None, str]:
+    """Extract key rule properties from a full rule record dict."""
+    group_id: str = rule.get("group_id") or "unknown"
+    region: str = rule.get("region") or ""
+    protocol: str = rule.get("protocol") or "-1"
+    from_port: int | None = rule.get("from_port")
+    to_port: int | None = rule.get("to_port")
+    cidr: str = (
+        rule.get("cidr_ipv4")
+        or rule.get("cidr_ipv6")
+        or (f"group:{rule['referenced_group_id']}" if rule.get("referenced_group_id") else "")
+        or ""
+    )
+    return group_id, region, protocol, from_port, to_port, cidr
+
+
+def _risk_for_public_ingress_rule(
+    group_id: str,
+    region: str,
+    protocol: str,
+    from_port: int | None,
+    to_port: int | None,
+    cidr: str,
+) -> tuple[str, str]:
+    """Return (risk_level, risk_reason) for a public ingress rule (added).
+
+    Uses "may be reachable" hedging throughout — a SG rule allowing public
+    access does not prove reachability without subnet/IGW/route-table context.
+    """
+    port_cat = _port_category(from_port, to_port, protocol)
+    port_str = (
+        "all ports and protocols" if protocol == "-1"
+        else f"port {from_port}" if from_port == to_port and from_port is not None
+        else f"ports {from_port}–{to_port}" if from_port is not None
+        else "unknown port"
+    )
+
+    if port_cat == "admin":
+        # Identify specific admin service for the message
+        if _has_port_in_range(22, from_port, to_port, protocol):
+            admin_name = "SSH (port 22)"
+        elif _has_port_in_range(3389, from_port, to_port, protocol):
+            admin_name = "RDP (port 3389)"
+        elif _has_port_in_range(5985, from_port, to_port, protocol) or _has_port_in_range(5986, from_port, to_port, protocol):
+            admin_name = "WinRM"
+        else:
+            admin_name = f"admin access ({port_str})"
+
+        return (
+            "critical",
+            f"An inbound {admin_name} rule was added to security group {group_id!r} "
+            f"in {region or 'unknown region'} allowing traffic from {cidr or 'all sources'}. "
+            f"Instances attached to this security group may be reachable from the public "
+            f"internet via {admin_name}. "
+            f"Restrict the source CIDR to known trusted IP ranges.",
+        )
+
+    if port_cat == "database":
+        return (
+            "critical",
+            f"An inbound database port rule was added to security group {group_id!r} "
+            f"in {region or 'unknown region'} allowing traffic from {cidr or 'all sources'}. "
+            f"Database services may be reachable from the public internet. "
+            f"Database ports should never be publicly accessible. "
+            f"Restrict the source CIDR to application security groups only.",
+        )
+
+    if port_cat == "all":
+        return (
+            "critical",
+            f"An inbound rule allowing ALL traffic was added to security group {group_id!r} "
+            f"in {region or 'unknown region'} from {cidr or 'all sources'}. "
+            f"All ports and protocols may be reachable from the public internet. "
+            f"This is a significant network exposure. Remove or restrict this rule immediately.",
+        )
+
+    if port_cat == "web":
+        # Distinguish HTTP (risky for data exposure) from HTTPS (expected)
+        if _has_port_in_range(80, from_port, to_port, protocol) or _has_port_in_range(8080, from_port, to_port, protocol):
+            return (
+                "medium",
+                f"An inbound HTTP rule ({port_str}) was added to security group {group_id!r} "
+                f"in {region or 'unknown region'} allowing traffic from {cidr or 'all sources'}. "
+                f"Verify that public HTTP access is intentional for the attached resources. "
+                f"HTTPS (port 443) is preferred for web traffic.",
+            )
+        # HTTPS (443, 8443) — standard for public web services
+        return (
+            "low",
+            f"An inbound HTTPS rule ({port_str}) was added to security group {group_id!r} "
+            f"in {region or 'unknown region'} allowing traffic from {cidr or 'all sources'}. "
+            f"HTTPS access from the internet is expected for public web services.",
+        )
+
+    # Other port with public CIDR
+    return (
+        "medium",
+        f"An inbound rule for {port_str} was added to security group {group_id!r} "
+        f"in {region or 'unknown region'} allowing traffic from {cidr or 'all sources'}. "
+        f"Verify that this public access is intentional.",
+    )
+
+
+# ── M38: aws_security_group_rule ──────────────────────────────────────────────
+
+
+def _classify_security_group_rule_change(change: object) -> tuple[str, str]:
+    """Classify changes to individual security group rules.
+
+    Added rules:
+      - Critical for public inbound SSH, RDP, database ports, or all-traffic.
+      - Medium for public inbound HTTP or other non-web ports.
+      - Low for public HTTPS, private CIDRs, group references, or egress.
+    Removed rules:
+      - Always low (rule removed = less exposure or routine cleanup).
+    Modified rules (description only):
+      - Always low (description change, no security posture change).
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    fp = (_get(change, "field_path") or "").lower()
+
+    if ct == "added":
+        rule = nv if isinstance(nv, dict) else {}
+        group_id, region, protocol, from_port, to_port, cidr = _sg_rule_context(rule)
+        direction: str = rule.get("direction") or ""
+        is_public: bool = bool(rule.get("is_public"))
+
+        if direction == "ingress" and is_public:
+            return _risk_for_public_ingress_rule(
+                group_id, region, protocol, from_port, to_port, cidr
+            )
+
+        if direction == "ingress":
+            ref_gid = rule.get("referenced_group_id")
+            if ref_gid:
+                return (
+                    "low",
+                    f"An inbound rule referencing security group {ref_gid!r} was added "
+                    f"to {group_id!r}. Verify the referenced group's rules are appropriate.",
+                )
+            return (
+                "low",
+                f"An inbound rule was added to security group {group_id!r} "
+                f"in {region or 'unknown region'} from a private or restricted CIDR.",
+            )
+
+        # Egress rules
+        if direction == "egress":
+            port_cat = _port_category(from_port, to_port, protocol)
+            if is_public and port_cat == "all":
+                # Default all-egress rule — very common and expected
+                return (
+                    "low",
+                    f"A default all-traffic egress rule was added to security group "
+                    f"{group_id!r}. This is standard EC2 default behaviour — all "
+                    f"outbound traffic is allowed.",
+                )
+            return (
+                "low",
+                f"An egress rule was added to security group {group_id!r}.",
+            )
+
+        return ("low", f"A security group rule was added to {group_id!r}.")
+
+    if ct == "removed":
+        rule = pv if isinstance(pv, dict) else {}
+        group_id, region, protocol, from_port, to_port, cidr = _sg_rule_context(rule)
+        direction = rule.get("direction") or ""
+        is_public = bool(rule.get("is_public"))
+        port_cat = _port_category(from_port, to_port, protocol)
+
+        if direction == "ingress" and is_public and port_cat in ("admin", "database", "all"):
+            return (
+                "low",
+                f"A public-facing inbound {port_cat} rule was removed from security group "
+                f"{group_id!r} in {region or 'unknown region'}. "
+                f"Public exposure via {cidr or 'the previous CIDR'} has been reduced. "
+                f"Verify the removal was intentional.",
+            )
+        return (
+            "low",
+            f"A security group rule was removed from {group_id!r}. "
+            f"Network access may have changed.",
+        )
+
+    # Modified — only description can change in place
+    if ct == "modified" and fp == "description":
+        pm = _get(change, "provider_metadata") or {}
+        rid = pm.get("record_id") or ""
+        parts = rid.split("/")
+        group_label = parts[1] if len(parts) >= 2 else "unknown"
+        return (
+            "low",
+            f"A security group rule description was updated in group {group_label!r}.",
+        )
+
+    return ("low", "A security group rule changed.")
+
+
+# ── M38: aws_security_group ───────────────────────────────────────────────────
+
+
+def _classify_security_group_change(change: object) -> tuple[str, str]:
+    """Classify changes to security group aggregate records.
+
+    The aws_security_group record tracks group-level posture (has_public_ssh,
+    has_public_rdp, has_public_database_port, has_public_inbound, rule counts).
+    Individual rule risk is covered by _classify_security_group_rule_change.
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    label = _sg_group_name(change)
+
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        if (
+            nv_dict.get("has_public_ssh")
+            or nv_dict.get("has_public_rdp")
+            or nv_dict.get("has_public_database_port")
+        ):
+            return (
+                "high",
+                f"Security group {label!r} appeared with public-facing rules for "
+                f"admin or database ports. Instances attached to this group may be "
+                f"reachable from the public internet. Verify all rules are intentional.",
+            )
+        if nv_dict.get("has_public_inbound"):
+            return (
+                "medium",
+                f"Security group {label!r} appeared with public inbound rules. "
+                f"Verify the intended level of internet access.",
+            )
+        return ("low", f"Security group {label!r} appeared in monitoring.")
+
+    if ct == "removed":
+        return (
+            "medium",
+            f"Security group {label!r} was removed. "
+            f"Instances that referenced this group may have their network access changed. "
+            f"Verify the removal was intentional.",
+        )
+
+    # Modified field changes
+    if fp == "has_public_ssh":
+        if nv is True:
+            return (
+                "high",
+                f"Security group {label!r} now has an inbound rule allowing SSH "
+                f"(port 22) from the public internet (0.0.0.0/0 or ::/0). "
+                f"Instances attached to this group may be reachable via SSH from any IP address.",
+            )
+        return (
+            "low",
+            f"Security group {label!r} no longer has a public SSH rule. "
+            f"SSH exposure from the internet has been reduced.",
+        )
+
+    if fp == "has_public_rdp":
+        if nv is True:
+            return (
+                "high",
+                f"Security group {label!r} now has an inbound rule allowing RDP "
+                f"(port 3389) from the public internet. "
+                f"Windows instances attached to this group may be reachable via RDP.",
+            )
+        return (
+            "low",
+            f"Security group {label!r} no longer has a public RDP rule. "
+            f"RDP exposure from the internet has been reduced.",
+        )
+
+    if fp == "has_public_database_port":
+        if nv is True:
+            return (
+                "high",
+                f"Security group {label!r} now has inbound rules allowing database "
+                f"ports from the public internet. Database services may be reachable "
+                f"from any IP address. Review and restrict access immediately.",
+            )
+        return (
+            "low",
+            f"Security group {label!r} no longer exposes database ports to the "
+            f"public internet. Exposure reduced.",
+        )
+
+    if fp == "has_public_inbound":
+        if nv is True:
+            return (
+                "medium",
+                f"Security group {label!r} now has at least one inbound rule open to "
+                f"the public internet. Verify the intended exposure.",
+            )
+        return (
+            "low",
+            f"Security group {label!r} no longer has public inbound rules. "
+            f"Internet-facing exposure has been removed.",
+        )
+
+    if fp in ("inbound_rule_count", "outbound_rule_count"):
+        direction_label = "inbound" if "inbound" in fp else "outbound"
+        if isinstance(nv, int) and isinstance(pv, int):
+            if nv < pv:
+                return (
+                    "medium",
+                    f"Security group {label!r} {direction_label} rule count decreased "
+                    f"from {pv} to {nv}. Rules may have been removed. "
+                    f"Verify the intended network access.",
+                )
+            return (
+                "low",
+                f"Security group {label!r} {direction_label} rule count increased "
+                f"from {pv} to {nv}.",
+            )
+        return ("low", f"Security group {label!r} rule count changed.")
+
+    if fp == "description":
+        return ("low", f"Security group {label!r} description was updated.")
+
+    if fp == "group_name":
+        return ("low", f"Security group was renamed to {nv!r}.")
+
+    if fp == "vpc_id":
+        return (
+            "medium",
+            f"Security group {label!r} VPC association changed "
+            f"(was {pv!r}, now {nv!r}). Verify the group is in the intended VPC.",
+        )
+
+    if fp == "tag_keys":
+        return ("low", f"Security group {label!r} tag keys changed.")
+
+    return (
+        "low",
+        f"Security group {label!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── M38: aws_vpc ─────────────────────────────────────────────────────────────
+
+
+def _classify_vpc_change(change: object) -> tuple[str, str]:
+    """Classify changes to VPC records."""
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    rid = pm.get("record_id") or ""
+    parts = rid.split("/")
+    vpc_id = parts[-1] if parts else "unknown"
+
+    if ct == "added":
+        return ("low", f"VPC {vpc_id!r} appeared in monitoring.")
+    if ct == "removed":
+        return (
+            "medium",
+            f"VPC {vpc_id!r} is no longer visible. "
+            f"It may have been deleted or become inaccessible.",
+        )
+
+    if fp == "state":
+        if nv not in ("available",):
+            return (
+                "medium",
+                f"VPC {vpc_id!r} state changed to {nv!r}. "
+                f"Verify the VPC is operational.",
+            )
+        return ("low", f"VPC {vpc_id!r} state changed to {nv!r}.")
+
+    if fp == "instance_tenancy":
+        return (
+            "medium",
+            f"VPC {vpc_id!r} instance tenancy changed to {nv!r}. "
+            f"Verify billing and compliance implications.",
+        )
+
+    if fp == "dhcp_options_id":
+        return (
+            "medium",
+            f"DHCP options set changed for VPC {vpc_id!r} "
+            f"(was {pv!r}, now {nv!r}). "
+            f"DNS resolution and domain settings may be affected.",
+        )
+
+    if fp == "cidr_block":
+        return (
+            "medium",
+            f"The primary CIDR block for VPC {vpc_id!r} changed "
+            f"(was {pv!r}, now {nv!r}). Verify routing and subnet allocation.",
+        )
+
+    return ("low", f"VPC {vpc_id!r} metadata changed ({fp or 'unknown field'}).")
+
+
+# ── M38: aws_subnet ───────────────────────────────────────────────────────────
+
+
+def _classify_subnet_change(change: object) -> tuple[str, str]:
+    """Classify changes to subnet records."""
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    rid = pm.get("record_id") or ""
+    parts = rid.split("/")
+    subnet_id = parts[-1] if parts else "unknown"
+
+    if ct == "added":
+        return ("low", f"Subnet {subnet_id!r} appeared in monitoring.")
+    if ct == "removed":
+        return ("low", f"Subnet {subnet_id!r} is no longer visible.")
+
+    if fp == "map_public_ip_on_launch":
+        if nv is True:
+            return (
+                "high",
+                f"Auto-assign public IPv4 addresses was enabled on subnet {subnet_id!r}. "
+                f"Instances launched in this subnet will automatically receive public IP "
+                f"addresses. Verify that this is intentional and that security groups "
+                f"appropriately restrict inbound access.",
+            )
+        if nv is False:
+            return (
+                "low",
+                f"Auto-assign public IPv4 addresses was disabled on subnet {subnet_id!r}. "
+                f"Instances launched here will no longer receive public IPs automatically.",
+            )
+        return (
+            "medium",
+            f"Subnet {subnet_id!r} public IP auto-assignment status changed.",
+        )
+
+    if fp == "state":
+        return ("low", f"Subnet {subnet_id!r} state changed to {nv!r}.")
+
+    if fp == "available_ip_count":
+        return ("low", f"Available IP address count changed in subnet {subnet_id!r}.")
+
+    return ("low", f"Subnet {subnet_id!r} configuration changed ({fp or 'unknown field'}).")
+
+
+# ── M38: aws_route_table ──────────────────────────────────────────────────────
+
+
+def _classify_route_table_change(change: object) -> tuple[str, str]:
+    """Classify changes to route table records.
+
+    has_igw_route is the primary risk signal: when True, resources associated
+    with this route table may route traffic through an Internet Gateway.
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    rid = pm.get("record_id") or ""
+    parts = rid.split("/")
+    rt_id = parts[-1] if parts else "unknown"
+
+    if ct == "added":
+        return ("low", f"Route table {rt_id!r} appeared in monitoring.")
+    if ct == "removed":
+        return ("low", f"Route table {rt_id!r} is no longer visible.")
+
+    if fp == "has_igw_route":
+        if nv is True:
+            return (
+                "high",
+                f"Route table {rt_id!r} now has a route to an Internet Gateway. "
+                f"Resources associated with this route table may now have internet "
+                f"connectivity. Verify that security groups and Network ACLs are "
+                f"configured to restrict inbound access appropriately.",
+            )
+        if nv is False:
+            return (
+                "low",
+                f"The Internet Gateway route was removed from route table {rt_id!r}. "
+                f"Internet connectivity for associated resources may have been removed.",
+            )
+        return ("medium", f"Route table {rt_id!r} IGW routing status changed.")
+
+    if fp == "igw_id":
+        return (
+            "medium",
+            f"Route table {rt_id!r} Internet Gateway reference changed "
+            f"(was {pv!r}, now {nv!r}). Verify the new IGW is correct.",
+        )
+
+    if fp == "route_count":
+        if isinstance(nv, int) and isinstance(pv, int):
+            if nv < pv:
+                return (
+                    "medium",
+                    f"Route count decreased in route table {rt_id!r} "
+                    f"(was {pv}, now {nv}). Routes may have been removed.",
+                )
+            return (
+                "low",
+                f"Route count increased in route table {rt_id!r} "
+                f"(was {pv}, now {nv}).",
+            )
+        return ("low", f"Route count changed in route table {rt_id!r}.")
+
+    if fp == "associated_subnet_ids":
+        return (
+            "low",
+            f"Subnet associations changed for route table {rt_id!r}.",
+        )
+
+    return (
+        "low",
+        f"Route table {rt_id!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── M38: aws_internet_gateway ─────────────────────────────────────────────────
+
+
+def _classify_igw_change(change: object) -> tuple[str, str]:
+    """Classify changes to Internet Gateway records."""
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    rid = pm.get("record_id") or ""
+    parts = rid.split("/")
+    igw_id = parts[-1] if parts else "unknown"
+
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        if nv_dict.get("attached_vpc_id"):
+            return (
+                "medium",
+                f"Internet Gateway {igw_id!r} appeared already attached to VPC "
+                f"{nv_dict['attached_vpc_id']!r}.",
+            )
+        return ("low", f"Internet Gateway {igw_id!r} appeared in monitoring.")
+
+    if ct == "removed":
+        return (
+            "low",
+            f"Internet Gateway {igw_id!r} is no longer visible. "
+            f"It may have been deleted.",
+        )
+
+    if fp == "attached_vpc_id":
+        if pv is None and nv is not None:
+            return (
+                "high",
+                f"Internet Gateway {igw_id!r} was attached to VPC {nv!r}. "
+                f"Resources in this VPC may now have internet connectivity. "
+                f"Verify that route tables and security groups are configured to "
+                f"restrict inbound access appropriately.",
+            )
+        if pv is not None and nv is None:
+            return (
+                "low",
+                f"Internet Gateway {igw_id!r} was detached from VPC {pv!r}. "
+                f"Internet connectivity for resources in this VPC has been removed.",
+            )
+        return (
+            "medium",
+            f"Internet Gateway {igw_id!r} VPC attachment changed "
+            f"(was {pv!r}, now {nv!r}).",
+        )
+
+    if fp == "state":
+        return ("low", f"Internet Gateway {igw_id!r} state changed to {nv!r}.")
+
+    return (
+        "low",
+        f"Internet Gateway {igw_id!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ── M38: aws_network_acl ──────────────────────────────────────────────────────
+
+
+def _classify_network_acl_change(change: object) -> tuple[str, str]:
+    """Classify changes to Network ACL records."""
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata") or {}
+    rid = pm.get("record_id") or ""
+    parts = rid.split("/")
+    nacl_id = parts[-1] if parts else "unknown"
+
+    if ct == "added":
+        return ("low", f"Network ACL {nacl_id!r} appeared in monitoring.")
+    if ct == "removed":
+        return ("low", f"Network ACL {nacl_id!r} is no longer visible.")
+
+    if fp == "inbound_allow_all_count":
+        if isinstance(nv, int) and isinstance(pv, int):
+            if nv > pv:
+                return (
+                    "medium",
+                    f"The number of inbound ALLOW-all rules in Network ACL {nacl_id!r} "
+                    f"increased from {pv} to {nv}. "
+                    f"Verify the new rules are intentional and correctly scoped.",
+                )
+            if nv < pv:
+                return (
+                    "low",
+                    f"Inbound ALLOW-all rules decreased in Network ACL {nacl_id!r} "
+                    f"(was {pv}, now {nv}). Public access restriction improved.",
+                )
+        return (
+            "medium",
+            f"Inbound ALLOW-all rule count changed in Network ACL {nacl_id!r}.",
+        )
+
+    if fp == "outbound_allow_all_count":
+        if isinstance(nv, int) and isinstance(pv, int) and nv > pv:
+            return (
+                "low",
+                f"Outbound ALLOW-all rules increased in Network ACL {nacl_id!r}. "
+                f"This is generally expected for standard configurations.",
+            )
+        return (
+            "low",
+            f"Outbound ALLOW-all rule count changed in Network ACL {nacl_id!r}.",
+        )
+
+    if fp == "rule_count":
+        return (
+            "low",
+            f"Rule count changed in Network ACL {nacl_id!r} "
+            f"(was {pv!r}, now {nv!r}).",
+        )
+
+    return (
+        "low",
+        f"Network ACL {nacl_id!r} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
@@ -665,8 +1338,23 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_service_inventory_change(change)
     if record_type == AWS_S3_BUCKET:
         return _classify_s3_change(change)
+    # ── M38 ──────────────────────────────────────────────────────────────────
+    if record_type == AWS_SECURITY_GROUP_RULE:
+        return _classify_security_group_rule_change(change)
+    if record_type == AWS_SECURITY_GROUP:
+        return _classify_security_group_change(change)
+    if record_type == AWS_VPC:
+        return _classify_vpc_change(change)
+    if record_type == AWS_SUBNET:
+        return _classify_subnet_change(change)
+    if record_type == AWS_ROUTE_TABLE:
+        return _classify_route_table_change(change)
+    if record_type == AWS_INTERNET_GATEWAY:
+        return _classify_igw_change(change)
+    if record_type == AWS_NETWORK_ACL:
+        return _classify_network_acl_change(change)
 
-    # Unknown AWS record type — future surfaces; conservative default
+    # Unknown AWS record type — conservative default
     return (
         "low",
         f"AWS configuration changed ({record_type or 'unknown record type'}).",

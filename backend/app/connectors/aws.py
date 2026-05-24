@@ -1,4 +1,4 @@
-"""AWS connector — M36: Foundation + Account Inventory; M37: S3 Exposure.
+"""AWS connector — M36: Foundation + Account Inventory; M37: S3 Exposure; M38: Security Groups + VPC.
 
 Fetches safe account/inventory metadata from AWS using read-only IAM credentials.
 
@@ -20,6 +20,40 @@ Resources fetched in M37
 -----------------------
 aws_s3_bucket
     One record per S3 bucket visible to the credentials.
+
+Resources fetched in M38
+-----------------------
+aws_security_group
+    One record per EC2 security group per selected region.
+    Includes aggregate posture fields (has_public_ssh, has_public_rdp, etc.)
+    computed from the group's ingress rules.
+aws_security_group_rule
+    One record per flattened ingress/egress rule per security group.
+    Rules are flattened so each CIDR (IPv4, IPv6) or referenced group is
+    a separate record.  Stable IDs are deterministic hashes of
+    region|group_id|direction|protocol|from_port|to_port|cidr.
+aws_vpc
+    One record per VPC per selected region.
+aws_subnet
+    One record per subnet per selected region.  Tracks
+    map_public_ip_on_launch as the primary exposure signal.
+aws_route_table
+    One record per route table per selected region.  Tracks
+    has_igw_route as the key internet-routing signal.
+aws_internet_gateway
+    One record per IGW per selected region.  Tracks attached_vpc_id.
+aws_network_acl
+    One record per Network ACL per selected region.  Tracks
+    inbound_allow_all_count / outbound_allow_all_count.
+
+SECURITY (M38)
+--------------
+- No write operations are performed.  No resource mutations.
+- No AdministratorAccess is requested or required.
+- All network resource calls are read-only describe operations.
+- "may be reachable" language is used in risk messages: a SG rule
+  allowing public CIDR does not prove reachability without subnet/IGW
+  context, so risk reasons hedge appropriately.
     Includes Block Public Access, policy public status, ACL public grants,
     encryption, versioning, logging, lifecycle rule count, and tag keys.
     Per-field optional failures are recorded as config_fetch_warnings rather
@@ -54,6 +88,7 @@ The _make_client() and _call_aws() helpers provide consistent error handling.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -64,11 +99,19 @@ from app.connectors.exceptions import (
     NetworkError,
     RateLimitError,
 )
+from app.core.failure_classifier import classify_aws_ec2_failure
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
     AWS_REGION,
     AWS_SERVICE_INVENTORY,
     AWS_S3_BUCKET,
+    AWS_SECURITY_GROUP,
+    AWS_SECURITY_GROUP_RULE,
+    AWS_VPC,
+    AWS_SUBNET,
+    AWS_ROUTE_TABLE,
+    AWS_INTERNET_GATEWAY,
+    AWS_NETWORK_ACL,
 )
 
 logger = logging.getLogger(__name__)
@@ -122,6 +165,112 @@ _ACL_ALL_USERS_URI         = "http://acs.amazonaws.com/groups/global/AllUsers"
 _ACL_AUTH_USERS_URI        = "http://acs.amazonaws.com/groups/global/AuthenticatedUsers"
 _ACL_READ_PERMISSIONS      = frozenset({"READ", "FULL_CONTROL"})
 _ACL_WRITE_PERMISSIONS     = frozenset({"WRITE", "FULL_CONTROL"})
+
+
+# ── M38: Security Group / Network helpers ────────────────────────────────────
+
+# Port sets used for categorising security group rules.
+_SG_ADMIN_PORTS: frozenset[int] = frozenset({22, 3389, 5985, 5986})
+_SG_DATABASE_PORTS: frozenset[int] = frozenset({
+    5432, 3306, 1433, 1521, 27017, 6379,
+    9200, 9300, 11211, 9042, 9092,
+})
+_SG_WEB_PORTS: frozenset[int] = frozenset({80, 443, 8080, 8443})
+
+
+def _cidr_is_public(cidr: str) -> bool:
+    """Return True if *cidr* represents unrestricted public internet access.
+
+    Only the canonical "any" CIDRs qualify:
+    - 0.0.0.0/0  → all IPv4 addresses
+    - ::/0        → all IPv6 addresses
+
+    RFC-1918 private ranges and smaller public prefixes are NOT considered
+    public for risk-classification purposes.
+    """
+    return cidr in ("0.0.0.0/0", "::/0")
+
+
+def _has_port_in_range(
+    port: int,
+    from_port: int | None,
+    to_port: int | None,
+    protocol: str,
+) -> bool:
+    """Return True if *port* is covered by the permission's port range.
+
+    Protocol "-1" means all-traffic: every port is included.
+    None ports (e.g. ICMP rules) are treated as not covering *port*.
+    """
+    if protocol == "-1":
+        return True
+    if from_port is None or to_port is None:
+        return False
+    return from_port <= port <= to_port
+
+
+def _port_category(
+    from_port: int | None,
+    to_port: int | None,
+    protocol: str,
+) -> str:
+    """Classify the port range into a security-relevant category.
+
+    Returns one of: "all", "admin", "database", "web", "other".
+
+    "all" is returned for protocol "-1" (all-traffic rules).
+    Admin, database, and web categories are detected by checking whether
+    any sentinel port from the respective set falls within [from_port, to_port].
+    """
+    if protocol == "-1":
+        return "all"
+    if from_port is None or to_port is None:
+        return "other"
+    for p in _SG_ADMIN_PORTS:
+        if from_port <= p <= to_port:
+            return "admin"
+    for p in _SG_DATABASE_PORTS:
+        if from_port <= p <= to_port:
+            return "database"
+    for p in _SG_WEB_PORTS:
+        if from_port <= p <= to_port:
+            return "web"
+    return "other"
+
+
+def _sg_rule_stable_id(
+    region: str,
+    group_id: str,
+    direction: str,
+    protocol: str,
+    from_port: int | None,
+    to_port: int | None,
+    cidr: str,
+) -> str:
+    """Compute a deterministic 12-character hex ID for a security group rule.
+
+    The ID is stable across syncs as long as the structural properties of the
+    rule (direction, protocol, ports, CIDR) do not change.  Description is
+    intentionally excluded so description-only changes are tracked as field
+    modifications rather than remove+add events.
+
+    Returns a 12-hex-character string (48 bits of SHA-256).
+    """
+    parts = "|".join([
+        region, group_id, direction, protocol,
+        str(from_port) if from_port is not None else "",
+        str(to_port) if to_port is not None else "",
+        cidr,
+    ])
+    return hashlib.sha256(parts.encode()).hexdigest()[:12]
+
+
+def _extract_tag_keys(tags: list[dict]) -> list[str] | None:
+    """Return sorted tag key names from an AWS Tags list, or None if empty."""
+    if not tags:
+        return None
+    keys = sorted(t["Key"] for t in tags if "Key" in t)
+    return keys if keys else None
 
 
 def _parse_bucket_policy_public(policy_json: str) -> bool:
@@ -356,24 +505,25 @@ class AWSConnector(BaseConnector):
         return True
 
     def fetch(self, credentials: dict) -> list[dict]:
-        """Fetch all AWS account/inventory and S3 records.
+        """Fetch all AWS account/inventory, S3, and network records.
 
         Returns a flat list of normalized records:
         - 1 × aws_account_identity  (M36)
         - N × aws_region            (M36, one per selected region)
-        - 1 × aws_service_inventory (M36/M37)
         - M × aws_s3_bucket         (M37, one per visible S3 bucket)
+        - P × aws_security_group    (M38, one per SG per selected region)
+        - Q × aws_security_group_rule (M38, one per flattened rule)
+        - R × aws_vpc               (M38, one per VPC per selected region)
+        - S × aws_subnet / aws_route_table / aws_internet_gateway / aws_network_acl
+        - 1 × aws_service_inventory (last — reflects all active surfaces)
 
         All resources use fail-soft behavior for optional endpoints.
         The account identity is the only required call — a 403 on account
         identity propagates as AuthenticationError.
 
-        S3 listing is fail-soft: if s3:ListAllMyBuckets is denied, S3 records
-        are omitted and the sync still succeeds. Per-bucket optional fields
-        that require additional permissions also fail soft (config_fetch_warnings).
-
         SECURITY: Credentials are never included in returned records.
                   S3 object contents and keys are never fetched.
+                  No write operations are performed.  No resource mutations.
         """
         logger.info(
             "AWSConnector.fetch: starting  key_id=%s",
@@ -408,8 +558,31 @@ class AWSConnector(BaseConnector):
             len(s3_records),
         )
 
-        # 4. Service inventory (reflects active surfaces)
-        inventory_record = self._fetch_service_inventory(credentials, s3_count=len(s3_records))
+        # 4. Network resources — security groups, VPCs, route tables, etc. (M38)
+        # Fail-soft: if the account has no EC2 permissions, returns empty list.
+        # Per-region and per-API-call failures are also soft.
+        network_records = self._fetch_network_resources(credentials)
+        records.extend(network_records)
+        logger.info(
+            "AWSConnector.fetch: network_resources fetched  count=%d",
+            len(network_records),
+        )
+
+        # 5. Service inventory (always last — reflects all active surfaces)
+        sg_count = sum(
+            1 for r in network_records
+            if r.get("record_type") == AWS_SECURITY_GROUP
+        )
+        vpc_count = sum(
+            1 for r in network_records
+            if r.get("record_type") == AWS_VPC
+        )
+        inventory_record = self._fetch_service_inventory(
+            credentials,
+            s3_count=len(s3_records),
+            security_group_count=sg_count,
+            vpc_count=vpc_count,
+        )
         records.append(inventory_record)
 
         logger.info(
@@ -504,29 +677,37 @@ class AWSConnector(BaseConnector):
             })
         return records
 
-    def _fetch_service_inventory(self, credentials: dict, s3_count: int = 0) -> dict:
+    def _fetch_service_inventory(
+        self,
+        credentials: dict,
+        s3_count: int = 0,
+        security_group_count: int = 0,
+        vpc_count: int = 0,
+    ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces.
 
-        Records which surfaces are actively monitored (M36: account_inventory;
-        M37: + s3) and which are planned for future milestones.
-        This record allows diff tracking to detect when the set of active
-        surfaces or selected regions changes.
+        Records which surfaces are actively monitored and which are planned for
+        future milestones.  This record allows diff tracking to detect when the
+        set of active surfaces or selected regions changes.
 
         Args:
-            credentials: AWS credentials (used only for region extraction).
-            s3_count:    Number of S3 bucket records fetched this sync.
-                         Used to update s3_bucket_count for change detection.
+            credentials:           AWS credentials (used only for region extraction).
+            s3_count:              Number of S3 bucket records fetched this sync.
+            security_group_count:  Number of security group records fetched (M38).
+            vpc_count:             Number of VPC records fetched (M38).
         """
         selected = self._selected_regions(credentials)
         return {
-            "record_type":      AWS_SERVICE_INVENTORY,
-            "record_id":        "service_inventory",
-            "name":             "AWS Service Inventory",
-            "selected_regions": selected,
-            "enabled_surfaces": ["account_inventory", "s3"],
-            "s3_bucket_count":  s3_count,
+            "record_type":           AWS_SERVICE_INVENTORY,
+            "record_id":             "service_inventory",
+            "name":                  "AWS Service Inventory",
+            "selected_regions":      selected,
+            "enabled_surfaces":      ["account_inventory", "s3", "security_groups", "vpc"],
+            "s3_bucket_count":       s3_count,
+            "security_group_count":  security_group_count,
+            "vpc_count":             vpc_count,
             "future_surfaces": [
-                "security_groups", "iam", "route53", "cloudfront",
+                "iam", "route53", "cloudfront",
                 "secrets", "rds", "lambda", "api_gateway", "load_balancers",
                 "waf", "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
@@ -1086,3 +1267,562 @@ class AWSConnector(BaseConnector):
                 warnings.append("s3_tagging_unavailable")
                 return {"tag_keys": None}
             raise
+
+    # ── Network resources (M38) ───────────────────────────────────────────────
+
+    def _fetch_network_resources(self, credentials: dict) -> list[dict]:
+        """Fetch security groups and VPC network resources across selected regions.
+
+        Returns a flat list of records covering all selected regions:
+        - aws_security_group / aws_security_group_rule (M38)
+        - aws_vpc / aws_subnet / aws_route_table
+        - aws_internet_gateway / aws_network_acl
+
+        Fail-soft design:
+        - If creating an EC2 client for a region fails, that region is skipped.
+        - Per-API failures within a region (e.g. DescribeSecurityGroups 403)
+          are caught individually so other APIs in the same region still run.
+        - Unexpected exceptions per API are also caught and logged.
+
+        SECURITY: No write operations.  No resource mutations.  Credentials
+        are only forwarded to _make_client; they are never placed in records.
+        """
+        regions = self._selected_regions(credentials)
+        records: list[dict] = []
+
+        for region in regions:
+            try:
+                client = self._make_client("ec2", credentials, region=region)
+            except Exception:
+                logger.warning(
+                    "aws.network: failed to create EC2 client for region %s — skipping",
+                    region,
+                    exc_info=True,
+                )
+                continue
+
+            for fetch_fn, api_name in [
+                (self._fetch_security_groups,  "DescribeSecurityGroups"),
+                (self._fetch_vpcs,             "DescribeVpcs"),
+                (self._fetch_igws,             "DescribeInternetGateways"),
+                (self._fetch_route_tables,     "DescribeRouteTables"),
+                (self._fetch_subnets,          "DescribeSubnets"),
+                (self._fetch_network_acls,     "DescribeNetworkAcls"),
+            ]:
+                try:
+                    sub_records = fetch_fn(client, region)
+                    records.extend(sub_records)
+                    logger.debug(
+                        "aws.network: %s in %s → %d record(s)",
+                        api_name, region, len(sub_records),
+                    )
+                except ConnectorError as exc:
+                    fc = classify_aws_ec2_failure(api_name, exc)
+                    if exc.status_code == 403:
+                        logger.info(
+                            "aws: %s [%s] not permitted in %s — %s",
+                            api_name, fc.error_code, region, fc.recommended_action,
+                        )
+                    else:
+                        logger.warning(
+                            "aws: %s [%s] failed in %s — %s",
+                            api_name, fc.error_code, region, fc.recommended_action,
+                            exc_info=True,
+                        )
+                except Exception as exc:
+                    fc = classify_aws_ec2_failure(api_name, exc)
+                    logger.warning(
+                        "aws: %s [%s] unexpected error in %s — skipping",
+                        api_name, fc.error_code, region,
+                        exc_info=True,
+                    )
+
+        return records
+
+    # ── Security groups ───────────────────────────────────────────────────────
+
+    def _make_sg_rule(
+        self,
+        group_id: str,
+        region: str,
+        direction: str,
+        protocol: str,
+        from_port: int | None,
+        to_port: int | None,
+        cidr: str,
+        description: str,
+    ) -> dict:
+        """Build one aws_security_group_rule record.
+
+        The ``record_id`` encodes the structural properties of the rule so it
+        is stable across syncs.  Description is NOT part of the stable ID —
+        description changes are tracked as field-level modifications, not
+        remove+add events.
+
+        CIDR is one of:
+        - IPv4 CIDR string (e.g. "0.0.0.0/0", "10.0.0.0/8")
+        - IPv6 CIDR string (e.g. "::/0", "2001:db8::/32")
+        - Group reference (e.g. "group:123456789012/sg-abcdef")
+        """
+        rule_hash = _sg_rule_stable_id(
+            region, group_id, direction, protocol, from_port, to_port, cidr
+        )
+        is_public = _cidr_is_public(cidr)
+        port_cat = _port_category(from_port, to_port, protocol)
+
+        # Classify CIDR type
+        if cidr.startswith("group:"):
+            cidr_ipv4 = None
+            cidr_ipv6 = None
+            ref_group_id: str | None = cidr[len("group:"):]
+        elif ":" in cidr:
+            cidr_ipv4 = None
+            cidr_ipv6 = cidr
+            ref_group_id = None
+        else:
+            cidr_ipv4 = cidr
+            cidr_ipv6 = None
+            ref_group_id = None
+
+        # Human-readable name for display / record_identifier
+        port_label = (
+            "all" if protocol == "-1"
+            else str(from_port) if from_port == to_port and from_port is not None
+            else f"{from_port}-{to_port}" if from_port is not None
+            else "?"
+        )
+        name = f"{direction} {protocol} {port_label} {cidr}"
+
+        return {
+            "record_type":         AWS_SECURITY_GROUP_RULE,
+            "record_id":           f"{region}/{group_id}/{rule_hash}",
+            "name":                name,
+            "rule_hash":           rule_hash,
+            "group_id":            group_id,
+            "region":              region,
+            "direction":           direction,
+            "protocol":            protocol,
+            "from_port":           from_port,
+            "to_port":             to_port,
+            "cidr_ipv4":           cidr_ipv4,
+            "cidr_ipv6":           cidr_ipv6,
+            "referenced_group_id": ref_group_id,
+            "is_public":           is_public,
+            "port_category":       port_cat,
+            "description":         description,
+        }
+
+    def _flatten_permission(
+        self,
+        group_id: str,
+        region: str,
+        direction: str,
+        permission: dict,
+    ) -> list[dict]:
+        """Flatten a single IpPermission dict into individual rule records.
+
+        One rule record is created per:
+        - IPv4 CIDR in IpRanges
+        - IPv6 CIDR in Ipv6Ranges
+        - Referenced security group in UserIdGroupPairs
+
+        For permissions with no CIDRs or group pairs (unusual edge case),
+        an empty list is returned.
+        """
+        protocol: str = permission.get("IpProtocol") or "-1"
+        from_port: int | None = permission.get("FromPort")
+        to_port: int | None = permission.get("ToPort")
+
+        rules: list[dict] = []
+
+        # IPv4 CIDRs
+        for ip_range in (permission.get("IpRanges") or []):
+            cidr = ip_range.get("CidrIp") or ""
+            desc = ip_range.get("Description") or ""
+            if cidr:
+                rules.append(
+                    self._make_sg_rule(
+                        group_id, region, direction,
+                        protocol, from_port, to_port, cidr, desc,
+                    )
+                )
+
+        # IPv6 CIDRs
+        for ip_range in (permission.get("Ipv6Ranges") or []):
+            cidr = ip_range.get("CidrIpv6") or ""
+            desc = ip_range.get("Description") or ""
+            if cidr:
+                rules.append(
+                    self._make_sg_rule(
+                        group_id, region, direction,
+                        protocol, from_port, to_port, cidr, desc,
+                    )
+                )
+
+        # Security group references
+        for pair in (permission.get("UserIdGroupPairs") or []):
+            ref_gid = pair.get("GroupId") or ""
+            ref_uid = pair.get("UserId") or ""
+            desc = pair.get("Description") or ""
+            if ref_gid:
+                cidr = f"group:{ref_uid}/{ref_gid}" if ref_uid else f"group:{ref_gid}"
+                rules.append(
+                    self._make_sg_rule(
+                        group_id, region, direction,
+                        protocol, from_port, to_port, cidr, desc,
+                    )
+                )
+
+        return rules
+
+    def _fetch_security_groups(self, client: Any, region: str) -> list[dict]:
+        """Fetch all EC2 security groups in *region* and normalize to records.
+
+        Returns aws_security_group records (one per group) followed by
+        aws_security_group_rule records (one per flattened rule).
+
+        Handles pagination via NextToken.
+
+        SECURITY: No write operations.  Group rules are read-only metadata.
+        """
+        # ── Paginate DescribeSecurityGroups ───────────────────────────────────
+        groups: list[dict] = []
+        kwargs: dict = {}
+        while True:
+            response = self._call_aws(client.describe_security_groups, **kwargs)
+            groups.extend(response.get("SecurityGroups") or [])
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+            kwargs["NextToken"] = next_token
+
+        sg_records: list[dict] = []
+        rule_records: list[dict] = []
+
+        for group in groups:
+            group_id: str = group.get("GroupId") or ""
+            if not group_id:
+                continue
+
+            group_name: str = group.get("GroupName") or ""
+            description: str = group.get("Description") or ""
+            vpc_id: str | None = group.get("VpcId") or None
+            owner_id: str = group.get("OwnerId") or ""
+            tag_keys = _extract_tag_keys(group.get("Tags") or [])
+
+            # ── Flatten all inbound rules ─────────────────────────────────────
+            inbound_rules: list[dict] = []
+            for perm in (group.get("IpPermissions") or []):
+                inbound_rules.extend(
+                    self._flatten_permission(group_id, region, "ingress", perm)
+                )
+
+            # ── Flatten all outbound rules ────────────────────────────────────
+            outbound_rules: list[dict] = []
+            for perm in (group.get("IpPermissionsEgress") or []):
+                outbound_rules.extend(
+                    self._flatten_permission(group_id, region, "egress", perm)
+                )
+
+            rule_records.extend(inbound_rules)
+            rule_records.extend(outbound_rules)
+
+            # ── Compute aggregate posture fields ──────────────────────────────
+            # These allow diff tracking at the group level without scanning all
+            # individual rule records.
+            has_public_inbound = any(
+                r["is_public"] for r in inbound_rules
+            )
+            has_public_ssh = any(
+                r["is_public"]
+                and _has_port_in_range(22, r["from_port"], r["to_port"], r["protocol"])
+                for r in inbound_rules
+            )
+            has_public_rdp = any(
+                r["is_public"]
+                and _has_port_in_range(3389, r["from_port"], r["to_port"], r["protocol"])
+                for r in inbound_rules
+            )
+            has_public_database_port = any(
+                r["is_public"] and r["port_category"] == "database"
+                for r in inbound_rules
+            )
+
+            sg_records.append({
+                "record_type":             AWS_SECURITY_GROUP,
+                "record_id":               f"{region}/{group_id}",
+                "name":                    f"{group_name} ({group_id})",
+                "group_id":                group_id,
+                "group_name":              group_name,
+                "description":             description,
+                "vpc_id":                  vpc_id,
+                "region":                  region,
+                "owner_id":                owner_id,
+                "inbound_rule_count":      len(inbound_rules),
+                "outbound_rule_count":     len(outbound_rules),
+                "has_public_inbound":      has_public_inbound,
+                "has_public_ssh":          has_public_ssh,
+                "has_public_rdp":          has_public_rdp,
+                "has_public_database_port": has_public_database_port,
+                "tag_keys":                tag_keys,
+            })
+
+        # SG records first, then rule records (stable ordering)
+        return sg_records + rule_records
+
+    # ── VPCs ──────────────────────────────────────────────────────────────────
+
+    def _fetch_vpcs(self, client: Any, region: str) -> list[dict]:
+        """Fetch all VPCs in *region* and normalize.
+
+        Handles pagination via NextToken.
+        """
+        vpcs: list[dict] = []
+        kwargs: dict = {}
+        while True:
+            response = self._call_aws(client.describe_vpcs, **kwargs)
+            vpcs.extend(response.get("Vpcs") or [])
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+            kwargs["NextToken"] = next_token
+
+        records: list[dict] = []
+        for vpc in vpcs:
+            vpc_id: str = vpc.get("VpcId") or ""
+            if not vpc_id:
+                continue
+            records.append({
+                "record_type":       AWS_VPC,
+                "record_id":         f"{region}/{vpc_id}",
+                "name":              vpc_id,
+                "vpc_id":            vpc_id,
+                "region":            region,
+                "cidr_block":        vpc.get("CidrBlock") or "",
+                "state":             vpc.get("State") or "",
+                "is_default":        bool(vpc.get("IsDefault")),
+                "dhcp_options_id":   vpc.get("DhcpOptionsId") or None,
+                "instance_tenancy":  vpc.get("InstanceTenancy") or "default",
+                "tag_keys":          _extract_tag_keys(vpc.get("Tags") or []),
+            })
+        return records
+
+    # ── Internet Gateways ─────────────────────────────────────────────────────
+
+    def _fetch_igws(self, client: Any, region: str) -> list[dict]:
+        """Fetch all Internet Gateways in *region* and normalize.
+
+        An IGW is considered "attached" when Attachments contains an entry with
+        State "available" or "attached".  attached_vpc_id is the VPC it is
+        attached to, or None if detached.
+
+        Handles pagination via NextToken.
+        """
+        igws: list[dict] = []
+        kwargs: dict = {}
+        while True:
+            response = self._call_aws(client.describe_internet_gateways, **kwargs)
+            igws.extend(response.get("InternetGateways") or [])
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+            kwargs["NextToken"] = next_token
+
+        records: list[dict] = []
+        for igw in igws:
+            igw_id: str = igw.get("InternetGatewayId") or ""
+            if not igw_id:
+                continue
+            attachments = igw.get("Attachments") or []
+            # Find the first VPC attachment that is available/attached
+            attached_vpc_id: str | None = None
+            state: str = "detached"
+            for att in attachments:
+                att_state = (att.get("State") or "").lower()
+                if att_state in ("available", "attached"):
+                    attached_vpc_id = att.get("VpcId") or None
+                    state = att_state
+                    break
+                elif att_state:
+                    state = att_state
+
+            records.append({
+                "record_type":      AWS_INTERNET_GATEWAY,
+                "record_id":        f"{region}/{igw_id}",
+                "name":             igw_id,
+                "igw_id":           igw_id,
+                "region":           region,
+                "state":            state,
+                "attached_vpc_id":  attached_vpc_id,
+                "tag_keys":         _extract_tag_keys(igw.get("Tags") or []),
+            })
+        return records
+
+    # ── Route tables ──────────────────────────────────────────────────────────
+
+    def _fetch_route_tables(self, client: Any, region: str) -> list[dict]:
+        """Fetch all route tables in *region* and normalize.
+
+        Key derived field: ``has_igw_route`` — True when any route in this
+        table points to an Internet Gateway (GatewayId starts with "igw-").
+        This is the primary risk signal for internet-facing routing.
+
+        Handles pagination via NextToken.
+        """
+        rts: list[dict] = []
+        kwargs: dict = {}
+        while True:
+            response = self._call_aws(client.describe_route_tables, **kwargs)
+            rts.extend(response.get("RouteTables") or [])
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+            kwargs["NextToken"] = next_token
+
+        records: list[dict] = []
+        for rt in rts:
+            rt_id: str = rt.get("RouteTableId") or ""
+            if not rt_id:
+                continue
+            vpc_id: str = rt.get("VpcId") or ""
+
+            # Determine if this is the main route table
+            associations = rt.get("Associations") or []
+            is_main = any(a.get("Main") for a in associations)
+
+            # Collect associated subnet IDs
+            associated_subnet_ids: list[str] = sorted(
+                a["SubnetId"]
+                for a in associations
+                if a.get("SubnetId")
+            )
+
+            # Check for IGW route
+            routes = rt.get("Routes") or []
+            igw_route = next(
+                (
+                    r for r in routes
+                    if (r.get("GatewayId") or "").startswith("igw-")
+                    and r.get("State") != "blackhole"
+                ),
+                None,
+            )
+            has_igw_route = igw_route is not None
+            igw_id: str | None = igw_route["GatewayId"] if igw_route else None
+
+            records.append({
+                "record_type":           AWS_ROUTE_TABLE,
+                "record_id":             f"{region}/{rt_id}",
+                "name":                  rt_id,
+                "route_table_id":        rt_id,
+                "region":                region,
+                "vpc_id":                vpc_id,
+                "is_main":               is_main,
+                "has_igw_route":         has_igw_route,
+                "igw_id":                igw_id,
+                "route_count":           len(routes),
+                "associated_subnet_ids": associated_subnet_ids,
+                "tag_keys":              _extract_tag_keys(rt.get("Tags") or []),
+            })
+        return records
+
+    # ── Subnets ───────────────────────────────────────────────────────────────
+
+    def _fetch_subnets(self, client: Any, region: str) -> list[dict]:
+        """Fetch all subnets in *region* and normalize.
+
+        Key field: ``map_public_ip_on_launch`` — when True, instances launched
+        in this subnet automatically receive a public IPv4 address.
+
+        Handles pagination via NextToken.
+        """
+        subnets: list[dict] = []
+        kwargs: dict = {}
+        while True:
+            response = self._call_aws(client.describe_subnets, **kwargs)
+            subnets.extend(response.get("Subnets") or [])
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+            kwargs["NextToken"] = next_token
+
+        records: list[dict] = []
+        for subnet in subnets:
+            subnet_id: str = subnet.get("SubnetId") or ""
+            if not subnet_id:
+                continue
+            records.append({
+                "record_type":              AWS_SUBNET,
+                "record_id":               f"{region}/{subnet_id}",
+                "name":                    subnet_id,
+                "subnet_id":               subnet_id,
+                "region":                  region,
+                "vpc_id":                  subnet.get("VpcId") or "",
+                "cidr_block":              subnet.get("CidrBlock") or "",
+                "availability_zone":       subnet.get("AvailabilityZone") or "",
+                "state":                   subnet.get("State") or "",
+                "available_ip_count":      subnet.get("AvailableIpAddressCount"),
+                "map_public_ip_on_launch": bool(subnet.get("MapPublicIpOnLaunch")),
+                "is_default":              bool(subnet.get("DefaultForAz")),
+                "tag_keys":                _extract_tag_keys(subnet.get("Tags") or []),
+            })
+        return records
+
+    # ── Network ACLs ──────────────────────────────────────────────────────────
+
+    def _fetch_network_acls(self, client: Any, region: str) -> list[dict]:
+        """Fetch all Network ACLs in *region* and normalize.
+
+        Derived fields:
+        - ``inbound_allow_all_count``  — # inbound ALLOW entries covering
+          0.0.0.0/0 or ::/0 (any protocol)
+        - ``outbound_allow_all_count`` — same for outbound entries
+
+        These counts detect NACL configurations that effectively allow all
+        internet traffic past the network layer.
+
+        Handles pagination via NextToken.
+        """
+        acls: list[dict] = []
+        kwargs: dict = {}
+        while True:
+            response = self._call_aws(client.describe_network_acls, **kwargs)
+            acls.extend(response.get("NetworkAcls") or [])
+            next_token = response.get("NextToken")
+            if not next_token:
+                break
+            kwargs["NextToken"] = next_token
+
+        records: list[dict] = []
+        for acl in acls:
+            acl_id: str = acl.get("NetworkAclId") or ""
+            if not acl_id:
+                continue
+            entries = acl.get("Entries") or []
+
+            def _is_allow_all(entry: dict, egress: bool) -> bool:
+                if bool(entry.get("Egress")) != egress:
+                    return False
+                if (entry.get("RuleAction") or "").lower() != "allow":
+                    return False
+                cidr4 = entry.get("CidrBlock") or ""
+                cidr6 = entry.get("Ipv6CidrBlock") or ""
+                return cidr4 == "0.0.0.0/0" or cidr6 == "::/0"
+
+            inbound_allow_all = sum(1 for e in entries if _is_allow_all(e, egress=False))
+            outbound_allow_all = sum(1 for e in entries if _is_allow_all(e, egress=True))
+
+            records.append({
+                "record_type":              AWS_NETWORK_ACL,
+                "record_id":               f"{region}/{acl_id}",
+                "name":                    acl_id,
+                "nacl_id":                 acl_id,
+                "region":                  region,
+                "vpc_id":                  acl.get("VpcId") or "",
+                "is_default":              bool(acl.get("IsDefault")),
+                "inbound_allow_all_count": inbound_allow_all,
+                "outbound_allow_all_count": outbound_allow_all,
+                "rule_count":              len(entries),
+                "tag_keys":                _extract_tag_keys(acl.get("Tags") or []),
+            })
+        return records

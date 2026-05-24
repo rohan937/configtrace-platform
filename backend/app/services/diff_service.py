@@ -261,6 +261,8 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "selected_regions",
         "enabled_surfaces",
         "s3_bucket_count",
+        "security_group_count",  # M38
+        "vpc_count",             # M38
         # NOTE: future_surfaces is intentionally NOT tracked — adding future
         # surfaces to the placeholder list should not generate change events.
     ),
@@ -304,6 +306,66 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "tag_keys",
         # Fetch-time warnings (missing optional permissions)
         "config_fetch_warnings",
+    ),
+    # ── M38: Security Groups + VPC Network Exposure ───────────────────────────
+    # aws_security_group — one record per EC2 security group per region.
+    # Aggregate posture fields (has_public_*) allow diff to detect when the
+    # overall exposure of a group changes without scanning every rule record.
+    "aws_security_group": (
+        "group_name",
+        "description",
+        "vpc_id",
+        "inbound_rule_count",
+        "outbound_rule_count",
+        "has_public_inbound",
+        "has_public_ssh",
+        "has_public_rdp",
+        "has_public_database_port",
+        "tag_keys",
+    ),
+    # aws_security_group_rule — one record per flattened rule (one CIDR/ref).
+    # The record_id encodes direction/protocol/ports/CIDR so structural changes
+    # appear as remove+add.  Only description can change in place.
+    "aws_security_group_rule": (
+        "description",
+    ),
+    # aws_vpc — one record per VPC per region.
+    "aws_vpc": (
+        "state",
+        "cidr_block",
+        "dhcp_options_id",
+        "instance_tenancy",
+        "tag_keys",
+    ),
+    # aws_subnet — one record per subnet per region.
+    # map_public_ip_on_launch is the key exposure signal.
+    "aws_subnet": (
+        "state",
+        "available_ip_count",
+        "map_public_ip_on_launch",
+        "tag_keys",
+    ),
+    # aws_route_table — one record per route table per region.
+    # has_igw_route is the key internet-routing signal.
+    "aws_route_table": (
+        "has_igw_route",
+        "igw_id",
+        "route_count",
+        "associated_subnet_ids",
+        "tag_keys",
+    ),
+    # aws_internet_gateway — one record per IGW per region.
+    "aws_internet_gateway": (
+        "state",
+        "attached_vpc_id",
+        "tag_keys",
+    ),
+    # aws_network_acl — one record per NACL per region.
+    "aws_network_acl": (
+        "inbound_allow_all_count",
+        "outbound_allow_all_count",
+        "rule_count",
+        "tag_keys",
     ),
 }
 
