@@ -298,10 +298,18 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
                 f"{bucket_name!r}. External users may be able to upload or "
                 "modify objects without authentication.",
             )
+        if nv is False:
+            return (
+                "low",
+                f"Public WRITE ACL was removed from S3 bucket {bucket_name!r}. "
+                "This is a security improvement.",
+            )
+        # nv is None — GetBucketAcl permission removed; ACL status is unknown.
+        # Do not claim the ACL was removed when we cannot confirm it.
         return (
             "low",
-            f"Public WRITE ACL was removed from S3 bucket {bucket_name!r}. "
-            "This is a security improvement.",
+            f"Public WRITE ACL status for S3 bucket {bucket_name!r} is now "
+            "unavailable. Verify ACL configuration if a read permission changed.",
         )
 
     # ACL public READ for AllUsers
@@ -313,9 +321,16 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
                 "ACL. Objects may be readable by anyone on the internet without "
                 "authentication. Check if this is intentional.",
             )
+        if nv is False:
+            return (
+                "low",
+                f"Public READ ACL was removed from S3 bucket {bucket_name!r}.",
+            )
+        # nv is None — ACL status unavailable; cannot confirm removal.
         return (
             "low",
-            f"Public READ ACL was removed from S3 bucket {bucket_name!r}.",
+            f"Public READ ACL status for S3 bucket {bucket_name!r} is now "
+            "unavailable. Verify ACL configuration if a read permission changed.",
         )
 
     # ACL WRITE for authenticated AWS users (any AWS account)
@@ -327,9 +342,16 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
                 "authenticated AWS users via ACL. Any AWS account can modify "
                 "or delete objects in this bucket.",
             )
+        if nv is False:
+            return (
+                "low",
+                f"AuthenticatedUsers WRITE ACL was removed from S3 bucket {bucket_name!r}.",
+            )
+        # nv is None — ACL status unavailable.
         return (
             "low",
-            f"AuthenticatedUsers WRITE ACL was removed from S3 bucket {bucket_name!r}.",
+            f"AuthenticatedUsers WRITE ACL status for S3 bucket {bucket_name!r} "
+            "is now unavailable.",
         )
 
     # ACL READ for authenticated AWS users
@@ -341,9 +363,16 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
                 "authenticated AWS users via ACL. Any AWS account can list and "
                 "read objects in this bucket.",
             )
+        if nv is False:
+            return (
+                "low",
+                f"AuthenticatedUsers READ ACL was removed from S3 bucket {bucket_name!r}.",
+            )
+        # nv is None — ACL status unavailable.
         return (
             "low",
-            f"AuthenticatedUsers READ ACL was removed from S3 bucket {bucket_name!r}.",
+            f"AuthenticatedUsers READ ACL status for S3 bucket {bucket_name!r} "
+            "is now unavailable.",
         )
 
     # Public principal in bucket policy
@@ -455,8 +484,17 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
 
     # Versioning status
     if fp == "versioning_status":
-        nv_str = str(nv).lower() if nv is not None else "disabled"
-        pv_str = str(pv).lower() if pv is not None else "disabled"
+        # Guard: None means the field became unavailable (GetBucketVersioning
+        # permission removed), not that versioning was actually disabled.
+        # Treat unavailability as low — we cannot confirm a security regression.
+        if nv is None:
+            return (
+                "low",
+                f"Versioning status for S3 bucket {bucket_name!r} is now "
+                "unavailable. A read permission may have been removed.",
+            )
+        nv_str = nv.lower() if isinstance(nv, str) else str(nv).lower()
+        pv_str = str(pv).lower() if pv is not None else ""
         if nv_str in ("suspended", "disabled") and pv_str == "enabled":
             level = "high" if sensitive else "medium"
             return (

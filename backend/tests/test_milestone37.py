@@ -1593,6 +1593,221 @@ class TestS3RiskClassification:
         _, reason = classify_aws_change(change)
         assert "version" in reason.lower()
 
+    # ── Explanation direction, hedging, and data-safety tests ─────────────────
+
+    def test_versioning_status_none_is_low_not_high(self):
+        """Regression: versioning=None (permission removed) must NOT be treated
+        as versioning=disabled. Previously the None→"disabled" coercion caused
+        sensitive buckets to be classified high."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="versioning_status",
+            prev_value="enabled", new_value=None,
+            record_name="prod-backups",  # sensitive — would be high if bug present
+        )
+        level, reason = classify_aws_change(change)
+        assert level == "low", (
+            "versioning=None means the field is unavailable, not that versioning "
+            "was disabled. It must not escalate to high."
+        )
+        assert "unavailable" in reason.lower() or "permission" in reason.lower()
+
+    def test_acl_write_none_does_not_claim_acl_removed(self):
+        """When acl_all_users_write goes True→None (GetBucketAcl denied),
+        the message must not falsely say the ACL was removed."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="acl_all_users_write",
+            prev_value=True, new_value=None,
+        )
+        level, reason = classify_aws_change(change)
+        assert level == "low"
+        # Must NOT claim the ACL was removed — we only know we can't read it
+        assert "removed" not in reason.lower(), (
+            "When new_value=None the ACL status is unknown. "
+            "The reason must not falsely say the ACL was removed."
+        )
+        assert "unavailable" in reason.lower() or "cannot" in reason.lower() or "verify" in reason.lower()
+
+    def test_acl_read_none_does_not_claim_acl_removed(self):
+        """acl_all_users_read True→None must not say 'was removed'."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="acl_all_users_read",
+            prev_value=True, new_value=None,
+        )
+        _, reason = classify_aws_change(change)
+        assert "removed" not in reason.lower()
+        assert "unavailable" in reason.lower() or "verify" in reason.lower()
+
+    def test_acl_write_false_says_removed_and_improvement(self):
+        """When new_value=False (ACL confirmed removed), the message should
+        confirm the improvement — distinguishing from the None case."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="acl_all_users_write",
+            prev_value=True, new_value=False,
+        )
+        _, reason = classify_aws_change(change)
+        assert "removed" in reason.lower()
+        assert "improvement" in reason.lower() or "security" in reason.lower()
+
+    def test_bpa_weakened_reason_is_directional(self):
+        """BPA disabled message must describe the direction (disabled/weakened)
+        and prompt investigation, not just say 'changed'."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="block_public_policy",
+            prev_value=True, new_value=False,
+            record_name="prod-uploads",
+        )
+        _, reason = classify_aws_change(change)
+        assert "disabled" in reason.lower() or "removed" in reason.lower()
+        assert "verify" in reason.lower() or "check" in reason.lower() or "intentional" in reason.lower()
+
+    def test_bpa_strengthened_reason_says_strengthened(self):
+        """When BPA is re-enabled the message must describe it as a positive
+        change (strengthened / enabled), not just 'changed'."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="block_public_acls",
+            prev_value=False, new_value=True,
+        )
+        _, reason = classify_aws_change(change)
+        assert "enabled" in reason.lower() or "strengthened" in reason.lower()
+
+    def test_policy_status_public_reason_says_objects_may_be_readable(self):
+        """policy_status_is_public=True: explanation must be hedged ('may be')
+        and mention public readability — not claim objects ARE exposed."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="policy_status_is_public",
+            prev_value=False, new_value=True,
+            record_name="prod-data",
+        )
+        _, reason = classify_aws_change(change)
+        assert "may" in reason.lower()
+        assert "public" in reason.lower()
+        # Must prompt review, not claim objects have already been read
+        assert "review" in reason.lower() or "check" in reason.lower() or "verify" in reason.lower()
+
+    def test_public_principals_reason_uses_may_not_certainty(self):
+        """public_principals_detected=True must hedge ('may allow') rather than
+        claiming data has definitely been accessed."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="public_principals_detected",
+            prev_value=False, new_value=True,
+            record_name="prod-config",
+        )
+        _, reason = classify_aws_change(change)
+        assert "may" in reason.lower()
+        assert "public" in reason.lower()
+
+    def test_versioning_suspended_reason_says_suspended(self):
+        """When versioning goes enabled→suspended the reason must say 'suspended',
+        not just 'disabled' — these are distinct AWS states."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="versioning_status",
+            prev_value="enabled", new_value="suspended",
+            record_name="db-backups",
+        )
+        _, reason = classify_aws_change(change)
+        assert "suspended" in reason.lower()
+
+    def test_encryption_disabled_reason_hedged_with_newly_stored(self):
+        """Disabling encryption does not retroactively expose existing objects.
+        The reason must hedge ('may no longer be', 'newly stored') rather than
+        claiming all data is exposed."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="encryption_enabled",
+            prev_value=True, new_value=False,
+            record_name="static-site",  # non-sensitive → medium
+        )
+        _, reason = classify_aws_change(change)
+        assert "may" in reason.lower() or "newly" in reason.lower()
+        assert "exposed" not in reason.lower()
+
+    def test_bucket_removed_reason_is_hedged(self):
+        """Bucket removal message must be hedged — it may have been deleted,
+        renamed, or become inaccessible. Must not claim definite deletion."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            change_type="removed",
+            prev_value=_make_minimal_bucket_record(),
+        )
+        _, reason = classify_aws_change(change)
+        assert "may" in reason.lower()
+
+    def test_policy_hash_reason_does_not_include_hash_value(self):
+        """The policy_hash field value (a 16-char hex string) must NOT appear
+        in the risk reason — it is an internal diff signal, not user-visible."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="policy_hash",
+            prev_value="aabbccdd11223344", new_value="deadbeef12345678",
+        )
+        _, reason = classify_aws_change(change)
+        assert "aabbccdd11223344" not in reason
+        assert "deadbeef12345678" not in reason
+        assert "policy" in reason.lower()
+
+    def test_logging_disabled_reason_mentions_audit_or_investigation(self):
+        """Logging disabled must mention the audit/investigation impact,
+        not just say 'logging disabled'."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="logging_enabled",
+            prev_value=True, new_value=False,
+            record_name="production-data",
+        )
+        _, reason = classify_aws_change(change)
+        assert (
+            "audit" in reason.lower()
+            or "investigation" in reason.lower()
+            or "record" in reason.lower()
+        )
+
+    def test_acl_authenticated_users_write_reason_explains_scope(self):
+        """Authenticated-users WRITE grant: reason must explain that this means
+        any AWS account, not just the bucket owner's account."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="acl_authenticated_users_write",
+            prev_value=False, new_value=True,
+        )
+        _, reason = classify_aws_change(change)
+        # Must mention AWS account scope (not just "authenticated")
+        assert "aws account" in reason.lower() or "any aws" in reason.lower()
+        assert "modify" in reason.lower() or "delete" in reason.lower() or "write" in reason.lower()
+
+    def test_tag_keys_reason_does_not_expose_tag_values(self):
+        """tag_keys change: even if nv is a list, the reason string must never
+        embed tag key names from new_value (they may encode sensitive paths)."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="tag_keys",
+            prev_value=["cost-center"],
+            new_value=["cost-center", "contains-pii-true"],
+        )
+        _, reason = classify_aws_change(change)
+        # The tag key value must not appear verbatim in the reason
+        assert "contains-pii-true" not in reason
+
+    def test_encryption_enabled_reason_confirms_positive_direction(self):
+        """When encryption is enabled (False→True) the reason must confirm
+        it is a positive outcome, not just say 'status changed'."""
+        change = _make_change(
+            record_type=AWS_S3_BUCKET,
+            field_path="encryption_enabled",
+            prev_value=False, new_value=True,
+        )
+        _, reason = classify_aws_change(change)
+        assert "enabled" in reason.lower()
+        assert "encrypted" in reason.lower() or "encryption" in reason.lower()
+
 
 # ── 20. Security invariants ───────────────────────────────────────────────────
 
