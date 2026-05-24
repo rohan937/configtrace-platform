@@ -937,3 +937,387 @@ class TestM40RegressionGuards:
         }
         level, _ = classify_aws_change(c)
         assert level == "critical"
+
+
+# ===========================================================================
+# Class 9: Wildcard DNS + CAA record handling
+# ===========================================================================
+
+class TestM40WildcardAndCAA:
+    """Wildcard detection (literal *.x and escaped \\052.x) and CAA handling."""
+
+    # ── Wildcard added ────────────────────────────────────────────────────────
+
+    def test_wildcard_literal_added_non_sensitive_is_high(self):
+        """Literal *.example.com added to a non-sensitive zone → High."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="*.example.com",
+            dns_record_type="A",
+            dns_record_name="*.example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "high", reason
+        assert "wildcard" in reason.lower()
+
+    def test_wildcard_escaped_added_non_sensitive_is_high(self):
+        """AWS-escaped \\052.example.com added to a non-sensitive zone → High."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="\\052.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="\\052.example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "high", reason
+        assert "wildcard" in reason.lower()
+
+    def test_wildcard_literal_sensitive_zone_added_is_critical(self):
+        """Wildcard added to sensitive zone (api.*) → Critical."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="*.api.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="*.api.example.com",
+            zone_name="api.example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "critical", reason
+        assert "wildcard" in reason.lower()
+
+    def test_wildcard_escaped_prod_zone_added_is_critical(self):
+        """AWS-escaped \\052 in prod zone → Critical."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="\\052.prod.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="\\052.prod.example.com",
+            zone_name="prod.example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "critical", reason
+        assert "wildcard" in reason.lower()
+
+    # ── Wildcard value_hash changed ───────────────────────────────────────────
+
+    def test_wildcard_value_changed_non_sensitive_is_high(self):
+        """Wildcard value_hash changed in non-sensitive zone → High."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            field_path="value_hash",
+            new_value="newHash123",
+            previous_value="oldHash456",
+            record_name="*.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="*.example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "high", reason
+        assert "wildcard" in reason.lower()
+
+    def test_wildcard_value_changed_sensitive_is_critical(self):
+        """Wildcard value_hash changed in sensitive zone → Critical."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            field_path="value_hash",
+            new_value="newHash123",
+            previous_value="oldHash456",
+            record_name="*.auth.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="*.auth.example.com",
+            zone_name="auth.example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "critical", reason
+        assert "wildcard" in reason.lower()
+
+    # ── Wildcard removed ──────────────────────────────────────────────────────
+
+    def test_wildcard_removed_non_sensitive_is_medium(self):
+        """Wildcard removed from non-sensitive zone → Medium."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="*.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="*.example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "medium", reason
+        assert "wildcard" in reason.lower()
+
+    def test_wildcard_removed_sensitive_is_high(self):
+        """Wildcard removed from sensitive zone → High."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="*.api.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="*.api.example.com",
+            zone_name="api.example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "high", reason
+        assert "wildcard" in reason.lower()
+
+    def test_wildcard_escaped_removed_non_sensitive_is_medium(self):
+        """Escaped \\052 wildcard removed → Medium for non-sensitive zone."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="\\052.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="\\052.example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "medium", reason
+        assert "wildcard" in reason.lower()
+
+    # ── CAA record handling ───────────────────────────────────────────────────
+
+    def test_caa_removed_normal_zone_is_medium(self):
+        """CAA record removed from a normal zone → Medium."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="example.com",
+            dns_record_type="CAA",
+            dns_record_name="example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "medium", reason
+        assert "caa" in reason.lower() or "certificate" in reason.lower()
+
+    def test_caa_removed_prod_zone_is_high(self):
+        """CAA record removed from a prod/sensitive zone → High."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="prod.example.com",
+            dns_record_type="CAA",
+            dns_record_name="prod.example.com",
+            zone_name="prod.example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "high", reason
+        assert "caa" in reason.lower() or "certificate" in reason.lower()
+
+    def test_caa_added_is_low(self):
+        """CAA record added → Low (restricts certificate issuance)."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="example.com",
+            dns_record_type="CAA",
+            dns_record_name="example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "low", reason
+        assert "caa" in reason.lower() or "certificate" in reason.lower()
+
+    def test_caa_value_modified_normal_zone_is_medium(self):
+        """CAA value_hash changed in a normal zone → Medium."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            field_path="value_hash",
+            new_value="newHash",
+            previous_value="oldHash",
+            record_name="example.com",
+            dns_record_type="CAA",
+            dns_record_name="example.com",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "medium", reason
+        assert "caa" in reason.lower() or "certificate" in reason.lower()
+
+    def test_caa_value_modified_prod_zone_is_high(self):
+        """CAA value_hash changed in a prod zone → High."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            field_path="value_hash",
+            new_value="newHash",
+            previous_value="oldHash",
+            record_name="prod.example.com",
+            dns_record_type="CAA",
+            dns_record_name="prod.example.com",
+            zone_name="prod.example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "high", reason
+        assert "caa" in reason.lower() or "certificate" in reason.lower()
+
+    # ── Ordinary records unaffected ───────────────────────────────────────────
+
+    def test_normal_cname_added_is_low(self):
+        """Non-wildcard, non-sensitive CNAME added → Low."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="blog.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="blog.example.com",
+            zone_name="example.com",
+        )
+        level, _ = classify_aws_change(c)
+        assert level == "low"
+
+    def test_sensitive_non_wildcard_cname_added_is_medium(self):
+        """Sensitive non-wildcard record (api.*) added → Medium."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="api.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="api.example.com",
+            zone_name="example.com",
+        )
+        level, _ = classify_aws_change(c)
+        assert level == "medium"
+
+
+# ===========================================================================
+# Class 10: Message format validation
+# ===========================================================================
+
+class TestM40MessageFormat:
+    """Risk messages must not contain empty type labels '()' or empty zone
+    labels \"zone ''\", and must not use overclaiming language."""
+
+    def test_no_empty_type_label_when_dns_type_missing_removed(self):
+        """Removed record with no dns_record_type should not produce '()' in message."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="www.example.com",
+            dns_record_type="",          # deliberately empty
+            zone_name="example.com",
+        )
+        _, reason = classify_aws_change(c)
+        assert "()" not in reason, f"Empty type label in: {reason!r}"
+
+    def test_no_empty_zone_label_when_zone_missing_removed(self):
+        """Removed record with no zone_name should not produce \"zone ''\" in message."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="www.example.com",
+            dns_record_type="A",
+            zone_name="",               # deliberately empty
+        )
+        _, reason = classify_aws_change(c)
+        assert "zone ''" not in reason, f"Empty zone label in: {reason!r}"
+        # Should fall back to a human-readable phrase
+        assert "the hosted zone" in reason, f"Expected fallback label in: {reason!r}"
+
+    def test_no_empty_type_label_when_dns_type_missing_modified(self):
+        """value_hash change with no dns_record_type should not produce '()' in message."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            field_path="value_hash",
+            new_value="abc", previous_value="def",
+            record_name="www.example.com",
+            dns_record_type="",
+            zone_name="example.com",
+        )
+        _, reason = classify_aws_change(c)
+        assert "()" not in reason, f"Empty type label in: {reason!r}"
+
+    def test_no_empty_zone_label_when_zone_missing_modified(self):
+        """value_hash change with no zone_name should use fallback, not \"zone ''\"."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            field_path="value_hash",
+            new_value="abc", previous_value="def",
+            record_name="www.example.com",
+            dns_record_type="A",
+            zone_name="",
+        )
+        _, reason = classify_aws_change(c)
+        assert "zone ''" not in reason, f"Empty zone label in: {reason!r}"
+        assert "the hosted zone" in reason, f"Expected fallback label in: {reason!r}"
+
+    def test_caa_removed_empty_zone_no_empty_labels(self):
+        """CAA removed with empty zone_name uses 'the hosted zone', no '()' or \"zone ''\"."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="CAA example.com",
+            dns_record_type="CAA",
+            zone_name="",
+        )
+        _, reason = classify_aws_change(c)
+        assert "()" not in reason, f"Empty type label in: {reason!r}"
+        assert "zone ''" not in reason, f"Empty zone label in: {reason!r}"
+
+    def test_wildcard_added_message_does_not_overclaim(self):
+        """Wildcard added message uses hedged language, not absolute claims of harm."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="added",
+            record_name="*.example.com",
+            dns_record_type="CNAME",
+            dns_record_name="*.example.com",
+            zone_name="example.com",
+        )
+        _, reason = classify_aws_change(c)
+        lower = reason.lower()
+        for bad_phrase in ("will compromise", "will hijack", "data leak", "certificate compromise"):
+            assert bad_phrase not in lower, f"Overclaiming phrase {bad_phrase!r} in: {reason!r}"
+        # Must use hedged language
+        assert "may" in lower or "could" in lower or "confirm" in lower, (
+            f"Expected hedged language ('may'/'could'/'confirm') in: {reason!r}"
+        )
+
+    def test_caa_removed_message_does_not_overclaim(self):
+        """CAA removed message mentions certificate authorities, not catastrophic outcomes."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="example.com",
+            dns_record_type="CAA",
+            zone_name="example.com",
+        )
+        _, reason = classify_aws_change(c)
+        lower = reason.lower()
+        for bad_phrase in ("will compromise", "data leak", "account takeover"):
+            assert bad_phrase not in lower, f"Overclaiming phrase {bad_phrase!r} in: {reason!r}"
+        assert "certificate" in lower or "caa" in lower
+
+    def test_existing_mx_removed_message_unchanged(self):
+        """MX removal message still mentions email delivery (regression guard)."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            change_type="removed",
+            record_name="example.com",
+            dns_record_type="MX",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "critical"
+        assert "email" in reason.lower() or "mx" in reason.lower()
+
+    def test_existing_ns_changed_message_unchanged(self):
+        """NS value_hash change is still Critical (regression guard)."""
+        c = _change(
+            AWS_ROUTE53_RECORD,
+            field_path="value_hash",
+            new_value="abc", previous_value="def",
+            record_name="example.com",
+            dns_record_type="NS",
+            zone_name="example.com",
+        )
+        level, reason = classify_aws_change(c)
+        assert level == "critical"
+        assert "ns" in reason.lower() or "nameserver" in reason.lower()

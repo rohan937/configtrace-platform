@@ -526,6 +526,75 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* CloudTrail — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              CloudTrail posture metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ cloudtrail:DescribeTrails &nbsp;○ cloudtrail:GetTrailStatus
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ cloudtrail:GetEventSelectors &nbsp;○ cloudtrail:GetInsightSelectors
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ cloudtrail:ListEventDataStores &nbsp;○ cloudtrail:GetEventDataStore &nbsp;○ cloudtrail:ListTags
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls cloudtrail:LookupEvents and never reads CloudTrail log objects from S3.
+              Only trail posture configuration is collected (logging status, validation, KMS presence).
+              Event payloads, request parameters, and user identity data are never accessed or stored.
+            </span>
+            <br />
+
+            {/* GuardDuty — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              GuardDuty posture metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ guardduty:ListDetectors &nbsp;○ guardduty:GetDetector
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ guardduty:ListPublishingDestinations &nbsp;○ guardduty:DescribePublishingDestination
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ guardduty:ListMembers &nbsp;○ guardduty:GetAdministratorAccount &nbsp;○ guardduty:ListTagsForResource
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls guardduty:GetFindings.
+              Finding details, severity, evidence, and remediation data are never accessed or stored.
+              Only detector posture (enabled status, protection features, publishing frequency) is collected.
+            </span>
+            <br />
+
+            {/* Security Hub — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              Security Hub posture metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ securityhub:DescribeHub &nbsp;○ securityhub:GetEnabledStandards
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ securityhub:ListEnabledProductsForImport &nbsp;○ securityhub:ListFindingAggregators &nbsp;○ securityhub:GetFindingAggregator
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ securityhub:ListTagsForResource
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls securityhub:GetFindings.
+              Finding details, evidence, and remediation data are never accessed or stored.
+              Only hub posture (enabled status, standards subscriptions, aggregator configuration) is collected.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.

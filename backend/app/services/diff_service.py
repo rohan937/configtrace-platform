@@ -973,6 +973,104 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "resource_type",
         "scope",
     ),
+    # ── M45: CloudTrail + GuardDuty + Security Hub Posture ────────────────────
+    # aws_cloudtrail_trail — one per CloudTrail trail (one per home region).
+    # CloudTrail events/log objects are NEVER read. Selectors summarized by type/count.
+    "aws_cloudtrail_trail": (
+        # "trail_name" is not tracked — trail identity is via record_id (hashed ARN);
+        # renames cause remove+add events, not field modifications.
+        "home_region",
+        "is_multi_region_trail",
+        "include_global_service_events",
+        "is_organization_trail",
+        "log_file_validation_enabled",
+        "kms_key_id_present",
+        "kms_key_id_hash",
+        "s3_bucket_name_hash",
+        "sns_topic_name_present",
+        "cloud_watch_logs_enabled",
+        "has_custom_event_selectors",
+        "is_logging",
+        "latest_delivery_error_present",
+        "latest_notification_error_present",
+        "management_events_enabled",
+        "read_write_type",
+        "include_management_events",
+        "data_resource_type_counts",
+        "exclude_management_event_sources_count",
+        "insight_selector_count",
+        "insight_selector_types",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+    # aws_cloudtrail_event_data_store — one per CloudTrail event data store.
+    # Events NEVER read; only posture metadata tracked.
+    "aws_cloudtrail_event_data_store": (
+        "name",
+        "status",
+        "termination_protection_enabled",
+        "multi_region_enabled",
+        "organization_enabled",
+        "retention_period",
+        "advanced_event_selector_count",
+        "kms_key_id_present",
+        "billing_mode",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+    # aws_guardduty_detector — one per GuardDuty detector (per region).
+    # GuardDuty findings NEVER accessed; only posture metadata tracked.
+    "aws_guardduty_detector": (
+        "status",
+        "finding_publishing_frequency",
+        "s3_logs_enabled",
+        "eks_audit_logs_enabled",
+        "malware_protection_enabled",
+        "rds_login_events_enabled",
+        "lambda_network_logs_enabled",
+        "runtime_monitoring_enabled",
+        "ebs_malware_protection_enabled",
+        "feature_count",
+        "member_count",
+        "active_member_count",
+        "admin_account_present",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+    # aws_guardduty_publishing_destination — one per destination per detector.
+    "aws_guardduty_publishing_destination": (
+        "destination_type",
+        "status",
+        "kms_key_arn_present",
+        "destination_arn_present",
+        "config_fetch_warnings",
+    ),
+    # aws_securityhub_account — one per Security Hub account/region posture.
+    # Security Hub findings NEVER accessed; only posture/standards metadata.
+    "aws_securityhub_account": (
+        "hub_enabled",
+        "auto_enable_controls",
+        "control_finding_generator",
+        "enabled_standards_count",
+        "enabled_products_count",
+        "finding_aggregator_present",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+    # aws_securityhub_standard_subscription — one per enabled Security Hub standard.
+    "aws_securityhub_standard_subscription": (
+        "standards_status",
+        "standards_status_reason",
+        "standards_name_summary",
+        "config_fetch_warnings",
+    ),
+    # aws_securityhub_finding_aggregator — one per Security Hub finding aggregator.
+    "aws_securityhub_finding_aggregator": (
+        "linking_mode",
+        "specified_regions_count",
+        "specified_regions",
+        "config_fetch_warnings",
+    ),
 }
 
 
@@ -1100,6 +1198,25 @@ def _build_provider_metadata(
     }
     if alt_record is not None:
         metadata["new_record_content"] = alt_record.get("content")
+
+    # Route53 records carry DNS-specific context that the risk classifier
+    # and UI need for accurate messages. Add these fields so the classifier
+    # can access dns_record_type, zone_name, and the actual hostname
+    # (the composite ``name`` field alone is not enough).
+    if record.get("record_type") == "aws_route53_record":
+        metadata["dns_record_type"] = record.get("dns_record_type") or ""
+        metadata["zone_name"] = record.get("zone_name") or ""
+        # dns_record_name is the raw hostname (e.g. "*.example.com" or
+        # "\052.example.com") rather than the composite display name.
+        metadata["dns_record_name"] = record.get("record_name") or ""
+
+    # CloudTrail trails carry org/multi-region flags that the risk classifier
+    # uses to determine whether logging-disabled events should escalate to
+    # "critical" (org/multi-region trails) vs "high" (single-region trails).
+    if record.get("record_type") == "aws_cloudtrail_trail":
+        metadata["is_organization_trail"] = bool(record.get("is_organization_trail"))
+        metadata["is_multi_region_trail"] = bool(record.get("is_multi_region_trail"))
+
     return metadata
 
 

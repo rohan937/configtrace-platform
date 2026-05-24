@@ -842,6 +842,76 @@ function getChangeSummary(change: ChangeDetail): string {
     return `WAF Web ACL association changed for ${assocName}${fp ? ` (${fp})` : ""}.`;
   }
 
+  // ── M45: CloudTrail + GuardDuty + Security Hub ──────────────────────────
+  if (rt === "aws_cloudtrail_trail") {
+    const trailName = rn || (change.record_identifier ?? "trail");
+    if (change.change_type === "removed") return `CloudTrail trail ${trailName} is no longer visible. Confirm logging has not been silenced.`;
+    if (change.change_type === "added")   return `CloudTrail trail ${trailName} is now monitored.`;
+    if (fp === "is_logging" && change.new_value === false) return `CloudTrail trail ${trailName} stopped logging. Audit events may no longer be captured.`;
+    if (fp === "is_multi_region_trail" && change.new_value === false) return `CloudTrail trail ${trailName} was downgraded from multi-region to single-region.`;
+    if (fp === "log_file_validation_enabled" && change.new_value === false) return `CloudTrail trail ${trailName} log file validation was disabled. Log tampering detection is reduced.`;
+    if (fp === "kms_key_id_present" && change.new_value === false) return `CloudTrail trail ${trailName} KMS encryption was removed.`;
+    if (fp === "kms_key_id_hash") return `CloudTrail trail ${trailName} KMS encryption key changed.`;
+    if (fp === "management_events_enabled" && change.new_value === false) return `CloudTrail trail ${trailName} stopped logging management events.`;
+    if (fp === "s3_bucket_name_hash") return `CloudTrail trail ${trailName} S3 log destination changed.`;
+    return `CloudTrail trail ${trailName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudtrail_event_data_store") {
+    const edsName = rn || (change.record_identifier ?? "event data store");
+    if (change.change_type === "removed") return `CloudTrail event data store ${edsName} was removed.`;
+    if (change.change_type === "added")   return `CloudTrail event data store ${edsName} was added.`;
+    if (fp === "termination_protection_enabled" && change.new_value === false) return `CloudTrail event data store ${edsName} termination protection was disabled.`;
+    if (fp === "retention_period") return `CloudTrail event data store ${edsName} retention period changed.`;
+    if (fp === "status") return `CloudTrail event data store ${edsName} status changed to ${change.new_value ?? "unknown"}.`;
+    return `CloudTrail event data store ${edsName} changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_guardduty_detector") {
+    const detName = rn || (change.record_identifier ?? "detector");
+    if (change.change_type === "removed") return `GuardDuty detector ${detName} is no longer visible. Threat detection coverage may be missing.`;
+    if (change.change_type === "added")   return `GuardDuty detector ${detName} is now monitored.`;
+    if (fp === "status" && String(change.new_value).toUpperCase() === "DISABLED") return `GuardDuty detector ${detName} was disabled. Threat detection has stopped in this region.`;
+    if (fp === "finding_publishing_frequency") return `GuardDuty detector ${detName} finding publishing frequency changed to ${change.new_value ?? "unknown"}.`;
+    if (fp?.endsWith("_enabled") && change.new_value === false) return `GuardDuty ${fp.replace(/_enabled$/, "").replace(/_/g, " ")} protection was disabled in ${detName}.`;
+    return `GuardDuty detector ${detName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_guardduty_publishing_destination") {
+    const destName = rn || (change.record_identifier ?? "destination");
+    if (change.change_type === "removed") return `GuardDuty publishing destination ${destName} was removed.`;
+    if (change.change_type === "added")   return `GuardDuty publishing destination ${destName} was added.`;
+    if (fp === "status") return `GuardDuty publishing destination ${destName} status changed to ${change.new_value ?? "unknown"}.`;
+    return `GuardDuty publishing destination ${destName} changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_securityhub_account") {
+    const hubName = rn || (change.record_identifier ?? "Security Hub");
+    if (change.change_type === "removed") return `Security Hub hub ${hubName} is no longer visible.`;
+    if (change.change_type === "added")   return `Security Hub hub ${hubName} is now monitored.`;
+    if (fp === "hub_enabled" && change.new_value === false) return `Security Hub was disabled in ${hubName}. Security findings will stop being generated.`;
+    if (fp === "enabled_standards_count" && Number(change.new_value) === 0) return `All Security Hub standards were disabled in ${hubName}. Control coverage is now zero.`;
+    if (fp === "auto_enable_controls" && change.new_value === false) return `Security Hub auto-enable controls was turned off in ${hubName}.`;
+    if (fp === "finding_aggregator_present" && change.new_value === false) return `Security Hub finding aggregator was removed in ${hubName}.`;
+    return `Security Hub account ${hubName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_securityhub_standard_subscription") {
+    const stdName = rn || (change.record_identifier ?? "standard");
+    if (change.change_type === "removed") return `Security Hub standard subscription ${stdName} was removed. Compliance coverage may be reduced.`;
+    if (change.change_type === "added")   return `Security Hub standard subscription ${stdName} was added.`;
+    if (fp === "standards_status") return `Security Hub standard ${stdName} status changed to ${change.new_value ?? "unknown"}.`;
+    return `Security Hub standard subscription ${stdName} changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_securityhub_finding_aggregator") {
+    const aggName = rn || (change.record_identifier ?? "aggregator");
+    if (change.change_type === "removed") return `Security Hub finding aggregator ${aggName} was removed. Cross-region finding visibility may be reduced.`;
+    if (change.change_type === "added")   return `Security Hub finding aggregator ${aggName} was added.`;
+    if (fp === "linking_mode") return `Security Hub finding aggregator ${aggName} linking mode changed from ${change.prev_value ?? "unknown"} to ${change.new_value ?? "unknown"}.`;
+    return `Security Hub finding aggregator ${aggName} changed${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -2180,6 +2250,173 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the Web ACL association is intentional.",
       "Verify the Web ACL rules are appropriate for the associated resource.",
       "ConfigTrace does not read sampled requests or request contents.",
+    ];
+  }
+
+  // ── M45: CloudTrail + GuardDuty + Security Hub ──────────────────────────
+  if (rt === "aws_cloudtrail_trail") {
+    const fp5 = change.field_path ?? "";
+    if (change.change_type === "removed") {
+      return [
+        "Confirm this trail was intentionally removed or replaced.",
+        "Verify another trail is still capturing management events for this account.",
+        "Check AWS IAM access logs for who deleted or disabled the trail.",
+        "If the trail was deleted without authorization, escalate as a security incident.",
+        "ConfigTrace never reads CloudTrail event logs or S3 log objects.",
+      ];
+    }
+    if (fp5 === "is_logging" && change.new_value === false) {
+      return [
+        "Investigate why CloudTrail logging was stopped — this may indicate credential misuse.",
+        "Re-enable logging immediately if this was not authorized.",
+        "Check IAM access logs for who called cloudtrail:StopLogging.",
+        "Verify no audit gaps occurred during the period logging was off.",
+        "ConfigTrace never calls cloudtrail:LookupEvents or reads log files.",
+      ];
+    }
+    if (fp5 === "log_file_validation_enabled" && change.new_value === false) {
+      return [
+        "Log file validation ensures CloudTrail logs have not been tampered with.",
+        "Re-enable log file validation to restore tamper detection.",
+        "Review whether this change was authorized.",
+        "ConfigTrace never reads CloudTrail log objects from S3.",
+      ];
+    }
+    if (fp5 === "kms_key_id_present" && change.new_value === false) {
+      return [
+        "CloudTrail KMS encryption was removed — logs may be stored unencrypted.",
+        "Re-enable KMS encryption if this was not intentional.",
+        "Verify the KMS key change was authorized by a security administrator.",
+        "ConfigTrace does not store or access KMS key material.",
+      ];
+    }
+    return [
+      "Confirm this CloudTrail configuration change was authorized.",
+      "Verify logging coverage is still sufficient for your compliance requirements.",
+      "ConfigTrace never reads CloudTrail events, log objects, or S3 buckets.",
+    ];
+  }
+
+  if (rt === "aws_cloudtrail_event_data_store") {
+    if (change.change_type === "removed" || (change.field_path === "status" && ["STOPPED", "STOPPED_INGESTION", "DELETED"].includes(String(change.new_value).toUpperCase()))) {
+      return [
+        "Confirm the event data store removal or shutdown was intentional.",
+        "Events stored in a deleted data store may be permanently lost.",
+        "Verify alternative audit data stores cover the affected event types.",
+        "ConfigTrace never reads events from CloudTrail event data stores.",
+      ];
+    }
+    return [
+      "Confirm the event data store configuration change was authorized.",
+      "Verify retention period and termination protection settings meet your requirements.",
+      "ConfigTrace never reads events from CloudTrail event data stores.",
+    ];
+  }
+
+  if (rt === "aws_guardduty_detector") {
+    if (change.change_type === "removed" || (change.field_path === "status" && String(change.new_value).toUpperCase() === "DISABLED")) {
+      return [
+        "GuardDuty is your primary AWS threat detection layer — disabling it silences all findings.",
+        "Re-enable GuardDuty immediately if this was not authorized.",
+        "Investigate whether an attacker disabled GuardDuty to avoid detection.",
+        "Check CloudTrail for who called guardduty:DeleteDetector or guardduty:UpdateDetector.",
+        "ConfigTrace never calls guardduty:GetFindings or accesses finding details.",
+      ];
+    }
+    if (change.field_path?.endsWith("_enabled") && change.new_value === false) {
+      return [
+        "A GuardDuty protection feature was disabled — detection coverage for this threat category is reduced.",
+        "Re-enable the protection feature if this was not intentional.",
+        "Review whether alternative detection mechanisms cover this threat category.",
+        "ConfigTrace never calls guardduty:GetFindings or accesses finding details.",
+      ];
+    }
+    return [
+      "Confirm this GuardDuty configuration change was authorized.",
+      "Verify threat detection coverage remains appropriate for your environment.",
+      "ConfigTrace never calls guardduty:GetFindings or accesses finding details.",
+    ];
+  }
+
+  if (rt === "aws_guardduty_publishing_destination") {
+    if (change.change_type === "removed") {
+      return [
+        "GuardDuty findings will no longer be exported to this destination.",
+        "Confirm alternative destinations or SIEM integrations are in place.",
+        "Verify the removal was authorized by a security administrator.",
+        "ConfigTrace never reads GuardDuty finding payloads.",
+      ];
+    }
+    if (change.field_path === "status") {
+      return [
+        "GuardDuty cannot export findings to this destination — findings may be accumulating without alerting.",
+        "Check S3 bucket permissions or KMS key access for the destination.",
+        "Restore export functionality to ensure finding delivery to your SIEM.",
+        "ConfigTrace never reads GuardDuty finding payloads.",
+      ];
+    }
+    return [
+      "Confirm the GuardDuty publishing destination change was authorized.",
+      "ConfigTrace never reads GuardDuty finding payloads.",
+    ];
+  }
+
+  if (rt === "aws_securityhub_account") {
+    const sfp = change.field_path ?? "";
+    if (change.change_type === "removed" || (sfp === "hub_enabled" && change.new_value === false)) {
+      return [
+        "Security Hub was disabled — all security standards and control findings will stop.",
+        "Re-enable Security Hub if this was not intentional.",
+        "Investigate who disabled Security Hub and whether it was authorized.",
+        "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
+      ];
+    }
+    if (sfp === "enabled_standards_count" && Number(change.new_value) === 0) {
+      return [
+        "All Security Hub compliance standards were disabled — no controls are being evaluated.",
+        "Re-enable the appropriate standards (e.g., FSBP, CIS) for your compliance posture.",
+        "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
+      ];
+    }
+    return [
+      "Confirm this Security Hub configuration change was authorized.",
+      "Verify compliance standards and control coverage remain appropriate.",
+      "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
+    ];
+  }
+
+  if (rt === "aws_securityhub_standard_subscription") {
+    if (change.change_type === "removed") {
+      return [
+        "A Security Hub compliance standard was disabled — controls for this standard are no longer evaluated.",
+        "If this standard is required by your compliance framework, re-enable it.",
+        "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
+      ];
+    }
+    return [
+      "Confirm the standard subscription change was authorized.",
+      "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
+    ];
+  }
+
+  if (rt === "aws_securityhub_finding_aggregator") {
+    if (change.change_type === "removed") {
+      return [
+        "Cross-region Security Hub finding aggregation was removed — findings from other regions may not be visible.",
+        "Confirm this was intentional if you operate a multi-region environment.",
+        "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
+      ];
+    }
+    if (change.field_path === "linking_mode" && String(change.new_value) === "SPECIFIED_REGIONS") {
+      return [
+        "Security Hub finding aggregation was narrowed to specific regions.",
+        "Verify the selected regions cover all regions where you run workloads.",
+        "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
+      ];
+    }
+    return [
+      "Confirm the finding aggregator configuration change was authorized.",
+      "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
     ];
   }
 

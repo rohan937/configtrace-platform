@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44 / M45."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -63,6 +63,22 @@ AWS_RDS_DB_SUBNET_GROUP = "aws_rds_db_subnet_group"
 AWS_RDS_DB_SNAPSHOT = "aws_rds_db_snapshot"
 # One per RDS DB cluster snapshot — metadata only.
 AWS_RDS_DB_CLUSTER_SNAPSHOT = "aws_rds_db_cluster_snapshot"
+
+# ── M45 record types — CloudTrail + GuardDuty + Security Hub Posture ─────────
+# One per CloudTrail trail — posture/config metadata only; events/log objects NEVER accessed.
+AWS_CLOUDTRAIL_TRAIL = "aws_cloudtrail_trail"
+# One per CloudTrail event data store — posture metadata only; events NEVER read.
+AWS_CLOUDTRAIL_EVENT_DATA_STORE = "aws_cloudtrail_event_data_store"
+# One per GuardDuty detector (one per region) — posture metadata only; findings NEVER accessed.
+AWS_GUARDDUTY_DETECTOR = "aws_guardduty_detector"
+# One per GuardDuty publishing destination — metadata only; finding payloads NEVER stored.
+AWS_GUARDDUTY_PUBLISHING_DESTINATION = "aws_guardduty_publishing_destination"
+# One per Security Hub account-region posture — findings NEVER accessed.
+AWS_SECURITYHUB_ACCOUNT = "aws_securityhub_account"
+# One per Security Hub standard subscription — metadata only.
+AWS_SECURITYHUB_STANDARD_SUBSCRIPTION = "aws_securityhub_standard_subscription"
+# One per Security Hub finding aggregator — metadata only.
+AWS_SECURITYHUB_FINDING_AGGREGATOR = "aws_securityhub_finding_aggregator"
 
 # ── M44 record types — Load Balancers + WAF Config ───────────────────────────
 # One per ELBv2 load balancer (Application, Network, Gateway) — metadata only.
@@ -152,4 +168,12 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_ELB_CLASSIC_LOAD_BALANCER,
     AWS_WAFV2_WEB_ACL,
     AWS_WAFV2_WEB_ACL_ASSOCIATION,
+    # M45
+    AWS_CLOUDTRAIL_TRAIL,
+    AWS_CLOUDTRAIL_EVENT_DATA_STORE,
+    AWS_GUARDDUTY_DETECTOR,
+    AWS_GUARDDUTY_PUBLISHING_DESTINATION,
+    AWS_SECURITYHUB_ACCOUNT,
+    AWS_SECURITYHUB_STANDARD_SUBSCRIPTION,
+    AWS_SECURITYHUB_FINDING_AGGREGATOR,
 })

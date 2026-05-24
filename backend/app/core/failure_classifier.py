@@ -1633,3 +1633,278 @@ def classify_aws_apigateway_failure(
         error_code=error_code,
         recommended_action=_APIGATEWAY_PARTIAL_ACTION,
     )
+
+
+def classify_aws_cloudtrail_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial CloudTrail sync failure (per-API).
+
+    SECURITY: cloudtrail:LookupEvents is NEVER called.  CloudTrail log objects
+    (S3) are NEVER accessed.  Only trail posture/configuration metadata is
+    collected.
+
+    Args:
+        api_name: The CloudTrail API name (e.g. ``"DescribeTrails"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _CT_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only CloudTrail read permissions. "
+        "Required: cloudtrail:DescribeTrails, cloudtrail:GetTrailStatus, "
+        "cloudtrail:GetEventSelectors, cloudtrail:GetInsightSelectors, "
+        "cloudtrail:ListTags, cloudtrail:ListEventDataStores, "
+        "cloudtrail:GetEventDataStore. "
+        "ConfigTrace reads trail configuration metadata only; "
+        "CloudTrail events and log objects are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _CT_API_CODES: dict[str, str] = {
+        "DescribeTrails":         "aws_cloudtrail_trails_unavailable",
+        "GetTrail":               "aws_cloudtrail_trails_unavailable",
+        "GetTrailStatus":         "aws_cloudtrail_status_unavailable",
+        "GetEventSelectors":      "aws_cloudtrail_selectors_unavailable",
+        "GetInsightSelectors":    "aws_cloudtrail_selectors_unavailable",
+        "ListTags":               "aws_cloudtrail_trails_unavailable",
+        "ListEventDataStores":    "aws_cloudtrail_event_data_stores_unavailable",
+        "GetEventDataStore":      "aws_cloudtrail_event_data_stores_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_cloudtrail_access_denied",
+            recommended_action=_CT_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_cloudtrail_rate_limited",
+            recommended_action=(
+                "AWS throttled CloudTrail metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented CloudTrail API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_cloudtrail_api_unavailable",
+            recommended_action=(
+                "The CloudTrail API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _CT_API_CODES.get(api_name, "aws_cloudtrail_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional CloudTrail metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_guardduty_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial GuardDuty sync failure (per-API, per-region).
+
+    SECURITY: guardduty:GetFindings is NEVER called.  Finding details, evidence,
+    and resource data are NEVER accessed.  Only detector posture metadata is
+    collected.
+
+    Args:
+        api_name: The GuardDuty API name (e.g. ``"ListDetectors"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _GD_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only GuardDuty read permissions. "
+        "Required: guardduty:ListDetectors, guardduty:GetDetector, "
+        "guardduty:ListPublishingDestinations, "
+        "guardduty:DescribePublishingDestination. "
+        "ConfigTrace reads detector configuration metadata only; "
+        "GuardDuty finding details are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _GD_API_CODES: dict[str, str] = {
+        "ListDetectors":                "aws_guardduty_detectors_unavailable",
+        "GetDetector":                  "aws_guardduty_detectors_unavailable",
+        "ListPublishingDestinations":   "aws_guardduty_publishing_unavailable",
+        "DescribePublishingDestination": "aws_guardduty_publishing_unavailable",
+        "ListMembers":                  "aws_guardduty_members_unavailable",
+        "GetAdministratorAccount":      "aws_guardduty_detectors_unavailable",
+        "ListTagsForResource":          "aws_guardduty_detectors_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_guardduty_access_denied",
+            recommended_action=_GD_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_guardduty_rate_limited",
+            recommended_action=(
+                "AWS throttled GuardDuty metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented GuardDuty API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_guardduty_api_unavailable",
+            recommended_action=(
+                "The GuardDuty API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _GD_API_CODES.get(api_name, "aws_guardduty_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional GuardDuty metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_securityhub_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial Security Hub sync failure (per-API, per-region).
+
+    SECURITY: securityhub:GetFindings is NEVER called.  Security Hub finding
+    details and evidence are NEVER accessed.  Only hub posture and standards
+    subscription metadata is collected.
+
+    Args:
+        api_name: The Security Hub API name (e.g. ``"DescribeHub"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _SH_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only Security Hub read permissions. "
+        "Required: securityhub:DescribeHub, securityhub:GetEnabledStandards, "
+        "securityhub:ListEnabledProductsForImport, "
+        "securityhub:ListFindingAggregators, securityhub:GetFindingAggregator. "
+        "ConfigTrace reads hub posture and standards metadata only; "
+        "Security Hub finding details are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _SH_API_CODES: dict[str, str] = {
+        "DescribeHub":                 "aws_securityhub_hub_unavailable",
+        "GetEnabledStandards":         "aws_securityhub_standards_unavailable",
+        "DescribeStandards":           "aws_securityhub_standards_unavailable",
+        "ListEnabledProductsForImport": "aws_securityhub_products_unavailable",
+        "GetFindingAggregator":        "aws_securityhub_aggregator_unavailable",
+        "ListFindingAggregators":      "aws_securityhub_aggregator_unavailable",
+        "ListTagsForResource":         "aws_securityhub_hub_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_securityhub_access_denied",
+            recommended_action=_SH_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_securityhub_rate_limited",
+            recommended_action=(
+                "AWS throttled Security Hub metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented Security Hub API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_securityhub_api_unavailable",
+            recommended_action=(
+                "The Security Hub API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _SH_API_CODES.get(api_name, "aws_securityhub_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional Security Hub metadata; "
+            "other AWS checks may still work."
+        ),
+    )

@@ -84,6 +84,13 @@ from app.connectors.aws_schema import (
     AWS_ELB_CLASSIC_LOAD_BALANCER,
     AWS_WAFV2_WEB_ACL,
     AWS_WAFV2_WEB_ACL_ASSOCIATION,
+    AWS_CLOUDTRAIL_TRAIL,
+    AWS_CLOUDTRAIL_EVENT_DATA_STORE,
+    AWS_GUARDDUTY_DETECTOR,
+    AWS_GUARDDUTY_PUBLISHING_DESTINATION,
+    AWS_SECURITYHUB_ACCOUNT,
+    AWS_SECURITYHUB_STANDARD_SUBSCRIPTION,
+    AWS_SECURITYHUB_FINDING_AGGREGATOR,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -2338,6 +2345,24 @@ def _is_sensitive_routing_name(name: str) -> bool:
     return any(pattern in n for pattern in _SENSITIVE_ROUTING_PATTERNS)
 
 
+def _is_wildcard_dns_name(name: str) -> bool:
+    """Return True if the DNS record name is a wildcard.
+
+    AWS Route53 represents wildcard records as ``\\052.example.com`` (octal
+    escape for ``*``) in its API responses.  ConfigTrace also handles the
+    literal ``*.example.com`` form and composite display names such as
+    ``CNAME \\052.example.com``.
+    """
+    n = name.strip()
+    return (
+        n == "*"
+        or n.startswith("*.")
+        or n.startswith("\\052.")
+        or " *." in n          # composite "TYPE *.hostname"
+        or " \\052." in n      # composite "TYPE \\052.hostname"
+    )
+
+
 # ── M40: Route53 hosted zone classifier ──────────────────────────────────────
 
 
@@ -2480,108 +2505,182 @@ def _classify_route53_record_change(change: object) -> tuple[str, str]:
     fp: str = (_get(change, "field_path") or "").lower()
     nv = _get(change, "new_value")
     pv = _get(change, "previous_value")
+    # record_name: composite display label (e.g. "CAA example.com") or raw hostname
     record_name: str = pm.get("record_name") or pm.get("name") or "unknown"
+    # dns_record_name: actual raw hostname (set by _build_provider_metadata in M40.5+)
+    dns_hostname: str = pm.get("dns_record_name") or record_name
     dns_type: str = pm.get("dns_record_type") or ""
     zone_name: str = pm.get("zone_name") or ""
+
+    # Readable fallbacks so messages never show "()" or "zone ''"
+    type_label: str = f" ({dns_type})" if dns_type else ""
+    zone_label: str = f"zone {zone_name!r}" if zone_name else "the hosted zone"
+
     is_sensitive = _is_sensitive_routing_name(record_name) or _is_sensitive_routing_name(zone_name)
+    is_wildcard = _is_wildcard_dns_name(dns_hostname)
 
     # Apex/root record: name matches zone_name (or is @ or empty)
     is_apex = (
-        record_name == zone_name or
-        record_name == zone_name.rstrip(".") or
-        record_name in ("@", "")
+        record_name == zone_name
+        or record_name == zone_name.rstrip(".")
+        or dns_hostname == zone_name
+        or dns_hostname == zone_name.rstrip(".")
+        or record_name in ("@", "")
     )
 
+    # ── added ────────────────────────────────────────────────────────────────
+    if change_type == "added":
+        if is_wildcard:
+            # Wildcard DNS records match all undefined subdomains — always High.
+            # Escalate to Critical for production/sensitive zones.
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"Wildcard DNS record {record_name!r}{type_label} was added to "
+                f"{zone_label}. This may route many undefined subdomains to the "
+                "configured target. Confirm this is intentional.",
+            )
+        if dns_type == "CAA":
+            return (
+                "low",
+                f"CAA record {record_name!r} was added to {zone_label}. "
+                "This restricts which certificate authorities may issue certificates "
+                "for the domain.",
+            )
+        if is_sensitive:
+            return (
+                "medium",
+                f"DNS record {record_name!r}{type_label} was added to {zone_label}. "
+                "This record serves a sensitive path — confirm the target is correct.",
+            )
+        return (
+            "low",
+            f"DNS record {record_name!r}{type_label} was added to {zone_label}.",
+        )
+
+    # ── removed ──────────────────────────────────────────────────────────────
     if change_type == "removed":
+        if is_wildcard:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"Wildcard DNS record {record_name!r}{type_label} was removed from "
+                f"{zone_label}. Confirm undefined-subdomain routing was intentionally stopped.",
+            )
+        if dns_type == "CAA":
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"CAA record {record_name!r} was removed from {zone_label}. "
+                "This may weaken certificate issuance restrictions for the domain. "
+                "Without a CAA record, any certificate authority may issue certificates. "
+                "Confirm this change is intentional.",
+            )
         if dns_type == "MX":
             return (
                 "critical",
-                f"MX record {record_name!r} was removed from zone {zone_name!r}. "
+                f"MX record {record_name!r} was removed from {zone_label}. "
                 "Email delivery to this domain will fail.",
             )
         if dns_type in ("A", "AAAA") and is_apex:
             return (
                 "critical",
-                f"Apex DNS record {record_name!r} ({dns_type}) was removed from "
-                f"zone {zone_name!r}. The domain may become unreachable.",
+                f"Apex DNS record {record_name!r}{type_label} was removed from "
+                f"{zone_label}. The domain may become unreachable.",
             )
         if is_sensitive:
             return (
                 "high",
-                f"DNS record {record_name!r} ({dns_type}) was removed from "
-                f"zone {zone_name!r}. This record serves a sensitive path.",
+                f"DNS record {record_name!r}{type_label} was removed from "
+                f"{zone_label}. This record serves a sensitive path.",
             )
         return (
             "medium",
-            f"DNS record {record_name!r} ({dns_type}) was removed from zone {zone_name!r}.",
+            f"DNS record {record_name!r}{type_label} was removed from {zone_label}.",
         )
 
+    # ── modified field handlers ───────────────────────────────────────────────
     if fp == "value_hash":
+        if is_wildcard:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"Wildcard DNS record {record_name!r}{type_label} target changed "
+                f"in {zone_label}. Many undefined subdomains may now route differently.",
+            )
         if dns_type == "NS":
             return (
                 "critical",
-                f"NS record values changed for {record_name!r} in zone {zone_name!r}. "
+                f"NS record values changed for {record_name!r} in {zone_label}. "
                 "Nameserver changes can redirect all DNS traffic for the domain.",
+            )
+        if dns_type == "CAA":
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"CAA record {record_name!r} was modified in {zone_label}. "
+                "Certificate issuance restrictions for the domain have changed. "
+                "Confirm the new policy is correct.",
             )
         if is_apex and dns_type in ("A", "AAAA"):
             return (
                 "critical",
-                f"Apex DNS record {record_name!r} ({dns_type}) value changed in "
-                f"zone {zone_name!r}. The domain now points to a different destination.",
+                f"Apex DNS record {record_name!r}{type_label} value changed in "
+                f"{zone_label}. The domain now points to a different destination.",
             )
         if is_sensitive:
             return (
                 "high",
-                f"DNS record {record_name!r} ({dns_type}) value changed in "
-                f"zone {zone_name!r}. This record serves a sensitive path.",
+                f"DNS record {record_name!r}{type_label} value changed in "
+                f"{zone_label}. This record serves a sensitive path.",
             )
         return (
             "medium",
-            f"DNS record {record_name!r} ({dns_type}) value changed in zone {zone_name!r}.",
+            f"DNS record {record_name!r}{type_label} value changed in {zone_label}.",
         )
 
     if fp == "alias_target_dns_name":
         if is_apex or is_sensitive:
             return (
                 "critical",
-                f"Alias target for DNS record {record_name!r} ({dns_type}) changed "
-                f"in zone {zone_name!r} ({pv!r} → {nv!r}). "
+                f"Alias target for DNS record {record_name!r}{type_label} changed "
+                f"in {zone_label} ({pv!r} → {nv!r}). "
                 "Traffic may now be routed to a different destination.",
             )
         return (
             "high",
-            f"Alias target for DNS record {record_name!r} ({dns_type}) changed "
-            f"in zone {zone_name!r} ({pv!r} → {nv!r}).",
+            f"Alias target for DNS record {record_name!r}{type_label} changed "
+            f"in {zone_label} ({pv!r} → {nv!r}).",
         )
 
     if fp == "dmarc_policy":
+        zone_display = zone_name or "the domain"
         if nv == "none":
             return (
                 "critical",
-                f"DMARC policy for {zone_name!r} is set to 'none'. "
+                f"DMARC policy for {zone_display!r} is set to 'none'. "
                 "Phishing/spoofing emails will not be quarantined or rejected.",
             )
-        # reject → quarantine: explicit downgrade (quarantine is weaker than reject)
         if pv == "reject" and nv == "quarantine":
             return (
                 "high",
-                f"DMARC policy for {zone_name!r} weakened from 'reject' to 'quarantine'. "
+                f"DMARC policy for {zone_display!r} weakened from 'reject' to 'quarantine'. "
                 "Email domain spoofing protection has been reduced.",
             )
         if pv in ("reject", "quarantine") and nv not in ("reject", "quarantine"):
             return (
                 "high",
-                f"DMARC policy for {zone_name!r} weakened from {pv!r} to {nv!r}. "
+                f"DMARC policy for {zone_display!r} weakened from {pv!r} to {nv!r}. "
                 "Email domain spoofing protection has been reduced.",
             )
         if pv == "none" and nv in ("quarantine", "reject"):
             return (
                 "low",
-                f"DMARC policy for {zone_name!r} strengthened from {pv!r} to {nv!r}.",
+                f"DMARC policy for {zone_display!r} strengthened from {pv!r} to {nv!r}.",
             )
         return (
             "medium",
-            f"DMARC policy for {zone_name!r} changed from {pv!r} to {nv!r}.",
+            f"DMARC policy for {zone_display!r} changed from {pv!r} to {nv!r}.",
         )
 
     if fp == "ttl":
@@ -2589,59 +2688,59 @@ def _classify_route53_record_change(change: object) -> tuple[str, str]:
             if nv < 60 and pv >= 60:
                 return (
                     "medium",
-                    f"TTL for DNS record {record_name!r} ({dns_type}) decreased below "
+                    f"TTL for DNS record {record_name!r}{type_label} decreased below "
                     f"60 seconds ({pv}s → {nv}s). Very short TTLs can indicate "
                     "preparation for a DNS change.",
                 )
         return (
             "low",
-            f"TTL for DNS record {record_name!r} ({dns_type}) changed ({pv} → {nv}).",
+            f"TTL for DNS record {record_name!r}{type_label} changed ({pv} → {nv}).",
         )
 
     if fp == "routing_policy":
         return (
             "medium",
-            f"Routing policy for DNS record {record_name!r} ({dns_type}) changed "
-            f"from {pv!r} to {nv!r} in zone {zone_name!r}.",
+            f"Routing policy for DNS record {record_name!r}{type_label} changed "
+            f"from {pv!r} to {nv!r} in {zone_label}.",
         )
 
     if fp == "failover":
         return (
             "medium",
-            f"Failover setting for DNS record {record_name!r} ({dns_type}) changed "
-            f"in zone {zone_name!r}.",
+            f"Failover setting for DNS record {record_name!r}{type_label} changed "
+            f"in {zone_label}.",
         )
 
     if fp == "evaluate_target_health":
         return (
             "medium",
-            f"EvaluateTargetHealth for DNS record {record_name!r} ({dns_type}) "
-            f"changed in zone {zone_name!r}. Health-check routing may be affected.",
+            f"EvaluateTargetHealth for DNS record {record_name!r}{type_label} "
+            f"changed in {zone_label}. Health-check routing may be affected.",
         )
 
     if fp == "health_check_id":
         if nv is None and pv is not None:
             return (
                 "medium",
-                f"Health check removed from DNS record {record_name!r} ({dns_type}) "
-                f"in zone {zone_name!r}. Failover routing may no longer work.",
+                f"Health check removed from DNS record {record_name!r}{type_label} "
+                f"in {zone_label}. Failover routing may no longer work.",
             )
         return (
             "low",
-            f"Health check ID changed for DNS record {record_name!r} ({dns_type}).",
+            f"Health check ID changed for DNS record {record_name!r}{type_label}.",
         )
 
     if fp in ("weight", "region", "geo_location_summary"):
         return (
             "low",
             f"Routing weight/region metadata changed for DNS record "
-            f"{record_name!r} ({dns_type}) in zone {zone_name!r}.",
+            f"{record_name!r}{type_label} in {zone_label}.",
         )
 
     return (
         "low",
-        f"DNS record {record_name!r} ({dns_type}) configuration changed "
-        f"({fp or 'unknown field'}) in zone {zone_name!r}.",
+        f"DNS record {record_name!r}{type_label} configuration changed "
+        f"({fp or 'unknown field'}) in {zone_label}.",
     )
 
 
@@ -5265,6 +5364,681 @@ def _classify_wafv2_web_acl_association_change(change: object) -> tuple[str, str
     return "low", f"WAF Web ACL association changed for '{name}' (field: {fp or 'unknown'})."
 
 
+# ── M45 shared helpers ────────────────────────────────────────────────────────
+
+_SENSITIVE_SECURITY_SERVICE_CATEGORIES: frozenset[str] = frozenset({
+    "production", "credential", "api_key", "auth", "payment", "database",
+    "internal", "config", "secure", "admin", "customer",
+})
+
+
+def _security_service_is_sensitive(name: str) -> bool:
+    """Return True if the trail/detector/hub name suggests a prod/sensitive context."""
+    from app.connectors.aws import _classify_lambda_name_sensitivity
+    return _classify_lambda_name_sensitivity(name) in _SENSITIVE_SECURITY_SERVICE_CATEGORIES
+
+
+# ── M45: aws_cloudtrail_trail ─────────────────────────────────────────────────
+
+def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _security_service_is_sensitive(name)
+
+    # Determine if this is an org or multi-region trail from metadata
+    is_org = bool(_get(change, "provider_metadata") and isinstance(pm, dict) and
+                  pm.get("is_organization_trail"))
+    is_multi = bool(_get(change, "provider_metadata") and isinstance(pm, dict) and
+                    pm.get("is_multi_region_trail"))
+    is_critical_trail = is_org or is_multi or is_sensitive
+
+    if ct == "added":
+        return (
+            "medium",
+            f"CloudTrail trail '{name}' was added to monitoring. "
+            "Verify logging is enabled and event selectors cover management events.",
+        )
+
+    if ct == "removed":
+        sev = "critical" if is_critical_trail else "high"
+        return (
+            sev,
+            f"CloudTrail trail '{name}' is no longer visible to ConfigTrace. "
+            "Confirm the trail was intentionally deleted. "
+            "A missing trail may reduce audit-log coverage.",
+        )
+
+    # is_logging: the most critical field — trail stopped logging
+    if fp == "is_logging":
+        if nv is False:
+            sev = "critical" if is_critical_trail else "high"
+            return (
+                sev,
+                f"CloudTrail trail '{name}' stopped logging. "
+                "Audit log delivery may have stopped. "
+                "Review whether this change was intentional and check the trail status.",
+            )
+        # Logging re-enabled
+        return (
+            "low",
+            f"CloudTrail trail '{name}' is now logging. Audit log delivery resumed.",
+        )
+
+    if fp == "is_multi_region_trail":
+        if nv is False:
+            sev = "critical" if is_org else "high"
+            return (
+                sev,
+                f"CloudTrail trail '{name}' is no longer multi-region. "
+                "Events from other regions may no longer be captured in this trail.",
+            )
+        return "low", f"CloudTrail trail '{name}' is now multi-region."
+
+    if fp == "include_global_service_events":
+        if nv is False:
+            sev = "critical" if is_critical_trail else "high"
+            return (
+                sev,
+                f"CloudTrail trail '{name}' no longer logs global service events (IAM, STS). "
+                "IAM activity may not be captured.",
+            )
+        return "low", f"CloudTrail trail '{name}' now includes global service events."
+
+    if fp == "is_organization_trail":
+        if nv is False:
+            return (
+                "critical",
+                f"CloudTrail trail '{name}' is no longer an organization trail. "
+                "Member account activity may no longer be captured centrally.",
+            )
+        return "low", f"CloudTrail trail '{name}' is now an organization trail."
+
+    if fp == "log_file_validation_enabled":
+        if nv is False:
+            sev = "critical" if is_critical_trail else "high"
+            return (
+                sev,
+                f"CloudTrail log file validation was disabled on trail '{name}'. "
+                "Log file integrity can no longer be verified. "
+                "Review whether this meets your audit requirements.",
+            )
+        return "low", f"CloudTrail log file validation was enabled on trail '{name}'."
+
+    if fp == "kms_key_id_present":
+        if nv is False:
+            sev = "critical" if is_critical_trail else "high"
+            return (
+                sev,
+                f"KMS encryption was removed from CloudTrail trail '{name}'. "
+                "Log files may no longer be encrypted at rest.",
+            )
+        return "low", f"KMS encryption was added to CloudTrail trail '{name}'."
+
+    if fp == "kms_key_id_hash":
+        return (
+            "high",
+            f"KMS key changed on CloudTrail trail '{name}'. "
+            "Confirm the new key is accessible and managed appropriately.",
+        )
+
+    if fp in ("s3_bucket_name_hash",):
+        return (
+            "high",
+            f"CloudTrail trail '{name}' S3 destination changed. "
+            "Confirm logs still flow to the expected secure S3 bucket.",
+        )
+
+    if fp == "sns_topic_name_present":
+        if nv is False:
+            return (
+                "medium",
+                f"CloudTrail trail '{name}' SNS notification topic was removed.",
+            )
+        return "low", f"CloudTrail trail '{name}' SNS notification topic was added."
+
+    if fp == "cloud_watch_logs_enabled":
+        if nv is False:
+            return (
+                "medium",
+                f"CloudTrail trail '{name}' CloudWatch Logs integration was removed.",
+            )
+        return "low", f"CloudTrail trail '{name}' CloudWatch Logs integration was added."
+
+    if fp == "management_events_enabled" or fp == "include_management_events":
+        if nv is False:
+            sev = "critical" if is_critical_trail else "high"
+            return (
+                sev,
+                f"CloudTrail trail '{name}' no longer logs management events. "
+                "API calls that create, modify, and delete AWS resources may not be captured.",
+            )
+        return "low", f"CloudTrail trail '{name}' management event logging was re-enabled."
+
+    if fp == "read_write_type":
+        old_str = str(pv or "").upper()
+        new_str = str(nv or "").upper()
+        # Downgrade from All to ReadOnly or WriteOnly is weakening
+        if old_str in ("ALL", "WRITEONLY") and new_str == "READONLY":
+            sev = "critical" if is_critical_trail else "high"
+            return (
+                sev,
+                f"CloudTrail trail '{name}' read/write type changed from '{old_str}' to "
+                f"'{new_str}'. Write-only management events may no longer be captured.",
+            )
+        return (
+            "medium",
+            f"CloudTrail trail '{name}' read/write type changed "
+            f"('{old_str}' → '{new_str}').",
+        )
+
+    if fp == "exclude_management_event_sources_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else 0
+        new_c = int(nv) if isinstance(nv, (int, float)) else 0
+        if new_c > old_c:
+            return (
+                "medium",
+                f"More management event sources are excluded from CloudTrail trail '{name}'. "
+                "Some API activity may no longer be logged.",
+            )
+        return "low", f"CloudTrail trail '{name}' excluded event sources count changed."
+
+    if fp in ("data_resource_type_counts", "has_custom_event_selectors"):
+        return (
+            "medium",
+            f"CloudTrail trail '{name}' data event selectors changed. "
+            "Review whether data event coverage meets your audit requirements.",
+        )
+
+    if fp == "insight_selector_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else 0
+        new_c = int(nv) if isinstance(nv, (int, float)) else 0
+        if new_c == 0 and old_c > 0:
+            return (
+                "high",
+                f"CloudTrail Insights selectors were removed from trail '{name}'. "
+                "Unusual API activity will no longer be detected.",
+            )
+        if new_c > 0 and old_c == 0:
+            return "low", f"CloudTrail Insights selectors were added to trail '{name}'."
+        return "medium", f"CloudTrail Insights selector count changed on trail '{name}'."
+
+    if fp == "insight_selector_types":
+        return (
+            "medium",
+            f"CloudTrail Insights selector types changed on trail '{name}'.",
+        )
+
+    if fp in ("latest_delivery_error_present", "latest_notification_error_present"):
+        if nv is True:
+            return (
+                "high",
+                f"CloudTrail trail '{name}' has a delivery or notification error. "
+                "Logs may not be reaching the destination. Review trail status.",
+            )
+        return "low", f"CloudTrail trail '{name}' delivery error cleared."
+
+    if fp in ("tag_keys", "sensitive_name_category"):
+        return "low", f"CloudTrail trail '{name}' {fp.replace('_', ' ')} changed."
+
+    return (
+        "low",
+        f"CloudTrail trail '{name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── M45: aws_cloudtrail_event_data_store ──────────────────────────────────────
+
+def _classify_cloudtrail_event_data_store_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "medium", f"CloudTrail event data store '{name}' was added to monitoring."
+
+    if ct == "removed":
+        return (
+            "high",
+            f"CloudTrail event data store '{name}' is no longer visible to ConfigTrace. "
+            "Confirm it was intentionally deleted.",
+        )
+
+    if fp == "status":
+        old_s = str(pv or "").upper()
+        new_s = str(nv or "").upper()
+        if new_s in ("STOPPED_INGESTION", "STOPPED", "DELETED"):
+            return (
+                "high",
+                f"CloudTrail event data store '{name}' status changed to '{new_s}'. "
+                "Event ingestion may have stopped.",
+            )
+        return "medium", f"CloudTrail event data store '{name}' status changed to '{new_s}'."
+
+    if fp == "termination_protection_enabled":
+        if nv is False:
+            return (
+                "high",
+                f"Termination protection was disabled on event data store '{name}'. "
+                "Confirm this change is intentional.",
+            )
+        return "low", f"Termination protection was enabled on event data store '{name}'."
+
+    if fp == "retention_period":
+        old_r = int(pv) if isinstance(pv, (int, float)) else None
+        new_r = int(nv) if isinstance(nv, (int, float)) else None
+        if old_r is not None and new_r is not None and new_r < old_r:
+            return (
+                "high",
+                f"Retention period reduced on event data store '{name}' "
+                f"({old_r} → {new_r} days). Older events may be purged sooner.",
+            )
+        return "medium", f"Retention period changed on event data store '{name}'."
+
+    if fp == "kms_key_id_present":
+        if nv is False:
+            return (
+                "high",
+                f"KMS encryption was removed from event data store '{name}'.",
+            )
+        return "low", f"KMS encryption was added to event data store '{name}'."
+
+    if fp in ("multi_region_enabled", "organization_enabled"):
+        if nv is False:
+            return (
+                "medium",
+                f"Event data store '{name}' {fp.replace('_', ' ')} was disabled.",
+            )
+        return "low", f"Event data store '{name}' {fp.replace('_', ' ')} was enabled."
+
+    if fp in ("advanced_event_selector_count", "billing_mode"):
+        return "medium", f"Event data store '{name}' {fp.replace('_', ' ')} changed."
+
+    if fp in ("tag_keys",):
+        return "low", f"Event data store '{name}' tag keys changed."
+
+    return "low", f"CloudTrail event data store '{name}' changed (field: {fp or 'unknown'})."
+
+
+# ── M45: aws_guardduty_detector ───────────────────────────────────────────────
+
+_GUARDDUTY_PROTECTION_FEATURES: frozenset[str] = frozenset({
+    "s3_logs_enabled",
+    "eks_audit_logs_enabled",
+    "malware_protection_enabled",
+    "rds_login_events_enabled",
+    "lambda_network_logs_enabled",
+    "runtime_monitoring_enabled",
+    "ebs_malware_protection_enabled",
+})
+
+
+def _classify_guardduty_detector_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or pm.get("region") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _security_service_is_sensitive(name)
+
+    if ct == "added":
+        return (
+            "medium",
+            f"GuardDuty detector was added to monitoring in '{name}'. "
+            "Verify the detector is enabled and protection features are configured.",
+        )
+
+    if ct == "removed":
+        # Always critical — losing visibility of a GuardDuty detector
+        return (
+            "critical",
+            f"GuardDuty detector in '{name}' is no longer visible to ConfigTrace. "
+            "Confirm GuardDuty was not disabled or deleted.",
+        )
+
+    if fp == "status":
+        old_s = str(pv or "").upper()
+        new_s = str(nv or "").upper()
+        if new_s == "DISABLED":
+            # Always critical — disabling GuardDuty silences threat detection
+            return (
+                "critical",
+                f"GuardDuty detector in '{name}' was disabled. "
+                "Threat detection has stopped in this region. "
+                "Review whether this change was intentional.",
+            )
+        if new_s == "ENABLED":
+            return "low", f"GuardDuty detector in '{name}' was enabled."
+        return "medium", f"GuardDuty detector status changed to '{new_s}' in '{name}'."
+
+    if fp == "finding_publishing_frequency":
+        old_f = str(pv or "").upper()
+        new_f = str(nv or "").upper()
+        # Slowing down frequency is a concern
+        freq_order = {"FIFTEEN_MINUTES": 0, "ONE_HOUR": 1, "SIX_HOURS": 2}
+        old_rank = freq_order.get(old_f, -1)
+        new_rank = freq_order.get(new_f, -1)
+        if new_rank > old_rank >= 0:
+            return (
+                "high",
+                f"GuardDuty finding publishing frequency slowed in '{name}' "
+                f"({old_f} → {new_f}). Findings may reach destinations less frequently.",
+            )
+        if new_rank < old_rank:
+            return (
+                "low",
+                f"GuardDuty finding publishing frequency increased in '{name}' "
+                f"({old_f} → {new_f}).",
+            )
+        return "medium", f"GuardDuty finding publishing frequency changed in '{name}'."
+
+    if fp in _GUARDDUTY_PROTECTION_FEATURES:
+        feature_label = fp.replace("_enabled", "").replace("_", " ")
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"GuardDuty {feature_label} protection was disabled in '{name}'. "
+                "Detection coverage for this feature may be reduced.",
+            )
+        return "low", f"GuardDuty {feature_label} protection was enabled in '{name}'."
+
+    if fp == "member_count" or fp == "active_member_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return (
+                "medium",
+                f"GuardDuty {fp.replace('_', ' ')} decreased in '{name}' "
+                f"({old_c} → {new_c}).",
+            )
+        return "low", f"GuardDuty {fp.replace('_', ' ')} changed in '{name}'."
+
+    if fp == "admin_account_present":
+        if nv is False:
+            return (
+                "high",
+                f"GuardDuty administrator account association was removed in '{name}'. "
+                "Centralized threat detection management may be affected.",
+            )
+        return "low", f"GuardDuty administrator account association was added in '{name}'."
+
+    if fp == "feature_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return (
+                "high",
+                f"GuardDuty feature count decreased in '{name}' ({old_c} → {new_c}). "
+                "Some detection features may have been disabled.",
+            )
+        return "medium", f"GuardDuty feature count changed in '{name}'."
+
+    if fp in ("tag_keys",):
+        return "low", f"GuardDuty detector tag keys changed in '{name}'."
+
+    return "low", f"GuardDuty detector configuration changed in '{name}' (field: {fp or 'unknown'})."
+
+
+# ── M45: aws_guardduty_publishing_destination ─────────────────────────────────
+
+def _classify_guardduty_publishing_destination_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or pm.get("region") or "") if isinstance(pm, dict) else ""
+
+    if ct == "removed":
+        return (
+            "high",
+            f"GuardDuty publishing destination in '{name}' was removed. "
+            "Findings may no longer reach their destination.",
+        )
+    if ct == "added":
+        return "low", f"GuardDuty publishing destination was added in '{name}'."
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("UNABLE_TO_EXPORT_FINDINGS", "STOPPED"):
+            return (
+                "high",
+                f"GuardDuty publishing destination status changed to '{new_s}' in '{name}'. "
+                "Findings may not be reaching the destination.",
+            )
+        if new_s == "PUBLISHING":
+            return "low", f"GuardDuty publishing destination is now active in '{name}'."
+        return "medium", f"GuardDuty publishing destination status changed to '{new_s}'."
+
+    if fp == "kms_key_arn_present":
+        if nv is False:
+            return (
+                "medium",
+                f"KMS key was removed from GuardDuty publishing destination in '{name}'.",
+            )
+        return "low", f"KMS key was added to GuardDuty publishing destination in '{name}'."
+
+    if fp == "destination_arn_present":
+        if nv is False:
+            return (
+                "high",
+                f"GuardDuty publishing destination ARN was removed in '{name}'. "
+                "Findings will not be delivered.",
+            )
+        return "low", f"GuardDuty publishing destination ARN was added in '{name}'."
+
+    return "low", f"GuardDuty publishing destination changed in '{name}' (field: {fp or 'unknown'})."
+
+
+# ── M45: aws_securityhub_account ──────────────────────────────────────────────
+
+def _classify_securityhub_account_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or pm.get("region") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _security_service_is_sensitive(name)
+
+    if ct == "added":
+        return (
+            "medium",
+            f"Security Hub account posture was added to monitoring in '{name}'. "
+            "Verify Security Hub is enabled and standards are configured.",
+        )
+    if ct == "removed":
+        sev = "critical" if is_sensitive else "high"
+        return (
+            sev,
+            f"Security Hub account posture in '{name}' is no longer visible. "
+            "Confirm Security Hub was not disabled.",
+        )
+
+    if fp == "hub_enabled":
+        if nv is False:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"Security Hub was disabled in '{name}'. "
+                "Compliance findings and standards will no longer be monitored. "
+                "Review whether this change was intentional.",
+            )
+        return "low", f"Security Hub was enabled in '{name}'."
+
+    if fp == "enabled_standards_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c == 0 and old_c > 0:
+                sev = "critical" if is_sensitive else "high"
+                return (
+                    sev,
+                    f"All Security Hub standards were removed in '{name}'. "
+                    "Compliance monitoring coverage may be significantly reduced.",
+                )
+            if new_c < old_c:
+                return (
+                    "high",
+                    f"Security Hub enabled standards count decreased in '{name}' "
+                    f"({old_c} → {new_c}). Compliance coverage may be reduced.",
+                )
+            return "medium", f"Security Hub enabled standards count changed in '{name}'."
+        return "medium", f"Security Hub enabled standards count changed in '{name}'."
+
+    if fp == "auto_enable_controls":
+        if nv is False:
+            return (
+                "high",
+                f"Security Hub auto-enable controls was disabled in '{name}'. "
+                "New controls will not automatically be enabled for existing standards.",
+            )
+        return "low", f"Security Hub auto-enable controls was enabled in '{name}'."
+
+    if fp == "enabled_products_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return (
+                "medium",
+                f"Security Hub enabled product integrations decreased in '{name}' "
+                f"({old_c} → {new_c}).",
+            )
+        return "low", f"Security Hub enabled product integrations changed in '{name}'."
+
+    if fp == "finding_aggregator_present":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"Security Hub finding aggregator was removed in '{name}'. "
+                "Multi-region finding aggregation may be affected.",
+            )
+        return "low", f"Security Hub finding aggregator was added in '{name}'."
+
+    if fp == "control_finding_generator":
+        return (
+            "medium",
+            f"Security Hub control finding generator changed in '{name}' "
+            f"('{str(pv)}' → '{str(nv)}').",
+        )
+
+    if fp in ("tag_keys",):
+        return "low", f"Security Hub account tag keys changed in '{name}'."
+
+    return "low", f"Security Hub account configuration changed in '{name}' (field: {fp or 'unknown'})."
+
+
+# ── M45: aws_securityhub_standard_subscription ───────────────────────────────
+
+# Known high-priority Security Hub standards
+_CRITICAL_SECURITY_HUB_STANDARDS: frozenset[str] = frozenset({
+    "FSBP", "CIS", "NIST-800-53", "PCI-DSS",
+})
+
+
+def _classify_securityhub_standard_subscription_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    # Extract standard name from record name or metadata
+    standard_name = str(pm.get("standards_name_summary") or name or "unknown") if isinstance(pm, dict) else name
+    is_critical_standard = any(
+        s in standard_name.upper() for s in _CRITICAL_SECURITY_HUB_STANDARDS
+    )
+
+    if ct == "removed":
+        sev = "critical" if is_critical_standard else "high"
+        return (
+            sev,
+            f"Security Hub standard '{standard_name}' subscription was removed. "
+            "Compliance checks for this standard will no longer run.",
+        )
+    if ct == "added":
+        return (
+            "medium",
+            f"Security Hub standard '{standard_name}' subscription was added.",
+        )
+
+    if fp == "standards_status":
+        new_s = str(nv or "").upper()
+        old_s = str(pv or "").upper()
+        if new_s in ("DELETING", "FAILED", "INCOMPLETE"):
+            sev = "high" if is_critical_standard else "medium"
+            return (
+                sev,
+                f"Security Hub standard '{standard_name}' status changed to '{new_s}'. "
+                "Standard compliance checks may be affected.",
+            )
+        if new_s == "READY" and old_s != "READY":
+            return "low", f"Security Hub standard '{standard_name}' is now ready."
+        return "medium", f"Security Hub standard '{standard_name}' status changed to '{new_s}'."
+
+    return "low", f"Security Hub standard subscription '{standard_name}' changed (field: {fp or 'unknown'})."
+
+
+# ── M45: aws_securityhub_finding_aggregator ───────────────────────────────────
+
+def _classify_securityhub_finding_aggregator_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or pm.get("region") or "") if isinstance(pm, dict) else ""
+
+    if ct == "removed":
+        return (
+            "high",
+            f"Security Hub finding aggregator in '{name}' was removed. "
+            "Multi-region finding aggregation is no longer configured.",
+        )
+    if ct == "added":
+        return "low", f"Security Hub finding aggregator was added in '{name}'."
+
+    if fp == "linking_mode":
+        old_m = str(pv or "").upper()
+        new_m = str(nv or "").upper()
+        # Downgrade from ALL_REGIONS to SPECIFIED_REGIONS is a scope reduction
+        if old_m == "ALL_REGIONS" and new_m == "SPECIFIED_REGIONS":
+            return (
+                "high",
+                f"Security Hub finding aggregator linking mode changed from "
+                f"ALL_REGIONS to SPECIFIED_REGIONS in '{name}'. "
+                "Fewer regions may now be aggregated.",
+            )
+        if new_m == "ALL_REGIONS" and old_m != "ALL_REGIONS":
+            return "low", f"Security Hub finding aggregator now aggregates all regions in '{name}'."
+        return "medium", f"Security Hub finding aggregator linking mode changed in '{name}'."
+
+    if fp == "specified_regions_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return (
+                "medium",
+                f"Security Hub finding aggregator covers fewer regions in '{name}' "
+                f"({old_c} → {new_c}).",
+            )
+        return "low", f"Security Hub finding aggregator region count changed in '{name}'."
+
+    if fp in ("specified_regions",):
+        return "medium", f"Security Hub finding aggregator regions changed in '{name}'."
+
+    return "low", f"Security Hub finding aggregator changed in '{name}' (field: {fp or 'unknown'})."
+
+
 def classify_aws_change(change: object) -> tuple[str, str]:
     """Route an AWS change to the appropriate risk rule.
 
@@ -5374,6 +6148,22 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_wafv2_web_acl_change(change)
     if record_type == AWS_WAFV2_WEB_ACL_ASSOCIATION:
         return _classify_wafv2_web_acl_association_change(change)
+
+    # ── M45 CloudTrail + GuardDuty + Security Hub ─────────────────────────────
+    if record_type == AWS_CLOUDTRAIL_TRAIL:
+        return _classify_cloudtrail_trail_change(change)
+    if record_type == AWS_CLOUDTRAIL_EVENT_DATA_STORE:
+        return _classify_cloudtrail_event_data_store_change(change)
+    if record_type == AWS_GUARDDUTY_DETECTOR:
+        return _classify_guardduty_detector_change(change)
+    if record_type == AWS_GUARDDUTY_PUBLISHING_DESTINATION:
+        return _classify_guardduty_publishing_destination_change(change)
+    if record_type == AWS_SECURITYHUB_ACCOUNT:
+        return _classify_securityhub_account_change(change)
+    if record_type == AWS_SECURITYHUB_STANDARD_SUBSCRIPTION:
+        return _classify_securityhub_standard_subscription_change(change)
+    if record_type == AWS_SECURITYHUB_FINDING_AGGREGATOR:
+        return _classify_securityhub_finding_aggregator_change(change)
 
     # Unknown AWS record type — conservative default
     return (

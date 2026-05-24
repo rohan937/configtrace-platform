@@ -112,6 +112,9 @@ from app.core.failure_classifier import (
     classify_aws_elbv2_failure,
     classify_aws_elb_classic_failure,
     classify_aws_wafv2_failure,
+    classify_aws_cloudtrail_failure,
+    classify_aws_guardduty_failure,
+    classify_aws_securityhub_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -159,6 +162,13 @@ from app.connectors.aws_schema import (
     AWS_ELB_CLASSIC_LOAD_BALANCER,
     AWS_WAFV2_WEB_ACL,
     AWS_WAFV2_WEB_ACL_ASSOCIATION,
+    AWS_CLOUDTRAIL_TRAIL,
+    AWS_CLOUDTRAIL_EVENT_DATA_STORE,
+    AWS_GUARDDUTY_DETECTOR,
+    AWS_GUARDDUTY_PUBLISHING_DESTINATION,
+    AWS_SECURITYHUB_ACCOUNT,
+    AWS_SECURITYHUB_STANDARD_SUBSCRIPTION,
+    AWS_SECURITYHUB_FINDING_AGGREGATOR,
 )
 
 logger = logging.getLogger(__name__)
@@ -1799,6 +1809,34 @@ class AWSConnector(BaseConnector):
             len(wafv2_records),
         )
 
+        # 18. CloudTrail trails + event data stores (M45) — trail metadata only.
+        #     SECURITY: LookupEvents NEVER called. S3 log objects NEVER read.
+        #     Event payloads, request params, user identity data NEVER stored.
+        cloudtrail_records = self._fetch_cloudtrail_resources(credentials, account_id)
+        records.extend(cloudtrail_records)
+        logger.info(
+            "AWSConnector.fetch: cloudtrail_resources fetched  count=%d",
+            len(cloudtrail_records),
+        )
+
+        # 19. GuardDuty detectors (M45) — posture metadata only.
+        #     SECURITY: GetFindings NEVER called. Finding details NEVER accessed or stored.
+        guardduty_records = self._fetch_guardduty_resources(credentials, account_id)
+        records.extend(guardduty_records)
+        logger.info(
+            "AWSConnector.fetch: guardduty_resources fetched  count=%d",
+            len(guardduty_records),
+        )
+
+        # 20. Security Hub account posture (M45) — hub/standards metadata only.
+        #     SECURITY: GetFindings NEVER called. Finding details NEVER accessed or stored.
+        securityhub_records = self._fetch_securityhub_resources(credentials, account_id)
+        records.extend(securityhub_records)
+        logger.info(
+            "AWSConnector.fetch: securityhub_resources fetched  count=%d",
+            len(securityhub_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -1864,6 +1902,18 @@ class AWSConnector(BaseConnector):
             1 for r in wafv2_records
             if r.get("record_type") == AWS_WAFV2_WEB_ACL
         )
+        cloudtrail_trail_count = sum(
+            1 for r in cloudtrail_records
+            if r.get("record_type") == AWS_CLOUDTRAIL_TRAIL
+        )
+        guardduty_detector_count = sum(
+            1 for r in guardduty_records
+            if r.get("record_type") == AWS_GUARDDUTY_DETECTOR
+        )
+        securityhub_hub_count = sum(
+            1 for r in securityhub_records
+            if r.get("record_type") == AWS_SECURITYHUB_ACCOUNT
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -1883,6 +1933,9 @@ class AWSConnector(BaseConnector):
             elbv2_lb_count=elbv2_lb_count,
             elb_classic_count=elb_classic_count,
             wafv2_acl_count=wafv2_acl_count,
+            cloudtrail_trail_count=cloudtrail_trail_count,
+            guardduty_detector_count=guardduty_detector_count,
+            securityhub_hub_count=securityhub_hub_count,
         )
         records.append(inventory_record)
 
@@ -1998,6 +2051,9 @@ class AWSConnector(BaseConnector):
         elbv2_lb_count: int = 0,
         elb_classic_count: int = 0,
         wafv2_acl_count: int = 0,
+        cloudtrail_trail_count: int = 0,
+        guardduty_detector_count: int = 0,
+        securityhub_hub_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -2010,6 +2066,7 @@ class AWSConnector(BaseConnector):
                 "account_inventory", "s3", "security_groups", "vpc",
                 "iam", "route53", "cloudfront", "secrets_manager", "ssm",
                 "rds", "lambda", "api_gateway", "load_balancers", "waf",
+                "cloudtrail", "guardduty", "security_hub",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -2028,8 +2085,10 @@ class AWSConnector(BaseConnector):
             "elbv2_lb_count":                 elbv2_lb_count,
             "elb_classic_count":              elb_classic_count,
             "wafv2_acl_count":                wafv2_acl_count,
+            "cloudtrail_trail_count":         cloudtrail_trail_count,
+            "guardduty_detector_count":       guardduty_detector_count,
+            "securityhub_hub_count":          securityhub_hub_count,
             "future_surfaces": [
-                "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations", "cloudwatch",
             ],
@@ -7414,4 +7473,1034 @@ class AWSConnector(BaseConnector):
                 region, scope, exc_info=True,
             )
 
+        return records
+
+    # ── M45: CloudTrail helpers ────────────────────────────────────────────────
+
+    @staticmethod
+    def _summarize_cloudtrail_event_selectors(selectors: list[dict]) -> dict:
+        """Extract aggregate metadata from GetEventSelectors response.
+
+        SECURITY: Selector condition values (prefixes, field values) NEVER stored.
+        Only type/count metadata is retained.
+        """
+        read_write_type = "All"
+        include_management = True
+        exclude_count = 0
+        data_resource_type_counts: dict[str, int] = {}
+
+        for sel in selectors:
+            rw = sel.get("ReadWriteType") or "All"
+            read_write_type = rw
+            include_management = bool(sel.get("IncludeManagementEvents", True))
+            for exc_src in sel.get("ExcludeManagementEventSources") or []:
+                if exc_src:
+                    exclude_count += 1
+            for dr in sel.get("DataResources") or []:
+                dr_type: str = dr.get("Type") or "unknown"
+                data_resource_type_counts[dr_type] = (
+                    data_resource_type_counts.get(dr_type, 0) + 1
+                )
+
+        return {
+            "read_write_type":                        read_write_type,
+            "include_management_events":              include_management,
+            "data_resource_type_counts":              data_resource_type_counts or None,
+            "exclude_management_event_sources_count": exclude_count,
+        }
+
+    @staticmethod
+    def _summarize_cloudtrail_advanced_event_selectors(
+        adv_selectors: list[dict],
+    ) -> dict:
+        """Extract aggregate metadata from AdvancedEventSelectors.
+
+        SECURITY: FieldSelector values NEVER stored. Only type/count info.
+        """
+        read_write_type = "All"
+        include_management = True
+        exclude_count = 0
+
+        for sel in adv_selectors:
+            for fs in sel.get("FieldSelectors") or []:
+                field = (fs.get("Field") or "").lower()
+                if field == "readwritetype":
+                    vals = fs.get("Equals") or []
+                    if vals:
+                        read_write_type = vals[0]
+                elif field == "managementevent":
+                    vals = fs.get("Equals") or []
+                    if "false" in [str(v).lower() for v in vals]:
+                        include_management = False
+
+        return {
+            "read_write_type":                        read_write_type,
+            "include_management_events":              include_management,
+            "data_resource_type_counts":              None,
+            "exclude_management_event_sources_count": exclude_count,
+        }
+
+    @staticmethod
+    def _summarize_cloudtrail_insight_selectors(selectors: list[dict]) -> dict:
+        """Extract insight selector metadata.
+
+        SECURITY: No event content is accessed or stored.
+        """
+        types = sorted({
+            sel.get("InsightType") or "unknown"
+            for sel in selectors
+            if sel.get("InsightType")
+        })
+        return {
+            "insight_selector_count": len(selectors),
+            "insight_selector_types": types if types else None,
+        }
+
+    # ── M45: CloudTrail fetch methods ─────────────────────────────────────────
+
+    def _fetch_cloudtrail_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch CloudTrail trail posture and event data stores across all regions.
+
+        SECURITY:
+        - LookupEvents is NEVER called.
+        - S3 log objects are NEVER accessed.
+        - Event payloads, request parameters, user identity data,
+          source IPs NEVER stored.
+        - Only posture/configuration metadata is collected:
+          multi-region enabled, logging status, validation enabled,
+          KMS presence (hashed), event selector type counts.
+        - cloudtrail:LookupEvents NOT requested in IAM permissions.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+        seen_trail_arns: set[str] = set()
+
+        # Fetch all trails from primary region with includeShadowTrails=True
+        # for a deduplicated account-wide view. Use home_region clients for
+        # status and selectors.
+        primary_region = selected_regions[0] if selected_regions else "us-east-1"
+        try:
+            primary_client = self._make_client(
+                "cloudtrail", credentials, region=primary_region
+            )
+            try:
+                describe_resp = self._call_aws(
+                    primary_client.describe_trails,
+                    includeShadowTrails=True,
+                )
+            except Exception as exc:
+                fc = classify_aws_cloudtrail_failure("DescribeTrails", exc)
+                logger.warning(
+                    "aws: DescribeTrails failed  region=%s  code=%s",
+                    primary_region, fc.error_code,
+                )
+                describe_resp = {}
+
+            trails = describe_resp.get("trailList") or []
+
+            for trail in trails:
+                trail_arn: str = trail.get("TrailARN") or ""
+                if not trail_arn or trail_arn in seen_trail_arns:
+                    continue
+                seen_trail_arns.add(trail_arn)
+
+                home_region: str = trail.get("HomeRegion") or primary_region
+                # Include multi-region trails regardless of home_region;
+                # include single-region trails only if home_region is selected.
+                if home_region not in selected_regions:
+                    if not trail.get("IsMultiRegionTrail"):
+                        continue
+
+                trail_record = self._fetch_cloudtrail_trail_detail(
+                    credentials, trail, account_id, home_region
+                )
+                all_records.append(trail_record)
+
+        except Exception:
+            logger.warning(
+                "aws: CloudTrail describe_trails unexpected error  region=%s",
+                primary_region, exc_info=True,
+            )
+
+        # Fetch event data stores per region
+        for region in selected_regions:
+            try:
+                ct_client = self._make_client("cloudtrail", credentials, region=region)
+                eds_records = self._fetch_cloudtrail_event_data_stores_in_region(
+                    ct_client, account_id, region
+                )
+                all_records.extend(eds_records)
+            except Exception:
+                logger.warning(
+                    "aws: CloudTrail event data stores unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        logger.debug(
+            "aws._fetch_cloudtrail_resources: fetched %d record(s)  account=%s",
+            len(all_records), account_id,
+        )
+        return all_records
+
+    def _fetch_cloudtrail_trail_detail(  # noqa: C901
+        self,
+        credentials: dict,
+        trail: dict,
+        account_id: str,
+        home_region: str,
+    ) -> dict:
+        """Fetch and normalize a single CloudTrail trail posture record.
+
+        SECURITY:
+        - LookupEvents NEVER called.
+        - S3 log objects NEVER read.
+        - Event payloads, request parameters, user identity data NEVER stored.
+        - GetTrailStatus: only is_logging + latest error presence (boolean) stored.
+        - GetEventSelectors: only type/count aggregates stored.
+        - GetInsightSelectors: only count + type names stored.
+        - Tag values NEVER stored — only key names.
+        """
+        trail_arn: str = trail.get("TrailARN") or ""
+        trail_name: str = trail.get("Name") or ""
+        is_multi: bool = bool(trail.get("IsMultiRegionTrail"))
+        is_org: bool = bool(trail.get("IsOrganizationTrail"))
+        include_global: bool = bool(trail.get("IncludeGlobalServiceEvents"))
+        log_validation: bool = bool(trail.get("LogFileValidationEnabled"))
+        s3_bucket: str = trail.get("S3BucketName") or ""
+        sns_topic: str = trail.get("SNSTopicARN") or trail.get("SNSTopicName") or ""
+        kms_key_id: str = trail.get("KMSKeyId") or ""
+        cw_log_grp: str = trail.get("CloudWatchLogsLogGroupArn") or ""
+
+        warnings: list[str] = []
+
+        # Use home_region client for status and selectors (trail lives there)
+        try:
+            home_client = self._make_client(
+                "cloudtrail", credentials, region=home_region
+            )
+        except Exception:
+            logger.warning(
+                "aws: CloudTrail could not create client  home_region=%s",
+                home_region, exc_info=True,
+            )
+            home_client = None
+
+        # GetTrailStatus — logging status and error presence only
+        is_logging: bool = False
+        latest_delivery_error_present: bool = False
+        latest_notification_error_present: bool = False
+        if home_client is not None:
+            try:
+                status_resp = self._call_aws(
+                    home_client.get_trail_status,
+                    Name=trail_arn,
+                )
+                is_logging = bool(status_resp.get("IsLogging"))
+                # SECURITY: boolean presence only — not the actual error text
+                latest_delivery_error_present = bool(
+                    status_resp.get("LatestDeliveryError")
+                )
+                latest_notification_error_present = bool(
+                    status_resp.get("LatestNotificationError")
+                )
+            except Exception as exc:
+                fc = classify_aws_cloudtrail_failure("GetTrailStatus", exc)
+                warnings.append(f"GetTrailStatus: {fc.error_code}")
+
+        # GetEventSelectors — aggregate counts only
+        sel_summary: dict = {
+            "management_events_enabled":              True,
+            "read_write_type":                        "All",
+            "include_management_events":              True,
+            "data_resource_type_counts":              None,
+            "exclude_management_event_sources_count": 0,
+            "has_custom_event_selectors":             False,
+        }
+        if home_client is not None:
+            try:
+                sel_resp = self._call_aws(
+                    home_client.get_event_selectors,
+                    TrailName=trail_arn,
+                )
+                adv = sel_resp.get("AdvancedEventSelectors") or []
+                basic = sel_resp.get("EventSelectors") or []
+                if adv:
+                    parsed = self._summarize_cloudtrail_advanced_event_selectors(adv)
+                    sel_summary.update(parsed)
+                    sel_summary["has_custom_event_selectors"] = True
+                elif basic:
+                    parsed = self._summarize_cloudtrail_event_selectors(basic)
+                    sel_summary.update(parsed)
+                    sel_summary["has_custom_event_selectors"] = True
+                sel_summary["management_events_enabled"] = sel_summary.get(
+                    "include_management_events", True
+                )
+            except Exception as exc:
+                fc = classify_aws_cloudtrail_failure("GetEventSelectors", exc)
+                warnings.append(f"GetEventSelectors: {fc.error_code}")
+
+        # GetInsightSelectors — count + type names only
+        insight_summary: dict = {
+            "insight_selector_count": 0,
+            "insight_selector_types": None,
+        }
+        if home_client is not None:
+            try:
+                ins_resp = self._call_aws(
+                    home_client.get_insight_selectors,
+                    TrailName=trail_arn,
+                )
+                raw_ins = ins_resp.get("InsightSelectors") or []
+                insight_summary = self._summarize_cloudtrail_insight_selectors(raw_ins)
+            except Exception as exc:
+                code = getattr(
+                    getattr(exc, "response", {}), "get", lambda *a: {}
+                )("Error", {}).get("Code", "") if hasattr(exc, "response") else ""
+                if not code:
+                    # Try botocore-style exception
+                    try:
+                        code = exc.response.get("Error", {}).get("Code", "")  # type: ignore[union-attr]
+                    except Exception:
+                        code = ""
+                if code == "InsightNotEnabledException":
+                    pass  # Normal — insights not configured
+                else:
+                    fc = classify_aws_cloudtrail_failure("GetInsightSelectors", exc)
+                    warnings.append(f"GetInsightSelectors: {fc.error_code}")
+
+        # Tags — key names only (values NEVER stored)
+        tag_keys: list[str] | None = None
+        if home_client is not None:
+            try:
+                tag_resp = self._call_aws(
+                    home_client.list_tags,
+                    ResourceIdList=[trail_arn],
+                )
+                for tag_list in tag_resp.get("ResourceTagList") or []:
+                    raw_tags = tag_list.get("TagsList") or []
+                    tag_keys = _extract_tag_keys(raw_tags)
+                    break
+            except Exception as exc:
+                fc = classify_aws_cloudtrail_failure("ListTags", exc)
+                warnings.append(f"ListTags: {fc.error_code}")
+
+        stable_id = f"{account_id}/{home_region}/{_hash_kms_key_id(trail_arn)}"
+
+        return {
+            "record_type":              AWS_CLOUDTRAIL_TRAIL,
+            "record_id":                stable_id,
+            "external_id":              stable_id,
+            "name":                     trail_name,
+            "account_id":               account_id,
+            "home_region":              home_region,
+            "is_multi_region_trail":    is_multi,
+            "include_global_service_events":  include_global,
+            "is_organization_trail":    is_org,
+            "log_file_validation_enabled":    log_validation,
+            "kms_key_id_present":       bool(kms_key_id),
+            "kms_key_id_hash":          _hash_kms_key_id(kms_key_id) if kms_key_id else None,
+            "s3_bucket_name_hash":      _hash_kms_key_id(s3_bucket) if s3_bucket else None,
+            "sns_topic_name_present":   bool(sns_topic),
+            "cloud_watch_logs_enabled": bool(cw_log_grp),
+            "has_custom_event_selectors":     sel_summary.get("has_custom_event_selectors", False),
+            "is_logging":               is_logging,
+            "latest_delivery_error_present":      latest_delivery_error_present,
+            "latest_notification_error_present":  latest_notification_error_present,
+            "management_events_enabled":          sel_summary.get("management_events_enabled", True),
+            "read_write_type":                    sel_summary.get("read_write_type", "All"),
+            "include_management_events":          sel_summary.get("include_management_events", True),
+            "data_resource_type_counts":          sel_summary.get("data_resource_type_counts"),
+            "exclude_management_event_sources_count": sel_summary.get(
+                "exclude_management_event_sources_count", 0
+            ),
+            "insight_selector_count":  insight_summary.get("insight_selector_count", 0),
+            "insight_selector_types":  insight_summary.get("insight_selector_types"),
+            "tag_keys":                tag_keys,
+            "config_fetch_warnings":   warnings if warnings else None,
+        }
+
+    def _fetch_cloudtrail_event_data_stores_in_region(
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch CloudTrail Event Data Store metadata in a single region.
+
+        SECURITY:
+        - Event records NEVER accessed.
+        - Only posture/config metadata stored.
+        - Advanced event selector values NEVER stored.
+        - Tag values NEVER stored.
+        """
+        records: list[dict] = []
+
+        try:
+            kwargs: dict = {}
+            while True:
+                try:
+                    resp = self._call_aws(client.list_event_data_stores, **kwargs)
+                except Exception as exc:
+                    fc = classify_aws_cloudtrail_failure("ListEventDataStores", exc)
+                    logger.warning(
+                        "aws: ListEventDataStores failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for eds in resp.get("EventDataStores") or []:
+                    eds_arn: str = eds.get("EventDataStoreArn") or ""
+                    if not eds_arn:
+                        continue
+
+                    eds_name: str = eds.get("Name") or ""
+                    status: str = eds.get("Status") or "UNKNOWN"
+                    term_protection: bool = bool(eds.get("TerminationProtectionEnabled"))
+                    multi_region: bool = bool(eds.get("MultiRegionEnabled"))
+                    org_enabled: bool = bool(eds.get("OrganizationEnabled"))
+                    retention: int | None = eds.get("RetentionPeriod")
+                    billing_mode: str = (
+                        eds.get("BillingMode") or "EXTENDABLE_RETENTION_PRICING"
+                    )
+                    kms_key_id: str = eds.get("KmsKeyId") or ""
+                    # Advanced event selectors — count only; values NEVER stored
+                    adv_sel_count = len(eds.get("AdvancedEventSelectors") or [])
+
+                    # GetEventDataStore for tags (fail-soft)
+                    tag_keys: list[str] | None = None
+                    eds_warnings: list[str] = []
+                    try:
+                        get_resp = self._call_aws(
+                            client.get_event_data_store,
+                            EventDataStore=eds_arn,
+                        )
+                        raw_tags = get_resp.get("Tags") or []
+                        tag_keys = _extract_tag_keys(raw_tags)
+                    except Exception as exc:
+                        fc = classify_aws_cloudtrail_failure("GetEventDataStore", exc)
+                        eds_warnings.append(f"GetEventDataStore: {fc.error_code}")
+
+                    stable_id = (
+                        f"{account_id}/{region}/{_hash_kms_key_id(eds_arn)}"
+                    )
+                    records.append({
+                        "record_type":                      AWS_CLOUDTRAIL_EVENT_DATA_STORE,
+                        "record_id":                        stable_id,
+                        "external_id":                      stable_id,
+                        "name":                             eds_name,
+                        "account_id":                       account_id,
+                        "region":                           region,
+                        "status":                           status,
+                        "termination_protection_enabled":   term_protection,
+                        "multi_region_enabled":             multi_region,
+                        "organization_enabled":             org_enabled,
+                        "retention_period":                 retention,
+                        "advanced_event_selector_count":    adv_sel_count,
+                        "kms_key_id_present":               bool(kms_key_id),
+                        "billing_mode":                     billing_mode,
+                        "tag_keys":                         tag_keys,
+                        "config_fetch_warnings":            eds_warnings if eds_warnings else None,
+                    })
+
+                next_token = resp.get("NextToken")
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                else:
+                    break
+
+        except Exception:
+            logger.warning(
+                "aws: CloudTrail event data store unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        return records
+
+    # ── M45: GuardDuty fetch methods ──────────────────────────────────────────
+
+    @staticmethod
+    def _summarize_guardduty_features(features: list[dict]) -> dict:
+        """Extract GuardDuty feature enable/disable status.
+
+        SECURITY: Feature configuration details and finding data NEVER stored.
+        Only presence/enabled booleans per feature.
+        """
+        result: dict[str, bool] = {}
+        for feat in features:
+            name: str = (feat.get("Name") or "").lower()
+            status: str = (feat.get("Status") or "").upper()
+            enabled = status == "ENABLED"
+            if name in {"s3_logs", "s3logs"}:
+                result["s3_logs_enabled"] = enabled
+            elif name in {"eks_audit_logs", "eksauditlogs"}:
+                result["eks_audit_logs_enabled"] = enabled
+            elif name in {"malware_protection", "malwareprotection"}:
+                result["malware_protection_enabled"] = enabled
+            elif name in {"rds_login_events", "rdsloginevents"}:
+                result["rds_login_events_enabled"] = enabled
+            elif name in {"lambda_network_logs", "lambdanetworklogs"}:
+                result["lambda_network_logs_enabled"] = enabled
+            elif name in {"runtime_monitoring", "runtimemonitoring"}:
+                result["runtime_monitoring_enabled"] = enabled
+            elif name in {"ebs_malware_protection", "ebsmalwareprotection"}:
+                result["ebs_malware_protection_enabled"] = enabled
+        return result
+
+    def _fetch_guardduty_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch GuardDuty detector posture across all selected regions.
+
+        SECURITY:
+        - GetFindings NEVER called.
+        - Finding details, severity, resources, remediation NEVER accessed.
+        - Only detector posture (enabled, publishing frequency, feature flags)
+          and aggregate member counts collected.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                gd_client = self._make_client("guardduty", credentials, region=region)
+                region_records = self._fetch_guardduty_in_region(
+                    gd_client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: guardduty fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: guardduty fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_guardduty_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize GuardDuty detectors in a single region.
+
+        SECURITY:
+        - GetFindings NEVER called.
+        - Finding details NEVER accessed or stored.
+        - Tag values NEVER stored.
+        """
+        records: list[dict] = []
+
+        # ListDetectors
+        detector_ids: list[str] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                try:
+                    resp = self._call_aws(client.list_detectors, **kwargs)
+                except Exception as exc:
+                    fc = classify_aws_guardduty_failure("ListDetectors", exc)
+                    logger.warning(
+                        "aws: ListDetectors failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+                detector_ids.extend(resp.get("DetectorIds") or [])
+                next_token = resp.get("NextToken")
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: GuardDuty ListDetectors unexpected  region=%s",
+                region, exc_info=True,
+            )
+            return records
+
+        for detector_id in detector_ids:
+            warnings: list[str] = []
+
+            # GetDetector
+            det: dict = {}
+            try:
+                det_resp = self._call_aws(client.get_detector, DetectorId=detector_id)
+                det = det_resp
+            except Exception as exc:
+                fc = classify_aws_guardduty_failure("GetDetector", exc)
+                warnings.append(f"GetDetector: {fc.error_code}")
+
+            status: str = (det.get("Status") or "DISABLED").upper()
+            freq: str = det.get("FindingPublishingFrequency") or "SIX_HOURS"
+
+            # Features (newer API) vs DataSources (legacy) — handle both
+            features_raw: list[dict] = det.get("Features") or []
+            data_sources: dict = det.get("DataSources") or {}
+
+            feature_flags: dict = {}
+            if features_raw:
+                feature_flags = self._summarize_guardduty_features(features_raw)
+                feature_count = len(features_raw)
+            else:
+                # Legacy DataSources format
+                s3_status = (
+                    (data_sources.get("S3Logs") or {}).get("Status") or "DISABLED"
+                ).upper()
+                eks_status = (
+                    (
+                        (data_sources.get("Kubernetes") or {})
+                        .get("AuditLogs") or {}
+                    ).get("Status") or "DISABLED"
+                ).upper()
+                mal_ds = data_sources.get("MalwareProtection") or {}
+                ebs_status = (
+                    (
+                        (mal_ds.get("ScanEc2InstanceWithFindings") or {})
+                        .get("EbsVolumes") or {}
+                    ).get("Status") or "DISABLED"
+                ).upper()
+                feature_flags = {
+                    "s3_logs_enabled":           s3_status == "ENABLED",
+                    "eks_audit_logs_enabled":    eks_status == "ENABLED",
+                    "malware_protection_enabled": ebs_status == "ENABLED",
+                    "rds_login_events_enabled":  False,
+                    "lambda_network_logs_enabled": False,
+                    "runtime_monitoring_enabled": False,
+                    "ebs_malware_protection_enabled": False,
+                }
+                feature_count = sum(1 for v in feature_flags.values() if v)
+
+            # Member counts (fail-soft)
+            member_count = 0
+            active_member_count = 0
+            try:
+                mem_resp = self._call_aws(
+                    client.list_members,
+                    DetectorId=detector_id,
+                    OnlyAssociated="false",
+                )
+                members = mem_resp.get("Members") or []
+                member_count = len(members)
+                active_member_count = sum(
+                    1 for m in members
+                    if (m.get("RelationshipStatus") or "").upper() == "ENABLED"
+                )
+            except Exception as exc:
+                fc = classify_aws_guardduty_failure("ListMembers", exc)
+                warnings.append(f"ListMembers: {fc.error_code}")
+
+            # Admin account presence (fail-soft)
+            admin_account_present: bool = False
+            try:
+                admin_resp = self._call_aws(
+                    client.get_administrator_account,
+                    DetectorId=detector_id,
+                )
+                admin_info = admin_resp.get("Administrator") or {}
+                admin_account_present = bool(admin_info.get("AccountId"))
+            except Exception as exc:
+                fc = classify_aws_guardduty_failure("GetAdministratorAccount", exc)
+                if fc.error_code not in {
+                    "aws_guardduty_access_denied",
+                    "aws_guardduty_api_unavailable",
+                }:
+                    warnings.append(f"GetAdministratorAccount: {fc.error_code}")
+
+            # Publishing destinations
+            pub_dest_records: list[dict] = []
+            try:
+                dest_resp = self._call_aws(
+                    client.list_publishing_destinations,
+                    DetectorId=detector_id,
+                )
+                for dest in dest_resp.get("Destinations") or []:
+                    dest_id: str = dest.get("DestinationId") or ""
+                    if not dest_id:
+                        continue
+                    dest_type: str = dest.get("DestinationType") or "UNKNOWN"
+                    dest_status: str = (dest.get("Status") or "UNKNOWN").upper()
+
+                    dest_warnings: list[str] = []
+                    kms_arn_present: bool = False
+                    dest_arn_present: bool = False
+                    try:
+                        desc_resp = self._call_aws(
+                            client.describe_publishing_destination,
+                            DetectorId=detector_id,
+                            DestinationId=dest_id,
+                        )
+                        dest_props = desc_resp.get("DestinationProperties") or {}
+                        kms_arn_present = bool(dest_props.get("KmsKeyArn"))
+                        dest_arn_present = bool(dest_props.get("DestinationArn"))
+                    except Exception as exc:
+                        fc = classify_aws_guardduty_failure(
+                            "DescribePublishingDestination", exc
+                        )
+                        dest_warnings.append(
+                            f"DescribePublishingDestination: {fc.error_code}"
+                        )
+
+                    dest_stable_id = (
+                        f"{account_id}/{region}/{detector_id}/{dest_id}"
+                    )
+                    pub_dest_records.append({
+                        "record_type":             AWS_GUARDDUTY_PUBLISHING_DESTINATION,
+                        "record_id":               dest_stable_id,
+                        "external_id":             dest_stable_id,
+                        "name":                    f"guardduty-dest-{dest_id[:8]}",
+                        "account_id":              account_id,
+                        "region":                  region,
+                        "destination_type":        dest_type,
+                        "status":                  dest_status,
+                        "kms_key_arn_present":     kms_arn_present,
+                        "destination_arn_present": dest_arn_present,
+                        "config_fetch_warnings":   dest_warnings if dest_warnings else None,
+                    })
+            except Exception as exc:
+                fc = classify_aws_guardduty_failure("ListPublishingDestinations", exc)
+                warnings.append(f"ListPublishingDestinations: {fc.error_code}")
+
+            # Tags — key names only (values NEVER stored)
+            tag_keys: list[str] | None = None
+            try:
+                det_arn = (
+                    f"arn:aws:guardduty:{region}:{account_id}:detector/{detector_id}"
+                )
+                tag_resp = self._call_aws(
+                    client.list_tags_for_resource,
+                    ResourceArn=det_arn,
+                )
+                raw_tags = [
+                    {"Key": k, "Value": v}
+                    for k, v in (tag_resp.get("Tags") or {}).items()
+                ]
+                tag_keys = _extract_tag_keys(raw_tags)
+            except Exception as exc:
+                fc = classify_aws_guardduty_failure("ListTagsForResource", exc)
+                warnings.append(f"ListTagsForResource: {fc.error_code}")
+
+            stable_id = f"{account_id}/{region}/{detector_id}"
+            det_record: dict = {
+                "record_type":                    AWS_GUARDDUTY_DETECTOR,
+                "record_id":                      stable_id,
+                "external_id":                    stable_id,
+                "name":                           f"guardduty-{region}-{detector_id[:8]}",
+                "account_id":                     account_id,
+                "region":                         region,
+                "status":                         status,
+                "finding_publishing_frequency":   freq,
+                "s3_logs_enabled":                feature_flags.get("s3_logs_enabled", False),
+                "eks_audit_logs_enabled":         feature_flags.get("eks_audit_logs_enabled", False),
+                "malware_protection_enabled":     feature_flags.get("malware_protection_enabled", False),
+                "rds_login_events_enabled":       feature_flags.get("rds_login_events_enabled", False),
+                "lambda_network_logs_enabled":    feature_flags.get("lambda_network_logs_enabled", False),
+                "runtime_monitoring_enabled":     feature_flags.get("runtime_monitoring_enabled", False),
+                "ebs_malware_protection_enabled": feature_flags.get("ebs_malware_protection_enabled", False),
+                "feature_count":                  feature_count,
+                "member_count":                   member_count,
+                "active_member_count":            active_member_count,
+                "admin_account_present":          admin_account_present,
+                "tag_keys":                       tag_keys,
+                "config_fetch_warnings":          warnings if warnings else None,
+            }
+            records.append(det_record)
+            records.extend(pub_dest_records)
+
+        return records
+
+    # ── M45: Security Hub fetch methods ───────────────────────────────────────
+
+    @staticmethod
+    def _securityhub_standard_name_from_arn(arn: str) -> str:
+        """Extract a short human-readable standard name from a standards ARN.
+
+        SECURITY: Only the ARN path segment is used to derive the name.
+        No finding data or standard content is accessed.
+        """
+        arn_lower = arn.lower()
+        if "cis" in arn_lower:
+            return "CIS"
+        if (
+            "aws-foundational-security-best-practices" in arn_lower
+            or "fsbp" in arn_lower
+        ):
+            return "FSBP"
+        if "nist-800-53" in arn_lower or "nist800" in arn_lower:
+            return "NIST-800-53"
+        if "pci-dss" in arn_lower or "pcidss" in arn_lower:
+            return "PCI-DSS"
+        # Fallback: last meaningful path component
+        parts = arn.rstrip("/").split("/")
+        for p in reversed(parts):
+            if p and not p.startswith("v") and p not in {"standards", "ruleset", "aws"}:
+                return p[:32]
+        return "unknown"
+
+    def _fetch_securityhub_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch Security Hub posture across all selected regions.
+
+        SECURITY:
+        - GetFindings NEVER called.
+        - Finding details, evidence, remediation NEVER accessed or stored.
+        - Only hub posture (enabled, auto-enable controls, standards) collected.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                sh_client = self._make_client("securityhub", credentials, region=region)
+                region_records = self._fetch_securityhub_in_region(
+                    sh_client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: securityhub fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: securityhub fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_securityhub_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize Security Hub posture in a single region.
+
+        SECURITY:
+        - GetFindings NEVER called.
+        - Finding details NEVER accessed or stored.
+        - Tag values NEVER stored — only key names.
+        """
+        records: list[dict] = []
+        warnings: list[str] = []
+
+        # DescribeHub — check if Security Hub is enabled
+        hub_enabled: bool = False
+        auto_enable_controls: bool = False
+        control_finding_generator: str = "STANDARD_CONTROL"
+
+        try:
+            hub_resp = self._call_aws(client.describe_hub)
+            hub_enabled = True
+            auto_enable_controls = bool(hub_resp.get("AutoEnableControls"))
+            control_finding_generator = (
+                hub_resp.get("ControlFindingGenerator") or "STANDARD_CONTROL"
+            )
+        except Exception as exc:
+            fc = classify_aws_securityhub_failure("DescribeHub", exc)
+            if fc.error_code == "aws_securityhub_hub_unavailable":
+                # Security Hub not enabled in this region — emit disabled record
+                stable_id = f"{account_id}/{region}/securityhub"
+                records.append({
+                    "record_type":                  AWS_SECURITYHUB_ACCOUNT,
+                    "record_id":                    stable_id,
+                    "external_id":                  stable_id,
+                    "name":                         f"securityhub-{region}",
+                    "account_id":                   account_id,
+                    "region":                       region,
+                    "hub_enabled":                  False,
+                    "auto_enable_controls":         False,
+                    "control_finding_generator":    "STANDARD_CONTROL",
+                    "enabled_standards_count":      0,
+                    "enabled_products_count":       0,
+                    "finding_aggregator_present":   False,
+                    "tag_keys":                     None,
+                    "config_fetch_warnings":        None,
+                })
+                return records
+            warnings.append(f"DescribeHub: {fc.error_code}")
+
+        # GetEnabledStandards — count + name summaries only
+        standards_records: list[dict] = []
+        enabled_standards_count = 0
+        try:
+            std_kwargs: dict = {}
+            while True:
+                try:
+                    std_resp = self._call_aws(
+                        client.get_enabled_standards, **std_kwargs
+                    )
+                except Exception as exc:
+                    fc = classify_aws_securityhub_failure("GetEnabledStandards", exc)
+                    warnings.append(f"GetEnabledStandards: {fc.error_code}")
+                    break
+
+                for sub in std_resp.get("StandardsSubscriptions") or []:
+                    sub_arn: str = sub.get("StandardsSubscriptionArn") or ""
+                    std_arn: str = sub.get("StandardsArn") or ""
+                    status: str = (sub.get("StandardsStatus") or "INCOMPLETE").upper()
+                    status_reason_obj = sub.get("StandardsStatusReason") or {}
+                    status_reason: str = (
+                        status_reason_obj.get("StatusReasonCode") or ""
+                        if isinstance(status_reason_obj, dict)
+                        else ""
+                    )
+                    std_name = self._securityhub_standard_name_from_arn(std_arn)
+                    enabled_standards_count += 1
+
+                    sub_stable_id = (
+                        f"{account_id}/{region}/"
+                        f"{_hash_kms_key_id(sub_arn) if sub_arn else std_name}"
+                    )
+                    standards_records.append({
+                        "record_type":             AWS_SECURITYHUB_STANDARD_SUBSCRIPTION,
+                        "record_id":               sub_stable_id,
+                        "external_id":             sub_stable_id,
+                        "name":                    f"securityhub-std-{std_name}",
+                        "account_id":              account_id,
+                        "region":                  region,
+                        "standards_status":        status,
+                        "standards_status_reason": status_reason or None,
+                        "standards_name_summary":  std_name,
+                        "config_fetch_warnings":   None,
+                    })
+
+                next_token = std_resp.get("NextToken")
+                if next_token:
+                    std_kwargs["NextToken"] = next_token
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: SecurityHub GetEnabledStandards unexpected  region=%s",
+                region, exc_info=True,
+            )
+
+        # ListEnabledProductsForImport — count only (product ARNs NEVER stored)
+        enabled_products_count = 0
+        try:
+            prod_kwargs: dict = {}
+            while True:
+                try:
+                    prod_resp = self._call_aws(
+                        client.list_enabled_products_for_import, **prod_kwargs
+                    )
+                except Exception as exc:
+                    fc = classify_aws_securityhub_failure(
+                        "ListEnabledProductsForImport", exc
+                    )
+                    warnings.append(f"ListEnabledProductsForImport: {fc.error_code}")
+                    break
+                enabled_products_count += len(
+                    prod_resp.get("ProductSubscriptions") or []
+                )
+                next_token = prod_resp.get("NextToken")
+                if next_token:
+                    prod_kwargs["NextToken"] = next_token
+                else:
+                    break
+        except Exception:
+            pass  # Non-critical; fail-soft
+
+        # ListFindingAggregators — presence only
+        finding_aggregator_records: list[dict] = []
+        finding_aggregator_present: bool = False
+        try:
+            agg_resp = self._call_aws(client.list_finding_aggregators)
+            aggregators = agg_resp.get("FindingAggregators") or []
+            finding_aggregator_present = bool(aggregators)
+
+            for agg in aggregators:
+                agg_arn: str = agg.get("FindingAggregatorArn") or ""
+                if not agg_arn:
+                    continue
+
+                linking_mode: str = "UNKNOWN"
+                specified_regions: list[str] = []
+                agg_warnings: list[str] = []
+                try:
+                    get_agg_resp = self._call_aws(
+                        client.get_finding_aggregator,
+                        FindingAggregatorArn=agg_arn,
+                    )
+                    linking_mode = get_agg_resp.get("RegionLinkingMode") or "UNKNOWN"
+                    # Region names are not PII; stored for drift detection only.
+                    specified_regions = sorted(get_agg_resp.get("Regions") or [])
+                except Exception as exc:
+                    fc = classify_aws_securityhub_failure("GetFindingAggregator", exc)
+                    agg_warnings.append(f"GetFindingAggregator: {fc.error_code}")
+
+                agg_stable_id = (
+                    f"{account_id}/{region}/{_hash_kms_key_id(agg_arn)}"
+                )
+                finding_aggregator_records.append({
+                    "record_type":             AWS_SECURITYHUB_FINDING_AGGREGATOR,
+                    "record_id":               agg_stable_id,
+                    "external_id":             agg_stable_id,
+                    "name":                    f"securityhub-aggregator-{region}",
+                    "account_id":              account_id,
+                    "region":                  region,
+                    "linking_mode":            linking_mode,
+                    "specified_regions_count": len(specified_regions),
+                    "specified_regions":       specified_regions if specified_regions else None,
+                    "config_fetch_warnings":   agg_warnings if agg_warnings else None,
+                })
+
+        except Exception as exc:
+            fc = classify_aws_securityhub_failure("ListFindingAggregators", exc)
+            if fc.error_code not in {
+                "aws_securityhub_access_denied",
+                "aws_securityhub_aggregator_unavailable",
+            }:
+                warnings.append(f"ListFindingAggregators: {fc.error_code}")
+
+        # Tags — key names only (values NEVER stored)
+        tag_keys: list[str] | None = None
+        try:
+            hub_arn = f"arn:aws:securityhub:{region}:{account_id}:hub/default"
+            tag_resp = self._call_aws(
+                client.list_tags_for_resource,
+                ResourceArn=hub_arn,
+            )
+            raw_tags = [
+                {"Key": k, "Value": v}
+                for k, v in (tag_resp.get("Tags") or {}).items()
+            ]
+            tag_keys = _extract_tag_keys(raw_tags)
+        except Exception as exc:
+            fc = classify_aws_securityhub_failure("ListTagsForResource", exc)
+            warnings.append(f"ListTagsForResource: {fc.error_code}")
+
+        stable_id = f"{account_id}/{region}/securityhub"
+        hub_record: dict = {
+            "record_type":                  AWS_SECURITYHUB_ACCOUNT,
+            "record_id":                    stable_id,
+            "external_id":                  stable_id,
+            "name":                         f"securityhub-{region}",
+            "account_id":                   account_id,
+            "region":                       region,
+            "hub_enabled":                  hub_enabled,
+            "auto_enable_controls":         auto_enable_controls,
+            "control_finding_generator":    control_finding_generator,
+            "enabled_standards_count":      enabled_standards_count,
+            "enabled_products_count":       enabled_products_count,
+            "finding_aggregator_present":   finding_aggregator_present,
+            "tag_keys":                     tag_keys,
+            "config_fetch_warnings":        warnings if warnings else None,
+        }
+
+        records.append(hub_record)
+        records.extend(standards_records)
+        records.extend(finding_aggregator_records)
         return records
