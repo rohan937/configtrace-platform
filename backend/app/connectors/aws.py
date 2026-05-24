@@ -106,6 +106,7 @@ from app.core.failure_classifier import (
     classify_aws_cloudfront_failure,
     classify_aws_secretsmanager_failure,
     classify_aws_ssm_failure,
+    classify_aws_rds_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -133,6 +134,11 @@ from app.connectors.aws_schema import (
     AWS_CLOUDFRONT_DISTRIBUTION,
     AWS_SECRETSMANAGER_SECRET,
     AWS_SSM_PARAMETER,
+    AWS_RDS_DB_INSTANCE,
+    AWS_RDS_DB_CLUSTER,
+    AWS_RDS_DB_SUBNET_GROUP,
+    AWS_RDS_DB_SNAPSHOT,
+    AWS_RDS_DB_CLUSTER_SNAPSHOT,
 )
 
 logger = logging.getLogger(__name__)
@@ -631,6 +637,114 @@ def _summarize_ssm_policies(policies: list) -> dict | None:
         ptype = p.get("Type") or "Unknown"
         counts[ptype] = counts.get(ptype, 0) + 1
     return {"type_counts": counts, "total": len(policies)}
+
+
+# ── M42: RDS helpers ─────────────────────────────────────────────────────────
+
+# RDS name sensitivity categories — same structure as M41 helpers.
+_RDS_NAME_PATTERNS: dict[str, frozenset[str]] = {
+    "production":  frozenset({"prod", "production", "live"}),
+    "credential":  frozenset({"credential", "credentials", "passwd", "password", "pass"}),
+    "api_key":     frozenset({"apikey", "api_key", "api-key", "token", "access_key"}),
+    "auth":        frozenset({"auth", "login", "oauth", "sso"}),
+    "payment":     frozenset({"payment", "stripe", "paypal", "billing", "checkout", "invoice"}),
+    "database":    frozenset({"db", "database", "rds", "postgres", "mysql", "mongo", "redis", "sql"}),
+    "internal":    frozenset({"admin", "dashboard", "portal", "internal", "private", "backend", "worker"}),
+    "config":      frozenset({"config", "settings", "environment", "env"}),
+    "secure":      frozenset({"secure", "secrets", "secret"}),
+    "app":         frozenset({"app", "api", "customer", "checkout"}),
+}
+
+
+def _classify_rds_name_sensitivity(name: str) -> str:
+    """Return sensitivity category for an RDS DB instance/cluster identifier.
+
+    Returns one of: production, credential, api_key, auth, payment, database,
+    internal, config, secure, app, none.
+    """
+    lower = name.lower()
+    for category, patterns in _RDS_NAME_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in lower:
+                return category
+    return "none"
+
+
+def _rds_engine_major_version(engine_version: str) -> str:
+    """Extract major version string from full engine version.
+
+    Examples:
+        "8.0.28"  → "8"
+        "5.7.40"  → "5"
+        "14.5"    → "14"
+        "aurora-mysql8.0.23" → "8"
+    """
+    if not engine_version:
+        return "unknown"
+    # Strip common prefixes like "aurora-mysql", "aurora-postgresql"
+    ver = engine_version.lower()
+    for prefix in ("aurora-mysql", "aurora-postgresql", "aurora-"):
+        if ver.startswith(prefix):
+            ver = ver[len(prefix):]
+            break
+    # Take first numeric segment
+    parts = ver.split(".")
+    if parts and parts[0].isdigit():
+        return parts[0]
+    return engine_version.split(".")[0] if engine_version else "unknown"
+
+
+def _rds_summarize_pending_modified(pending: dict) -> dict | None:
+    """Return a safe summary of PendingModifiedValues.
+
+    Only records the presence/absence of pending changes by field name.
+    Raw values (e.g. pending MasterUserPassword) are NEVER stored.
+
+    SECURITY: MasterUserPassword and other credential fields are explicitly
+    excluded even if present in the API response.
+    """
+    if not pending:
+        return None
+    # Fields that must NEVER be included in the summary
+    _FORBIDDEN = frozenset({
+        "MasterUserPassword", "masterUserPassword",
+        "Password", "password",
+    })
+    present_fields = [
+        k for k in pending
+        if k not in _FORBIDDEN and pending[k] is not None and pending[k] != []
+    ]
+    return {"pending_fields": sorted(present_fields), "count": len(present_fields)} if present_fields else None
+
+
+def _rds_sorted_sg_ids(vpc_security_groups: list) -> list[str]:
+    """Return a sorted list of VPC security group IDs from a DB security group list."""
+    ids = []
+    for sg in vpc_security_groups:
+        sg_id = sg.get("VpcSecurityGroupId") or sg.get("vpc_security_group_id")
+        if sg_id:
+            ids.append(str(sg_id))
+    return sorted(ids)
+
+
+def _rds_sorted_param_group_names(param_groups: list, key: str = "DBParameterGroupName") -> list[str]:
+    """Return sorted parameter group names from a list of parameter group dicts."""
+    names = []
+    for pg in param_groups:
+        name = pg.get(key)
+        if name:
+            names.append(str(name))
+    return sorted(names)
+
+
+def _rds_sorted_option_group_names(option_groups: list) -> list[str]:
+    """Return sorted option group names from a list of option group membership dicts."""
+    names = []
+    for og in option_groups:
+        name = og.get("OptionGroupName")
+        if name:
+            names.append(str(name))
+    return sorted(names)
 
 
 # ── M39: IAM policy and trust analysis helpers ────────────────────────────────
@@ -1238,6 +1352,16 @@ class AWSConnector(BaseConnector):
             len(ssm_records),
         )
 
+        # 11. RDS database resources (M42) — regional; metadata only.
+        #     SECURITY: No DB connections, no passwords, no database content accessed.
+        #     DownloadDBLogFilePortion and DownloadCompleteDBLogFile are NEVER called.
+        rds_records = self._fetch_rds_resources(credentials, account_id)
+        records.extend(rds_records)
+        logger.info(
+            "AWSConnector.fetch: rds_resources fetched  count=%d",
+            len(rds_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -1271,6 +1395,14 @@ class AWSConnector(BaseConnector):
             1 for r in ssm_records
             if r.get("record_type") == AWS_SSM_PARAMETER
         )
+        rds_instance_count = sum(
+            1 for r in rds_records
+            if r.get("record_type") == AWS_RDS_DB_INSTANCE
+        )
+        rds_cluster_count = sum(
+            1 for r in rds_records
+            if r.get("record_type") == AWS_RDS_DB_CLUSTER
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -1282,6 +1414,8 @@ class AWSConnector(BaseConnector):
             cloudfront_distribution_count=cloudfront_dist_count,
             secrets_count=secrets_count,
             ssm_parameter_count=ssm_parameter_count,
+            rds_instance_count=rds_instance_count,
+            rds_cluster_count=rds_cluster_count,
         )
         records.append(inventory_record)
 
@@ -1389,6 +1523,8 @@ class AWSConnector(BaseConnector):
         cloudfront_distribution_count: int = 0,
         secrets_count: int = 0,
         ssm_parameter_count: int = 0,
+        rds_instance_count: int = 0,
+        rds_cluster_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -1399,7 +1535,7 @@ class AWSConnector(BaseConnector):
             "selected_regions":               selected,
             "enabled_surfaces":               [
                 "account_inventory", "s3", "security_groups", "vpc",
-                "iam", "route53", "cloudfront", "secrets_manager", "ssm",
+                "iam", "route53", "cloudfront", "secrets_manager", "ssm", "rds",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -1410,8 +1546,10 @@ class AWSConnector(BaseConnector):
             "cloudfront_distribution_count":  cloudfront_distribution_count,
             "secrets_count":                  secrets_count,
             "ssm_parameter_count":            ssm_parameter_count,
+            "rds_instance_count":             rds_instance_count,
+            "rds_cluster_count":              rds_cluster_count,
             "future_surfaces": [
-                "rds", "lambda", "api_gateway", "load_balancers",
+                "lambda", "api_gateway", "load_balancers",
                 "waf", "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations", "cloudwatch",
@@ -4275,5 +4413,549 @@ class AWSConnector(BaseConnector):
                 kwargs["NextToken"] = next_token
             else:
                 break
+
+        return records
+
+    # ── M42: RDS fetch methods ────────────────────────────────────────────────
+
+    def _fetch_rds_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch RDS database resource metadata across all selected regions.
+
+        Iterates over each selected region, calling ``_fetch_rds_in_region``.
+        Fail-soft: per-region failures are logged but do not abort the sync.
+
+        SECURITY:
+        - No database connections are made.
+        - No database content, passwords, or credentials are read.
+        - DownloadDBLogFilePortion and DownloadCompleteDBLogFile are NEVER called.
+        - Only metadata-level Describe* APIs are used.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                client = self._make_client("rds", credentials, region=region)
+                region_records = self._fetch_rds_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: rds fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except ConnectorError as exc:
+                fc = classify_aws_rds_failure("DescribeDBInstances", exc)
+                logger.warning(
+                    "aws: rds fetch failed  region=%s  code=%s  action=%s",
+                    region, fc.error_code, fc.recommended_action,
+                )
+            except Exception:
+                logger.warning(
+                    "aws: rds fetch failed  region=%s  (unexpected error)",
+                    region,
+                )
+
+        return all_records
+
+    def _fetch_rds_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize RDS resources in a single region.
+
+        Calls (fail-soft per API):
+          - DescribeDBInstances (paginated)
+          - DescribeDBClusters (paginated)
+          - DescribeDBSubnetGroups (paginated)
+          - DescribeDBSnapshots (paginated, manual snapshots only)
+          - DescribeDBClusterSnapshots (paginated, manual snapshots only)
+
+        SECURITY:
+          - No DB connections are made.
+          - No passwords, credentials, or database content are accessed.
+          - MasterUserPassword is explicitly excluded from pending change summaries.
+          - KMS key IDs are hashed; raw ARNs are never stored.
+          - DownloadDBLogFilePortion / DownloadCompleteDBLogFile are NEVER called.
+        """
+        records: list[dict] = []
+
+        def _iso(dt: Any) -> str | None:
+            if dt is None:
+                return None
+            try:
+                return dt.isoformat()
+            except AttributeError:
+                return str(dt)
+
+        # ── DescribeDBInstances ───────────────────────────────────────────────
+        try:
+            inst_kwargs: dict = {"MaxRecords": 100}
+            while True:
+                try:
+                    response = self._call_aws(client.describe_db_instances, **inst_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_rds_failure("DescribeDBInstances", exc)
+                    logger.warning(
+                        "aws: DescribeDBInstances failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for db in response.get("DBInstances") or []:
+                    db_id: str = db.get("DBInstanceIdentifier") or ""
+                    if not db_id:
+                        continue
+
+                    engine: str = db.get("Engine") or ""
+                    engine_version: str = db.get("EngineVersion") or ""
+                    kms_key_id: str | None = db.get("KmsKeyId")
+                    performance_insights_kms: str | None = db.get("PerformanceInsightsKMSKeyId")
+                    ca_cert: str | None = db.get("CACertificateIdentifier")
+                    az: str | None = db.get("AvailabilityZone")
+                    multi_az: bool = bool(db.get("MultiAZ", False))
+                    secondary_az: str | None = db.get("SecondaryAvailabilityZone")
+                    endpoint = db.get("Endpoint") or {}
+                    publicly_accessible: bool = bool(db.get("PubliclyAccessible", False))
+                    storage_encrypted: bool = bool(db.get("StorageEncrypted", False))
+                    iam_auth_enabled: bool = bool(db.get("IAMDatabaseAuthenticationEnabled", False))
+                    deletion_protection: bool = bool(db.get("DeletionProtection", False))
+                    auto_minor_version_upgrade: bool = bool(db.get("AutoMinorVersionUpgrade", False))
+                    copy_tags_to_snapshot: bool = bool(db.get("CopyTagsToSnapshot", False))
+                    performance_insights_enabled: bool = bool(db.get("PerformanceInsightsEnabled", False))
+                    enhanced_monitoring_interval: int = int(db.get("MonitoringInterval") or 0)
+                    backup_retention_period: int = int(db.get("BackupRetentionPeriod") or 0)
+                    preferred_backup_window: str | None = db.get("PreferredBackupWindow")
+                    preferred_maintenance_window: str | None = db.get("PreferredMaintenanceWindow")
+                    db_instance_class: str | None = db.get("DBInstanceClass")
+                    db_instance_status: str | None = db.get("DBInstanceStatus")
+                    db_name_present: bool = bool(db.get("DBName"))
+                    allocated_storage: int = int(db.get("AllocatedStorage") or 0)
+                    storage_type: str | None = db.get("StorageType")
+                    license_model: str | None = db.get("LicenseModel")
+                    read_replica_source: str | None = db.get("ReadReplicaSourceDBInstanceIdentifier")
+                    read_replica_identifiers: list = db.get("ReadReplicaDBInstanceIdentifiers") or []
+                    cluster_id: str | None = db.get("DBClusterIdentifier")
+                    db_subnet_group = db.get("DBSubnetGroup") or {}
+                    vpc_id: str | None = db_subnet_group.get("VpcId")
+                    db_subnet_group_name: str | None = db_subnet_group.get("DBSubnetGroupName")
+                    db_subnet_group_status: str | None = db_subnet_group.get("SubnetGroupStatus")
+                    port: int | None = endpoint.get("Port")
+                    hosted_zone_id: str | None = endpoint.get("HostedZoneId")
+                    tags: list = db.get("TagList") or []
+                    tag_keys: list[str] | None = sorted({t["Key"] for t in tags if "Key" in t}) or None
+                    sg_ids = _rds_sorted_sg_ids(db.get("VpcSecurityGroups") or [])
+                    param_group_names = _rds_sorted_param_group_names(
+                        db.get("DBParameterGroups") or []
+                    )
+                    option_group_names = _rds_sorted_option_group_names(
+                        db.get("OptionGroupMemberships") or []
+                    )
+                    pending_summary = _rds_summarize_pending_modified(
+                        db.get("PendingModifiedValues") or {}
+                    )
+                    latest_restore_time = db.get("LatestRestorableTime")
+                    processor_features: list = db.get("ProcessorFeatures") or []
+
+                    stable_id = f"{account_id}/{region}/{db_id}"
+                    records.append({
+                        "record_type":                          AWS_RDS_DB_INSTANCE,
+                        "record_id":                            stable_id,
+                        "external_id":                          stable_id,
+                        "name":                                 db_id,
+                        "account_id":                           account_id,
+                        "region":                               region,
+                        "db_instance_identifier":               db_id,
+                        "db_instance_class":                    db_instance_class,
+                        "db_instance_status":                   db_instance_status,
+                        "engine":                               engine,
+                        "engine_version":                       engine_version,
+                        "engine_major_version":                 _rds_engine_major_version(engine_version),
+                        "db_name_present":                      db_name_present,
+                        # ── tracked by diff_service ───────────────────────────
+                        "allocated_storage":                    allocated_storage,          # was allocated_storage_gib
+                        "storage_type":                         storage_type,
+                        "storage_encrypted":                    storage_encrypted,
+                        "kms_key_id_present":                   bool(kms_key_id),
+                        "kms_key_id_hash":                      _hash_kms_key_id(kms_key_id) if kms_key_id else None,
+                        "publicly_accessible":                  publicly_accessible,
+                        "multi_az":                             multi_az,
+                        "availability_zone":                    az,
+                        "secondary_availability_zone_present":  bool(secondary_az),         # bool, not raw AZ name
+                        "vpc_id":                               vpc_id,
+                        "db_subnet_group_name":                 db_subnet_group_name,
+                        "db_subnet_group_status":               db_subnet_group_status,
+                        "vpc_security_group_ids":               sg_ids or None,
+                        "endpoint_port":                        port,
+                        "endpoint_hosted_zone_id":              hosted_zone_id,
+                        "backup_retention_period":              backup_retention_period,
+                        "preferred_backup_window":              preferred_backup_window,
+                        "preferred_maintenance_window":         preferred_maintenance_window,
+                        "latest_restorable_time":               _iso(latest_restore_time),
+                        "auto_minor_version_upgrade":           auto_minor_version_upgrade,
+                        "copy_tags_to_snapshot":                copy_tags_to_snapshot,
+                        "deletion_protection":                  deletion_protection,
+                        "iam_database_authentication_enabled":  iam_auth_enabled,
+                        "performance_insights_enabled":         performance_insights_enabled,
+                        "performance_insights_kms_key_id_present": bool(performance_insights_kms),  # was performance_insights_kms_key_present
+                        "monitoring_interval":                  enhanced_monitoring_interval,       # was enhanced_monitoring_interval
+                        "ca_certificate_identifier":            ca_cert,
+                        "license_model":                        license_model,
+                        "parameter_group_names":                param_group_names or None,          # was db_parameter_group_names
+                        "option_group_names":                   option_group_names or None,
+                        "read_replica_source_present":          bool(read_replica_source),          # bool presence, not raw ID
+                        "read_replica_count":                   len(read_replica_identifiers),
+                        "db_cluster_identifier":                cluster_id,
+                        "processor_feature_count":              len(processor_features),
+                        "pending_modified_values_summary":      pending_summary,
+                        "tag_keys":                             tag_keys,
+                        "sensitive_name_category":              _classify_rds_name_sensitivity(db_id),
+                        "config_fetch_warnings":                None,
+                    })
+
+                marker = response.get("Marker")
+                if marker:
+                    inst_kwargs["Marker"] = marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: DescribeDBInstances unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        # ── DescribeDBClusters ────────────────────────────────────────────────
+        try:
+            cl_kwargs: dict = {"MaxRecords": 100}
+            while True:
+                try:
+                    response = self._call_aws(client.describe_db_clusters, **cl_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_rds_failure("DescribeDBClusters", exc)
+                    logger.warning(
+                        "aws: DescribeDBClusters failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for cluster in response.get("DBClusters") or []:
+                    cluster_id: str = cluster.get("DBClusterIdentifier") or ""
+                    if not cluster_id:
+                        continue
+
+                    engine: str = cluster.get("Engine") or ""
+                    engine_version: str = cluster.get("EngineVersion") or ""
+                    engine_mode: str | None = cluster.get("EngineMode")
+                    status: str | None = cluster.get("Status")
+                    kms_key_id: str | None = cluster.get("KmsKeyId")
+                    storage_encrypted: bool = bool(cluster.get("StorageEncrypted", False))
+                    iam_auth_enabled: bool = bool(cluster.get("IAMDatabaseAuthenticationEnabled", False))
+                    deletion_protection: bool = bool(cluster.get("DeletionProtection", False))
+                    multi_az: bool = bool(cluster.get("MultiAZ", False))
+                    backup_retention_period: int = int(cluster.get("BackupRetentionPeriod") or 0)
+                    preferred_backup_window: str | None = cluster.get("PreferredBackupWindow")
+                    preferred_maintenance_window: str | None = cluster.get("PreferredMaintenanceWindow")
+                    publicly_accessible: bool = bool(cluster.get("PubliclyAccessible", False))
+                    copy_tags_to_snapshot: bool = bool(cluster.get("CopyTagsToSnapshot", False))
+                    performance_insights_enabled: bool = bool(cluster.get("PerformanceInsightsEnabled", False))
+                    performance_insights_kms: str | None = cluster.get("PerformanceInsightsKMSKeyId")
+                    port: int | None = cluster.get("Port")
+                    subnet_group_name: str | None = cluster.get("DBSubnetGroup")
+                    az_list: list[str] = sorted(cluster.get("AvailabilityZones") or [])
+                    member_instances: list = cluster.get("DBClusterMembers") or []
+                    db_cluster_members_count: int = len(member_instances)
+                    writer_count: int = sum(
+                        1 for m in member_instances if m.get("IsClusterWriter")
+                    )
+                    reader_count: int = db_cluster_members_count - writer_count
+                    sg_ids = _rds_sorted_sg_ids(cluster.get("VpcSecurityGroups") or [])
+                    vpc_security_group_count: int = len(sg_ids) if sg_ids else 0
+                    db_cluster_parameter_group: str | None = cluster.get("DBClusterParameterGroup")
+                    custom_endpoints: list = cluster.get("CustomEndpoints") or []
+                    cloudwatch_logs_exports: list = cluster.get("EnabledCloudwatchLogsExports") or []
+                    tags: list = cluster.get("TagList") or []
+                    tag_keys: list[str] | None = sorted({t["Key"] for t in tags if "Key" in t}) or None
+                    latest_restore_time = cluster.get("LatestRestorableTime")
+                    # data-minimization: presence booleans only — no raw hostnames/names
+                    endpoint_present: bool = bool(cluster.get("Endpoint"))
+                    reader_endpoint_present: bool = bool(cluster.get("ReaderEndpoint"))
+                    hosted_zone_id_present: bool = bool(cluster.get("HostedZoneId"))
+                    database_name_present: bool = bool(cluster.get("DatabaseName"))
+                    master_username_present: bool = bool(cluster.get("MasterUsername"))
+
+                    stable_id = f"{account_id}/{region}/{cluster_id}"
+                    records.append({
+                        "record_type":                          AWS_RDS_DB_CLUSTER,
+                        "record_id":                            stable_id,
+                        "external_id":                          stable_id,
+                        "name":                                 cluster_id,
+                        "account_id":                           account_id,
+                        "region":                               region,
+                        "db_cluster_identifier":                cluster_id,
+                        "status":                               status,
+                        "engine":                               engine,
+                        "engine_version":                       engine_version,
+                        "engine_major_version":                 _rds_engine_major_version(engine_version),
+                        "engine_mode":                          engine_mode,
+                        "storage_encrypted":                    storage_encrypted,
+                        "kms_key_id_present":                   bool(kms_key_id),
+                        "kms_key_id_hash":                      _hash_kms_key_id(kms_key_id) if kms_key_id else None,
+                        "backup_retention_period":              backup_retention_period,
+                        "preferred_backup_window":              preferred_backup_window,
+                        "preferred_maintenance_window":         preferred_maintenance_window,
+                        "multi_az":                             multi_az,
+                        "availability_zone_count":              len(az_list),
+                        "db_cluster_members_count":             db_cluster_members_count,
+                        "writer_count":                         writer_count,
+                        "reader_count":                         reader_count,
+                        "db_subnet_group_name":                 subnet_group_name,
+                        "vpc_security_group_ids":               sg_ids or None,
+                        "vpc_security_group_count":             vpc_security_group_count,
+                        "port":                                 port,
+                        "publicly_accessible":                  publicly_accessible,
+                        "endpoint_present":                     endpoint_present,
+                        "reader_endpoint_present":              reader_endpoint_present,
+                        "custom_endpoints_count":               len(custom_endpoints),
+                        "hosted_zone_id_present":               hosted_zone_id_present,
+                        "database_name_present":                database_name_present,
+                        "master_username_present":              master_username_present,
+                        "iam_database_authentication_enabled":  iam_auth_enabled,
+                        "deletion_protection":                  deletion_protection,
+                        "copy_tags_to_snapshot":                copy_tags_to_snapshot,
+                        "db_cluster_parameter_group":           db_cluster_parameter_group,
+                        "enabled_cloudwatch_logs_exports":      cloudwatch_logs_exports or None,
+                        "performance_insights_enabled":         performance_insights_enabled,
+                        "performance_insights_kms_key_id_present": bool(performance_insights_kms),
+                        "latest_restorable_time":               _iso(latest_restore_time),
+                        "tag_keys":                             tag_keys,
+                        "sensitive_name_category":              _classify_rds_name_sensitivity(cluster_id),
+                        "config_fetch_warnings":                None,
+                    })
+
+                marker = response.get("Marker")
+                if marker:
+                    cl_kwargs["Marker"] = marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: DescribeDBClusters unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        # ── DescribeDBSubnetGroups ────────────────────────────────────────────
+        try:
+            sg_kwargs: dict = {"MaxRecords": 100}
+            while True:
+                try:
+                    response = self._call_aws(client.describe_db_subnet_groups, **sg_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_rds_failure("DescribeDBSubnetGroups", exc)
+                    logger.warning(
+                        "aws: DescribeDBSubnetGroups failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for sng in response.get("DBSubnetGroups") or []:
+                    group_name: str = sng.get("DBSubnetGroupName") or ""
+                    if not group_name:
+                        continue
+                    vpc_id: str | None = sng.get("VpcId")
+                    status: str | None = sng.get("SubnetGroupStatus")
+                    subnets: list = sng.get("Subnets") or []
+                    subnet_ids = sorted(
+                        s.get("SubnetIdentifier") or ""
+                        for s in subnets if s.get("SubnetIdentifier")
+                    )
+                    subnet_azs = sorted({
+                        (s.get("SubnetAvailabilityZone") or {}).get("Name") or ""
+                        for s in subnets
+                        if (s.get("SubnetAvailabilityZone") or {}).get("Name")
+                    })
+                    tags: list = sng.get("TagList") or []
+                    tag_keys: list[str] | None = sorted({t["Key"] for t in tags if "Key" in t}) or None
+
+                    stable_id = f"{account_id}/{region}/{group_name}"
+                    records.append({
+                        "record_type":                  AWS_RDS_DB_SUBNET_GROUP,
+                        "record_id":                    stable_id,
+                        "external_id":                  stable_id,
+                        "name":                         group_name,
+                        "account_id":                   account_id,
+                        "region":                       region,
+                        "vpc_id":                       vpc_id,
+                        "subnet_count":                 len(subnets),
+                        "subnet_ids":                   subnet_ids or None,
+                        "subnet_availability_zones":    subnet_azs or None,
+                        "status":                       status,
+                        "tag_keys":                     tag_keys,
+                        "config_fetch_warnings":        None,
+                    })
+
+                marker = response.get("Marker")
+                if marker:
+                    sg_kwargs["Marker"] = marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: DescribeDBSubnetGroups unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        # ── DescribeDBSnapshots (manual only) ─────────────────────────────────
+        try:
+            snap_kwargs: dict = {"MaxRecords": 100, "SnapshotType": "manual"}
+            while True:
+                try:
+                    response = self._call_aws(client.describe_db_snapshots, **snap_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_rds_failure("DescribeDBSnapshots", exc)
+                    logger.warning(
+                        "aws: DescribeDBSnapshots failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for snap in response.get("DBSnapshots") or []:
+                    snap_id: str = snap.get("DBSnapshotIdentifier") or ""
+                    if not snap_id:
+                        continue
+                    db_instance_id: str | None = snap.get("DBInstanceIdentifier")
+                    engine: str = snap.get("Engine") or ""
+                    engine_version: str = snap.get("EngineVersion") or ""
+                    status: str | None = snap.get("Status")
+                    snapshot_type: str | None = snap.get("SnapshotType")
+                    storage_encrypted: bool = bool(snap.get("Encrypted", False))
+                    kms_key_id: str | None = snap.get("KmsKeyId")
+                    publicly_accessible: bool = snapshot_type == "public"
+                    allocated_storage: int = int(snap.get("AllocatedStorage") or 0)
+                    az: str | None = snap.get("AvailabilityZone")
+                    vpc_id: str | None = snap.get("VpcId")
+                    license_model: str | None = snap.get("LicenseModel")
+                    snapshot_create_time = snap.get("SnapshotCreateTime")
+                    instance_create_time = snap.get("InstanceCreateTime")
+                    tags: list = snap.get("TagList") or []
+                    tag_keys: list[str] | None = sorted({t["Key"] for t in tags if "Key" in t}) or None
+
+                    stable_id = f"{account_id}/{region}/{snap_id}"
+                    records.append({
+                        "record_type":              AWS_RDS_DB_SNAPSHOT,
+                        "record_id":                stable_id,
+                        "external_id":              stable_id,
+                        "name":                     snap_id,
+                        "account_id":               account_id,
+                        "region":                   region,
+                        "db_snapshot_identifier":   snap_id,
+                        "db_instance_identifier":   db_instance_id,
+                        "engine":                   engine,
+                        "engine_version":           engine_version,
+                        "status":                   status,
+                        "snapshot_type":            snapshot_type,
+                        "storage_encrypted":        storage_encrypted,
+                        "kms_key_id_present":       bool(kms_key_id),
+                        "kms_key_id_hash":          _hash_kms_key_id(kms_key_id) if kms_key_id else None,
+                        "publicly_accessible":      publicly_accessible,
+                        "allocated_storage_gib":    allocated_storage,
+                        "availability_zone":        az,
+                        "vpc_id":                   vpc_id,
+                        "license_model":            license_model,
+                        "snapshot_create_time":     _iso(snapshot_create_time),
+                        "instance_create_time":     _iso(instance_create_time),
+                        "tag_keys":                 tag_keys,
+                        "config_fetch_warnings":    None,
+                    })
+
+                marker = response.get("Marker")
+                if marker:
+                    snap_kwargs["Marker"] = marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: DescribeDBSnapshots unexpected error  region=%s",
+                region, exc_info=True,
+            )
+
+        # ── DescribeDBClusterSnapshots (manual only) ──────────────────────────
+        try:
+            csnap_kwargs: dict = {"MaxRecords": 100, "SnapshotType": "manual"}
+            while True:
+                try:
+                    response = self._call_aws(client.describe_db_cluster_snapshots, **csnap_kwargs)
+                except ConnectorError as exc:
+                    fc = classify_aws_rds_failure("DescribeDBClusterSnapshots", exc)
+                    logger.warning(
+                        "aws: DescribeDBClusterSnapshots failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+
+                for snap in response.get("DBClusterSnapshots") or []:
+                    snap_id: str = snap.get("DBClusterSnapshotIdentifier") or ""
+                    if not snap_id:
+                        continue
+                    cluster_id: str | None = snap.get("DBClusterIdentifier")
+                    engine: str = snap.get("Engine") or ""
+                    engine_version: str = snap.get("EngineVersion") or ""
+                    status: str | None = snap.get("Status")
+                    snapshot_type: str | None = snap.get("SnapshotType")
+                    storage_encrypted: bool = bool(snap.get("StorageEncrypted", False))
+                    kms_key_id: str | None = snap.get("KmsKeyId")
+                    publicly_accessible: bool = snapshot_type == "public"
+                    allocated_storage: int = int(snap.get("AllocatedStorage") or 0)
+                    vpc_id: str | None = snap.get("VpcId")
+                    az_list: list[str] = sorted(snap.get("AvailabilityZones") or [])
+                    cluster_create_time = snap.get("ClusterCreateTime")
+                    snapshot_create_time = snap.get("SnapshotCreateTime")
+                    iam_auth_enabled: bool = bool(snap.get("IAMDatabaseAuthenticationEnabled", False))
+                    tags: list = snap.get("TagList") or []
+                    tag_keys: list[str] | None = sorted({t["Key"] for t in tags if "Key" in t}) or None
+
+                    stable_id = f"{account_id}/{region}/{snap_id}"
+                    records.append({
+                        "record_type":                          AWS_RDS_DB_CLUSTER_SNAPSHOT,
+                        "record_id":                            stable_id,
+                        "external_id":                          stable_id,
+                        "name":                                 snap_id,
+                        "account_id":                           account_id,
+                        "region":                               region,
+                        "db_cluster_snapshot_identifier":       snap_id,
+                        "db_cluster_identifier":                cluster_id,
+                        "engine":                               engine,
+                        "engine_version":                       engine_version,
+                        "status":                               status,
+                        "snapshot_type":                        snapshot_type,
+                        "storage_encrypted":                    storage_encrypted,
+                        "kms_key_id_present":                   bool(kms_key_id),
+                        "kms_key_id_hash":                      _hash_kms_key_id(kms_key_id) if kms_key_id else None,
+                        "publicly_accessible":                  publicly_accessible,
+                        "allocated_storage_gib":                allocated_storage,
+                        "vpc_id":                               vpc_id,
+                        "availability_zones":                   az_list or None,
+                        "iam_database_authentication_enabled":  iam_auth_enabled,
+                        "snapshot_create_time":                 _iso(snapshot_create_time),
+                        "cluster_create_time":                  _iso(cluster_create_time),
+                        "tag_keys":                             tag_keys,
+                        "config_fetch_warnings":                None,
+                    })
+
+                marker = response.get("Marker")
+                if marker:
+                    csnap_kwargs["Marker"] = marker
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: DescribeDBClusterSnapshots unexpected error  region=%s",
+                region, exc_info=True,
+            )
 
         return records

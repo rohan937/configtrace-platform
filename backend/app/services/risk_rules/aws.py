@@ -64,6 +64,11 @@ from app.connectors.aws_schema import (
     AWS_CLOUDFRONT_DISTRIBUTION,
     AWS_SECRETSMANAGER_SECRET,
     AWS_SSM_PARAMETER,
+    AWS_RDS_DB_INSTANCE,
+    AWS_RDS_DB_CLUSTER,
+    AWS_RDS_DB_SUBNET_GROUP,
+    AWS_RDS_DB_SNAPSHOT,
+    AWS_RDS_DB_CLUSTER_SNAPSHOT,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -3287,6 +3292,604 @@ def _classify_ssm_parameter_change(change: object) -> tuple[str, str]:
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 
+# ── M42 RDS helpers ──────────────────────────────────────────────────────────
+
+_SENSITIVE_RDS_CATEGORIES: frozenset[str] = frozenset({
+    "production", "credential", "api_key", "auth", "payment",
+    "database", "internal", "config", "secure",
+})
+
+
+def _rds_is_sensitive(name: str) -> bool:
+    """Return True if the RDS identifier name suggests a sensitive/production resource."""
+    from app.connectors.aws import _classify_rds_name_sensitivity
+    return _classify_rds_name_sensitivity(name) in _SENSITIVE_RDS_CATEGORIES
+
+
+# ── aws_rds_db_instance ───────────────────────────────────────────────────────
+
+def _classify_rds_db_instance_change(change: object) -> tuple[str, str]:  # noqa: C901
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    name = str(_get(change, "name") or "")
+    sensitive = _rds_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"RDS DB instance '{name}' was added to monitoring."
+    if ct == "removed":
+        level = "high" if sensitive else "medium"
+        return level, f"RDS DB instance '{name}' is no longer visible to ConfigTrace."
+
+    # ── Critical ──────────────────────────────────────────────────────────────
+    if fp == "publicly_accessible" and new_val is True:
+        level = "critical" if sensitive else "high"
+        return (
+            level,
+            f"RDS DB instance '{name}' is now publicly accessible over the internet. "
+            "Verify this is intentional and that network-level controls (security groups, NACLs) "
+            "restrict access appropriately.",
+        )
+
+    if fp == "storage_encrypted" and new_val is False:
+        return (
+            "critical",
+            f"Encryption at rest was disabled for RDS DB instance '{name}'. "
+            "Unencrypted database storage exposes data if the underlying storage is compromised.",
+        )
+
+    # ── High ──────────────────────────────────────────────────────────────────
+    if fp == "publicly_accessible" and new_val is False:
+        return (
+            "low",
+            f"RDS DB instance '{name}' is no longer publicly accessible. Exposure reduced.",
+        )
+
+    if fp == "deletion_protection" and new_val is False:
+        level = "critical" if sensitive else "medium"
+        return (
+            level,
+            f"Deletion protection was disabled for RDS DB instance '{name}'. "
+            "The instance can now be deleted without an additional safeguard.",
+        )
+
+    if fp == "deletion_protection" and new_val is True:
+        return "low", f"Deletion protection was enabled for RDS DB instance '{name}'."
+
+    if fp == "backup_retention_period":
+        try:
+            old_days = int(prev_val) if prev_val is not None else None
+            new_days = int(new_val) if new_val is not None else None
+        except (TypeError, ValueError):
+            old_days = new_days = None
+        if new_days == 0:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"Automated backups were disabled for RDS DB instance '{name}' "
+                "(retention set to 0 days). Point-in-time recovery is no longer available.",
+            )
+        if old_days is not None and new_days is not None and new_days < old_days:
+            return (
+                "medium",
+                f"Backup retention period for RDS DB instance '{name}' was reduced "
+                f"from {old_days} to {new_days} days. Recovery window shortened.",
+            )
+        if old_days is not None and new_days is not None and new_days > old_days:
+            return (
+                "low",
+                f"Backup retention period for RDS DB instance '{name}' increased "
+                f"from {old_days} to {new_days} days.",
+            )
+
+    if fp == "iam_database_authentication_enabled" and new_val is False:
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"IAM database authentication was disabled for RDS DB instance '{name}'. "
+            "Password-based authentication is now the only available method.",
+        )
+
+    if fp == "iam_database_authentication_enabled" and new_val is True:
+        return (
+            "low",
+            f"IAM database authentication was enabled for RDS DB instance '{name}'.",
+        )
+
+    if fp == "multi_az" and new_val is False:
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"Multi-AZ failover was disabled for RDS DB instance '{name}'. "
+            "The instance is now a single-AZ deployment; availability is reduced.",
+        )
+
+    if fp == "multi_az" and new_val is True:
+        return "low", f"Multi-AZ failover was enabled for RDS DB instance '{name}'."
+
+    if fp == "kms_key_id_present" and new_val is False:
+        return (
+            "high",
+            f"The KMS encryption key association was removed from RDS DB instance '{name}'. "
+            "Verify storage encryption is still active.",
+        )
+
+    if fp == "storage_encrypted" and new_val is True:
+        return "low", f"Encryption at rest was enabled for RDS DB instance '{name}'."
+
+    # ── Medium ────────────────────────────────────────────────────────────────
+    if fp == "vpc_security_group_ids":
+        return (
+            "medium",
+            f"VPC security groups changed for RDS DB instance '{name}'. "
+            "Verify the new security group configuration restricts access appropriately.",
+        )
+
+    if fp == "auto_minor_version_upgrade" and new_val is False:
+        return (
+            "medium",
+            f"Auto minor version upgrade was disabled for RDS DB instance '{name}'. "
+            "Security patches will not be applied automatically.",
+        )
+
+    if fp == "auto_minor_version_upgrade" and new_val is True:
+        return (
+            "low",
+            f"Auto minor version upgrade was enabled for RDS DB instance '{name}'.",
+        )
+
+    if fp == "engine_version":
+        return (
+            "medium",
+            f"Engine version changed for RDS DB instance '{name}' "
+            f"(was '{prev_val}', now '{new_val}'). Verify compatibility.",
+        )
+
+    if fp == "engine_major_version":
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"Major engine version changed for RDS DB instance '{name}' "
+            f"(was '{prev_val}', now '{new_val}'). Major version upgrades may introduce "
+            "breaking changes.",
+        )
+
+    if fp == "db_instance_class":
+        return (
+            "low",
+            f"Instance class changed for RDS DB instance '{name}' "
+            f"(was '{prev_val}', now '{new_val}').",
+        )
+
+    if fp == "db_instance_status":
+        if str(new_val or "").lower() in ("stopped", "deleting", "failed", "inaccessible-encryption-credentials"):
+            return (
+                "high",
+                f"RDS DB instance '{name}' entered status '{new_val}'. Investigate immediately.",
+            )
+        return (
+            "low",
+            f"RDS DB instance '{name}' status changed to '{new_val}'.",
+        )
+
+    if fp == "pending_modified_values_summary":
+        return (
+            "low",
+            f"RDS DB instance '{name}' has pending configuration changes queued "
+            "for the next maintenance window.",
+        )
+
+    if fp == "preferred_backup_window":
+        return "low", f"Backup window changed for RDS DB instance '{name}'."
+
+    if fp == "preferred_maintenance_window":
+        return "low", f"Maintenance window changed for RDS DB instance '{name}'."
+
+    if fp in ("tag_keys", "copy_tags_to_snapshot"):
+        return "low", f"Tag configuration changed for RDS DB instance '{name}'."
+
+    if fp in ("parameter_group_names", "option_group_names"):
+        return (
+            "medium",
+            f"Parameter/option group configuration changed for RDS DB instance '{name}'. "
+            "Verify the new group settings are correct.",
+        )
+
+    if fp == "monitoring_interval":
+        if new_val == 0:
+            return (
+                "medium",
+                f"Enhanced monitoring was disabled for RDS DB instance '{name}'.",
+            )
+        return "low", f"Enhanced monitoring interval changed for RDS DB instance '{name}'."
+
+    if fp == "performance_insights_enabled" and new_val is False:
+        return "medium", f"Performance Insights was disabled for RDS DB instance '{name}'."
+    if fp == "performance_insights_enabled" and new_val is True:
+        return "low", f"Performance Insights was enabled for RDS DB instance '{name}'."
+
+    if fp == "db_cluster_identifier":
+        return (
+            "medium",
+            f"RDS DB instance '{name}' cluster association changed. "
+            "Verify the instance belongs to the expected cluster.",
+        )
+
+    if fp == "read_replica_source":
+        return "medium", f"Read replica source changed for RDS DB instance '{name}'."
+
+    if fp == "read_replica_count":
+        return "low", f"Number of read replicas changed for RDS DB instance '{name}'."
+
+    return (
+        "low",
+        f"RDS DB instance '{name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_rds_db_cluster ────────────────────────────────────────────────────────
+
+def _classify_rds_db_cluster_change(change: object) -> tuple[str, str]:  # noqa: C901
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    name = str(_get(change, "name") or "")
+    sensitive = _rds_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"RDS DB cluster '{name}' was added to monitoring."
+    if ct == "removed":
+        level = "high" if sensitive else "medium"
+        return level, f"RDS DB cluster '{name}' is no longer visible to ConfigTrace."
+
+    # ── Critical ──────────────────────────────────────────────────────────────
+    if fp == "publicly_accessible" and new_val is True:
+        level = "critical" if sensitive else "high"
+        return (
+            level,
+            f"RDS DB cluster '{name}' is now publicly accessible. "
+            "Verify this is intentional and network controls restrict access.",
+        )
+
+    if fp == "storage_encrypted" and new_val is False:
+        return (
+            "critical",
+            f"Encryption at rest was disabled for RDS DB cluster '{name}'.",
+        )
+
+    # ── High ──────────────────────────────────────────────────────────────────
+    if fp == "publicly_accessible" and new_val is False:
+        return "low", f"RDS DB cluster '{name}' is no longer publicly accessible."
+
+    if fp == "deletion_protection" and new_val is False:
+        level = "critical" if sensitive else "medium"
+        return (
+            level,
+            f"Deletion protection was disabled for RDS DB cluster '{name}'.",
+        )
+
+    if fp == "deletion_protection" and new_val is True:
+        return "low", f"Deletion protection was enabled for RDS DB cluster '{name}'."
+
+    if fp == "backup_retention_period":
+        try:
+            old_days = int(prev_val) if prev_val is not None else None
+            new_days = int(new_val) if new_val is not None else None
+        except (TypeError, ValueError):
+            old_days = new_days = None
+        if new_days == 0:
+            level = "high" if sensitive else "medium"
+            return (
+                level,
+                f"Automated backups were disabled for RDS DB cluster '{name}' "
+                "(retention set to 0 days).",
+            )
+        if old_days is not None and new_days is not None and new_days < old_days:
+            return (
+                "medium",
+                f"Backup retention reduced for RDS DB cluster '{name}' "
+                f"from {old_days} to {new_days} days.",
+            )
+        if old_days is not None and new_days is not None and new_days > old_days:
+            return (
+                "low",
+                f"Backup retention increased for RDS DB cluster '{name}' "
+                f"from {old_days} to {new_days} days.",
+            )
+
+    if fp == "iam_database_authentication_enabled" and new_val is False:
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"IAM database authentication was disabled for RDS DB cluster '{name}'.",
+        )
+
+    if fp == "iam_database_authentication_enabled" and new_val is True:
+        return "low", f"IAM database authentication was enabled for RDS DB cluster '{name}'."
+
+    if fp == "multi_az" and new_val is False:
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"Multi-AZ was disabled for RDS DB cluster '{name}'. Availability reduced.",
+        )
+
+    if fp == "multi_az" and new_val is True:
+        return "low", f"Multi-AZ was enabled for RDS DB cluster '{name}'."
+
+    if fp == "storage_encrypted" and new_val is True:
+        return "low", f"Encryption at rest was enabled for RDS DB cluster '{name}'."
+
+    if fp == "kms_key_id_present" and new_val is False:
+        return (
+            "high",
+            f"KMS encryption key association removed from RDS DB cluster '{name}'.",
+        )
+
+    # ── Medium ────────────────────────────────────────────────────────────────
+    if fp == "vpc_security_group_ids":
+        return (
+            "medium",
+            f"VPC security groups changed for RDS DB cluster '{name}'. "
+            "Verify the new configuration restricts access appropriately.",
+        )
+
+    if fp == "engine_version":
+        return (
+            "medium",
+            f"Engine version changed for RDS DB cluster '{name}' "
+            f"(was '{prev_val}', now '{new_val}').",
+        )
+
+    if fp == "engine_major_version":
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"Major engine version changed for RDS DB cluster '{name}' "
+            f"(was '{prev_val}', now '{new_val}'). Verify compatibility.",
+        )
+
+    if fp == "status":
+        if str(new_val or "").lower() in ("stopped", "deleting", "failed", "inaccessible-encryption-credentials"):
+            return (
+                "high",
+                f"RDS DB cluster '{name}' entered status '{new_val}'. Investigate.",
+            )
+        return "low", f"RDS DB cluster '{name}' status changed to '{new_val}'."
+
+    if fp == "db_cluster_members_count":
+        return (
+            "medium",
+            f"Instance count changed for RDS DB cluster '{name}' "
+            f"(was {prev_val}, now {new_val}). Verify cluster scaling is expected.",
+        )
+
+    if fp == "db_cluster_parameter_group":
+        return (
+            "medium",
+            f"Cluster parameter group changed for RDS DB cluster '{name}'. "
+            "Verify the new group settings are correct.",
+        )
+
+    if fp in ("preferred_backup_window", "preferred_maintenance_window"):
+        return "low", f"Maintenance/backup window changed for RDS DB cluster '{name}'."
+
+    if fp in ("tag_keys", "copy_tags_to_snapshot"):
+        return "low", f"Tag configuration changed for RDS DB cluster '{name}'."
+
+    if fp == "performance_insights_enabled" and new_val is False:
+        return "medium", f"Performance Insights was disabled for RDS DB cluster '{name}'."
+    if fp == "performance_insights_enabled" and new_val is True:
+        return "low", f"Performance Insights was enabled for RDS DB cluster '{name}'."
+
+    return (
+        "low",
+        f"RDS DB cluster '{name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
+# ── aws_rds_db_subnet_group ───────────────────────────────────────────────────
+
+def _classify_rds_db_subnet_group_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    name = str(_get(change, "name") or "")
+
+    if ct == "added":
+        return "low", f"RDS DB subnet group '{name}' was added to monitoring."
+    if ct == "removed":
+        return "low", f"RDS DB subnet group '{name}' is no longer visible."
+
+    if fp == "vpc_id":
+        return (
+            "high",
+            f"The VPC association for RDS subnet group '{name}' changed "
+            f"(was '{prev_val}', now '{new_val}'). "
+            "Databases using this subnet group may have changed network placement.",
+        )
+
+    if fp == "subnet_ids":
+        return (
+            "medium",
+            f"Subnet membership changed for RDS subnet group '{name}'. "
+            "Verify database placement and AZ coverage are correct.",
+        )
+
+    if fp == "subnet_count":
+        return (
+            "medium",
+            f"Subnet count changed for RDS subnet group '{name}' "
+            f"(was {prev_val}, now {new_val}).",
+        )
+
+    if fp == "subnet_availability_zones":
+        return (
+            "medium",
+            f"Availability zone coverage changed for RDS subnet group '{name}'.",
+        )
+
+    if fp == "status":
+        if str(new_val or "").lower() == "incomplete":
+            return (
+                "high",
+                f"RDS subnet group '{name}' status changed to '{new_val}'. "
+                "The subnet group may not have coverage in all required AZs.",
+            )
+        return "low", f"RDS subnet group '{name}' status changed to '{new_val}'."
+
+    if fp == "tag_keys":
+        return "low", f"Tag keys changed for RDS subnet group '{name}'."
+
+    return "low", f"RDS DB subnet group '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── aws_rds_db_snapshot ───────────────────────────────────────────────────────
+
+def _classify_rds_db_snapshot_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    name = str(_get(change, "name") or "")
+    db_id = str(_get(change, "db_instance_identifier") or name)
+    sensitive = _rds_is_sensitive(db_id)
+
+    if ct == "added":
+        return "low", f"RDS DB snapshot '{name}' was detected."
+    if ct == "removed":
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"RDS DB snapshot '{name}' was deleted. "
+            "Verify this was intentional and a backup exists elsewhere.",
+        )
+
+    if fp == "publicly_accessible" and new_val is True:
+        level = "critical" if sensitive else "high"
+        return (
+            level,
+            f"RDS DB snapshot '{name}' is now publicly accessible. "
+            "Public snapshots can be copied and restored by any AWS account. "
+            "Restrict access immediately if this is not intentional.",
+        )
+
+    if fp == "publicly_accessible" and new_val is False:
+        return "low", f"RDS DB snapshot '{name}' is no longer publicly accessible."
+
+    if fp == "storage_encrypted" and new_val is False:
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"RDS DB snapshot '{name}' is unencrypted. "
+            "Unencrypted snapshots expose data if shared or copied.",
+        )
+
+    if fp == "storage_encrypted" and new_val is True:
+        return "low", f"RDS DB snapshot '{name}' is now encrypted."
+
+    if fp == "kms_key_id_present" and new_val is False:
+        return (
+            "high",
+            f"KMS encryption key association removed from RDS snapshot '{name}'.",
+        )
+
+    if fp == "snapshot_type":
+        return (
+            "medium",
+            f"Snapshot type changed for '{name}' (was '{prev_val}', now '{new_val}').",
+        )
+
+    if fp == "status":
+        if str(new_val or "").lower() in ("failed", "deleting"):
+            return "high", f"RDS snapshot '{name}' entered status '{new_val}'."
+        return "low", f"RDS snapshot '{name}' status changed to '{new_val}'."
+
+    if fp == "tag_keys":
+        return "low", f"Tag keys changed for RDS snapshot '{name}'."
+
+    return "low", f"RDS DB snapshot '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── aws_rds_db_cluster_snapshot ───────────────────────────────────────────────
+
+def _classify_rds_db_cluster_snapshot_change(change: object) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_val = _get(change, "new_value")
+    prev_val = _get(change, "prev_value")
+    name = str(_get(change, "name") or "")
+    cluster_id = str(_get(change, "db_cluster_identifier") or name)
+    sensitive = _rds_is_sensitive(cluster_id)
+
+    if ct == "added":
+        return "low", f"RDS DB cluster snapshot '{name}' was detected."
+    if ct == "removed":
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"RDS DB cluster snapshot '{name}' was deleted. "
+            "Verify this was intentional and a backup exists elsewhere.",
+        )
+
+    if fp == "publicly_accessible" and new_val is True:
+        level = "critical" if sensitive else "high"
+        return (
+            level,
+            f"RDS DB cluster snapshot '{name}' is now publicly accessible. "
+            "Public cluster snapshots can be copied by any AWS account. "
+            "Restrict access immediately if unintentional.",
+        )
+
+    if fp == "publicly_accessible" and new_val is False:
+        return "low", f"RDS DB cluster snapshot '{name}' is no longer publicly accessible."
+
+    if fp == "storage_encrypted" and new_val is False:
+        level = "high" if sensitive else "medium"
+        return (
+            level,
+            f"RDS DB cluster snapshot '{name}' is unencrypted.",
+        )
+
+    if fp == "storage_encrypted" and new_val is True:
+        return "low", f"RDS DB cluster snapshot '{name}' is now encrypted."
+
+    if fp == "kms_key_id_present" and new_val is False:
+        return (
+            "high",
+            f"KMS encryption key association removed from RDS cluster snapshot '{name}'.",
+        )
+
+    if fp == "iam_database_authentication_enabled" and new_val is False:
+        return (
+            "medium",
+            f"IAM authentication was disabled in RDS cluster snapshot '{name}'.",
+        )
+
+    if fp == "snapshot_type":
+        return (
+            "medium",
+            f"Snapshot type changed for cluster snapshot '{name}' "
+            f"(was '{prev_val}', now '{new_val}').",
+        )
+
+    if fp == "status":
+        if str(new_val or "").lower() in ("failed", "deleting"):
+            return "high", f"RDS cluster snapshot '{name}' entered status '{new_val}'."
+        return "low", f"RDS cluster snapshot '{name}' status changed to '{new_val}'."
+
+    if fp == "tag_keys":
+        return "low", f"Tag keys changed for RDS cluster snapshot '{name}'."
+
+    return (
+        "low",
+        f"RDS DB cluster snapshot '{name}' configuration changed (field: {fp or 'unknown'}).",
+    )
+
+
 def classify_aws_change(change: object) -> tuple[str, str]:
     """Route an AWS change to the appropriate risk rule.
 
@@ -3353,6 +3956,17 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_secretsmanager_secret_change(change)
     if record_type == AWS_SSM_PARAMETER:
         return _classify_ssm_parameter_change(change)
+    # ── M42 RDS ───────────────────────────────────────────────────────────────
+    if record_type == AWS_RDS_DB_INSTANCE:
+        return _classify_rds_db_instance_change(change)
+    if record_type == AWS_RDS_DB_CLUSTER:
+        return _classify_rds_db_cluster_change(change)
+    if record_type == AWS_RDS_DB_SUBNET_GROUP:
+        return _classify_rds_db_subnet_group_change(change)
+    if record_type == AWS_RDS_DB_SNAPSHOT:
+        return _classify_rds_db_snapshot_change(change)
+    if record_type == AWS_RDS_DB_CLUSTER_SNAPSHOT:
+        return _classify_rds_db_cluster_snapshot_change(change)
 
     # Unknown AWS record type — conservative default
     return (

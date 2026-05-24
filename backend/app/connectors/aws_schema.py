@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -38,12 +38,6 @@ AWS_IAM_INLINE_POLICY = "aws_iam_inline_policy"
 # One per OIDC or SAML identity provider registered in the account.
 AWS_IAM_IDENTITY_PROVIDER = "aws_iam_identity_provider"
 
-# ── M41 record types — Secrets Manager + SSM Parameter Metadata ──────────────
-# One per Secrets Manager secret — metadata only; secret value is NEVER stored.
-AWS_SECRETSMANAGER_SECRET = "aws_secretsmanager_secret"
-# One per SSM Parameter — metadata only; parameter value is NEVER stored.
-AWS_SSM_PARAMETER = "aws_ssm_parameter"
-
 # ── M40 record types — Route53 DNS + CloudFront CDN Routing Config ────────────
 # One per Route53 hosted zone — zone-level posture (public/private, NS, VPC links).
 AWS_ROUTE53_HOSTED_ZONE = "aws_route53_hosted_zone"
@@ -51,6 +45,24 @@ AWS_ROUTE53_HOSTED_ZONE = "aws_route53_hosted_zone"
 AWS_ROUTE53_RECORD = "aws_route53_record"
 # One per CloudFront distribution — CDN config, origins, protocol, aliases, WAF.
 AWS_CLOUDFRONT_DISTRIBUTION = "aws_cloudfront_distribution"
+
+# ── M41 record types — Secrets Manager + SSM Parameter Metadata ──────────────
+# One per Secrets Manager secret — metadata only; secret value is NEVER stored.
+AWS_SECRETSMANAGER_SECRET = "aws_secretsmanager_secret"
+# One per SSM Parameter — metadata only; parameter value is NEVER stored.
+AWS_SSM_PARAMETER = "aws_ssm_parameter"
+
+# ── M42 record types — RDS Database Exposure / Backup / Encryption Config ────
+# One per RDS DB instance — metadata only; no DB data, passwords, or connections.
+AWS_RDS_DB_INSTANCE = "aws_rds_db_instance"
+# One per RDS/Aurora DB cluster — metadata only.
+AWS_RDS_DB_CLUSTER = "aws_rds_db_cluster"
+# One per RDS DB subnet group — VPC/subnet topology metadata.
+AWS_RDS_DB_SUBNET_GROUP = "aws_rds_db_subnet_group"
+# One per RDS DB snapshot — metadata only; no log downloads or data access.
+AWS_RDS_DB_SNAPSHOT = "aws_rds_db_snapshot"
+# One per RDS DB cluster snapshot — metadata only.
+AWS_RDS_DB_CLUSTER_SNAPSHOT = "aws_rds_db_cluster_snapshot"
 
 AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_ACCOUNT_IDENTITY,
@@ -83,4 +95,10 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     # M41
     AWS_SECRETSMANAGER_SECRET,
     AWS_SSM_PARAMETER,
+    # M42
+    AWS_RDS_DB_INSTANCE,
+    AWS_RDS_DB_CLUSTER,
+    AWS_RDS_DB_SUBNET_GROUP,
+    AWS_RDS_DB_SNAPSHOT,
+    AWS_RDS_DB_CLUSTER_SNAPSHOT,
 })

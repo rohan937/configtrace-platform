@@ -66,6 +66,11 @@ AWS Secrets Manager (partial/per-API failures, via classify_aws_secretsmanager_f
 AWS SSM (partial/per-API failures, via classify_aws_ssm_failure):
   aws_ssm_access_denied, aws_ssm_rate_limited, aws_ssm_api_unavailable
   aws_ssm_describe_parameters_unavailable, aws_ssm_tags_unavailable
+AWS RDS (partial/per-API failures, via classify_aws_rds_failure):
+  aws_rds_access_denied, aws_rds_rate_limited, aws_rds_api_unavailable
+  aws_rds_instances_unavailable, aws_rds_clusters_unavailable
+  aws_rds_subnet_groups_unavailable, aws_rds_snapshots_unavailable
+  aws_rds_cluster_snapshots_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -1044,4 +1049,105 @@ def classify_aws_ssm_failure(
         category="provider_unavailable",
         error_code=error_code,
         recommended_action=_SSM_PARTIAL_ACTION,
+    )
+
+
+# ── M42: RDS per-API failure classification ───────────────────────────────────
+
+_AWS_RDS_API_CODE: dict[str, str] = {
+    "DescribeDBInstances":              "aws_rds_instances_unavailable",
+    "DescribeDBClusters":               "aws_rds_clusters_unavailable",
+    "DescribeDBSubnetGroups":           "aws_rds_subnet_groups_unavailable",
+    "DescribeDBSnapshots":              "aws_rds_snapshots_unavailable",
+    "DescribeDBClusterSnapshots":       "aws_rds_cluster_snapshots_unavailable",
+    "DescribeDBParameterGroups":        "aws_rds_api_unavailable",
+    "DescribeDBClusterParameterGroups": "aws_rds_api_unavailable",
+    "DescribeOptionGroups":             "aws_rds_api_unavailable",
+    "ListTagsForResource":              "aws_rds_api_unavailable",
+}
+
+_RDS_PARTIAL_ACTION = (
+    "ConfigTrace could not read optional RDS metadata; "
+    "other AWS checks may still work."
+)
+
+_RDS_ACCESS_DENIED_ACTION = (
+    "Grant ConfigTrace metadata-only RDS Describe permissions. "
+    "Required: rds:DescribeDBInstances, rds:DescribeDBClusters, "
+    "rds:DescribeDBSubnetGroups, rds:DescribeDBSnapshots, "
+    "rds:DescribeDBClusterSnapshots, rds:ListTagsForResource. "
+    "ConfigTrace never connects to databases or reads database content. "
+    "Missing permissions are skipped; other AWS checks may still work."
+)
+
+
+def classify_aws_rds_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial RDS sync failure (per-API, per-region).
+
+    Used when an individual RDS Describe call fails inside
+    ``_fetch_rds_in_region``.  The overall sync continues; the result
+    is logged as a structured warning.
+
+    Args:
+        api_name: The RDS API name (e.g. ``"DescribeDBInstances"``).
+        exc:      The exception raised by the failed call.
+
+    Returns:
+        A :class:`FailureClassification` with a stable ``error_code``.
+        Database passwords and connection strings are never included.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_rds_access_denied",
+            recommended_action=_RDS_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_rds_rate_limited",
+            recommended_action=(
+                "AWS throttled RDS metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented RDS API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_rds_api_unavailable",
+            recommended_action=(
+                "The RDS API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _AWS_RDS_API_CODE.get(api_name, "aws_rds_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=_RDS_PARTIAL_ACTION,
     )

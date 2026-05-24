@@ -600,6 +600,59 @@ function getChangeSummary(change: ChangeDetail): string {
     if (fp === "version")                 return `SSM parameter ${paramName} was updated to version ${String(nv)}.`;
     return `SSM parameter ${paramName} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
+  if (rt === "aws_rds_db_instance") {
+    const dbId = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `RDS DB instance ${dbId} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `RDS DB instance ${dbId} was added to monitoring.`;
+    if (fp === "publicly_accessible" && nv === true)  return `RDS DB instance ${dbId} is now publicly accessible.`;
+    if (fp === "publicly_accessible" && nv === false) return `RDS DB instance ${dbId} is no longer publicly accessible.`;
+    if (fp === "storage_encrypted" && nv === false)   return `Encryption at rest was disabled for RDS DB instance ${dbId}.`;
+    if (fp === "deletion_protection" && nv === false) return `Deletion protection was disabled for RDS DB instance ${dbId}.`;
+    if (fp === "backup_retention_days" && nv === 0)   return `Automated backups were disabled for RDS DB instance ${dbId}.`;
+    if (fp === "multi_az" && nv === false)            return `Multi-AZ failover was disabled for RDS DB instance ${dbId}.`;
+    if (fp === "iam_database_authentication_enabled" && nv === false) return `IAM database authentication was disabled for RDS DB instance ${dbId}.`;
+    if (fp === "db_instance_status")                  return `RDS DB instance ${dbId} status changed to ${String(nv)}.`;
+    if (fp === "engine_version")                      return `Engine version changed for RDS DB instance ${dbId} (${String(pv)} → ${String(nv)}).`;
+    return `RDS DB instance ${dbId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_rds_db_cluster") {
+    const clusterId = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `RDS DB cluster ${clusterId} is no longer visible to ConfigTrace.`;
+    if (change.change_type === "added")   return `RDS DB cluster ${clusterId} was added to monitoring.`;
+    if (fp === "publicly_accessible" && nv === true)  return `RDS DB cluster ${clusterId} is now publicly accessible.`;
+    if (fp === "storage_encrypted" && nv === false)   return `Encryption at rest was disabled for RDS DB cluster ${clusterId}.`;
+    if (fp === "deletion_protection" && nv === false) return `Deletion protection was disabled for RDS DB cluster ${clusterId}.`;
+    if (fp === "backup_retention_days" && nv === 0)   return `Automated backups were disabled for RDS DB cluster ${clusterId}.`;
+    if (fp === "multi_az" && nv === false)            return `Multi-AZ was disabled for RDS DB cluster ${clusterId}.`;
+    if (fp === "iam_database_authentication_enabled" && nv === false) return `IAM database authentication was disabled for RDS DB cluster ${clusterId}.`;
+    if (fp === "status")                              return `RDS DB cluster ${clusterId} status changed to ${String(nv)}.`;
+    if (fp === "instance_count")                      return `Instance count changed for RDS DB cluster ${clusterId} (${String(pv)} → ${String(nv)}).`;
+    return `RDS DB cluster ${clusterId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_rds_db_subnet_group") {
+    const sgName = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `RDS subnet group ${sgName} was removed.`;
+    if (change.change_type === "added")   return `RDS subnet group ${sgName} was added.`;
+    if (fp === "vpc_id")     return `VPC association changed for RDS subnet group ${sgName}.`;
+    if (fp === "subnet_ids") return `Subnet membership changed for RDS subnet group ${sgName}.`;
+    return `RDS subnet group ${sgName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_rds_db_snapshot") {
+    const snapId = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `RDS snapshot ${snapId} was deleted.`;
+    if (change.change_type === "added")   return `RDS snapshot ${snapId} was detected.`;
+    if (fp === "publicly_accessible" && nv === true)  return `RDS snapshot ${snapId} is now publicly accessible.`;
+    if (fp === "storage_encrypted" && nv === false)   return `RDS snapshot ${snapId} is unencrypted.`;
+    return `RDS snapshot ${snapId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_rds_db_cluster_snapshot") {
+    const csnapId = rn || (change.record_identifier ?? "unknown");
+    if (change.change_type === "removed") return `RDS cluster snapshot ${csnapId} was deleted.`;
+    if (change.change_type === "added")   return `RDS cluster snapshot ${csnapId} was detected.`;
+    if (fp === "publicly_accessible" && nv === true)  return `RDS cluster snapshot ${csnapId} is now publicly accessible.`;
+    if (fp === "storage_encrypted" && nv === false)   return `RDS cluster snapshot ${csnapId} is unencrypted.`;
+    return `RDS cluster snapshot ${csnapId} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
 
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
@@ -1241,6 +1294,166 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Check AWS CloudTrail for who made the change.",
       "Verify consumer applications are updated if the parameter structure changed.",
       "ConfigTrace does not read or store parameter values.",
+    ];
+  }
+
+  // M42 RDS
+  if (rt === "aws_rds_db_instance") {
+    const fpRds = change.field_path ?? "";
+    if (fpRds === "publicly_accessible" && change.new_value === true) {
+      return [
+        "Verify that public accessibility is intentional for this database instance.",
+        "Confirm security groups restrict inbound access to trusted IP ranges only.",
+        "Check if the instance is in a public subnet with an internet gateway route.",
+        "Review network ACLs for the associated subnets.",
+        "Check AWS CloudTrail for who changed the publicly_accessible setting.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (fpRds === "storage_encrypted" && change.new_value === false) {
+      return [
+        "Verify encryption was intentionally disabled — this cannot be undone on an existing instance.",
+        "Consider creating a new encrypted instance and migrating data.",
+        "Check AWS CloudTrail for who disabled encryption.",
+        "Review your data residency and compliance requirements.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (fpRds === "deletion_protection" && change.new_value === false) {
+      return [
+        "Confirm deletion protection was intentionally disabled.",
+        "Verify no automated process or script is about to delete this instance.",
+        "Re-enable deletion protection if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (fpRds === "backup_retention_days" && change.new_value === 0) {
+      return [
+        "Confirm automated backups were intentionally disabled.",
+        "Ensure manual snapshots exist before disabling backups.",
+        "Review your RPO requirements — disabling backups removes point-in-time recovery.",
+        "Re-enable automated backups if this was accidental.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (fpRds === "multi_az" && change.new_value === false) {
+      return [
+        "Confirm Multi-AZ was intentionally disabled.",
+        "Assess impact on availability SLAs — single-AZ instances are not HA.",
+        "Re-enable Multi-AZ if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    return [
+      "Confirm the RDS configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+      "Verify the instance security groups, encryption, and backup settings are correct.",
+      "ConfigTrace does not connect to databases or read database content.",
+    ];
+  }
+  if (rt === "aws_rds_db_cluster") {
+    const fpCluster = change.field_path ?? "";
+    if (fpCluster === "publicly_accessible" && change.new_value === true) {
+      return [
+        "Verify public accessibility is intentional for this cluster.",
+        "Confirm security groups restrict inbound access to trusted IP ranges only.",
+        "Review network ACLs for the associated subnets.",
+        "Check AWS CloudTrail for who changed the setting.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (fpCluster === "storage_encrypted" && change.new_value === false) {
+      return [
+        "Verify encryption was intentionally disabled.",
+        "Check AWS CloudTrail for who made the change.",
+        "Review compliance and data residency requirements.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (fpCluster === "deletion_protection" && change.new_value === false) {
+      return [
+        "Confirm deletion protection was intentionally disabled.",
+        "Verify no automated process is about to delete this cluster.",
+        "Re-enable deletion protection if this was accidental.",
+        "Check AWS CloudTrail for who made the change.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (fpCluster === "backup_retention_days" && change.new_value === 0) {
+      return [
+        "Confirm automated backups were intentionally disabled for this cluster.",
+        "Ensure cluster snapshots exist before disabling backups.",
+        "Review RPO requirements — disabling backups removes point-in-time recovery.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    return [
+      "Confirm the RDS cluster configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+      "Verify cluster security groups, encryption, and backup settings are correct.",
+      "ConfigTrace does not connect to databases or read database content.",
+    ];
+  }
+  if (rt === "aws_rds_db_subnet_group") {
+    return [
+      "Verify the subnet group change was intentional.",
+      "Confirm databases using this subnet group have coverage in the required availability zones.",
+      "Check AWS CloudTrail for who made the change.",
+      "Verify the new subnets belong to the expected VPC.",
+    ];
+  }
+  if (rt === "aws_rds_db_snapshot") {
+    const fpSnap = change.field_path ?? "";
+    if (fpSnap === "publicly_accessible" && change.new_value === true) {
+      return [
+        "Restrict snapshot access immediately if this was not intentional.",
+        "Public snapshots can be copied and restored by any AWS account.",
+        "Check the snapshot for sensitive data before allowing public access.",
+        "Remove public access via RDS → Snapshots → Actions → Share snapshot.",
+        "Check AWS CloudTrail for who changed the snapshot visibility.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the snapshot deletion was intentional.",
+        "Verify the database can be recovered from another backup if needed.",
+        "Check AWS CloudTrail for who deleted the snapshot.",
+        "Review your backup retention policy.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    return [
+      "Confirm the snapshot configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not connect to databases or read database content.",
+    ];
+  }
+  if (rt === "aws_rds_db_cluster_snapshot") {
+    const fpCSnap = change.field_path ?? "";
+    if (fpCSnap === "publicly_accessible" && change.new_value === true) {
+      return [
+        "Restrict cluster snapshot access immediately if this was not intentional.",
+        "Public cluster snapshots can be copied and restored by any AWS account.",
+        "Remove public access via RDS → Snapshots → Actions → Share snapshot.",
+        "Check AWS CloudTrail for who changed the snapshot visibility.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the cluster snapshot deletion was intentional.",
+        "Verify the cluster can be recovered from another backup if needed.",
+        "Check AWS CloudTrail for who deleted the snapshot.",
+        "ConfigTrace does not connect to databases or read database content.",
+      ];
+    }
+    return [
+      "Confirm the cluster snapshot configuration change was intentional.",
+      "Check AWS CloudTrail for who made the change.",
+      "ConfigTrace does not connect to databases or read database content.",
     ];
   }
 

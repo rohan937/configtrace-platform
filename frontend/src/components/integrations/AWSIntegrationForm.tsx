@@ -412,6 +412,28 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* RDS — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              RDS database metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ rds:DescribeDBInstances &nbsp;○ rds:DescribeDBClusters
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ rds:DescribeDBSubnetGroups &nbsp;○ rds:DescribeDBSnapshots
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ rds:DescribeDBClusterSnapshots &nbsp;○ rds:ListTagsForResource
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never connects to databases or reads database content, passwords,
+              or credentials. Only configuration metadata is collected.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.
