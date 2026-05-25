@@ -1609,3 +1609,176 @@ class TestPaymentSucceededFixM52_5:
         db_session.delete(member)
         db_session.delete(ws)
         db_session.commit()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# set_workspace_plan script — unit tests (no DB required)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSetWorkspacePlanScript:
+    """Tests for scripts/set_workspace_plan.py helpers.
+
+    All tests use mock DB sessions — no real Postgres required.
+    """
+
+    # ── resolve_workspace ────────────────────────────────────────────────────
+
+    def test_resolve_by_exact_name(self):
+        """resolve_workspace returns the workspace when name matches exactly."""
+        import sys, os
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        from scripts.set_workspace_plan import resolve_workspace
+
+        ws = MagicMock()
+        ws.id = uuid.uuid4()
+        ws.name = "Whoa"
+
+        db = MagicMock()
+        db.get.return_value = None  # UUID lookup misses
+
+        q = MagicMock()
+        q.filter.return_value = q
+        q.all.return_value = [ws]
+        db.query.return_value = q
+
+        result = resolve_workspace("Whoa", db)
+        assert result is ws
+
+    def test_resolve_by_uuid(self):
+        """resolve_workspace returns workspace directly by UUID."""
+        from scripts.set_workspace_plan import resolve_workspace
+
+        ws = MagicMock()
+        ws.id = uuid.uuid4()
+        ws.name = "Whoa"
+
+        db = MagicMock()
+        db.get.return_value = ws
+
+        result = resolve_workspace(str(ws.id), db)
+        assert result is ws
+        db.get.assert_called_once()
+
+    def test_resolve_raises_lookup_error_when_not_found(self):
+        """resolve_workspace raises LookupError when no match."""
+        from scripts.set_workspace_plan import resolve_workspace
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        q = MagicMock()
+        q.filter.return_value = q
+        q.all.return_value = []
+        db.query.return_value = q
+
+        with pytest.raises(LookupError, match="No workspace found"):
+            resolve_workspace("Nonexistent", db)
+
+    def test_resolve_raises_value_error_on_ambiguous_name(self):
+        """resolve_workspace raises ValueError when multiple names match."""
+        from scripts.set_workspace_plan import resolve_workspace
+
+        ws1 = MagicMock(); ws1.id = uuid.uuid4(); ws1.name = "whoa"
+        ws2 = MagicMock(); ws2.id = uuid.uuid4(); ws2.name = "Whoa"
+
+        db = MagicMock()
+        db.get.return_value = None
+
+        q = MagicMock()
+        q.filter.return_value = q
+        q.all.return_value = [ws1, ws2]
+        db.query.return_value = q
+
+        with pytest.raises(ValueError, match="Ambiguous"):
+            resolve_workspace("whoa", db)
+
+    # ── apply_plan_change ────────────────────────────────────────────────────
+
+    def test_apply_plan_change_updates_billing(self):
+        """apply_plan_change sets plan/status on the billing row."""
+        from scripts.set_workspace_plan import apply_plan_change
+        from unittest.mock import patch
+
+        ws_id = uuid.uuid4()
+        mock_billing = MagicMock()
+        mock_billing.plan = "free"
+        mock_billing.status = "active"
+        mock_billing.stripe_customer_id = None
+
+        db = MagicMock()
+
+        with patch(
+            "app.services.billing_service.get_or_create_billing",
+            return_value=mock_billing,
+        ):
+            result = apply_plan_change(ws_id, "team", "active", db, dry_run=False)
+
+        assert mock_billing.plan == "team"
+        assert mock_billing.status == "active"
+        assert result["plan_before"] == "free"
+        assert result["plan_after"] == "team"
+        assert result["dry_run"] is False
+        db.flush.assert_called_once()
+
+    def test_apply_plan_change_dry_run_does_not_mutate(self):
+        """apply_plan_change with dry_run=True does not touch the billing row."""
+        from scripts.set_workspace_plan import apply_plan_change
+        from unittest.mock import patch
+
+        ws_id = uuid.uuid4()
+        mock_billing = MagicMock()
+        mock_billing.plan = "free"
+        mock_billing.status = "active"
+        mock_billing.stripe_customer_id = None
+
+        db = MagicMock()
+
+        with patch(
+            "app.services.billing_service.get_or_create_billing",
+            return_value=mock_billing,
+        ):
+            result = apply_plan_change(ws_id, "pro", "trialing", db, dry_run=True)
+
+        # Billing object must NOT be mutated
+        assert mock_billing.plan == "free"
+        assert mock_billing.status == "active"
+        assert result["plan_after"] == "pro"
+        assert result["status_after"] == "trialing"
+        assert result["dry_run"] is True
+        db.flush.assert_not_called()
+
+    def test_apply_plan_change_rejects_invalid_plan(self):
+        """apply_plan_change raises ValueError for unknown plan names."""
+        from scripts.set_workspace_plan import apply_plan_change
+
+        db = MagicMock()
+        with pytest.raises(ValueError, match="Invalid plan"):
+            apply_plan_change(uuid.uuid4(), "enterprise", "active", db)
+
+    def test_apply_plan_change_rejects_invalid_status(self):
+        """apply_plan_change raises ValueError for unknown status values."""
+        from scripts.set_workspace_plan import apply_plan_change
+
+        db = MagicMock()
+        with pytest.raises(ValueError, match="Invalid status"):
+            apply_plan_change(uuid.uuid4(), "team", "suspended", db)
+
+    def test_free_plan_limits_unchanged(self):
+        """PLAN_LIMITS['free'] remains max_members=1 after script import."""
+        from app.services.billing_service import PLAN_LIMITS
+
+        assert PLAN_LIMITS["free"]["max_members"] == 1
+        assert PLAN_LIMITS["free"]["max_integrations"] == 3
+
+    def test_script_has_no_public_endpoint(self):
+        """The script module does not register any FastAPI router."""
+        import importlib
+        import types
+
+        # Import the module without running __main__
+        import scripts.set_workspace_plan as script_mod
+
+        # Should not have a 'router' attribute (no FastAPI router)
+        assert not hasattr(script_mod, "router"), (
+            "set_workspace_plan must not expose a public API router"
+        )
