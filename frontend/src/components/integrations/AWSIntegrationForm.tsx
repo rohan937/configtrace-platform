@@ -595,6 +595,63 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* ECS — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              ECS cluster/service/task configuration metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ ecs:ListClusters &nbsp;○ ecs:DescribeClusters &nbsp;○ ecs:ListServices
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ ecs:DescribeServices &nbsp;○ ecs:DescribeTaskDefinition
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls logs:GetLogEvents.
+              ECS task logs, container output, environment variable values, and secret values are never read or stored.
+              Only cluster posture, service configuration, and task definition structure metadata is collected.
+            </span>
+            <br />
+
+            {/* EKS — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              EKS cluster/node group/add-on configuration metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ eks:ListClusters &nbsp;○ eks:DescribeCluster &nbsp;○ eks:ListNodegroups &nbsp;○ eks:DescribeNodegroup
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ eks:ListFargateProfiles &nbsp;○ eks:DescribeFargateProfile &nbsp;○ eks:ListAddons &nbsp;○ eks:DescribeAddon
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls the Kubernetes API.
+              Kubernetes pods, Secrets, ConfigMaps, events, and logs are never accessed or stored.
+              Only EKS control-plane configuration and posture metadata is collected.
+            </span>
+            <br />
+
+            {/* ECR — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              ECR repository and registry scanning metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ ecr:DescribeRepositories &nbsp;○ ecr:GetRepositoryPolicy
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ ecr:GetLifecyclePolicy &nbsp;○ ecr:GetRegistryScanningConfiguration
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls ecr:GetAuthorizationToken and never pulls container images.
+              Image layers, manifests, and vulnerability scan findings are never accessed or stored.
+              Only repository policy posture and scanning configuration metadata is collected.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.

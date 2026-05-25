@@ -912,6 +912,90 @@ function getChangeSummary(change: ChangeDetail): string {
     return `Security Hub finding aggregator ${aggName} changed${fp ? ` (${fp})` : ""}.`;
   }
 
+  // ── M46: ECS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_ecs_cluster") {
+    const clusterName = rn || (change.record_identifier ?? "cluster");
+    if (change.change_type === "removed") return `ECS cluster ${clusterName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `ECS cluster ${clusterName} was added.`;
+    if (fp === "container_insights_enabled") return `Container Insights ${change.new_value ? "enabled" : "disabled"} on ECS cluster ${clusterName}.`;
+    if (fp === "status") return `ECS cluster ${clusterName} status changed to ${change.new_value ?? "unknown"}.`;
+    return `ECS cluster ${clusterName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_ecs_service") {
+    const svcName = rn || (change.record_identifier ?? "service");
+    if (change.change_type === "removed") return `ECS service ${svcName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `ECS service ${svcName} was added.`;
+    if (fp === "has_public_ip") return `ECS service ${svcName} ${change.new_value ? "now assigns" : "no longer assigns"} public IPs to tasks.`;
+    if (fp === "circuit_breaker_enabled") return `Deployment circuit breaker ${change.new_value ? "enabled" : "disabled"} on ECS service ${svcName}.`;
+    if (fp === "task_definition_arn_hash") return `ECS service ${svcName} task definition was updated.`;
+    if (fp === "desired_count") return `ECS service ${svcName} desired count changed to ${change.new_value ?? "unknown"}.`;
+    return `ECS service ${svcName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_ecs_task_definition") {
+    const tdName = rn || (change.record_identifier ?? "task-definition");
+    if (change.change_type === "removed") return `ECS task definition ${tdName} was removed.`;
+    if (change.change_type === "added")   return `ECS task definition ${tdName} was added.`;
+    if (fp === "has_privileged_container") return `ECS task definition ${tdName} ${change.new_value ? "now has" : "no longer has"} a privileged container.`;
+    if (fp === "secret_ref_count") return `ECS task definition ${tdName} secret reference count changed to ${change.new_value ?? "unknown"}.`;
+    if (fp === "env_sensitive_key_count") return `ECS task definition ${tdName} sensitive environment key count changed.`;
+    return `ECS task definition ${tdName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  // ── M46: EKS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_eks_cluster") {
+    const eksName = rn || (change.record_identifier ?? "cluster");
+    if (change.change_type === "removed") return `EKS cluster ${eksName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `EKS cluster ${eksName} was added.`;
+    if (fp === "public_access_fully_open") return `EKS cluster ${eksName} public API endpoint is now ${change.new_value ? "unrestricted (0.0.0.0/0)" : "CIDR-restricted"}.`;
+    if (fp === "endpoint_public_access") return `EKS cluster ${eksName} public API endpoint access was ${change.new_value ? "enabled" : "disabled"}.`;
+    if (fp === "secrets_encryption_enabled") return `Kubernetes Secrets encryption at rest was ${change.new_value ? "enabled" : "disabled"} on EKS cluster ${eksName}.`;
+    if (fp === "has_audit_logging") return `EKS cluster ${eksName} audit logging was ${change.new_value ? "enabled" : "disabled"}.`;
+    if (fp === "kubernetes_version") return `EKS cluster ${eksName} Kubernetes version changed from ${change.prev_value ?? "?"} to ${change.new_value ?? "?"}.`;
+    return `EKS cluster ${eksName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_eks_node_group") {
+    const ngName = rn || (change.record_identifier ?? "node-group");
+    if (change.change_type === "removed") return `EKS node group ${ngName} was removed.`;
+    if (change.change_type === "added")   return `EKS node group ${ngName} was added.`;
+    if (fp === "ssh_unrestricted") return `EKS node group ${ngName} ${change.new_value ? "now allows unrestricted SSH access" : "SSH access is now restricted"}.`;
+    if (fp === "has_remote_access") return `EKS node group ${ngName} remote SSH access was ${change.new_value ? "enabled" : "disabled"}.`;
+    return `EKS node group ${ngName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_eks_fargate_profile") {
+    const fpName = rn || (change.record_identifier ?? "fargate-profile");
+    if (change.change_type === "removed") return `EKS Fargate profile ${fpName} was removed.`;
+    if (change.change_type === "added")   return `EKS Fargate profile ${fpName} was added.`;
+    if (fp === "selector_namespaces") return `EKS Fargate profile ${fpName} target namespaces changed.`;
+    return `EKS Fargate profile ${fpName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_eks_addon") {
+    const addonName = rn || (change.record_identifier ?? "addon");
+    if (change.change_type === "removed") return `EKS add-on ${addonName} was removed.`;
+    if (change.change_type === "added")   return `EKS add-on ${addonName} was added.`;
+    if (fp === "addon_version") return `EKS add-on ${addonName} version changed from ${change.prev_value ?? "?"} to ${change.new_value ?? "?"}.`;
+    if (fp === "status") return `EKS add-on ${addonName} status changed to ${change.new_value ?? "unknown"}.`;
+    return `EKS add-on ${addonName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  // ── M46: ECR ──────────────────────────────────────────────────────────────
+  if (rt === "aws_ecr_repository") {
+    const repoName = rn || (change.record_identifier ?? "repository");
+    if (change.change_type === "removed") return `ECR repository ${repoName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `ECR repository ${repoName} was added.`;
+    if (fp === "policy_is_public") return `ECR repository ${repoName} policy ${change.new_value ? "now grants external/public access" : "no longer grants external access"}.`;
+    if (fp === "scan_on_push") return `ECR repository ${repoName} scan-on-push was ${change.new_value ? "enabled" : "disabled"}.`;
+    if (fp === "tag_immutable") return `ECR repository ${repoName} image tags are now ${change.new_value ? "immutable" : "mutable"}.`;
+    return `ECR repository ${repoName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_ecr_registry_scanning_config") {
+    const scanName = rn || (change.record_identifier ?? "registry-scanning");
+    if (change.change_type === "removed") return `ECR registry scanning configuration for ${scanName} was removed.`;
+    if (change.change_type === "added")   return `ECR registry scanning configuration for ${scanName} was added.`;
+    if (fp === "scan_type") return `ECR registry scanning type changed from ${change.prev_value ?? "unknown"} to ${change.new_value ?? "unknown"} in ${scanName}.`;
+    if (fp === "rule_count") return `ECR registry scanning rule count changed to ${change.new_value ?? "unknown"} in ${scanName}.`;
+    return `ECR registry scanning configuration changed in ${scanName}${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -2418,6 +2502,141 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm the finding aggregator configuration change was authorized.",
       "ConfigTrace never calls securityhub:GetFindings or accesses finding details.",
     ];
+  }
+
+  // ── M46: ECS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_ecs_cluster") {
+    if (change.field_path === "container_insights_enabled" && change.new_value === false) {
+      return [
+        "Container Insights was disabled — ECS metrics and logs will not be forwarded to CloudWatch.",
+        "Re-enable Container Insights if operational observability is required.",
+        "ConfigTrace never reads ECS task logs or container output.",
+      ];
+    }
+    return ["Confirm the ECS cluster configuration change was authorized.", "ConfigTrace never reads ECS task logs or environment variable values."];
+  }
+  if (rt === "aws_ecs_service") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "has_public_ip" && change.new_value === true) {
+      return [
+        "ECS tasks are now assigned public IPs — they may be directly reachable from the internet.",
+        "Ensure your security groups restrict inbound access to only required ports.",
+        "Consider using a load balancer instead of direct public IPs for better control.",
+        "ConfigTrace never reads ECS task logs or environment variable values.",
+      ];
+    }
+    if (sfp === "desired_count" && Number(change.new_value) === 0) {
+      return [
+        "ECS service desired count was set to 0 — all running tasks will stop.",
+        "Verify this was intentional and not caused by an erroneous deployment or automation.",
+        "ConfigTrace never reads ECS task logs or environment variable values.",
+      ];
+    }
+    return ["Confirm the ECS service configuration change was authorized.", "ConfigTrace never reads ECS task logs or environment variable values."];
+  }
+  if (rt === "aws_ecs_task_definition") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "has_privileged_container" && change.new_value === true) {
+      return [
+        "A privileged container was added to this task definition — containers run with host-level privileges.",
+        "Review whether privileged mode is required; it greatly increases blast radius on compromise.",
+        "Ensure the task definition was updated by an authorized party.",
+        "ConfigTrace never reads ECS environment variable values or secret values.",
+      ];
+    }
+    if (sfp === "secret_ref_count") {
+      return [
+        "The number of injected secrets changed — review the task definition for unintended additions or removals.",
+        "ConfigTrace never reads ECS environment variable values or secret values.",
+      ];
+    }
+    return ["Confirm the ECS task definition change was authorized.", "ConfigTrace never reads ECS environment variable values or secret values."];
+  }
+
+  // ── M46: EKS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_eks_cluster") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "public_access_fully_open" && change.new_value === true) {
+      return [
+        "The EKS Kubernetes API is now accessible from any IP (0.0.0.0/0) — immediate action recommended.",
+        "Restrict publicAccessCidrs to your organization's trusted IP ranges.",
+        "Consider disabling public endpoint access and using private endpoint instead.",
+        "ConfigTrace never calls the Kubernetes API or reads pod/secret/configmap data.",
+      ];
+    }
+    if (sfp === "secrets_encryption_enabled" && change.new_value === false) {
+      return [
+        "Kubernetes Secrets encryption at rest was disabled — secrets in etcd are no longer KMS-encrypted.",
+        "Re-enable envelope encryption with a customer-managed KMS key.",
+        "ConfigTrace never calls the Kubernetes API or reads pod/secret data.",
+      ];
+    }
+    if (sfp === "has_audit_logging" && change.new_value === false) {
+      return [
+        "EKS audit logging was disabled — Kubernetes API audit events will no longer be captured.",
+        "Re-enable audit logging; it is essential for detecting unauthorized API calls.",
+        "ConfigTrace never calls the Kubernetes API or reads pod/secret data.",
+      ];
+    }
+    return [
+      "Confirm the EKS cluster configuration change was authorized.",
+      "ConfigTrace never calls the Kubernetes API or reads pod, secret, or configmap data.",
+    ];
+  }
+  if (rt === "aws_eks_node_group") {
+    if (change.field_path === "ssh_unrestricted" && change.new_value === true) {
+      return [
+        "EKS nodes are now accessible via SSH from any source — restrict the source security group immediately.",
+        "If SSH access is required, limit it to a specific bastion/VPN security group.",
+        "ConfigTrace never calls the Kubernetes API or reads pod/secret data.",
+      ];
+    }
+    return ["Confirm the EKS node group configuration change was authorized.", "ConfigTrace never calls the Kubernetes API."];
+  }
+  if (rt === "aws_eks_fargate_profile") {
+    return ["Confirm the EKS Fargate profile configuration change was authorized.", "ConfigTrace never calls the Kubernetes API."];
+  }
+  if (rt === "aws_eks_addon") {
+    return ["Confirm the EKS add-on change was authorized and the new version is compatible.", "ConfigTrace never calls the Kubernetes API."];
+  }
+
+  // ── M46: ECR ──────────────────────────────────────────────────────────────
+  if (rt === "aws_ecr_repository") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "policy_is_public" && change.new_value === true) {
+      return [
+        "ECR repository policy now grants access to external principals or * — images may be publicly accessible.",
+        "Review and restrict the repository policy to only authorized accounts and roles.",
+        "Verify no unauthorized images were pushed during the window of public access.",
+        "ConfigTrace never pulls images, reads image layers, or requests GetAuthorizationToken.",
+      ];
+    }
+    if (sfp === "scan_on_push" && change.new_value === false) {
+      return [
+        "Scan-on-push was disabled — images pushed to this repository will not be automatically scanned for vulnerabilities.",
+        "Re-enable scan-on-push or ensure images are scanned by another mechanism.",
+        "ConfigTrace never pulls images or reads vulnerability scan findings.",
+      ];
+    }
+    return ["Confirm the ECR repository configuration change was authorized.", "ConfigTrace never pulls images or reads image layers."];
+  }
+  if (rt === "aws_ecr_registry_scanning_config") {
+    if (change.field_path === "scan_type" && String(change.new_value).toUpperCase() === "BASIC") {
+      return [
+        "ECR registry scanning was downgraded from ENHANCED to BASIC — continuous scanning across all images will stop.",
+        "Enhanced scanning uses Amazon Inspector for continuous CVE coverage; BASIC only scans on push.",
+        "Re-enable ENHANCED scanning if continuous vulnerability detection is required.",
+        "ConfigTrace never reads vulnerability scan findings.",
+      ];
+    }
+    if (change.field_path === "rule_count" && Number(change.new_value) === 0) {
+      return [
+        "All ECR registry scanning rules were removed — repositories may no longer be scanned.",
+        "Add scanning rules to ensure image vulnerability coverage.",
+        "ConfigTrace never reads vulnerability scan findings.",
+      ];
+    }
+    return ["Confirm the ECR registry scanning configuration change was authorized.", "ConfigTrace never reads vulnerability scan findings."];
   }
 
   // AWS

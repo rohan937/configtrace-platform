@@ -80,6 +80,26 @@ AWS_SECURITYHUB_STANDARD_SUBSCRIPTION = "aws_securityhub_standard_subscription"
 # One per Security Hub finding aggregator — metadata only.
 AWS_SECURITYHUB_FINDING_AGGREGATOR = "aws_securityhub_finding_aggregator"
 
+# ── M46 record types — ECS/EKS/ECR Container Platform Config ─────────────────
+# One per ECS cluster per region — posture metadata; task logs NEVER read.
+AWS_ECS_CLUSTER = "aws_ecs_cluster"
+# One per ECS service per cluster — posture metadata; env var values NEVER stored.
+AWS_ECS_SERVICE = "aws_ecs_service"
+# One per ECS task definition revision — container metadata; secrets/env values NEVER stored.
+AWS_ECS_TASK_DEFINITION = "aws_ecs_task_definition"
+# One per EKS cluster per region — posture metadata; Kubernetes API NEVER called.
+AWS_EKS_CLUSTER = "aws_eks_cluster"
+# One per EKS node group — scaling/security posture metadata.
+AWS_EKS_NODE_GROUP = "aws_eks_node_group"
+# One per EKS Fargate profile — selector/role metadata.
+AWS_EKS_FARGATE_PROFILE = "aws_eks_fargate_profile"
+# One per EKS add-on — version/status metadata.
+AWS_EKS_ADDON = "aws_eks_addon"
+# One per ECR repository per region — policy/scan/encryption metadata; images NEVER pulled.
+AWS_ECR_REPOSITORY = "aws_ecr_repository"
+# One per ECR registry scanning configuration per region.
+AWS_ECR_REGISTRY_SCANNING_CONFIG = "aws_ecr_registry_scanning_config"
+
 # ── M44 record types — Load Balancers + WAF Config ───────────────────────────
 # One per ELBv2 load balancer (Application, Network, Gateway) — metadata only.
 AWS_ELBV2_LOAD_BALANCER = "aws_elbv2_load_balancer"
@@ -176,4 +196,14 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_SECURITYHUB_ACCOUNT,
     AWS_SECURITYHUB_STANDARD_SUBSCRIPTION,
     AWS_SECURITYHUB_FINDING_AGGREGATOR,
+    # M46
+    AWS_ECS_CLUSTER,
+    AWS_ECS_SERVICE,
+    AWS_ECS_TASK_DEFINITION,
+    AWS_EKS_CLUSTER,
+    AWS_EKS_NODE_GROUP,
+    AWS_EKS_FARGATE_PROFILE,
+    AWS_EKS_ADDON,
+    AWS_ECR_REPOSITORY,
+    AWS_ECR_REGISTRY_SCANNING_CONFIG,
 })

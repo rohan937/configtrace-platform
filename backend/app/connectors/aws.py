@@ -115,6 +115,9 @@ from app.core.failure_classifier import (
     classify_aws_cloudtrail_failure,
     classify_aws_guardduty_failure,
     classify_aws_securityhub_failure,
+    classify_aws_ecs_failure,
+    classify_aws_eks_failure,
+    classify_aws_ecr_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -169,6 +172,15 @@ from app.connectors.aws_schema import (
     AWS_SECURITYHUB_ACCOUNT,
     AWS_SECURITYHUB_STANDARD_SUBSCRIPTION,
     AWS_SECURITYHUB_FINDING_AGGREGATOR,
+    AWS_ECS_CLUSTER,
+    AWS_ECS_SERVICE,
+    AWS_ECS_TASK_DEFINITION,
+    AWS_EKS_CLUSTER,
+    AWS_EKS_NODE_GROUP,
+    AWS_EKS_FARGATE_PROFILE,
+    AWS_EKS_ADDON,
+    AWS_ECR_REPOSITORY,
+    AWS_ECR_REGISTRY_SCANNING_CONFIG,
 )
 
 logger = logging.getLogger(__name__)
@@ -1137,6 +1149,105 @@ def _summarize_wafv2_rules(rules: list[dict]) -> dict:
     }
 
 
+# ── M46: ECS / EKS / ECR helpers ─────────────────────────────────────────────
+
+
+def _classify_container_name_sensitivity(name: str) -> str:
+    """Return sensitivity category for an ECS/EKS/ECR resource name.
+
+    Reuses the Lambda name classifier — same pattern vocabulary covering:
+    production, payment, auth, admin, database, internal, secure, customer,
+    api, none.
+
+    SECURITY: The raw name is already stored as record_name; this adds no
+    new data exposure beyond what's already tracked.
+    """
+    return _classify_lambda_name_sensitivity(name)
+
+
+def _ecs_env_key_info(env_list: list[dict]) -> tuple[list[str], int, int]:
+    """Extract safe key info from an ECS container environment list.
+
+    ECS env vars are represented as [{"name": KEY, "value": VALUE}, ...].
+
+    Returns (sorted_key_names, key_count, sensitive_key_count).
+
+    SECURITY: ``value`` fields are NEVER accessed or stored.  Only ``name``
+    (the key name) is inspected.
+    """
+    if not env_list:
+        return [], 0, 0
+    key_names = sorted(
+        item["name"]
+        for item in env_list
+        if isinstance(item, dict) and "name" in item
+    )
+    sensitive_count = sum(
+        1
+        for k in key_names
+        if any(pat in k.lower() for pat in _SENSITIVE_ENV_KEY_PATTERNS)
+    )
+    return key_names, len(key_names), sensitive_count
+
+
+def _ecs_secret_ref_count(secrets_list: list[dict]) -> int:
+    """Return the number of ECS secret references (Secrets Manager / SSM).
+
+    ECS secrets are represented as [{"name": ENV_KEY, "valueFrom": ARN}, ...].
+
+    SECURITY: ``valueFrom`` ARNs and ``name`` env key names are NEVER stored
+    as-is.  Only the count is returned.
+    """
+    return len(secrets_list) if secrets_list else 0
+
+
+def _ecr_policy_is_public(policy_json: str, account_id: str) -> bool:
+    """Return True if the ECR repository policy grants access beyond the account.
+
+    Checks for:
+    - Principal ``"*"`` (anonymous / any AWS principal)
+    - Cross-account principal ARNs containing a different account ID
+
+    SECURITY: Raw policy JSON is never stored.  Only the boolean result is
+    returned.
+    """
+    if not policy_json:
+        return False
+    try:
+        import json
+        policy = json.loads(policy_json)
+        for stmt in policy.get("Statement") or []:
+            effect = (stmt.get("Effect") or "").upper()
+            if effect != "ALLOW":
+                continue
+            principal = stmt.get("Principal")
+            if principal == "*":
+                return True
+            if isinstance(principal, dict):
+                for _key, val in principal.items():
+                    if isinstance(val, str):
+                        if val == "*":
+                            return True
+                        if account_id and account_id not in val:
+                            return True
+                    elif isinstance(val, list):
+                        for v in val:
+                            if v == "*":
+                                return True
+                            if account_id and account_id not in str(v):
+                                return True
+    except Exception:
+        pass
+    return False
+
+
+def _eks_public_access_cidrs_open(cidrs: list[str]) -> bool:
+    """Return True if the EKS public access CIDR list includes 0.0.0.0/0 or ::/0."""
+    if not cidrs:
+        return True  # No restriction = fully open by default
+    return any(c in ("0.0.0.0/0", "::/0") for c in cidrs)
+
+
 # ── M39: IAM policy and trust analysis helpers ────────────────────────────────
 
 # Services whose actions in a policy are considered sensitive for privilege
@@ -1837,6 +1948,35 @@ class AWSConnector(BaseConnector):
             len(securityhub_records),
         )
 
+        # 21. ECS clusters, services, task definitions (M46) — posture metadata only.
+        #     SECURITY: logs:GetLogEvents NEVER called. Task/container logs NEVER read.
+        #     Environment variable values NEVER stored. Secret values NEVER accessed.
+        ecs_records = self._fetch_ecs_resources(credentials, account_id)
+        records.extend(ecs_records)
+        logger.info(
+            "AWSConnector.fetch: ecs_resources fetched  count=%d",
+            len(ecs_records),
+        )
+
+        # 22. EKS clusters, node groups, Fargate profiles, add-ons (M46).
+        #     SECURITY: Kubernetes API NEVER called. Pods, Secrets, ConfigMaps NEVER read.
+        eks_records = self._fetch_eks_resources(credentials, account_id)
+        records.extend(eks_records)
+        logger.info(
+            "AWSConnector.fetch: eks_resources fetched  count=%d",
+            len(eks_records),
+        )
+
+        # 23. ECR repositories + registry scanning config (M46).
+        #     SECURITY: Images NEVER pulled. ecr:GetAuthorizationToken NEVER called.
+        #     Image layers and manifests NEVER accessed.
+        ecr_records = self._fetch_ecr_resources(credentials, account_id)
+        records.extend(ecr_records)
+        logger.info(
+            "AWSConnector.fetch: ecr_resources fetched  count=%d",
+            len(ecr_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -1914,6 +2054,18 @@ class AWSConnector(BaseConnector):
             1 for r in securityhub_records
             if r.get("record_type") == AWS_SECURITYHUB_ACCOUNT
         )
+        ecs_cluster_count = sum(
+            1 for r in ecs_records
+            if r.get("record_type") == AWS_ECS_CLUSTER
+        )
+        eks_cluster_count = sum(
+            1 for r in eks_records
+            if r.get("record_type") == AWS_EKS_CLUSTER
+        )
+        ecr_repository_count = sum(
+            1 for r in ecr_records
+            if r.get("record_type") == AWS_ECR_REPOSITORY
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -1936,6 +2088,9 @@ class AWSConnector(BaseConnector):
             cloudtrail_trail_count=cloudtrail_trail_count,
             guardduty_detector_count=guardduty_detector_count,
             securityhub_hub_count=securityhub_hub_count,
+            ecs_cluster_count=ecs_cluster_count,
+            eks_cluster_count=eks_cluster_count,
+            ecr_repository_count=ecr_repository_count,
         )
         records.append(inventory_record)
 
@@ -2054,6 +2209,9 @@ class AWSConnector(BaseConnector):
         cloudtrail_trail_count: int = 0,
         guardduty_detector_count: int = 0,
         securityhub_hub_count: int = 0,
+        ecs_cluster_count: int = 0,
+        eks_cluster_count: int = 0,
+        ecr_repository_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -2067,6 +2225,7 @@ class AWSConnector(BaseConnector):
                 "iam", "route53", "cloudfront", "secrets_manager", "ssm",
                 "rds", "lambda", "api_gateway", "load_balancers", "waf",
                 "cloudtrail", "guardduty", "security_hub",
+                "ecs", "eks", "ecr",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -2088,8 +2247,11 @@ class AWSConnector(BaseConnector):
             "cloudtrail_trail_count":         cloudtrail_trail_count,
             "guardduty_detector_count":       guardduty_detector_count,
             "securityhub_hub_count":          securityhub_hub_count,
+            "ecs_cluster_count":              ecs_cluster_count,
+            "eks_cluster_count":              eks_cluster_count,
+            "ecr_repository_count":           ecr_repository_count,
             "future_surfaces": [
-                "ecs", "eks", "ecr", "eventbridge", "sqs", "sns",
+                "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations", "cloudwatch",
             ],
         }
@@ -8503,4 +8665,1081 @@ class AWSConnector(BaseConnector):
         records.append(hub_record)
         records.extend(standards_records)
         records.extend(finding_aggregator_records)
+        return records
+
+    # ── M46: ECS fetch methods ─────────────────────────────────────────────────
+
+    def _fetch_ecs_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch ECS cluster, service, and task definition posture across all regions.
+
+        SECURITY:
+        - logs:GetLogEvents NEVER called.
+        - ECS task and container logs NEVER read.
+        - Environment variable values NEVER stored — key names only.
+        - Secret reference values and ARNs NEVER stored — count only.
+        - No write operations performed.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                ecs_client = self._make_client("ecs", credentials, region=region)
+                region_records = self._fetch_ecs_in_region(ecs_client, account_id, region)
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: ecs fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: ecs fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_ecs_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize ECS resources in a single region.
+
+        SECURITY:
+        - logs:GetLogEvents NEVER called.
+        - Container log output NEVER accessed.
+        - Environment variable values NEVER stored.
+        - Secret values NEVER accessed.
+        """
+        records: list[dict] = []
+        seen_task_def_arns: set[str] = set()
+
+        # ── ListClusters (paginated) ──────────────────────────────────────────
+        cluster_arns: list[str] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                try:
+                    resp = self._call_aws(client.list_clusters, **kwargs)
+                except Exception as exc:
+                    fc = classify_aws_ecs_failure("ListClusters", exc)
+                    logger.warning(
+                        "aws: ListClusters failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    return records
+                cluster_arns.extend(resp.get("clusterArns") or [])
+                next_token = resp.get("nextToken")
+                if next_token:
+                    kwargs["nextToken"] = next_token
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: ECS ListClusters unexpected  region=%s", region, exc_info=True,
+            )
+            return records
+
+        if not cluster_arns:
+            return records
+
+        # ── DescribeClusters (batch up to 100) ────────────────────────────────
+        cluster_details: list[dict] = []
+        try:
+            for i in range(0, len(cluster_arns), 100):
+                batch = cluster_arns[i:i + 100]
+                try:
+                    desc_resp = self._call_aws(
+                        client.describe_clusters,
+                        clusters=batch,
+                        include=["SETTINGS", "STATISTICS", "TAGS"],
+                    )
+                    cluster_details.extend(desc_resp.get("clusters") or [])
+                except Exception as exc:
+                    fc = classify_aws_ecs_failure("DescribeClusters", exc)
+                    logger.warning(
+                        "aws: DescribeClusters failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+        except Exception:
+            logger.warning(
+                "aws: ECS DescribeClusters unexpected  region=%s", region, exc_info=True,
+            )
+
+        for cluster in cluster_details:
+            cluster_arn: str = cluster.get("clusterArn") or ""
+            cluster_name: str = cluster.get("clusterName") or ""
+            if not cluster_arn:
+                continue
+
+            status: str = cluster.get("status") or "UNKNOWN"
+            registered_container_instances: int = cluster.get(
+                "registeredContainerInstancesCount", 0
+            ) or 0
+            running_tasks: int = cluster.get("runningTasksCount", 0) or 0
+            pending_tasks: int = cluster.get("pendingTasksCount", 0) or 0
+            active_services: int = cluster.get("activeServicesCount", 0) or 0
+
+            # Capacity providers
+            capacity_providers: list[str] = sorted(
+                cluster.get("capacityProviders") or []
+            )
+            default_capacity_provider_strategy: list[dict] = (
+                cluster.get("defaultCapacityProviderStrategy") or []
+            )
+            has_fargate_capacity: bool = any(
+                cp in ("FARGATE", "FARGATE_SPOT")
+                for cp in capacity_providers
+            )
+
+            # Settings (containerInsights, etc.)
+            settings: list[dict] = cluster.get("settings") or []
+            container_insights_enabled: bool = any(
+                s.get("name") == "containerInsights" and s.get("value") == "enabled"
+                for s in settings
+            )
+
+            # Tag keys only
+            tag_keys = _extract_tag_keys(cluster.get("tags") or [])
+
+            name_sensitivity = _classify_container_name_sensitivity(cluster_name)
+            stable_id = f"{account_id}/{region}/{cluster_name}"
+            records.append({
+                "record_type":                       AWS_ECS_CLUSTER,
+                "record_id":                         stable_id,
+                "external_id":                       cluster_arn,
+                "name":                              cluster_name,
+                "account_id":                        account_id,
+                "region":                            region,
+                "status":                            status,
+                "registered_container_instance_count": registered_container_instances,
+                "running_tasks_count":               running_tasks,
+                "pending_tasks_count":               pending_tasks,
+                "active_services_count":             active_services,
+                "capacity_providers":                capacity_providers if capacity_providers else None,
+                "default_capacity_provider_strategy_count": len(default_capacity_provider_strategy),
+                "has_fargate_capacity":              has_fargate_capacity,
+                "container_insights_enabled":        container_insights_enabled,
+                "name_sensitivity":                  name_sensitivity,
+                "tag_keys":                          tag_keys,
+            })
+
+            # ── ListServices per cluster ──────────────────────────────────────
+            service_arns: list[str] = []
+            try:
+                svc_kwargs: dict = {"cluster": cluster_arn}
+                while True:
+                    try:
+                        svc_resp = self._call_aws(client.list_services, **svc_kwargs)
+                    except Exception as exc:
+                        fc = classify_aws_ecs_failure("ListServices", exc)
+                        logger.warning(
+                            "aws: ListServices failed  cluster=%s  code=%s",
+                            cluster_name, fc.error_code,
+                        )
+                        break
+                    service_arns.extend(svc_resp.get("serviceArns") or [])
+                    next_token = svc_resp.get("nextToken")
+                    if next_token:
+                        svc_kwargs["nextToken"] = next_token
+                    else:
+                        break
+            except Exception:
+                logger.warning(
+                    "aws: ECS ListServices unexpected  cluster=%s", cluster_name, exc_info=True,
+                )
+
+            if not service_arns:
+                continue
+
+            # ── DescribeServices (batch up to 10) ─────────────────────────────
+            for i in range(0, len(service_arns), 10):
+                batch_svc = service_arns[i:i + 10]
+                try:
+                    svc_desc_resp = self._call_aws(
+                        client.describe_services,
+                        cluster=cluster_arn,
+                        services=batch_svc,
+                        include=["TAGS"],
+                    )
+                    for svc in svc_desc_resp.get("services") or []:
+                        svc_arn: str = svc.get("serviceArn") or ""
+                        svc_name: str = svc.get("serviceName") or ""
+                        if not svc_arn:
+                            continue
+
+                        launch_type: str = svc.get("launchType") or "EC2"
+                        scheduling_strategy: str = (
+                            svc.get("schedulingStrategy") or "REPLICA"
+                        )
+                        desired_count: int = svc.get("desiredCount", 0) or 0
+                        running_count: int = svc.get("runningCount", 0) or 0
+                        status_svc: str = svc.get("status") or "UNKNOWN"
+
+                        # Network config
+                        network_cfg: dict = svc.get("networkConfiguration") or {}
+                        awsvpc_cfg: dict = (
+                            network_cfg.get("awsvpcConfiguration") or {}
+                        )
+                        assign_public_ip: str = (
+                            awsvpc_cfg.get("assignPublicIp") or "DISABLED"
+                        )
+                        has_public_ip: bool = assign_public_ip == "ENABLED"
+
+                        # Load balancers
+                        load_balancers: list[dict] = svc.get("loadBalancers") or []
+                        lb_count: int = len(load_balancers)
+                        lb_target_group_arns: list[str] = sorted(
+                            _hash_kms_key_id(lb.get("targetGroupArn") or "x")
+                            for lb in load_balancers
+                            if lb.get("targetGroupArn")
+                        )
+
+                        # Task definition ARN — hashed
+                        task_def_arn: str = svc.get("taskDefinition") or ""
+                        task_def_arn_hash: str | None = (
+                            _hash_kms_key_id(task_def_arn) if task_def_arn else None
+                        )
+                        # Track unique task def ARNs to fetch later
+                        if task_def_arn and task_def_arn not in seen_task_def_arns:
+                            seen_task_def_arns.add(task_def_arn)
+
+                        # Deployments
+                        deployments: list[dict] = svc.get("deployments") or []
+                        deployment_config: dict = (
+                            svc.get("deploymentConfiguration") or {}
+                        )
+                        circuit_breaker: dict = (
+                            deployment_config.get("deploymentCircuitBreaker") or {}
+                        )
+                        circuit_breaker_enabled: bool = bool(
+                            circuit_breaker.get("enable")
+                        )
+                        circuit_breaker_rollback: bool = bool(
+                            circuit_breaker.get("rollback")
+                        )
+
+                        # Service connect
+                        service_connect_cfg: dict = (
+                            svc.get("serviceConnectConfiguration") or {}
+                        )
+                        service_connect_enabled: bool = bool(
+                            service_connect_cfg.get("enabled")
+                        )
+
+                        # Tags
+                        svc_tag_keys = _extract_tag_keys(svc.get("tags") or [])
+                        svc_name_sensitivity = _classify_container_name_sensitivity(
+                            svc_name
+                        )
+
+                        svc_stable_id = f"{account_id}/{region}/{cluster_name}/{svc_name}"
+                        records.append({
+                            "record_type":                  AWS_ECS_SERVICE,
+                            "record_id":                    svc_stable_id,
+                            "external_id":                  svc_arn,
+                            "name":                         svc_name,
+                            "account_id":                   account_id,
+                            "region":                       region,
+                            "cluster_name":                 cluster_name,
+                            "status":                       status_svc,
+                            "launch_type":                  launch_type,
+                            "scheduling_strategy":          scheduling_strategy,
+                            "desired_count":                desired_count,
+                            "running_count":                running_count,
+                            "has_public_ip":                has_public_ip,
+                            "lb_count":                     lb_count,
+                            "lb_target_group_arn_hashes":   lb_target_group_arns if lb_target_group_arns else None,
+                            "task_definition_arn_hash":     task_def_arn_hash,
+                            "deployment_count":             len(deployments),
+                            "circuit_breaker_enabled":      circuit_breaker_enabled,
+                            "circuit_breaker_rollback":     circuit_breaker_rollback,
+                            "service_connect_enabled":      service_connect_enabled,
+                            "name_sensitivity":             svc_name_sensitivity,
+                            "tag_keys":                     svc_tag_keys,
+                        })
+                except Exception as exc:
+                    fc = classify_aws_ecs_failure("DescribeServices", exc)
+                    logger.warning(
+                        "aws: DescribeServices failed  cluster=%s  code=%s",
+                        cluster_name, fc.error_code,
+                    )
+
+        # ── DescribeTaskDefinition per unique revision ─────────────────────────
+        for td_arn in seen_task_def_arns:
+            try:
+                td_resp = self._call_aws(
+                    client.describe_task_definition,
+                    taskDefinition=td_arn,
+                    include=["TAGS"],
+                )
+                td: dict = td_resp.get("taskDefinition") or {}
+                if not td:
+                    continue
+
+                td_family: str = td.get("family") or ""
+                td_revision: int = td.get("revision") or 0
+                td_status: str = td.get("status") or "UNKNOWN"
+                td_network_mode: str = td.get("networkMode") or "bridge"
+                td_requires_compat: list[str] = sorted(
+                    td.get("requiresCompatibilities") or []
+                )
+                td_cpu: str | None = td.get("cpu")
+                td_memory: str | None = td.get("memory")
+                td_task_role_arn: str = td.get("taskRoleArn") or ""
+                td_exec_role_arn: str = td.get("executionRoleArn") or ""
+                td_task_role_hash: str | None = (
+                    _hash_kms_key_id(td_task_role_arn) if td_task_role_arn else None
+                )
+                td_exec_role_hash: str | None = (
+                    _hash_kms_key_id(td_exec_role_arn) if td_exec_role_arn else None
+                )
+
+                # Volumes (count + presence of sensitive types)
+                volumes: list[dict] = td.get("volumes") or []
+                volume_count: int = len(volumes)
+                has_efs_volume: bool = any(
+                    bool(v.get("efsVolumeConfiguration")) for v in volumes
+                )
+
+                # Container definitions — SECURITY: env values NEVER stored
+                container_defs: list[dict] = td.get("containerDefinitions") or []
+                container_count: int = len(container_defs)
+                total_env_key_count: int = 0
+                total_env_sensitive_count: int = 0
+                total_secret_ref_count: int = 0
+                has_privileged_container: bool = False
+                has_readonly_root: bool = False  # track if ALL containers have it
+                any_readonly_root: bool = False
+                log_driver_types: set[str] = set()
+
+                for cdef in container_defs:
+                    # Env vars — keys only
+                    env_list = cdef.get("environment") or []
+                    _, ek_count, es_count = _ecs_env_key_info(env_list)
+                    total_env_key_count += ek_count
+                    total_env_sensitive_count += es_count
+
+                    # Secret references — count only
+                    secrets_list = cdef.get("secrets") or []
+                    total_secret_ref_count += _ecs_secret_ref_count(secrets_list)
+
+                    # Privileged container flag
+                    if cdef.get("privileged"):
+                        has_privileged_container = True
+
+                    # Read-only root filesystem
+                    if cdef.get("readonlyRootFilesystem"):
+                        any_readonly_root = True
+
+                    # Log driver (driver name only, not config options)
+                    log_cfg: dict = cdef.get("logConfiguration") or {}
+                    driver = log_cfg.get("logDriver") or ""
+                    if driver:
+                        log_driver_types.add(driver)
+
+                td_tags = td_resp.get("tags") or []
+                td_tag_keys = _extract_tag_keys(td_tags)
+                td_name_sensitivity = _classify_container_name_sensitivity(td_family)
+
+                td_stable_id = f"{account_id}/{region}/{td_family}:{td_revision}"
+                records.append({
+                    "record_type":                  AWS_ECS_TASK_DEFINITION,
+                    "record_id":                    td_stable_id,
+                    "external_id":                  td_arn,
+                    "name":                         f"{td_family}:{td_revision}",
+                    "account_id":                   account_id,
+                    "region":                       region,
+                    "family":                       td_family,
+                    "revision":                     td_revision,
+                    "status":                       td_status,
+                    "network_mode":                 td_network_mode,
+                    "requires_compatibilities":     td_requires_compat if td_requires_compat else None,
+                    "cpu":                          td_cpu,
+                    "memory":                       td_memory,
+                    "task_role_arn_hash":           td_task_role_hash,
+                    "execution_role_arn_hash":      td_exec_role_hash,
+                    "container_count":              container_count,
+                    "volume_count":                 volume_count,
+                    "has_efs_volume":               has_efs_volume,
+                    "env_key_count":                total_env_key_count,
+                    "env_sensitive_key_count":      total_env_sensitive_count,
+                    "secret_ref_count":             total_secret_ref_count,
+                    "has_privileged_container":     has_privileged_container,
+                    "any_readonly_root_filesystem": any_readonly_root,
+                    "log_driver_types":             sorted(log_driver_types) if log_driver_types else None,
+                    "name_sensitivity":             td_name_sensitivity,
+                    "tag_keys":                     td_tag_keys,
+                })
+            except Exception as exc:
+                fc = classify_aws_ecs_failure("DescribeTaskDefinition", exc)
+                logger.warning(
+                    "aws: DescribeTaskDefinition failed  arn=%s  code=%s",
+                    td_arn[:40], fc.error_code,
+                )
+
+        return records
+
+    # ── M46: EKS fetch methods ─────────────────────────────────────────────────
+
+    def _fetch_eks_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch EKS cluster, node group, Fargate profile, and add-on posture.
+
+        SECURITY:
+        - Kubernetes API NEVER called.
+        - Kubernetes pods, Secrets, ConfigMaps, events, logs NEVER accessed.
+        - No write operations performed.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                eks_client = self._make_client("eks", credentials, region=region)
+                region_records = self._fetch_eks_in_region(eks_client, account_id, region)
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: eks fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: eks fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_eks_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize EKS resources in a single region.
+
+        SECURITY:
+        - Kubernetes API NEVER called.
+        - No pod, secret, configmap, or log data accessed.
+        - Role and endpoint ARNs hashed before storage.
+        """
+        records: list[dict] = []
+
+        # ── ListClusters (paginated) ──────────────────────────────────────────
+        cluster_names: list[str] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                try:
+                    resp = self._call_aws(client.list_clusters, **kwargs)
+                except Exception as exc:
+                    fc = classify_aws_eks_failure("ListClusters", exc)
+                    logger.warning(
+                        "aws: EKS ListClusters failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    return records
+                cluster_names.extend(resp.get("clusters") or [])
+                next_token = resp.get("nextToken")
+                if next_token:
+                    kwargs["nextToken"] = next_token
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: EKS ListClusters unexpected  region=%s", region, exc_info=True,
+            )
+            return records
+
+        for cluster_name in cluster_names:
+            cluster_warnings: list[str] = []
+
+            # ── DescribeCluster ───────────────────────────────────────────────
+            cluster: dict = {}
+            try:
+                desc_resp = self._call_aws(client.describe_cluster, name=cluster_name)
+                cluster = desc_resp.get("cluster") or {}
+            except Exception as exc:
+                fc = classify_aws_eks_failure("DescribeCluster", exc)
+                cluster_warnings.append(f"DescribeCluster: {fc.error_code}")
+
+            status_cluster: str = cluster.get("status") or "UNKNOWN"
+            k8s_version: str = cluster.get("version") or "unknown"
+            platform_version: str = cluster.get("platformVersion") or ""
+            role_arn: str = cluster.get("roleArn") or ""
+            role_arn_hash: str | None = (
+                _hash_kms_key_id(role_arn) if role_arn else None
+            )
+
+            # Kubernetes network config
+            k8s_network_cfg: dict = cluster.get("kubernetesNetworkConfig") or {}
+            ip_family: str = k8s_network_cfg.get("ipFamily") or "ipv4"
+
+            # Resources VPC config — SECURITY: store posture booleans, not subnet/SG IDs
+            resources_vpc: dict = cluster.get("resourcesVpcConfig") or {}
+            endpoint_public_access: bool = bool(
+                resources_vpc.get("endpointPublicAccess", True)
+            )
+            endpoint_private_access: bool = bool(
+                resources_vpc.get("endpointPrivateAccess", False)
+            )
+            public_access_cidrs: list[str] = sorted(
+                resources_vpc.get("publicAccessCidrs") or []
+            )
+            public_access_fully_open: bool = (
+                endpoint_public_access
+                and _eks_public_access_cidrs_open(public_access_cidrs)
+            )
+            subnet_count: int = len(resources_vpc.get("subnetIds") or [])
+            security_group_count: int = len(
+                resources_vpc.get("securityGroupIds") or []
+            )
+
+            # Logging config
+            logging_cfg: dict = cluster.get("logging") or {}
+            enabled_log_types: list[str] = []
+            for log_setup in logging_cfg.get("clusterLogging") or []:
+                if log_setup.get("enabled"):
+                    enabled_log_types.extend(log_setup.get("types") or [])
+            enabled_log_types = sorted(set(enabled_log_types))
+            has_audit_logging: bool = "audit" in enabled_log_types
+
+            # Encryption config — KMS presence only
+            encryption_configs: list[dict] = cluster.get("encryptionConfig") or []
+            secrets_encryption_enabled: bool = any(
+                "secrets" in (ec.get("resources") or [])
+                for ec in encryption_configs
+            )
+            kms_key_hash: str | None = None
+            for ec in encryption_configs:
+                provider = ec.get("provider") or {}
+                key_arn = provider.get("keyArn") or ""
+                if key_arn:
+                    kms_key_hash = _hash_kms_key_id(key_arn)
+                    break
+
+            # Add-ons and node groups will be added separately below
+            name_sensitivity = _classify_container_name_sensitivity(cluster_name)
+            tag_keys = _extract_tag_keys(
+                [{"Key": k, "Value": v} for k, v in (cluster.get("tags") or {}).items()]
+            )
+
+            stable_id = f"{account_id}/{region}/{cluster_name}"
+            records.append({
+                "record_type":                    AWS_EKS_CLUSTER,
+                "record_id":                      stable_id,
+                "external_id":                    cluster.get("arn") or stable_id,
+                "name":                           cluster_name,
+                "account_id":                     account_id,
+                "region":                         region,
+                "status":                         status_cluster,
+                "kubernetes_version":             k8s_version,
+                "platform_version":               platform_version,
+                "role_arn_hash":                  role_arn_hash,
+                "endpoint_public_access":         endpoint_public_access,
+                "endpoint_private_access":        endpoint_private_access,
+                "public_access_fully_open":       public_access_fully_open,
+                "public_access_cidrs_count":      len(public_access_cidrs),
+                "subnet_count":                   subnet_count,
+                "security_group_count":           security_group_count,
+                "ip_family":                      ip_family,
+                "enabled_log_types":              enabled_log_types if enabled_log_types else None,
+                "has_audit_logging":              has_audit_logging,
+                "secrets_encryption_enabled":     secrets_encryption_enabled,
+                "kms_key_hash":                   kms_key_hash,
+                "name_sensitivity":               name_sensitivity,
+                "tag_keys":                       tag_keys,
+                "config_fetch_warnings":          cluster_warnings if cluster_warnings else None,
+            })
+
+            # ── ListNodegroups ────────────────────────────────────────────────
+            ng_names: list[str] = []
+            try:
+                ng_kwargs: dict = {"clusterName": cluster_name}
+                while True:
+                    try:
+                        ng_resp = self._call_aws(client.list_nodegroups, **ng_kwargs)
+                    except Exception as exc:
+                        fc = classify_aws_eks_failure("ListNodegroups", exc)
+                        logger.warning(
+                            "aws: ListNodegroups failed  cluster=%s  code=%s",
+                            cluster_name, fc.error_code,
+                        )
+                        break
+                    ng_names.extend(ng_resp.get("nodegroups") or [])
+                    next_token = ng_resp.get("nextToken")
+                    if next_token:
+                        ng_kwargs["nextToken"] = next_token
+                    else:
+                        break
+            except Exception:
+                logger.warning(
+                    "aws: EKS ListNodegroups unexpected  cluster=%s",
+                    cluster_name, exc_info=True,
+                )
+
+            for ng_name in ng_names:
+                try:
+                    ng_resp = self._call_aws(
+                        client.describe_nodegroup,
+                        clusterName=cluster_name,
+                        nodegroupName=ng_name,
+                    )
+                    ng: dict = ng_resp.get("nodegroup") or {}
+
+                    ng_status: str = ng.get("status") or "UNKNOWN"
+                    ng_capacity_type: str = ng.get("capacityType") or "ON_DEMAND"
+                    ng_ami_type: str = ng.get("amiType") or "AL2_x86_64"
+                    ng_disk_size: int | None = ng.get("diskSize")
+                    ng_instance_types: list[str] = sorted(
+                        ng.get("instanceTypes") or []
+                    )
+
+                    # Scaling config
+                    scaling: dict = ng.get("scalingConfig") or {}
+                    ng_min_size: int | None = scaling.get("minSize")
+                    ng_max_size: int | None = scaling.get("maxSize")
+                    ng_desired_size: int | None = scaling.get("desiredSize")
+
+                    # Node role
+                    ng_role_arn: str = ng.get("nodeRole") or ""
+                    ng_role_arn_hash: str | None = (
+                        _hash_kms_key_id(ng_role_arn) if ng_role_arn else None
+                    )
+
+                    # Remote access
+                    remote_access: dict = ng.get("remoteAccess") or {}
+                    has_remote_access: bool = bool(
+                        remote_access.get("ec2SshKey")
+                    )
+                    source_security_group_count: int = len(
+                        remote_access.get("sourceSecurityGroups") or []
+                    )
+                    ssh_unrestricted: bool = (
+                        has_remote_access and source_security_group_count == 0
+                    )
+
+                    # Tags
+                    ng_tag_keys = _extract_tag_keys(
+                        [
+                            {"Key": k, "Value": v}
+                            for k, v in (ng.get("tags") or {}).items()
+                        ]
+                    )
+
+                    ng_stable_id = f"{account_id}/{region}/{cluster_name}/ng/{ng_name}"
+                    records.append({
+                        "record_type":                AWS_EKS_NODE_GROUP,
+                        "record_id":                  ng_stable_id,
+                        "external_id":                ng.get("nodegroupArn") or ng_stable_id,
+                        "name":                       ng_name,
+                        "account_id":                 account_id,
+                        "region":                     region,
+                        "cluster_name":               cluster_name,
+                        "status":                     ng_status,
+                        "capacity_type":              ng_capacity_type,
+                        "ami_type":                   ng_ami_type,
+                        "instance_types":             ng_instance_types if ng_instance_types else None,
+                        "disk_size":                  ng_disk_size,
+                        "min_size":                   ng_min_size,
+                        "max_size":                   ng_max_size,
+                        "desired_size":               ng_desired_size,
+                        "node_role_arn_hash":         ng_role_arn_hash,
+                        "has_remote_access":          has_remote_access,
+                        "ssh_unrestricted":           ssh_unrestricted,
+                        "source_security_group_count": source_security_group_count,
+                        "tag_keys":                   ng_tag_keys,
+                    })
+                except Exception as exc:
+                    fc = classify_aws_eks_failure("DescribeNodegroup", exc)
+                    logger.warning(
+                        "aws: DescribeNodegroup failed  cluster=%s  ng=%s  code=%s",
+                        cluster_name, ng_name, fc.error_code,
+                    )
+
+            # ── ListFargateProfiles ───────────────────────────────────────────
+            fp_names: list[str] = []
+            try:
+                fp_kwargs: dict = {"clusterName": cluster_name}
+                while True:
+                    try:
+                        fp_resp = self._call_aws(client.list_fargate_profiles, **fp_kwargs)
+                    except Exception as exc:
+                        fc = classify_aws_eks_failure("ListFargateProfiles", exc)
+                        logger.warning(
+                            "aws: ListFargateProfiles failed  cluster=%s  code=%s",
+                            cluster_name, fc.error_code,
+                        )
+                        break
+                    fp_names.extend(fp_resp.get("fargateProfileNames") or [])
+                    next_token = fp_resp.get("nextToken")
+                    if next_token:
+                        fp_kwargs["nextToken"] = next_token
+                    else:
+                        break
+            except Exception:
+                logger.warning(
+                    "aws: EKS ListFargateProfiles unexpected  cluster=%s",
+                    cluster_name, exc_info=True,
+                )
+
+            for fp_name in fp_names:
+                try:
+                    fp_desc_resp = self._call_aws(
+                        client.describe_fargate_profile,
+                        clusterName=cluster_name,
+                        fargateProfileName=fp_name,
+                    )
+                    fp: dict = fp_desc_resp.get("fargateProfile") or {}
+
+                    fp_status: str = fp.get("status") or "UNKNOWN"
+                    fp_role_arn: str = fp.get("podExecutionRoleArn") or ""
+                    fp_role_hash: str | None = (
+                        _hash_kms_key_id(fp_role_arn) if fp_role_arn else None
+                    )
+                    # Selectors — store count and namespace names (not labels)
+                    selectors: list[dict] = fp.get("selectors") or []
+                    selector_count: int = len(selectors)
+                    selector_namespaces: list[str] = sorted(
+                        s.get("namespace") or ""
+                        for s in selectors
+                        if s.get("namespace")
+                    )
+                    fp_subnet_count: int = len(fp.get("subnets") or [])
+                    fp_tag_keys = _extract_tag_keys(
+                        [
+                            {"Key": k, "Value": v}
+                            for k, v in (fp.get("tags") or {}).items()
+                        ]
+                    )
+
+                    fp_stable_id = f"{account_id}/{region}/{cluster_name}/fp/{fp_name}"
+                    records.append({
+                        "record_type":                 AWS_EKS_FARGATE_PROFILE,
+                        "record_id":                   fp_stable_id,
+                        "external_id":                 fp.get("fargateProfileArn") or fp_stable_id,
+                        "name":                        fp_name,
+                        "account_id":                  account_id,
+                        "region":                      region,
+                        "cluster_name":                cluster_name,
+                        "status":                      fp_status,
+                        "pod_execution_role_arn_hash": fp_role_hash,
+                        "selector_count":              selector_count,
+                        "selector_namespaces":         selector_namespaces if selector_namespaces else None,
+                        "subnet_count":                fp_subnet_count,
+                        "tag_keys":                    fp_tag_keys,
+                    })
+                except Exception as exc:
+                    fc = classify_aws_eks_failure("DescribeFargateProfile", exc)
+                    logger.warning(
+                        "aws: DescribeFargateProfile failed  cluster=%s  fp=%s  code=%s",
+                        cluster_name, fp_name, fc.error_code,
+                    )
+
+            # ── ListAddons ────────────────────────────────────────────────────
+            addon_names: list[str] = []
+            try:
+                addon_kwargs: dict = {"clusterName": cluster_name}
+                while True:
+                    try:
+                        addon_resp = self._call_aws(client.list_addons, **addon_kwargs)
+                    except Exception as exc:
+                        fc = classify_aws_eks_failure("ListAddons", exc)
+                        logger.warning(
+                            "aws: ListAddons failed  cluster=%s  code=%s",
+                            cluster_name, fc.error_code,
+                        )
+                        break
+                    addon_names.extend(addon_resp.get("addons") or [])
+                    next_token = addon_resp.get("nextToken")
+                    if next_token:
+                        addon_kwargs["nextToken"] = next_token
+                    else:
+                        break
+            except Exception:
+                logger.warning(
+                    "aws: EKS ListAddons unexpected  cluster=%s",
+                    cluster_name, exc_info=True,
+                )
+
+            for addon_name in addon_names:
+                try:
+                    addon_desc_resp = self._call_aws(
+                        client.describe_addon,
+                        clusterName=cluster_name,
+                        addonName=addon_name,
+                    )
+                    addon: dict = addon_desc_resp.get("addon") or {}
+
+                    addon_status: str = addon.get("status") or "UNKNOWN"
+                    addon_version: str = addon.get("addonVersion") or ""
+                    addon_created_at: str = str(addon.get("createdAt") or "")
+                    addon_modified_at: str = str(addon.get("modifiedAt") or "")
+                    addon_role_arn: str = addon.get("serviceAccountRoleArn") or ""
+                    addon_role_hash: str | None = (
+                        _hash_kms_key_id(addon_role_arn) if addon_role_arn else None
+                    )
+                    addon_tag_keys = _extract_tag_keys(
+                        [
+                            {"Key": k, "Value": v}
+                            for k, v in (addon.get("tags") or {}).items()
+                        ]
+                    )
+
+                    addon_stable_id = (
+                        f"{account_id}/{region}/{cluster_name}/addon/{addon_name}"
+                    )
+                    records.append({
+                        "record_type":               AWS_EKS_ADDON,
+                        "record_id":                 addon_stable_id,
+                        "external_id":               addon.get("addonArn") or addon_stable_id,
+                        "name":                      addon_name,
+                        "account_id":                account_id,
+                        "region":                    region,
+                        "cluster_name":              cluster_name,
+                        "status":                    addon_status,
+                        "addon_version":             addon_version,
+                        "service_account_role_hash": addon_role_hash,
+                        "tag_keys":                  addon_tag_keys,
+                    })
+                except Exception as exc:
+                    fc = classify_aws_eks_failure("DescribeAddon", exc)
+                    logger.warning(
+                        "aws: DescribeAddon failed  cluster=%s  addon=%s  code=%s",
+                        cluster_name, addon_name, fc.error_code,
+                    )
+
+        return records
+
+    # ── M46: ECR fetch methods ─────────────────────────────────────────────────
+
+    def _fetch_ecr_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch ECR repository and registry scanning posture across all regions.
+
+        SECURITY:
+        - Images NEVER pulled.
+        - Image layers and manifests NEVER accessed.
+        - ecr:GetAuthorizationToken NEVER called.
+        - Vulnerability scan findings NEVER ingested.
+        - Raw repository policy JSON NEVER stored — only boolean summary.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                ecr_client = self._make_client("ecr", credentials, region=region)
+                region_records = self._fetch_ecr_in_region(ecr_client, account_id, region)
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: ecr fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: ecr fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_ecr_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch and normalize ECR resources in a single region.
+
+        SECURITY:
+        - ecr:GetAuthorizationToken NEVER called.
+        - Images, layers, manifests NEVER accessed.
+        - Raw policy JSON NEVER stored — only boolean/count summary.
+        - Tag values NEVER stored.
+        """
+        records: list[dict] = []
+
+        # ── DescribeRepositories (paginated) ──────────────────────────────────
+        repositories: list[dict] = []
+        try:
+            repo_kwargs: dict = {}
+            while True:
+                try:
+                    resp = self._call_aws(client.describe_repositories, **repo_kwargs)
+                except Exception as exc:
+                    fc = classify_aws_ecr_failure("DescribeRepositories", exc)
+                    logger.warning(
+                        "aws: DescribeRepositories failed  region=%s  code=%s",
+                        region, fc.error_code,
+                    )
+                    break
+                repositories.extend(resp.get("repositories") or [])
+                next_token = resp.get("nextToken")
+                if next_token:
+                    repo_kwargs["nextToken"] = next_token
+                else:
+                    break
+        except Exception:
+            logger.warning(
+                "aws: ECR DescribeRepositories unexpected  region=%s",
+                region, exc_info=True,
+            )
+
+        for repo in repositories:
+            repo_arn: str = repo.get("repositoryArn") or ""
+            repo_name: str = repo.get("repositoryName") or ""
+            if not repo_arn:
+                continue
+
+            repo_warnings: list[str] = []
+
+            # Basic metadata
+            image_tag_mutability: str = repo.get("imageTagMutability") or "MUTABLE"
+            tag_immutable: bool = image_tag_mutability == "IMMUTABLE"
+            encryption_type: str = (
+                (repo.get("encryptionConfiguration") or {}).get("encryptionType") or "AES256"
+            )
+            kms_key_id: str = (
+                (repo.get("encryptionConfiguration") or {}).get("kmsKey") or ""
+            )
+            kms_key_hash: str | None = (
+                _hash_kms_key_id(kms_key_id) if kms_key_id else None
+            )
+
+            # Image scanning config
+            scan_cfg: dict = repo.get("imageScanningConfiguration") or {}
+            scan_on_push: bool = bool(scan_cfg.get("scanOnPush", False))
+
+            # Repository policy — SECURITY: raw JSON never stored
+            policy_public: bool = False
+            policy_present: bool = False
+            try:
+                policy_resp = self._call_aws(
+                    client.get_repository_policy,
+                    repositoryName=repo_name,
+                )
+                raw_policy: str = policy_resp.get("policyText") or ""
+                if raw_policy:
+                    policy_present = True
+                    policy_public = _ecr_policy_is_public(raw_policy, account_id)
+            except ConnectorError as exc:
+                if exc.status_code == 400 or (
+                    hasattr(exc, "aws_error_code")
+                    and exc.aws_error_code == "RepositoryPolicyNotFoundException"
+                ):
+                    pass  # No policy — safe default
+                else:
+                    fc = classify_aws_ecr_failure("GetRepositoryPolicy", exc)
+                    repo_warnings.append(f"GetRepositoryPolicy: {fc.error_code}")
+            except Exception as exc:
+                fc = classify_aws_ecr_failure("GetRepositoryPolicy", exc)
+                repo_warnings.append(f"GetRepositoryPolicy: {fc.error_code}")
+
+            # Lifecycle policy — presence + rule count only
+            lifecycle_present: bool = False
+            lifecycle_rule_count: int = 0
+            try:
+                lc_resp = self._call_aws(
+                    client.get_lifecycle_policy,
+                    repositoryName=repo_name,
+                )
+                lc_text: str = lc_resp.get("lifecyclePolicyText") or ""
+                if lc_text:
+                    lifecycle_present = True
+                    try:
+                        import json as _json
+                        lc_parsed = _json.loads(lc_text)
+                        lifecycle_rule_count = len(
+                            lc_parsed.get("rules") or []
+                        )
+                    except Exception:
+                        lifecycle_rule_count = 0
+            except ConnectorError as exc:
+                if exc.status_code == 400 or (
+                    hasattr(exc, "aws_error_code")
+                    and exc.aws_error_code == "LifecyclePolicyNotFoundException"
+                ):
+                    pass  # No lifecycle policy — safe default
+                else:
+                    fc = classify_aws_ecr_failure("GetLifecyclePolicy", exc)
+                    repo_warnings.append(f"GetLifecyclePolicy: {fc.error_code}")
+            except Exception as exc:
+                fc = classify_aws_ecr_failure("GetLifecyclePolicy", exc)
+                repo_warnings.append(f"GetLifecyclePolicy: {fc.error_code}")
+
+            # Tags
+            repo_tag_keys = _extract_tag_keys(repo.get("tags") or [])
+            name_sensitivity = _classify_container_name_sensitivity(repo_name)
+
+            repo_stable_id = f"{account_id}/{region}/{repo_name}"
+            records.append({
+                "record_type":            AWS_ECR_REPOSITORY,
+                "record_id":              repo_stable_id,
+                "external_id":            repo_arn,
+                "name":                   repo_name,
+                "account_id":             account_id,
+                "region":                 region,
+                "image_tag_mutability":   image_tag_mutability,
+                "tag_immutable":          tag_immutable,
+                "scan_on_push":           scan_on_push,
+                "encryption_type":        encryption_type,
+                "kms_key_hash":           kms_key_hash,
+                "policy_present":         policy_present,
+                "policy_is_public":       policy_public,
+                "lifecycle_policy_present": lifecycle_present,
+                "lifecycle_rule_count":   lifecycle_rule_count,
+                "name_sensitivity":       name_sensitivity,
+                "tag_keys":               repo_tag_keys,
+                "config_fetch_warnings":  repo_warnings if repo_warnings else None,
+            })
+
+        # ── GetRegistryScanningConfiguration (one per region) ─────────────────
+        try:
+            scan_config_resp = self._call_aws(client.get_registry_scanning_configuration)
+            scan_type: str = scan_config_resp.get("scanType") or "BASIC"
+            scan_rules: list[dict] = scan_config_resp.get("rules") or []
+            rule_count: int = len(scan_rules)
+            # Summarize filters (repo filter strings are not PII)
+            repo_filter_count: int = sum(
+                len(rule.get("repositoryFilters") or []) for rule in scan_rules
+            )
+            scan_freq_types: list[str] = sorted(set(
+                rule.get("scanFrequency") or "" for rule in scan_rules
+                if rule.get("scanFrequency")
+            ))
+
+            scan_stable_id = f"{account_id}/{region}/ecr-registry-scanning"
+            records.append({
+                "record_type":           AWS_ECR_REGISTRY_SCANNING_CONFIG,
+                "record_id":             scan_stable_id,
+                "external_id":           scan_stable_id,
+                "name":                  f"ecr-registry-scanning-{region}",
+                "account_id":            account_id,
+                "region":                region,
+                "scan_type":             scan_type,
+                "rule_count":            rule_count,
+                "repo_filter_count":     repo_filter_count,
+                "scan_frequency_types":  scan_freq_types if scan_freq_types else None,
+            })
+        except Exception as exc:
+            fc = classify_aws_ecr_failure("GetRegistryScanningConfiguration", exc)
+            logger.warning(
+                "aws: GetRegistryScanningConfiguration failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+
         return records

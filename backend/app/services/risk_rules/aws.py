@@ -91,6 +91,15 @@ from app.connectors.aws_schema import (
     AWS_SECURITYHUB_ACCOUNT,
     AWS_SECURITYHUB_STANDARD_SUBSCRIPTION,
     AWS_SECURITYHUB_FINDING_AGGREGATOR,
+    AWS_ECS_CLUSTER,
+    AWS_ECS_SERVICE,
+    AWS_ECS_TASK_DEFINITION,
+    AWS_EKS_CLUSTER,
+    AWS_EKS_NODE_GROUP,
+    AWS_EKS_FARGATE_PROFILE,
+    AWS_EKS_ADDON,
+    AWS_ECR_REPOSITORY,
+    AWS_ECR_REGISTRY_SCANNING_CONFIG,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -6039,6 +6048,686 @@ def _classify_securityhub_finding_aggregator_change(change: object) -> tuple[str
     return "low", f"Security Hub finding aggregator changed in '{name}' (field: {fp or 'unknown'})."
 
 
+# ── M46: ECS cluster ─────────────────────────────────────────────────────────
+
+
+def _ecs_is_sensitive(name: str) -> bool:
+    """Return True if the ECS resource name suggests production/sensitive workload."""
+    lower = name.lower()
+    return any(
+        p in lower
+        for p in ("prod", "production", "live", "payment", "billing", "auth", "admin")
+    )
+
+
+def _classify_ecs_cluster_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _ecs_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"ECS cluster '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return (
+            sev,
+            f"ECS cluster '{name}' was removed from monitoring. "
+            "Verify the cluster was not accidentally deleted.",
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("FAILED", "INACTIVE"):
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"ECS cluster '{name}' status changed to '{new_s}'. "
+                "Services in this cluster may be unavailable.",
+            )
+        if new_s == "ACTIVE":
+            return "low", f"ECS cluster '{name}' is now ACTIVE."
+        return "medium", f"ECS cluster '{name}' status changed to '{new_s}'."
+
+    if fp == "container_insights_enabled":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return (
+                sev,
+                f"Container Insights was disabled on ECS cluster '{name}'. "
+                "Observability and operational metrics will be reduced.",
+            )
+        return "low", f"Container Insights was enabled on ECS cluster '{name}'."
+
+    if fp == "has_fargate_capacity":
+        return "low", f"ECS cluster '{name}' Fargate capacity availability changed."
+
+    if fp == "capacity_providers":
+        return "low", f"ECS cluster '{name}' capacity providers changed."
+
+    if fp == "active_services_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return (
+                "medium",
+                f"ECS cluster '{name}' active services count decreased "
+                f"({old_c} → {new_c}). Some services may have stopped.",
+            )
+        return "low", f"ECS cluster '{name}' active services count changed."
+
+    if fp == "tag_keys":
+        return "low", f"ECS cluster '{name}' tag keys changed."
+
+    return "low", f"ECS cluster '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+def _classify_ecs_service_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _ecs_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"ECS service '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return (
+            sev,
+            f"ECS service '{name}' was removed from monitoring. "
+            "Verify the service was not accidentally deleted.",
+        )
+
+    if fp == "has_public_ip":
+        if nv is True:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"ECS service '{name}' now assigns public IPs to tasks. "
+                "Tasks may be directly reachable from the internet.",
+            )
+        return "low", f"ECS service '{name}' no longer assigns public IPs."
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("INACTIVE", "DRAINING"):
+            return (
+                "medium",
+                f"ECS service '{name}' status changed to '{new_s}'.",
+            )
+        return "low", f"ECS service '{name}' status changed to '{new_s}'."
+
+    if fp == "launch_type":
+        return "medium", f"ECS service '{name}' launch type changed from '{pv}' to '{nv}'."
+
+    if fp == "circuit_breaker_enabled":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return (
+                sev,
+                f"Deployment circuit breaker was disabled on ECS service '{name}'. "
+                "Failed deployments will not automatically roll back.",
+            )
+        return "low", f"Deployment circuit breaker was enabled on ECS service '{name}'."
+
+    if fp == "circuit_breaker_rollback":
+        if nv is False:
+            return (
+                "low",
+                f"Deployment circuit breaker rollback was disabled on ECS service '{name}'.",
+            )
+        return "low", f"Deployment circuit breaker rollback was enabled on ECS service '{name}'."
+
+    if fp == "desired_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c == 0 and old_c > 0:
+                sev = "high" if is_sensitive else "medium"
+                return (
+                    sev,
+                    f"ECS service '{name}' desired count was set to 0. "
+                    "The service will stop all running tasks.",
+                )
+            if new_c < old_c:
+                return (
+                    "medium",
+                    f"ECS service '{name}' desired count decreased ({old_c} → {new_c}).",
+                )
+        return "low", f"ECS service '{name}' desired count changed."
+
+    if fp == "task_definition_arn_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"ECS service '{name}' task definition was updated."
+
+    if fp == "lb_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return (
+                "medium",
+                f"ECS service '{name}' load balancer count decreased ({old_c} → {new_c}).",
+            )
+        return "low", f"ECS service '{name}' load balancer count changed."
+
+    if fp == "tag_keys":
+        return "low", f"ECS service '{name}' tag keys changed."
+
+    return "low", f"ECS service '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+def _classify_ecs_task_definition_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _ecs_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"ECS task definition '{name}' was added to monitoring."
+    if ct == "removed":
+        return "low", f"ECS task definition '{name}' was removed (revision may be inactive)."
+
+    if fp == "has_privileged_container":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"ECS task definition '{name}' now contains a privileged container. "
+                "Privileged containers have full access to the host; "
+                "this significantly increases the blast radius of a container compromise.",
+            )
+        return "low", f"ECS task definition '{name}' no longer has privileged containers."
+
+    if fp == "secret_ref_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c > old_c:
+                return (
+                    "medium",
+                    f"ECS task definition '{name}' secret reference count increased "
+                    f"({old_c} → {new_c}). Verify the injected secrets are intentional.",
+                )
+            if new_c < old_c:
+                return (
+                    "medium",
+                    f"ECS task definition '{name}' secret reference count decreased "
+                    f"({old_c} → {new_c}). Some secrets may no longer be injected.",
+                )
+        return "low", f"ECS task definition '{name}' secret reference count changed."
+
+    if fp == "env_sensitive_key_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c > old_c:
+            return (
+                "medium",
+                f"ECS task definition '{name}' sensitive environment key count increased "
+                f"({old_c} → {new_c}). Prefer secrets references over plain-text env vars "
+                "for sensitive values.",
+            )
+        return "low", f"ECS task definition '{name}' sensitive environment key count changed."
+
+    if fp == "network_mode":
+        return "medium", f"ECS task definition '{name}' network mode changed from '{pv}' to '{nv}'."
+
+    if fp == "execution_role_arn_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"ECS task definition '{name}' execution role changed."
+
+    if fp == "task_role_arn_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"ECS task definition '{name}' task role changed."
+
+    if fp == "any_readonly_root_filesystem":
+        if nv is False:
+            return (
+                "low",
+                f"ECS task definition '{name}' no longer has read-only root filesystem containers. "
+                "Consider enabling readonlyRootFilesystem for container hardening.",
+            )
+        return "low", f"ECS task definition '{name}' now has read-only root filesystem containers."
+
+    if fp == "has_efs_volume":
+        return "low", f"ECS task definition '{name}' EFS volume configuration changed."
+
+    if fp == "tag_keys":
+        return "low", f"ECS task definition '{name}' tag keys changed."
+
+    return "low", f"ECS task definition '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M46: EKS cluster ─────────────────────────────────────────────────────────
+
+
+def _classify_eks_cluster_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _ecs_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"EKS cluster '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return (
+            sev,
+            f"EKS cluster '{name}' was removed from monitoring. "
+            "Verify the cluster was not accidentally deleted.",
+        )
+
+    if fp == "public_access_fully_open":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"EKS cluster '{name}' Kubernetes API is now publicly accessible "
+                "from any IP address (0.0.0.0/0). "
+                "Restrict the public access CIDR list or disable public endpoint access.",
+            )
+        return (
+            "medium",
+            f"EKS cluster '{name}' public API access CIDR restriction was tightened.",
+        )
+
+    if fp == "endpoint_public_access":
+        if nv is True:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"EKS cluster '{name}' Kubernetes API endpoint became publicly accessible. "
+                "Ensure the public access CIDR list restricts access to trusted sources.",
+            )
+        return "low", f"EKS cluster '{name}' Kubernetes API public endpoint was disabled."
+
+    if fp == "endpoint_private_access":
+        if nv is False:
+            return (
+                "medium",
+                f"EKS cluster '{name}' private API endpoint access was disabled. "
+                "Nodes must use the public endpoint; consider enabling private access.",
+            )
+        return "low", f"EKS cluster '{name}' private API endpoint access was enabled."
+
+    if fp == "secrets_encryption_enabled":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"Kubernetes Secrets encryption at rest was disabled on EKS cluster '{name}'. "
+                "etcd secrets will no longer be encrypted with a customer-managed KMS key.",
+            )
+        return "low", f"Kubernetes Secrets encryption at rest was enabled on EKS cluster '{name}'."
+
+    if fp == "has_audit_logging":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"EKS cluster '{name}' audit logging was disabled. "
+                "Kubernetes API audit events will no longer be captured.",
+            )
+        return "low", f"EKS cluster '{name}' audit logging was enabled."
+
+    if fp == "enabled_log_types":
+        pv_set = set(pv or []) if isinstance(pv, list) else set()
+        nv_set = set(nv or []) if isinstance(nv, list) else set()
+        removed_types = pv_set - nv_set
+        if removed_types:
+            return (
+                "medium",
+                f"EKS cluster '{name}' removed log types: {sorted(removed_types)}. "
+                "Some Kubernetes control-plane logs will no longer be captured.",
+            )
+        return "low", f"EKS cluster '{name}' enabled log types changed."
+
+    if fp == "kubernetes_version":
+        pv_str = str(pv or "")
+        nv_str = str(nv or "")
+        sev = "medium" if is_sensitive else "low"
+        return (
+            sev,
+            f"EKS cluster '{name}' Kubernetes version changed ({pv_str!r} → {nv_str!r}). "
+            "Verify the upgrade is intentional and applications remain compatible.",
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("FAILED", "DELETING"):
+            sev = "critical" if is_sensitive else "high"
+            return sev, f"EKS cluster '{name}' status changed to '{new_s}'."
+        if new_s in ("DEGRADED", "UPDATING"):
+            return "medium", f"EKS cluster '{name}' status changed to '{new_s}'."
+        return "low", f"EKS cluster '{name}' status changed to '{new_s}'."
+
+    if fp == "role_arn_hash":
+        sev = "high" if is_sensitive else "medium"
+        return sev, f"EKS cluster '{name}' IAM role changed."
+
+    if fp == "tag_keys":
+        return "low", f"EKS cluster '{name}' tag keys changed."
+
+    return "low", f"EKS cluster '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+def _classify_eks_node_group_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _ecs_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"EKS node group '{name}' was added to monitoring."
+    if ct == "removed":
+        return "medium", f"EKS node group '{name}' was removed from monitoring."
+
+    if fp == "ssh_unrestricted":
+        if nv is True:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"EKS node group '{name}' allows unrestricted SSH access (no source SG restriction). "
+                "Nodes may be directly accessible from any IP with the configured key pair.",
+            )
+        return "low", f"EKS node group '{name}' SSH access is now restricted by security group."
+
+    if fp == "has_remote_access":
+        if nv is True:
+            return (
+                "medium",
+                f"EKS node group '{name}' remote SSH access was enabled. "
+                "Verify the source security group restricts access appropriately.",
+            )
+        return "low", f"EKS node group '{name}' remote SSH access was disabled."
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("DEGRADED", "CREATE_FAILED", "DELETE_FAILED"):
+            return "high", f"EKS node group '{name}' status changed to '{new_s}'."
+        return "medium", f"EKS node group '{name}' status changed to '{new_s}'."
+
+    if fp == "ami_type":
+        return "medium", f"EKS node group '{name}' AMI type changed from '{pv}' to '{nv}'."
+
+    if fp == "instance_types":
+        return "low", f"EKS node group '{name}' instance types changed."
+
+    if fp == "capacity_type":
+        return "low", f"EKS node group '{name}' capacity type changed from '{pv}' to '{nv}'."
+
+    if fp in ("min_size", "max_size", "desired_size"):
+        return "low", f"EKS node group '{name}' scaling configuration changed ({fp})."
+
+    if fp == "node_role_arn_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"EKS node group '{name}' node IAM role changed."
+
+    if fp == "tag_keys":
+        return "low", f"EKS node group '{name}' tag keys changed."
+
+    return "low", f"EKS node group '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+def _classify_eks_fargate_profile_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"EKS Fargate profile '{name}' was added to monitoring."
+    if ct == "removed":
+        return "medium", (
+            f"EKS Fargate profile '{name}' was removed. "
+            "Pods matching the profile's selectors may no longer schedule."
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("DELETE_FAILED", "CREATE_FAILED"):
+            return "high", f"EKS Fargate profile '{name}' status changed to '{new_s}'."
+        return "medium", f"EKS Fargate profile '{name}' status changed to '{new_s}'."
+
+    if fp == "selector_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c < old_c:
+                return (
+                    "medium",
+                    f"EKS Fargate profile '{name}' selector count decreased "
+                    f"({old_c} → {new_c}). Fewer pod namespaces will run on Fargate.",
+                )
+            return "low", f"EKS Fargate profile '{name}' selector count changed."
+        return "low", f"EKS Fargate profile '{name}' selector count changed."
+
+    if fp == "selector_namespaces":
+        return "medium", f"EKS Fargate profile '{name}' target namespaces changed."
+
+    if fp == "pod_execution_role_arn_hash":
+        return "medium", f"EKS Fargate profile '{name}' pod execution role changed."
+
+    if fp == "tag_keys":
+        return "low", f"EKS Fargate profile '{name}' tag keys changed."
+
+    return "low", f"EKS Fargate profile '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+def _classify_eks_addon_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"EKS add-on '{name}' was added to monitoring."
+    if ct == "removed":
+        return "medium", f"EKS add-on '{name}' was removed from the cluster."
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("DEGRADED", "CREATE_FAILED", "UPDATE_FAILED", "DELETE_FAILED"):
+            return "high", f"EKS add-on '{name}' status changed to '{new_s}'."
+        return "medium", f"EKS add-on '{name}' status changed to '{new_s}'."
+
+    if fp == "addon_version":
+        return (
+            "low",
+            f"EKS add-on '{name}' version changed from '{pv}' to '{nv}'. "
+            "Verify the version change is intentional.",
+        )
+
+    if fp == "service_account_role_hash":
+        return "medium", f"EKS add-on '{name}' service account role changed."
+
+    if fp == "tag_keys":
+        return "low", f"EKS add-on '{name}' tag keys changed."
+
+    return "low", f"EKS add-on '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M46: ECR repository ───────────────────────────────────────────────────────
+
+
+def _classify_ecr_repository_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _ecs_is_sensitive(name)
+
+    if ct == "added":
+        return "low", f"ECR repository '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return (
+            sev,
+            f"ECR repository '{name}' was removed from monitoring. "
+            "Verify the repository was not accidentally deleted.",
+        )
+
+    if fp == "policy_is_public":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"ECR repository '{name}' policy now grants access to external principals or '*'. "
+                "This may allow cross-account or public access to container images. "
+                "Review the repository policy immediately.",
+            )
+        return (
+            "medium",
+            f"ECR repository '{name}' policy is no longer publicly accessible.",
+        )
+
+    if fp == "scan_on_push":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return (
+                sev,
+                f"ECR repository '{name}' scan-on-push was disabled. "
+                "Images pushed to this repository will not be automatically scanned for vulnerabilities.",
+            )
+        return "low", f"ECR repository '{name}' scan-on-push was enabled."
+
+    if fp == "tag_immutable":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return (
+                sev,
+                f"ECR repository '{name}' image tag mutability changed to MUTABLE. "
+                "Image tags can now be overwritten, which may undermine deployment reproducibility.",
+            )
+        return "low", f"ECR repository '{name}' image tags are now immutable."
+
+    if fp == "lifecycle_policy_present":
+        if nv is False:
+            return (
+                "low",
+                f"ECR repository '{name}' lifecycle policy was removed. "
+                "Images will accumulate without automated cleanup.",
+            )
+        return "low", f"ECR repository '{name}' lifecycle policy was added."
+
+    if fp == "lifecycle_rule_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return (
+                "low",
+                f"ECR repository '{name}' lifecycle rule count decreased ({old_c} → {new_c}).",
+            )
+        return "low", f"ECR repository '{name}' lifecycle rule count changed."
+
+    if fp == "policy_present":
+        if nv is True:
+            return (
+                "medium",
+                f"ECR repository '{name}' had a repository policy added. "
+                "Review the policy to ensure it grants only intended access.",
+            )
+        return "low", f"ECR repository '{name}' repository policy was removed."
+
+    if fp == "encryption_type":
+        pv_str = str(pv or "")
+        nv_str = str(nv or "")
+        return (
+            "medium",
+            f"ECR repository '{name}' encryption type changed ({pv_str!r} → {nv_str!r}).",
+        )
+
+    if fp == "kms_key_hash":
+        if nv is None:
+            return (
+                "medium",
+                f"ECR repository '{name}' KMS key was removed. "
+                "Repository may now use the default AWS-managed key.",
+            )
+        return "low", f"ECR repository '{name}' KMS key changed."
+
+    if fp == "tag_keys":
+        return "low", f"ECR repository '{name}' tag keys changed."
+
+    return "low", f"ECR repository '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+def _classify_ecr_registry_scanning_config_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"ECR registry scanning configuration for '{name}' was added to monitoring."
+    if ct == "removed":
+        return "medium", f"ECR registry scanning configuration for '{name}' is no longer visible."
+
+    if fp == "scan_type":
+        pv_str = str(pv or "").upper()
+        nv_str = str(nv or "").upper()
+        if nv_str == "BASIC" and pv_str == "ENHANCED":
+            return (
+                "high",
+                f"ECR registry scanning in '{name}' was downgraded from ENHANCED to BASIC. "
+                "Continuous vulnerability scanning across all images will be disabled.",
+            )
+        if nv_str == "ENHANCED" and pv_str == "BASIC":
+            return (
+                "low",
+                f"ECR registry scanning in '{name}' was upgraded from BASIC to ENHANCED.",
+            )
+        return "medium", f"ECR registry scanning type changed in '{name}' ({pv_str!r} → {nv_str!r})."
+
+    if fp == "rule_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c == 0 and old_c > 0:
+                return (
+                    "high",
+                    f"All ECR registry scanning rules were removed in '{name}'. "
+                    "Images may no longer be scanned for vulnerabilities.",
+                )
+            if new_c < old_c:
+                return (
+                    "medium",
+                    f"ECR registry scanning rule count decreased in '{name}' "
+                    f"({old_c} → {new_c}). Some repositories may no longer be scanned.",
+                )
+        return "low", f"ECR registry scanning rule count changed in '{name}'."
+
+    if fp == "scan_frequency_types":
+        return "medium", f"ECR registry scanning frequency types changed in '{name}'."
+
+    if fp == "repo_filter_count":
+        return "low", f"ECR registry scanning repository filter count changed in '{name}'."
+
+    return "low", f"ECR registry scanning configuration changed in '{name}' (field: {fp or 'unknown'})."
+
+
 def classify_aws_change(change: object) -> tuple[str, str]:
     """Route an AWS change to the appropriate risk rule.
 
@@ -6164,6 +6853,26 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_securityhub_standard_subscription_change(change)
     if record_type == AWS_SECURITYHUB_FINDING_AGGREGATOR:
         return _classify_securityhub_finding_aggregator_change(change)
+
+    # ── M46 ECS / EKS / ECR ───────────────────────────────────────────────────
+    if record_type == AWS_ECS_CLUSTER:
+        return _classify_ecs_cluster_change(change)
+    if record_type == AWS_ECS_SERVICE:
+        return _classify_ecs_service_change(change)
+    if record_type == AWS_ECS_TASK_DEFINITION:
+        return _classify_ecs_task_definition_change(change)
+    if record_type == AWS_EKS_CLUSTER:
+        return _classify_eks_cluster_change(change)
+    if record_type == AWS_EKS_NODE_GROUP:
+        return _classify_eks_node_group_change(change)
+    if record_type == AWS_EKS_FARGATE_PROFILE:
+        return _classify_eks_fargate_profile_change(change)
+    if record_type == AWS_EKS_ADDON:
+        return _classify_eks_addon_change(change)
+    if record_type == AWS_ECR_REPOSITORY:
+        return _classify_ecr_repository_change(change)
+    if record_type == AWS_ECR_REGISTRY_SCANNING_CONFIG:
+        return _classify_ecr_registry_scanning_config_change(change)
 
     # Unknown AWS record type — conservative default
     return (

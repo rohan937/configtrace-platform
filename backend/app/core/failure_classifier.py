@@ -1908,3 +1908,273 @@ def classify_aws_securityhub_failure(
             "other AWS checks may still work."
         ),
     )
+
+
+def classify_aws_ecs_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial ECS sync failure (per-API, per-region).
+
+    SECURITY: logs:GetLogEvents is NEVER called.  ECS task/container logs are
+    NEVER read.  Environment variable values are NEVER stored.  Secret values
+    are NEVER accessed.  Only ECS posture and configuration metadata is
+    collected.
+
+    Args:
+        api_name: The ECS API name (e.g. ``"ListClusters"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _ECS_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only ECS read permissions. "
+        "Required: ecs:ListClusters, ecs:DescribeClusters, ecs:ListServices, "
+        "ecs:DescribeServices, ecs:ListTaskDefinitions, ecs:DescribeTaskDefinition. "
+        "ConfigTrace reads ECS configuration and posture metadata only; "
+        "task logs and environment variable values are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _ECS_API_CODES: dict[str, str] = {
+        "ListClusters":          "aws_ecs_clusters_unavailable",
+        "DescribeClusters":      "aws_ecs_clusters_unavailable",
+        "ListServices":          "aws_ecs_services_unavailable",
+        "DescribeServices":      "aws_ecs_services_unavailable",
+        "ListTaskDefinitions":   "aws_ecs_task_definitions_unavailable",
+        "DescribeTaskDefinition": "aws_ecs_task_definitions_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_ecs_access_denied",
+            recommended_action=_ECS_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_ecs_rate_limited",
+            recommended_action=(
+                "AWS throttled ECS metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented ECS API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_ecs_api_unavailable",
+            recommended_action=(
+                "The ECS API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _ECS_API_CODES.get(api_name, "aws_ecs_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional ECS metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_eks_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial EKS sync failure (per-API, per-region).
+
+    SECURITY: The Kubernetes API is NEVER called.  Kubernetes pods, Secrets,
+    ConfigMaps, events, and logs are NEVER accessed.  Only EKS control-plane
+    posture and configuration metadata is collected.
+
+    Args:
+        api_name: The EKS API name (e.g. ``"ListClusters"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _EKS_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only EKS read permissions. "
+        "Required: eks:ListClusters, eks:DescribeCluster, eks:ListNodegroups, "
+        "eks:DescribeNodegroup, eks:ListFargateProfiles, eks:DescribeFargateProfile, "
+        "eks:ListAddons, eks:DescribeAddon. "
+        "ConfigTrace reads EKS control-plane configuration metadata only; "
+        "the Kubernetes API is never called. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _EKS_API_CODES: dict[str, str] = {
+        "ListClusters":          "aws_eks_clusters_unavailable",
+        "DescribeCluster":       "aws_eks_clusters_unavailable",
+        "ListNodegroups":        "aws_eks_nodegroups_unavailable",
+        "DescribeNodegroup":     "aws_eks_nodegroups_unavailable",
+        "ListFargateProfiles":   "aws_eks_fargate_unavailable",
+        "DescribeFargateProfile": "aws_eks_fargate_unavailable",
+        "ListAddons":            "aws_eks_addons_unavailable",
+        "DescribeAddon":         "aws_eks_addons_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_eks_access_denied",
+            recommended_action=_EKS_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_eks_rate_limited",
+            recommended_action=(
+                "AWS throttled EKS metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented EKS API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_eks_api_unavailable",
+            recommended_action=(
+                "The EKS API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _EKS_API_CODES.get(api_name, "aws_eks_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional EKS metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_ecr_failure(
+    api_name: str,
+    exc: Exception,
+) -> "FailureClassification":
+    """Classify a partial ECR sync failure (per-API, per-region).
+
+    SECURITY: ECR images are NEVER pulled.  Image layers and manifests are
+    NEVER accessed.  ecr:GetAuthorizationToken is NEVER called.  Vulnerability
+    scan findings are NEVER ingested.  Only ECR repository and registry
+    posture/configuration metadata is collected.
+
+    Args:
+        api_name: The ECR API name (e.g. ``"DescribeRepositories"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _ECR_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only ECR read permissions. "
+        "Required: ecr:DescribeRepositories, ecr:GetRepositoryPolicy, "
+        "ecr:GetLifecyclePolicy, ecr:GetRegistryScanningConfiguration. "
+        "ConfigTrace reads ECR repository policy and scanning posture metadata only; "
+        "images are never pulled and authorization tokens are never requested. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _ECR_API_CODES: dict[str, str] = {
+        "DescribeRepositories":            "aws_ecr_repositories_unavailable",
+        "GetRepositoryPolicy":             "aws_ecr_repositories_unavailable",
+        "GetLifecyclePolicy":              "aws_ecr_repositories_unavailable",
+        "GetRegistryScanningConfiguration": "aws_ecr_scanning_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_ecr_access_denied",
+            recommended_action=_ECR_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_ecr_rate_limited",
+            recommended_action=(
+                "AWS throttled ECR metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented ECR API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_ecr_api_unavailable",
+            recommended_action=(
+                "The ECR API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _ECR_API_CODES.get(api_name, "aws_ecr_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional ECR metadata; "
+            "other AWS checks may still work."
+        ),
+    )

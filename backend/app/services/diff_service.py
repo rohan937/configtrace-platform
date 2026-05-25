@@ -1071,6 +1071,150 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "specified_regions",
         "config_fetch_warnings",
     ),
+
+    # ── M46: ECS / EKS / ECR ─────────────────────────────────────────────────
+
+    # aws_ecs_cluster — one per ECS cluster per region.
+    # SECURITY: task logs, env values, secret values NEVER tracked.
+    "aws_ecs_cluster": (
+        "status",
+        "registered_container_instance_count",
+        "running_tasks_count",
+        "pending_tasks_count",
+        "active_services_count",
+        "capacity_providers",
+        "default_capacity_provider_strategy_count",
+        "has_fargate_capacity",
+        "container_insights_enabled",
+        "name_sensitivity",
+        "tag_keys",
+    ),
+
+    # aws_ecs_service — one per ECS service per cluster per region.
+    # SECURITY: env values NEVER tracked; task definition ARN stored as hash only.
+    "aws_ecs_service": (
+        "status",
+        "launch_type",
+        "scheduling_strategy",
+        "desired_count",
+        "running_count",
+        "has_public_ip",
+        "lb_count",
+        "lb_target_group_arn_hashes",
+        "task_definition_arn_hash",
+        "deployment_count",
+        "circuit_breaker_enabled",
+        "circuit_breaker_rollback",
+        "service_connect_enabled",
+        "name_sensitivity",
+        "tag_keys",
+    ),
+
+    # aws_ecs_task_definition — one per task definition revision per region.
+    # SECURITY: env values NEVER tracked; secret ARNs NEVER stored; count only.
+    "aws_ecs_task_definition": (
+        "status",
+        "network_mode",
+        "requires_compatibilities",
+        "cpu",
+        "memory",
+        "task_role_arn_hash",
+        "execution_role_arn_hash",
+        "container_count",
+        "volume_count",
+        "has_efs_volume",
+        "env_key_count",
+        "env_sensitive_key_count",
+        "secret_ref_count",
+        "has_privileged_container",
+        "any_readonly_root_filesystem",
+        "log_driver_types",
+        "name_sensitivity",
+        "tag_keys",
+    ),
+
+    # aws_eks_cluster — one per EKS cluster per region.
+    # SECURITY: Kubernetes API never called; no pod/secret/configmap data tracked.
+    "aws_eks_cluster": (
+        "status",
+        "kubernetes_version",
+        "platform_version",
+        "role_arn_hash",
+        "endpoint_public_access",
+        "endpoint_private_access",
+        "public_access_fully_open",
+        "public_access_cidrs_count",
+        "subnet_count",
+        "security_group_count",
+        "ip_family",
+        "enabled_log_types",
+        "has_audit_logging",
+        "secrets_encryption_enabled",
+        "kms_key_hash",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_eks_node_group — one per node group per cluster.
+    "aws_eks_node_group": (
+        "status",
+        "capacity_type",
+        "ami_type",
+        "instance_types",
+        "disk_size",
+        "min_size",
+        "max_size",
+        "desired_size",
+        "node_role_arn_hash",
+        "has_remote_access",
+        "ssh_unrestricted",
+        "source_security_group_count",
+        "tag_keys",
+    ),
+
+    # aws_eks_fargate_profile — one per Fargate profile per cluster.
+    "aws_eks_fargate_profile": (
+        "status",
+        "pod_execution_role_arn_hash",
+        "selector_count",
+        "selector_namespaces",
+        "subnet_count",
+        "tag_keys",
+    ),
+
+    # aws_eks_addon — one per EKS add-on per cluster.
+    "aws_eks_addon": (
+        "status",
+        "addon_version",
+        "service_account_role_hash",
+        "tag_keys",
+    ),
+
+    # aws_ecr_repository — one per ECR repository per region.
+    # SECURITY: images never pulled; raw policy JSON never stored; tag values never stored.
+    "aws_ecr_repository": (
+        "image_tag_mutability",
+        "tag_immutable",
+        "scan_on_push",
+        "encryption_type",
+        "kms_key_hash",
+        "policy_present",
+        "policy_is_public",
+        "lifecycle_policy_present",
+        "lifecycle_rule_count",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_ecr_registry_scanning_config — one per region.
+    "aws_ecr_registry_scanning_config": (
+        "scan_type",
+        "rule_count",
+        "repo_filter_count",
+        "scan_frequency_types",
+    ),
 }
 
 
