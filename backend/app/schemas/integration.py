@@ -41,11 +41,11 @@ class IntegrationCreateRequest(BaseModel):
     is present for the chosen provider.
     """
 
-    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws", "firebase"] = Field(
+    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase"] = Field(
         ...,
         description=(
             "Provider identifier. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase', 'supabase'."
         ),
     )
     display_name: str = Field(
@@ -186,6 +186,27 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Supabase fields ───────────────────────────────────────────────────────
+    supabase_access_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Supabase Management API personal access token (starts with sbp_). "
+            "Generated at supabase.com/dashboard/account/tokens. "
+            "Required when provider='supabase'. "
+            "Stored encrypted — never returned in API responses. "
+            "SECURITY: Never logged, never returned to the frontend, stored in plaintext."
+        ),
+    )
+    supabase_project_ref: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Supabase project reference string (20-char alphanumeric, shown in the project URL). "
+            "Required when provider='supabase'."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -248,6 +269,15 @@ class IntegrationCreateRequest(BaseModel):
             if not self.firebase_service_account_json:
                 raise ValueError(
                     "firebase_service_account_json is required for Firebase integrations."
+                )
+        elif self.provider == "supabase":
+            if not self.supabase_access_token:
+                raise ValueError(
+                    "supabase_access_token is required for Supabase integrations."
+                )
+            if not self.supabase_project_ref:
+                raise ValueError(
+                    "supabase_project_ref is required for Supabase integrations."
                 )
         return self
 
@@ -368,6 +398,15 @@ class IntegrationReconnectRequest(BaseModel):
         min_length=1,
         description=(
             "New Firebase service account JSON. Required for Firebase integrations. "
+            "Stored encrypted — never returned in API responses."
+        ),
+    )
+    supabase_access_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Supabase Management API access token (sbp_...). "
+            "Required for Supabase integrations. "
             "Stored encrypted — never returned in API responses."
         ),
     )

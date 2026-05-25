@@ -14,10 +14,11 @@ import VercelIntegrationForm from "@/components/integrations/VercelIntegrationFo
 import StripeIntegrationForm from "@/components/integrations/StripeIntegrationForm";
 import AWSIntegrationForm from "@/components/integrations/AWSIntegrationForm";
 import FirebaseIntegrationForm from "@/components/integrations/FirebaseIntegrationForm";
+import SupabaseIntegrationForm from "@/components/integrations/SupabaseIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 
-type Provider = "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase";
+type Provider = "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase" | "supabase";
 // GitHub sub-modes: "app" = recommended GitHub App flow, "pat" = advanced PAT flow
 type GitHubMode = "app" | "pat";
 
@@ -138,7 +139,7 @@ export default function IntegrationsPage() {
           >
             {/* Provider tabs */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "18px" }}>
-              {(["cloudflare", "github", "vercel", "stripe", "aws", "firebase"] as Provider[]).map((p) => (
+              {(["cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase"] as Provider[]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setSelectedProvider(p)}
@@ -157,7 +158,7 @@ export default function IntegrationsPage() {
                     borderColor: selectedProvider === p ? "rgba(79,128,247,0.35)" : "#2a2d38",
                   }}
                 >
-                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : p === "vercel" ? "Vercel" : p === "stripe" ? "Stripe" : p === "aws" ? "AWS" : "Firebase"}
+                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : p === "vercel" ? "Vercel" : p === "stripe" ? "Stripe" : p === "aws" ? "AWS" : p === "firebase" ? "Firebase" : "Supabase"}
                 </button>
               ))}
             </div>
@@ -368,6 +369,46 @@ export default function IntegrationsPage() {
                 </p>
               </>
             )}
+
+            {/* Supabase guide */}
+            {selectedProvider === "supabase" && (
+              <>
+                <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+                  How to connect a Supabase project
+                </p>
+                <SetupSteps steps={[
+                  {
+                    heading: "Generate a Management API access token.",
+                    body: <>Go to{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>
+                        supabase.com/dashboard/account/tokens
+                      </code>{" "}
+                      → &ldquo;Generate new token&rdquo;. Copy the token immediately — it will not
+                      be shown again.</>,
+                  },
+                  {
+                    heading: "Find your project reference.",
+                    body: <>In the Supabase dashboard, open your project. The project reference is the
+                      20-character string in the URL:{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>
+                        supabase.com/dashboard/project/&lt;ref&gt;
+                      </code>
+                    </>,
+                  },
+                  {
+                    heading: "Connect below.",
+                    body: <>Enter the access token and project reference. ConfigTrace validates access
+                      before saving. The token is encrypted before storage and never returned in
+                      any API response.</>,
+                  },
+                ]} />
+                <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+                  ConfigTrace uses read-only access only — it never modifies your Supabase project.
+                  Database row data, Auth user PII, Edge Function source code, secret values,
+                  and Storage file contents are NEVER fetched or stored.
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -470,6 +511,22 @@ export default function IntegrationsPage() {
             >
               Add Firebase Integration
             </button>
+            <button
+              onClick={() => { setSelectedProvider("supabase"); setShowForm(true); }}
+              style={{
+                background: "#1e2030",
+                color: "#b0b5c4",
+                border: "1px solid #3a3d4a",
+                borderRadius: "6px",
+                padding: "8px 16px",
+                fontSize: "13px",
+                fontWeight: 500,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Add Supabase Integration
+            </button>
           </div>
         ) : selectedProvider === "cloudflare" ? (
           <CloudflareIntegrationForm
@@ -493,6 +550,11 @@ export default function IntegrationsPage() {
           />
         ) : selectedProvider === "firebase" ? (
           <FirebaseIntegrationForm
+            onCreated={handleCreated}
+            onCancel={() => setShowForm(false)}
+          />
+        ) : selectedProvider === "supabase" ? (
+          <SupabaseIntegrationForm
             onCreated={handleCreated}
             onCancel={() => setShowForm(false)}
           />

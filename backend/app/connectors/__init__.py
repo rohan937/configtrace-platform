@@ -13,6 +13,11 @@ FirebaseConnector
     Fetches Firebase/Google Cloud project metadata, Auth config, Security Rules,
     Storage bucket metadata, Hosting sites, and Cloud Functions metadata.
     Customer data (Firestore documents, Storage objects, Auth users) is NEVER read.
+SupabaseConnector
+    Fetches Supabase project configuration, Auth settings, database/storage/API
+    config, Edge Function metadata, RLS status, and network restrictions via the
+    Supabase Management API.
+    Row data, Auth user PII, secret values, and file contents are NEVER read.
 
 Exceptions
 ----------
@@ -34,10 +39,12 @@ from app.connectors.exceptions import (
     RateLimitError,
 )
 from app.connectors.firebase import FirebaseConnector
+from app.connectors.supabase import SupabaseConnector
 
 __all__ = [
     "CloudflareConnector",
     "FirebaseConnector",
+    "SupabaseConnector",
     "AuthenticationError",
     "ConnectorError",
     "NetworkError",

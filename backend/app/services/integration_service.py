@@ -149,10 +149,20 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    elif provider == "supabase":
+        return create_supabase_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase', 'supabase'."
         )
 
 
@@ -1029,6 +1039,152 @@ def reconnect_credentials_firebase(
 
     # Validate new credentials against the live Firebase API.
     FirebaseConnector().validate_credentials(new_creds)
+
+    # Encrypt and store.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
+    if integration.status == "error":
+        integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def create_supabase_integration(
+    *,
+    credentials: dict,
+    display_name: str,
+    user_id: uuid.UUID,
+    workspace_id: uuid.UUID | None = None,
+    scheduled_sync_enabled: bool = True,
+    sync_interval_minutes: int = 60,
+    db: Session,
+) -> Integration:
+    """Create and validate a Supabase integration using a Management API token.
+
+    SECURITY:
+    - credentials["access_token"] is never logged.
+    - The token is stored encrypted only and never returned.
+    - Only project configuration metadata is fetched; row data, auth user PII,
+      secret values, and file contents are NEVER read.
+    """
+    from app.connectors.supabase import SupabaseConnector
+
+    connector = SupabaseConnector()
+    access_token: str = credentials.get("access_token", "")
+    project_ref: str = credentials.get("project_ref", "")
+
+    # ── 1. Validate credentials ───────────────────────────────────────────────
+    connector.validate_credentials(credentials)
+
+    # ── 2. Duplicate-project check (non-deleted only) ─────────────────────────
+    if project_ref:
+        existing = (
+            db.query(Resource)
+            .join(Integration, Integration.id == Resource.integration_id)
+            .filter(
+                Resource.user_id == user_id,
+                Resource.provider_resource_type == "supabase_project",
+                Resource.provider_resource_id == project_ref,
+                Integration.status != "deleted",
+            )
+            .first()
+        )
+        if existing is not None:
+            raise ValueError(
+                f"Supabase project {project_ref!r} is already connected."
+            )
+
+    # ── 3. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 4. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="supabase",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 5. Create Resource row ────────────────────────────────────────────────
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="supabase_project",
+        provider_resource_id=project_ref or str(integration.id),
+        display_name=f"{display_name} ({project_ref})" if project_ref else display_name,
+        resource_metadata={
+            "project_ref": project_ref,
+            # Do NOT store the access_token in resource_metadata.
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 6. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_supabase(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_access_token: str,
+    db: Session,
+) -> Integration:
+    """Replace the Management API access token for an existing Supabase integration.
+
+    The new token is validated against the live Supabase Management API before
+    the database row is updated.  If validation fails, the existing credentials
+    remain unchanged.
+
+    SECURITY: The access token is stored encrypted only.
+    It is NEVER logged or returned.
+    """
+    from app.connectors.supabase import SupabaseConnector
+    from app.core.encryption import encrypt_credentials
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # Retrieve the existing project_ref from the resource row.
+    resource = (
+        db.query(Resource)
+        .filter(
+            Resource.integration_id == integration_id,
+            Resource.provider_resource_type == "supabase_project",
+        )
+        .first()
+    )
+    project_ref = ""
+    if resource is not None:
+        meta = resource.resource_metadata or {}
+        project_ref = meta.get("project_ref", "") or resource.provider_resource_id or ""
+
+    new_creds = {
+        "access_token": new_access_token,
+        "project_ref": project_ref,
+    }
+
+    # Validate new credentials against the live Supabase API.
+    SupabaseConnector().validate_credentials(new_creds)
 
     # Encrypt and store.
     ciphertext, iv = encrypt_credentials(new_creds)

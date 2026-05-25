@@ -82,6 +82,12 @@ AWS API Gateway (partial/per-API failures, via classify_aws_apigateway_failure):
   aws_apigateway_resources_unavailable, aws_apigateway_authorizers_unavailable
   aws_apigatewayv2_apis_unavailable, aws_apigatewayv2_stages_unavailable
   aws_apigatewayv2_routes_unavailable, aws_apigatewayv2_integrations_unavailable
+Firebase (whole-integration failures, via classify_failure):
+  firebase_credentials_invalid, firebase_permission_denied,
+  firebase_project_unavailable, firebase_api_unavailable
+Supabase (whole-integration failures, via classify_failure):
+  supabase_token_revoked, supabase_permission_denied,
+  supabase_project_not_found, supabase_api_unavailable
 Generic:
   rate_limit_exceeded, network_error, config_error, internal_error, unknown
 """
@@ -305,6 +311,16 @@ def _classify_auth(
                 "Do not grant data read/write permissions — metadata-only roles are sufficient."
             ),
         )
+    if provider == "supabase":
+        return FailureClassification(
+            category="authentication",
+            error_code="supabase_token_revoked",
+            recommended_action=(
+                "The Supabase Management API access token was revoked or expired. "
+                "Generate a new personal access token at supabase.com/dashboard/account/tokens "
+                "and reconnect this integration."
+            ),
+        )
     # Unknown provider
     return FailureClassification(
         category="authentication",
@@ -370,6 +386,16 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "Do not grant data read/write permissions — metadata-only roles are sufficient."
                 ),
             )
+        if provider == "supabase":
+            return FailureClassification(
+                category="authentication",
+                error_code="supabase_permission_denied",
+                recommended_action=(
+                    "The Supabase access token does not have permission to read project "
+                    "configuration via the Management API. "
+                    "Verify the token has the required scopes and the project ref is correct."
+                ),
+            )
         # Other providers: treat as auth failure.
         return _classify_auth(provider, None)
 
@@ -429,6 +455,16 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "and that the service account is a member of the project."
                 ),
             )
+        if provider == "supabase":
+            return FailureClassification(
+                category="resource_missing",
+                error_code="supabase_project_not_found",
+                recommended_action=(
+                    "The Supabase project was not found. "
+                    "Verify the project reference (project_ref) is correct and that the "
+                    "access token has access to this project."
+                ),
+            )
         return FailureClassification(
             category="resource_missing",
             error_code="resource_not_found",
@@ -451,6 +487,8 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
             code = "aws_api_unavailable"
         elif provider == "firebase":
             code = "firebase_api_unavailable"
+        elif provider == "supabase":
+            code = "supabase_api_unavailable"
         else:
             code = "provider_unavailable"
         return FailureClassification(

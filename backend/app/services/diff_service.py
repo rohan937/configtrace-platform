@@ -1701,6 +1701,81 @@ _FIREBASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# ── Supabase-specific tracked fields (M54) ────────────────────────────────────
+
+_SUPABASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "supabase_project": (
+        "name",
+        "region",
+        "cloud_provider",
+        "status",
+        "plan_id",
+        "has_custom_domain",
+        "config_fetch_warnings",
+    ),
+    "supabase_auth_config": (
+        "email_enabled",
+        "phone_enabled",
+        "anonymous_enabled",
+        "mfa_totp_enabled",
+        "session_timebox_seconds",
+        "session_inactivity_timeout_seconds",
+        "oauth_provider_count",
+        "password_min_length",
+        "site_url",
+        "max_request_users_per_day",
+        "config_fetch_warnings",
+    ),
+    "supabase_database_config": (
+        "pool_mode",
+        "pool_size",
+        "default_pool_size",
+        "max_client_conn",
+        "postgres_version",
+        "config_fetch_warnings",
+    ),
+    "supabase_storage_config": (
+        "file_size_limit",
+        "allowed_mime_types",
+        "s3_protocol_enabled",
+        "config_fetch_warnings",
+    ),
+    "supabase_edge_function": (
+        "status",
+        "version",
+        "env_var_key_count",
+        "verify_jwt",
+        "config_fetch_warnings",
+    ),
+    "supabase_rls_status": (
+        "rls_enabled",
+        "rls_forced",
+        "config_fetch_warnings",
+    ),
+    "supabase_api_config": (
+        "db_schema",
+        "db_extra_search_path",
+        "max_rows",
+        "config_fetch_warnings",
+    ),
+    "supabase_network_restriction": (
+        "cidr",
+        "is_unrestricted",
+        "config_fetch_warnings",
+    ),
+    "supabase_custom_domain": (
+        "custom_domain",
+        "status",
+        "config_fetch_warnings",
+    ),
+    "supabase_oauth_provider": (
+        "enabled",
+        "client_id_hash",
+        "config_fetch_warnings",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -1714,6 +1789,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_STRIPE_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"firebase_"`` look up in
       ``_FIREBASE_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"supabase_"`` look up in
+      ``_SUPABASE_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -1733,6 +1810,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _AWS_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("firebase_"):
         return _FIREBASE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("supabase_"):
+        return _SUPABASE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     return _TRACKED_FIELDS
 
 
