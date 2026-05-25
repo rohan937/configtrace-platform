@@ -8,6 +8,7 @@ import type { Integration } from "@/types";
 import StatusBadge from "@/components/common/StatusBadge";
 import { formatRelativeTime } from "@/lib/utils";
 import { getGitHubAppInstallUrl, getSyncStatus, patchIntegration, triggerSync } from "@/lib/api";
+import { getProviderMeta } from "@/lib/providers";
 import RenameIntegrationModal from "./RenameIntegrationModal";
 import DeleteIntegrationModal from "./DeleteIntegrationModal";
 import ReconnectIntegrationModal from "./ReconnectIntegrationModal";
@@ -15,10 +16,29 @@ import ReconnectIntegrationModal from "./ReconnectIntegrationModal";
 // Key used to stash state token for GitHub App re-install flow.
 const GITHUB_APP_STATE_KEY = "github_app_oauth_state";
 
-// ── Providers that have live sync available ───────────────────────────────────
-// Used to gate the "Live / webhook sync: coming soon" copy.
-// Both current providers have scheduled polling but not true live/webhook sync.
-const PROVIDERS_WITH_LIVE_SYNC: string[] = [];
+// ── Provider badge ────────────────────────────────────────────────────────────
+
+function ProviderBadge({ provider }: { provider: string }) {
+  const meta = getProviderMeta(provider);
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        fontSize: "10px",
+        fontWeight: 600,
+        letterSpacing: "0.04em",
+        padding: "2px 7px",
+        borderRadius: "4px",
+        background: meta.bgColor,
+        color: meta.color,
+        border: `1px solid ${meta.borderColor}`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {meta.shortLabel}
+    </span>
+  );
+}
 
 // ── Sync interval display helper ──────────────────────────────────────────────
 
@@ -250,17 +270,7 @@ export default function IntegrationList({
   }, []);
 
   if (localIntegrations.length === 0) {
-    return (
-      <div
-        className="flex flex-col items-center justify-center py-16 gap-2"
-        style={{ color: "#8b90a0", fontSize: "14px" }}
-      >
-        <span>No integrations connected yet.</span>
-        <span style={{ fontSize: "12px" }}>
-          Use the form above to connect your first integration.
-        </span>
-      </div>
-    );
+    return null; // parent page handles the empty state with the marketplace grid
   }
 
   // ── Local state helpers ───────────────────────────────────────────────────
@@ -390,23 +400,41 @@ export default function IntegrationList({
     poll();
   }
 
-  // ── Last-sync status dot ──────────────────────────────────────────────────
+  // ── Last-sync status chip ─────────────────────────────────────────────────
 
   function LastSyncDot({ integration }: { integration: Integration }) {
     const status = integration.last_sync_status;
-    if (!status || status === "completed") return null;
+    if (!status) {
+      return (
+        <span style={{ color: "#565b6e", fontSize: "10px" }}>
+          ● Never synced
+        </span>
+      );
+    }
     if (status === "failed") {
       return (
         <span
           title={integration.last_sync_error ?? "Last sync failed"}
           style={{ color: "#e84040", fontSize: "10px" }}
+          aria-label={`Sync failed: ${integration.last_sync_error ?? "unknown error"}`}
         >
-          ● Sync error
+          ● Sync failed
         </span>
       );
     }
     if (status === "running" || status === "pending") {
-      return <span style={{ color: "#f5a623", fontSize: "10px" }}>● Sync running…</span>;
+      return (
+        <span style={{ color: "#f5a623", fontSize: "10px" }} aria-live="polite">
+          ● Sync running…
+        </span>
+      );
+    }
+    if (status === "completed" && integration.last_synced_at) {
+      return (
+        <span style={{ color: "#3ccf7e", fontSize: "10px" }}>
+          ● Recently synced
+        </span>
+      );
     }
     return null;
   }
@@ -463,7 +491,6 @@ export default function IntegrationList({
           const state = syncStates[integration.id] ?? { polling: false, result: null, error: null };
           const isPaused = integration.status === "paused";
           const isBusy = pauseInProgress[integration.id] ?? false;
-          const hasLiveSync = PROVIDERS_WITH_LIVE_SYNC.includes(integration.provider);
 
           return (
             <div
@@ -484,20 +511,10 @@ export default function IntegrationList({
                   {integration.display_name}
                 </Link>
 
-                {/* Provider */}
-                <span
-                  className="shrink-0 uppercase tracking-wider"
-                  style={{ fontSize: "11px", color: "#8b90a0", width: "100px" }}
-                >
-                  {integration.provider === "cloudflare" ? "Cloudflare"
-                    : integration.provider === "github"    ? "GitHub"
-                    : integration.provider === "vercel"    ? "Vercel"
-                    : integration.provider === "stripe"    ? "Stripe"
-                    : integration.provider === "aws"       ? "AWS"
-                    : integration.provider === "firebase"  ? "Firebase"
-                    : integration.provider === "supabase"  ? "Supabase"
-                    : integration.provider}
-                </span>
+                {/* Provider badge */}
+                <div className="shrink-0" style={{ width: "100px" }}>
+                  <ProviderBadge provider={integration.provider} />
+                </div>
 
                 {/* Last synced */}
                 <span
@@ -506,7 +523,7 @@ export default function IntegrationList({
                 >
                   {integration.last_synced_at
                     ? formatRelativeTime(integration.last_synced_at)
-                    : "Never"}
+                    : "Never synced"}
                 </span>
 
                 {/* Status badge */}
@@ -623,16 +640,6 @@ export default function IntegrationList({
                       {integration.connection_method === "github_app"
                         ? "via GitHub App"
                         : "via Personal Access Token"}
-                    </span>
-                  </>
-                )}
-
-                {/* Live sync coming soon */}
-                {!hasLiveSync && (
-                  <>
-                    <span style={{ color: "#2a2d38" }}>·</span>
-                    <span style={{ color: "#3a3d4a" }} title="Webhook-based real-time sync is not yet available">
-                      Live / webhook sync: coming soon
                     </span>
                   </>
                 )}
