@@ -766,6 +766,40 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* CloudWatch — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              CloudWatch alarms, dashboards, metric streams, and anomaly detectors — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ cloudwatch:DescribeAlarms &nbsp;○ cloudwatch:DescribeAnomalyDetectors &nbsp;○ cloudwatch:ListTagsForResource
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ cloudwatch:ListDashboards &nbsp;○ cloudwatch:GetDashboard &nbsp;○ cloudwatch:ListMetricStreams &nbsp;○ cloudwatch:GetMetricStream
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls GetMetricData, GetMetricStatistics, or any metric datapoint API.
+              Alarm action ARNs are type-summarized; raw values are not stored.
+              Dashboard body is stored as a hash only; widget content is never stored.
+            </span>
+            <br />
+
+            {/* CloudWatch Logs — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              CloudWatch Logs log groups, metric filters, and subscription filters — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ logs:DescribeLogGroups &nbsp;○ logs:DescribeMetricFilters &nbsp;○ logs:DescribeSubscriptionFilters &nbsp;○ logs:ListTagsLogGroup
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls GetLogEvents, FilterLogEvents, StartQuery, or GetQueryResults.
+              Log event contents are never accessed. Filter patterns are stored as hashes only.
+              Subscription filter destination ARNs are type-summarized and hashed; raw values are not stored.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.

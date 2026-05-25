@@ -1484,6 +1484,136 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "target_type",
         "config_fetch_warnings",
     ),
+
+    # ── M49: CloudWatch Alarms + Observability Config ─────────────────────────
+
+    # aws_cloudwatch_metric_alarm — one per CloudWatch metric alarm per region.
+    # SECURITY: metric datapoints NEVER read; cloudwatch:GetMetricData NEVER called.
+    "aws_cloudwatch_metric_alarm": (
+        "alarm_state_reason_absent",
+        "alarm_state_value",
+        "actions_enabled",
+        "alarm_action_count",
+        "ok_action_count",
+        "insufficient_data_action_count",
+        "alarm_action_type_counts",
+        "ok_action_type_counts",
+        "insufficient_data_action_type_counts",
+        "namespace",
+        "metric_name",
+        "statistic",
+        "extended_statistic_present",
+        "period",
+        "comparison_operator",
+        "threshold",
+        "evaluation_periods",
+        "datapoints_to_alarm",
+        "treat_missing_data",
+        "dimension_key_names",
+        "metrics_present",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_cloudwatch_composite_alarm — one per CloudWatch composite alarm per region.
+    # SECURITY: metric datapoints NEVER read.
+    "aws_cloudwatch_composite_alarm": (
+        "alarm_state_value",
+        "alarm_state_reason_absent",
+        "actions_enabled",
+        "alarm_rule_present",
+        "alarm_rule_hash",
+        "alarm_rule_component_count",
+        "alarm_action_count",
+        "ok_action_count",
+        "insufficient_data_action_count",
+        "alarm_action_type_counts",
+        "ok_action_type_counts",
+        "insufficient_data_action_type_counts",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_cloudwatch_dashboard — one per CloudWatch dashboard per region.
+    # SECURITY: dashboard body NEVER stored in plaintext — hash only.
+    "aws_cloudwatch_dashboard": (
+        "dashboard_body_hash",
+        "widget_count",
+        "widget_type_counts",
+        "config_fetch_warnings",
+    ),
+
+    # aws_cloudwatch_log_group — one per CloudWatch Logs log group per region.
+    # SECURITY: log events NEVER read; logs:GetLogEvents/FilterLogEvents/StartQuery NEVER called.
+    "aws_cloudwatch_log_group": (
+        "retention_in_days",
+        "retention_configured",
+        "kms_key_id_present",
+        "kms_key_id_hash",
+        "stored_bytes",
+        "metric_filter_count",
+        "subscription_filter_count",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_cloudwatch_metric_filter — one per CloudWatch Logs metric filter per log group.
+    # SECURITY: filter patterns NEVER stored in plaintext — hash only.
+    "aws_cloudwatch_metric_filter": (
+        "filter_pattern_present",
+        "filter_pattern_hash",
+        "filter_pattern_length",
+        "metric_name",
+        "metric_namespace",
+        "metric_transformation_count",
+        "default_value_present",
+        "unit_present",
+        "config_fetch_warnings",
+    ),
+
+    # aws_cloudwatch_subscription_filter — one per CloudWatch Logs subscription filter per log group.
+    # SECURITY: destination ARN hashed; role ARN hashed; log events NEVER read.
+    "aws_cloudwatch_subscription_filter": (
+        "filter_pattern_present",
+        "filter_pattern_hash",
+        "filter_pattern_length",
+        "destination_type",
+        "destination_arn_hash",
+        "role_arn_present",
+        "role_arn_hash",
+        "distribution",
+        "config_fetch_warnings",
+    ),
+
+    # aws_cloudwatch_metric_stream — one per CloudWatch metric stream per region.
+    # SECURITY: metric datapoints NEVER read; firehose/role ARNs hashed only.
+    "aws_cloudwatch_metric_stream": (
+        "state",
+        "output_format",
+        "firehose_arn_hash",
+        "role_arn_hash",
+        "include_filter_count",
+        "exclude_filter_count",
+        "statistics_configuration_count",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_cloudwatch_anomaly_detector — one per anomaly detector per namespace/metric.
+    # SECURITY: anomaly evaluation results NEVER read.
+    "aws_cloudwatch_anomaly_detector": (
+        "namespace",
+        "metric_name",
+        "dimension_key_names",
+        "stat",
+        "state",
+        "configuration_excluded_time_ranges_count",
+        "configuration_metric_timezone_present",
+        "config_fetch_warnings",
+    ),
 }
 
 

@@ -2759,3 +2759,189 @@ def classify_aws_organizations_failure(
             "other AWS checks may still work."
         ),
     )
+
+
+# ── M49: CloudWatch Alarms + Observability Config ────────────────────────────
+
+
+def classify_aws_cloudwatch_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify a CloudWatch API failure for ConfigTrace sync reporting.
+
+    Covers: DescribeAlarms, DescribeAnomalyDetectors, GetDashboard, ListDashboards,
+    ListMetricStreams, GetMetricStream, ListTagsForResource.
+
+    SECURITY: cloudwatch:GetMetricData, cloudwatch:GetMetricStatistics,
+    and ALL metric datapoint read operations are NEVER called.
+    Alarm state/history NEVER read. Metric values NEVER stored.
+
+    Args:
+        api_name: The CloudWatch API name (e.g. ``"DescribeAlarms"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _CW_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only CloudWatch read permissions. "
+        "Required: cloudwatch:DescribeAlarms, cloudwatch:DescribeAnomalyDetectors, "
+        "cloudwatch:GetDashboard, cloudwatch:ListDashboards, "
+        "cloudwatch:ListMetricStreams, cloudwatch:GetMetricStream, "
+        "cloudwatch:ListTagsForResource. "
+        "ConfigTrace reads CloudWatch alarm and observability configuration only; "
+        "metric datapoints and alarm evaluation history are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _CW_API_CODES: dict[str, str] = {
+        "DescribeAlarms":             "aws_cloudwatch_alarms_unavailable",
+        "DescribeAnomalyDetectors":   "aws_cloudwatch_anomaly_detectors_unavailable",
+        "GetDashboard":               "aws_cloudwatch_dashboards_unavailable",
+        "ListDashboards":             "aws_cloudwatch_dashboards_unavailable",
+        "ListMetricStreams":          "aws_cloudwatch_metric_streams_unavailable",
+        "GetMetricStream":            "aws_cloudwatch_metric_streams_unavailable",
+        "ListTagsForResource":        "aws_cloudwatch_api_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ) or _looks_like_access_denied(exc):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_cloudwatch_access_denied",
+            recommended_action=_CW_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_cloudwatch_rate_limited",
+            recommended_action=(
+                "AWS throttled CloudWatch metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented CloudWatch API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_cloudwatch_api_unavailable",
+            recommended_action=(
+                "The CloudWatch API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _CW_API_CODES.get(api_name, "aws_cloudwatch_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional CloudWatch metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_cloudwatch_logs_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify a CloudWatch Logs API failure for ConfigTrace sync reporting.
+
+    Covers: DescribeLogGroups, DescribeMetricFilters, DescribeSubscriptionFilters,
+    ListTagsLogGroup.
+
+    SECURITY: logs:GetLogEvents, logs:FilterLogEvents, logs:StartQuery,
+    logs:GetQueryResults, and ALL log event read operations are NEVER called.
+    Log event contents NEVER accessed or stored.
+
+    Args:
+        api_name: The CloudWatch Logs API name (e.g. ``"DescribeLogGroups"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _CWLOGS_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only CloudWatch Logs read permissions. "
+        "Required: logs:DescribeLogGroups, logs:DescribeMetricFilters, "
+        "logs:DescribeSubscriptionFilters, logs:ListTagsLogGroup. "
+        "ConfigTrace reads log group retention, encryption, and filter configuration only; "
+        "log events and application log contents are never accessed. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _CWLOGS_API_CODES: dict[str, str] = {
+        "DescribeLogGroups":           "aws_cloudwatch_logs_log_groups_unavailable",
+        "DescribeMetricFilters":       "aws_cloudwatch_logs_metric_filters_unavailable",
+        "DescribeSubscriptionFilters": "aws_cloudwatch_logs_subscription_filters_unavailable",
+        "ListTagsLogGroup":            "aws_cloudwatch_logs_api_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ) or _looks_like_access_denied(exc):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_cloudwatch_logs_access_denied",
+            recommended_action=_CWLOGS_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_cloudwatch_logs_rate_limited",
+            recommended_action=(
+                "AWS throttled CloudWatch Logs metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented CloudWatch Logs API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_cloudwatch_logs_api_unavailable",
+            recommended_action=(
+                "The CloudWatch Logs API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _CWLOGS_API_CODES.get(api_name, "aws_cloudwatch_logs_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional CloudWatch Logs metadata; "
+            "other AWS checks may still work."
+        ),
+    )

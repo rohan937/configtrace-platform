@@ -1168,6 +1168,68 @@ function getChangeSummary(change: ChangeDetail): string {
     return `SCP attachment for ${attachName} changed${fp ? ` (${fp})` : ""}.`;
   }
 
+  // ── M49: CloudWatch Alarms + Observability ─────────────────────────────────
+  if (rt === "aws_cloudwatch_metric_alarm") {
+    if (change.change_type === "added")   return `CloudWatch metric alarm "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch metric alarm "${rn}" was removed — monitoring coverage may have changed.`;
+    if (fp === "actions_enabled")         return `CloudWatch alarm "${rn}" actions were ${change.new_value === false ? "disabled" : "re-enabled"}.`;
+    if (fp === "alarm_state_value")       return `CloudWatch alarm "${rn}" state changed to ${String(change.new_value ?? "unknown")}.`;
+    if (fp === "threshold")               return `CloudWatch alarm "${rn}" threshold changed from ${change.prev_value} to ${change.new_value}.`;
+    return `CloudWatch metric alarm "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudwatch_composite_alarm") {
+    if (change.change_type === "added")   return `CloudWatch composite alarm "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch composite alarm "${rn}" was removed.`;
+    if (fp === "actions_enabled")         return `CloudWatch composite alarm "${rn}" actions were ${change.new_value === false ? "disabled" : "re-enabled"}.`;
+    if (fp === "alarm_rule_hash")         return `CloudWatch composite alarm "${rn}" rule expression changed.`;
+    return `CloudWatch composite alarm "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudwatch_dashboard") {
+    if (change.change_type === "added")   return `CloudWatch dashboard "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch dashboard "${rn}" was removed.`;
+    if (fp === "dashboard_body_hash")     return `CloudWatch dashboard "${rn}" content changed (body hash updated).`;
+    return `CloudWatch dashboard "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudwatch_log_group") {
+    if (change.change_type === "added")   return `CloudWatch Logs log group "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch Logs log group "${rn}" was removed.`;
+    if (fp === "retention_configured" && change.new_value === false) return `CloudWatch Logs log group "${rn}" retention policy was removed — logs will be kept indefinitely.`;
+    if (fp === "retention_in_days")       return `CloudWatch Logs log group "${rn}" retention changed from ${change.prev_value} to ${change.new_value} days.`;
+    if (fp === "kms_key_id_present" && change.new_value === false) return `CloudWatch Logs log group "${rn}" KMS encryption was removed.`;
+    return `CloudWatch Logs log group "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudwatch_metric_filter") {
+    if (change.change_type === "added")   return `CloudWatch Logs metric filter "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch Logs metric filter "${rn}" was removed.`;
+    if (fp === "filter_pattern_hash")     return `CloudWatch Logs metric filter "${rn}" pattern changed (hash updated).`;
+    return `CloudWatch Logs metric filter "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudwatch_subscription_filter") {
+    if (change.change_type === "added")   return `CloudWatch Logs subscription filter "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch Logs subscription filter "${rn}" was removed — log streaming may have stopped.`;
+    if (fp === "destination_type")        return `CloudWatch Logs subscription filter "${rn}" destination type changed to ${String(change.new_value ?? "unknown")}.`;
+    return `CloudWatch Logs subscription filter "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudwatch_metric_stream") {
+    if (change.change_type === "added")   return `CloudWatch metric stream "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch metric stream "${rn}" was removed.`;
+    if (fp === "state")                   return `CloudWatch metric stream "${rn}" state changed to ${String(change.new_value ?? "unknown")}.`;
+    return `CloudWatch metric stream "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  if (rt === "aws_cloudwatch_anomaly_detector") {
+    if (change.change_type === "added")   return `CloudWatch anomaly detector "${rn}" was created.`;
+    if (change.change_type === "removed") return `CloudWatch anomaly detector "${rn}" was removed.`;
+    if (fp === "state")                   return `CloudWatch anomaly detector "${rn}" state changed to ${String(change.new_value ?? "unknown")}.`;
+    return `CloudWatch anomaly detector "${rn}" configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -3256,6 +3318,163 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
     return [
       "Confirm the SCP attachment change was authorized.",
       "ConfigTrace does not mutate AWS Organizations or modify SCP attachments.",
+    ];
+  }
+
+  // ── M49: CloudWatch Alarms + Observability ─────────────────────────────────
+  if (rt === "aws_cloudwatch_metric_alarm") {
+    if (change.change_type === "removed") {
+      return [
+        "A CloudWatch metric alarm was removed — monitoring coverage for this metric may be gone.",
+        "Verify the deletion was intentional and that alternative alerting is in place.",
+        "Check AWS CloudTrail for who deleted the alarm.",
+        "ConfigTrace reads alarm configuration only — metric datapoints are never accessed.",
+      ];
+    }
+    if (change.field_path === "actions_enabled" && change.new_value === false) {
+      return [
+        "CloudWatch alarm actions are disabled — notifications and auto-remediation will not fire.",
+        "Re-enable actions via the CloudWatch console or AWS CLI.",
+        "Check CloudTrail to identify who disabled alarm actions.",
+        "ConfigTrace does not modify CloudWatch alarm configurations.",
+      ];
+    }
+    if (change.field_path === "alarm_state_value" && String(change.new_value ?? "").toUpperCase() === "ALARM") {
+      return [
+        "A CloudWatch alarm entered ALARM state — investigate the metric threshold breach.",
+        "Review the alarm's metric and threshold configuration in the CloudWatch console.",
+        "ConfigTrace reads alarm configuration only; metric datapoints are never accessed.",
+      ];
+    }
+    return [
+      "Review the CloudWatch alarm configuration change.",
+      "Verify threshold and notification targets are correct.",
+      "ConfigTrace reads alarm configuration only — metric datapoints are never accessed.",
+    ];
+  }
+
+  if (rt === "aws_cloudwatch_composite_alarm") {
+    if (change.change_type === "removed") {
+      return [
+        "A CloudWatch composite alarm was removed — composite alerting coverage may have changed.",
+        "Verify the deletion was intentional.",
+        "Check AWS CloudTrail for who deleted the alarm.",
+        "ConfigTrace does not modify CloudWatch alarm configurations.",
+      ];
+    }
+    if (change.field_path === "actions_enabled" && change.new_value === false) {
+      return [
+        "CloudWatch composite alarm actions are disabled — notifications will not fire.",
+        "Re-enable actions via the CloudWatch console.",
+        "ConfigTrace does not modify CloudWatch alarm configurations.",
+      ];
+    }
+    if (change.field_path === "alarm_rule_hash") {
+      return [
+        "The composite alarm rule expression changed — verify the child alarm set is correct.",
+        "ConfigTrace stores the rule as a hash only; the raw expression is not stored.",
+        "Check CloudTrail to identify who modified the alarm rule.",
+      ];
+    }
+    return [
+      "Review the CloudWatch composite alarm configuration change.",
+      "ConfigTrace does not modify CloudWatch alarm configurations.",
+    ];
+  }
+
+  if (rt === "aws_cloudwatch_log_group") {
+    if (change.change_type === "removed") {
+      return [
+        "A CloudWatch Logs log group was removed — all metric filters and subscription filters for it are gone.",
+        "Verify the deletion was intentional.",
+        "Check CloudTrail for who deleted the log group.",
+        "ConfigTrace reads log group configuration only — log events are never accessed.",
+      ];
+    }
+    if ((change.field_path === "retention_configured" && change.new_value === false) ||
+        (change.field_path === "retention_in_days")) {
+      return [
+        "Log group retention was removed or reduced — older logs will be purged sooner.",
+        "Review compliance requirements for log retention periods.",
+        "Set an appropriate retention period in the CloudWatch Logs console.",
+        "ConfigTrace reads log group configuration only — log events are never accessed.",
+      ];
+    }
+    if (change.field_path === "kms_key_id_present" && change.new_value === false) {
+      return [
+        "Log group KMS encryption was removed — logs at rest are no longer encrypted with a CMK.",
+        "Re-enable KMS encryption if required by your compliance policy.",
+        "Check CloudTrail for who removed the encryption key association.",
+        "ConfigTrace does not modify log group encryption settings.",
+      ];
+    }
+    return [
+      "Review the CloudWatch Logs log group configuration change.",
+      "ConfigTrace reads log group configuration only — log events are never accessed.",
+    ];
+  }
+
+  if (rt === "aws_cloudwatch_metric_filter") {
+    if (change.change_type === "removed") {
+      return [
+        "A CloudWatch Logs metric filter was removed — metrics derived from this log pattern are no longer generated.",
+        "Verify any alarms relying on this metric are still valid.",
+        "ConfigTrace stores filter patterns as hashes; raw patterns are not stored.",
+      ];
+    }
+    return [
+      "Review the metric filter change — alarms relying on the derived metric may be affected.",
+      "ConfigTrace stores filter patterns as hashes; raw patterns are not stored.",
+    ];
+  }
+
+  if (rt === "aws_cloudwatch_subscription_filter") {
+    if (change.change_type === "removed") {
+      return [
+        "A CloudWatch Logs subscription filter was removed — log streaming to the destination has stopped.",
+        "Verify the removal was intentional and that log archiving/SIEM ingestion is unaffected.",
+        "ConfigTrace reads subscription filter configuration only — log events are never read.",
+      ];
+    }
+    return [
+      "Review the subscription filter destination and pattern change.",
+      "Verify the destination is authorized and log streaming is working.",
+      "ConfigTrace reads subscription filter configuration only — log events are never read.",
+    ];
+  }
+
+  if (rt === "aws_cloudwatch_metric_stream") {
+    if (change.change_type === "removed") {
+      return [
+        "A CloudWatch metric stream was removed — metric data is no longer being streamed to the destination.",
+        "Verify the removal was intentional.",
+        "ConfigTrace reads metric stream configuration only — metric datapoints are never accessed.",
+      ];
+    }
+    if (change.field_path === "state" && ["stopped", "disabled"].includes(String(change.new_value ?? "").toLowerCase())) {
+      return [
+        "A CloudWatch metric stream was stopped — metric streaming to the destination has halted.",
+        "Verify this was intentional and re-start the stream if needed.",
+        "ConfigTrace reads metric stream configuration only — metric datapoints are never accessed.",
+      ];
+    }
+    return [
+      "Review the metric stream configuration change.",
+      "ConfigTrace reads metric stream configuration only — metric datapoints are never accessed.",
+    ];
+  }
+
+  if (rt === "aws_cloudwatch_anomaly_detector") {
+    if (change.change_type === "removed") {
+      return [
+        "A CloudWatch anomaly detector was removed — anomaly detection for this metric/namespace is no longer active.",
+        "Verify the removal was intentional.",
+        "ConfigTrace reads anomaly detector configuration only.",
+      ];
+    }
+    return [
+      "Review the anomaly detector configuration change.",
+      "ConfigTrace reads anomaly detector configuration only — anomaly results are never accessed.",
     ];
   }
 

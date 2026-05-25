@@ -124,6 +124,8 @@ from app.core.failure_classifier import (
     classify_aws_kms_failure,
     classify_aws_backup_failure,
     classify_aws_organizations_failure,
+    classify_aws_cloudwatch_failure,
+    classify_aws_cloudwatch_logs_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -205,6 +207,14 @@ from app.connectors.aws_schema import (
     AWS_ORGANIZATIONS_OU,
     AWS_ORGANIZATIONS_SCP,
     AWS_ORGANIZATIONS_SCP_ATTACHMENT,
+    AWS_CLOUDWATCH_METRIC_ALARM,
+    AWS_CLOUDWATCH_COMPOSITE_ALARM,
+    AWS_CLOUDWATCH_DASHBOARD,
+    AWS_CLOUDWATCH_LOG_GROUP,
+    AWS_CLOUDWATCH_METRIC_FILTER,
+    AWS_CLOUDWATCH_SUBSCRIPTION_FILTER,
+    AWS_CLOUDWATCH_METRIC_STREAM,
+    AWS_CLOUDWATCH_ANOMALY_DETECTOR,
 )
 
 logger = logging.getLogger(__name__)
@@ -2580,6 +2590,28 @@ class AWSConnector(BaseConnector):
             len(organizations_records),
         )
 
+        # 30. CloudWatch metric alarms, composite alarms, dashboards, metric streams,
+        #     and anomaly detectors (M49).
+        #     SECURITY: cloudwatch:GetMetricData, cloudwatch:GetMetricStatistics,
+        #     and ALL metric datapoint read operations NEVER called.
+        #     Alarm evaluation history NEVER read.
+        cloudwatch_records = self._fetch_cloudwatch_resources(credentials, account_id)
+        records.extend(cloudwatch_records)
+        logger.info(
+            "AWSConnector.fetch: cloudwatch_resources fetched  count=%d",
+            len(cloudwatch_records),
+        )
+
+        # 31. CloudWatch Logs log groups, metric filters, subscription filters (M49).
+        #     SECURITY: logs:GetLogEvents, logs:FilterLogEvents, logs:StartQuery,
+        #     logs:GetQueryResults NEVER called. Log event contents NEVER accessed.
+        cloudwatch_logs_records = self._fetch_cloudwatch_logs_resources(credentials, account_id)
+        records.extend(cloudwatch_logs_records)
+        logger.info(
+            "AWSConnector.fetch: cloudwatch_logs_resources fetched  count=%d",
+            len(cloudwatch_logs_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -2693,6 +2725,14 @@ class AWSConnector(BaseConnector):
             1 for r in organizations_records
             if r.get("record_type") == AWS_ORGANIZATIONS_ACCOUNT
         )
+        cloudwatch_alarm_count = sum(
+            1 for r in cloudwatch_records
+            if r.get("record_type") == AWS_CLOUDWATCH_METRIC_ALARM
+        )
+        cloudwatch_log_group_count = sum(
+            1 for r in cloudwatch_logs_records
+            if r.get("record_type") == AWS_CLOUDWATCH_LOG_GROUP
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -2724,6 +2764,8 @@ class AWSConnector(BaseConnector):
             kms_key_count=kms_key_count,
             backup_vault_count=backup_vault_count,
             org_account_count=org_account_count,
+            cloudwatch_alarm_count=cloudwatch_alarm_count,
+            cloudwatch_log_group_count=cloudwatch_log_group_count,
         )
         records.append(inventory_record)
 
@@ -2851,6 +2893,8 @@ class AWSConnector(BaseConnector):
         kms_key_count: int = 0,
         backup_vault_count: int = 0,
         org_account_count: int = 0,
+        cloudwatch_alarm_count: int = 0,
+        cloudwatch_log_group_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -2867,6 +2911,7 @@ class AWSConnector(BaseConnector):
                 "ecs", "eks", "ecr",
                 "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations",
+                "cloudwatch", "cloudwatch_logs",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -2897,9 +2942,9 @@ class AWSConnector(BaseConnector):
             "kms_key_count":                  kms_key_count,
             "backup_vault_count":             backup_vault_count,
             "org_account_count":              org_account_count,
-            "future_surfaces": [
-                "cloudwatch",
-            ],
+            "cloudwatch_alarm_count":         cloudwatch_alarm_count,
+            "cloudwatch_log_group_count":     cloudwatch_log_group_count,
+            "future_surfaces":                [],
         }
 
     def get_account_id(self, credentials: dict) -> str:
@@ -11978,3 +12023,792 @@ class AWSConnector(BaseConnector):
                 parent_id, fc.error_code,
             )
         return total_ous
+
+    # ── M49: CloudWatch Alarms + Observability Config helpers ─────────────────
+
+    @staticmethod
+    def _summarize_alarm_action_types(action_arns: list) -> dict:
+        """Return a count-per-destination-type dict for a list of alarm action ARNs.
+
+        SECURITY: Raw ARN values are NEVER stored. Only the destination type is
+        extracted (e.g. "sns", "lambda", "ssm", "autoscaling", "ec2", "other").
+        """
+        counts: dict[str, int] = {}
+        for arn in (action_arns or []):
+            arn_str = str(arn)
+            # Extract service prefix from ARN: arn:partition:service:...
+            parts = arn_str.split(":")
+            service = parts[2].lower() if len(parts) >= 3 else "other"
+            # Normalize known service names
+            if service in ("sns", "lambda", "ssm", "autoscaling", "ec2"):
+                key = service
+            elif service == "sqs":
+                key = "sqs"
+            else:
+                key = "other"
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    @staticmethod
+    def _summarize_metric_dimensions(dimensions: list) -> list:
+        """Return a sorted list of dimension key names only — values NEVER stored."""
+        keys = []
+        for d in (dimensions or []):
+            k = d.get("Name") or "" if isinstance(d, dict) else ""
+            if k:
+                keys.append(k)
+        return sorted(set(keys))
+
+    @staticmethod
+    def _hash_dashboard_body(body: str) -> str:
+        """Return a 12-char SHA-256 hex digest of the dashboard JSON body.
+
+        SECURITY: The raw body string is NEVER stored or logged.
+        """
+        import hashlib
+        return hashlib.sha256((body or "").encode()).hexdigest()[:12]
+
+    @staticmethod
+    def _count_dashboard_widgets(body: str) -> tuple[int, dict]:
+        """Parse dashboard body and return (widget_count, type_counts_dict).
+
+        SECURITY: Widget content, metric names, query text, and any PII
+        in widget definitions are NEVER stored. Only type names and counts
+        are returned.
+        """
+        import json
+        try:
+            parsed = json.loads(body or "{}")
+            widgets = parsed.get("widgets") or []
+            type_counts: dict[str, int] = {}
+            for w in widgets:
+                wtype = (w.get("type") or "unknown") if isinstance(w, dict) else "unknown"
+                type_counts[wtype] = type_counts.get(wtype, 0) + 1
+            return len(widgets), type_counts
+        except Exception:
+            return 0, {}
+
+    @staticmethod
+    def _hash_filter_pattern(pattern: str) -> str:
+        """Return a 12-char SHA-256 hex digest of a filter pattern string.
+
+        SECURITY: The raw filter pattern is NEVER stored or logged.
+        """
+        import hashlib
+        return hashlib.sha256((pattern or "").encode()).hexdigest()[:12]
+
+    @staticmethod
+    def _summarize_subscription_destination_type(arn: str) -> str:
+        """Extract the destination type from a subscription filter destination ARN.
+
+        SECURITY: Raw ARN value is NEVER stored; only the service type is returned.
+        Returns one of: "lambda", "kinesis", "firehose", "opensearch", "other".
+        """
+        arn_str = str(arn or "")
+        parts = arn_str.split(":")
+        service = parts[2].lower() if len(parts) >= 3 else "other"
+        if service == "lambda":
+            return "lambda"
+        if service == "kinesis":
+            return "kinesis"
+        if service == "firehose":
+            return "firehose"
+        if service == "es":
+            return "opensearch"
+        return "other"
+
+    @staticmethod
+    def _classify_observability_name_sensitivity(name: str) -> str:
+        """Classify alarm/log-group name sensitivity level.
+
+        Returns one of: "production", "payment", "auth", "security",
+        "compliance", "alert", "none".
+        """
+        lower = (name or "").lower()
+        if any(p in lower for p in ("prod", "production", "live")):
+            return "production"
+        if any(p in lower for p in ("payment", "payments", "billing", "invoice")):
+            return "payment"
+        if any(p in lower for p in ("auth", "authentication", "login", "credential")):
+            return "auth"
+        if any(p in lower for p in ("security", "pii", "customer", "user", "users")):
+            return "security"
+        if any(p in lower for p in ("compliance", "audit")):
+            return "compliance"
+        if any(p in lower for p in ("alert", "alarm", "error", "exception")):
+            return "alert"
+        return "none"
+
+    # ── M49: CloudWatch fetch methods ──────────────────────────────────────────
+
+    def _fetch_cloudwatch_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch CloudWatch metric alarms, composite alarms, dashboards,
+        metric streams, and anomaly detectors across all selected regions.
+
+        SECURITY:
+        - cloudwatch:GetMetricData NEVER called — metric datapoints NEVER read.
+        - cloudwatch:GetMetricStatistics NEVER called.
+        - Alarm evaluation history NEVER read.
+        - All alarm action ARNs are type-summarized; raw values NEVER stored.
+        - Dashboard body stored as hash only; widget content NEVER stored.
+        - Firehose ARNs stored as hashes only.
+        """
+        selected = self._selected_regions(credentials)
+        all_records: list[dict] = []
+        for region in selected:
+            try:
+                client = self._make_client("cloudwatch", credentials, region)
+                region_records = self._fetch_cloudwatch_in_region(
+                    client, account_id, region
+                )
+                all_records.extend(region_records)
+            except Exception as exc:
+                fc = classify_aws_cloudwatch_failure("DescribeAlarms", exc)
+                logger.warning(
+                    "aws: cloudwatch region=%s  code=%s",
+                    region, fc.error_code,
+                )
+        return all_records
+
+    def _fetch_cloudwatch_in_region(  # noqa: C901
+        self,
+        client: object,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch all CloudWatch resources in one region.
+
+        Returns records for metric alarms, composite alarms, dashboards,
+        metric streams, and anomaly detectors.
+
+        SECURITY: metric datapoints NEVER read; dashboard body hashed only;
+        action ARNs type-summarized only; firehose ARNs hashed only.
+        """
+        records: list[dict] = []
+
+        # ── Metric alarms ──────────────────────────────────────────────────────
+        try:
+            paginator_resp: list[dict] = []
+            try:
+                # Paginate through all metric alarms
+                next_token = None
+                while True:
+                    kwargs: dict = {"AlarmTypes": ["MetricAlarm"]}
+                    if next_token:
+                        kwargs["NextToken"] = next_token
+                    resp = self._call_aws(client.describe_alarms, **kwargs)
+                    paginator_resp.extend(resp.get("MetricAlarms") or [])
+                    next_token = resp.get("NextToken")
+                    if not next_token:
+                        break
+            except Exception as exc:
+                fc = classify_aws_cloudwatch_failure("DescribeAlarms", exc)
+                logger.warning(
+                    "aws: DescribeAlarms(MetricAlarm) region=%s  code=%s",
+                    region, fc.error_code,
+                )
+
+            for alarm in paginator_resp:
+                alarm_name: str = alarm.get("AlarmName") or ""
+                alarm_arn: str = alarm.get("AlarmArn") or ""
+                alarm_arn_hash = _hash_id(alarm_arn)
+                stable_id = f"{account_id}/cloudwatch-alarm/{region}/{alarm_arn_hash}"
+
+                actions_enabled = alarm.get("ActionsEnabled")
+                alarm_state = alarm.get("StateValue") or "INSUFFICIENT_DATA"
+                comparison_op = alarm.get("ComparisonOperator") or ""
+                threshold = alarm.get("Threshold")
+                evaluation_periods = alarm.get("EvaluationPeriods")
+                datapoints_to_alarm = alarm.get("DatapointsToAlarm")
+                treat_missing = alarm.get("TreatMissingData") or "missing"
+                statistic = alarm.get("Statistic") or ""
+                extended_stat = alarm.get("ExtendedStatistic") or ""
+                namespace = alarm.get("Namespace") or ""
+                metric_name = alarm.get("MetricName") or ""
+                dimensions = alarm.get("Dimensions") or []
+                metrics = alarm.get("Metrics") or []
+
+                alarm_actions = self._summarize_alarm_action_types(
+                    alarm.get("AlarmActions") or []
+                )
+                ok_actions = self._summarize_alarm_action_types(
+                    alarm.get("OKActions") or []
+                )
+                insuf_actions = self._summarize_alarm_action_types(
+                    alarm.get("InsufficientDataActions") or []
+                )
+                alarm_action_count = sum(alarm_actions.values())
+                ok_action_count = sum(ok_actions.values())
+                insufficient_data_action_count = sum(insuf_actions.values())
+                dimension_keys = self._summarize_metric_dimensions(dimensions)
+                period = alarm.get("Period")
+                name_sensitivity = self._classify_observability_name_sensitivity(alarm_name)
+
+                # Tags — keys only; values NEVER stored
+                tag_keys: list[str] = []
+                try:
+                    tag_resp = self._call_aws(
+                        client.list_tags_for_resource,
+                        ResourceARN=alarm_arn,
+                    )
+                    tag_keys = sorted(
+                        t.get("Key") or ""
+                        for t in (tag_resp.get("Tags") or [])
+                        if t.get("Key")
+                    )
+                except Exception:
+                    pass
+
+                records.append({
+                    "record_type":                          AWS_CLOUDWATCH_METRIC_ALARM,
+                    "record_id":                            stable_id,
+                    "external_id":                          stable_id,
+                    "name":                                 alarm_name,
+                    "account_id":                           account_id,
+                    "region":                               region,
+                    "alarm_arn_hash":                       alarm_arn_hash,
+                    "alarm_state_value":                    alarm_state,
+                    "alarm_state_reason_absent":            not bool(alarm.get("StateReason")),
+                    "actions_enabled":                      actions_enabled,
+                    "alarm_action_type_counts":             alarm_actions,
+                    "alarm_action_count":                   alarm_action_count,
+                    "ok_action_type_counts":                ok_actions,
+                    "ok_action_count":                      ok_action_count,
+                    "insufficient_data_action_type_counts": insuf_actions,
+                    "insufficient_data_action_count":       insufficient_data_action_count,
+                    "namespace":                            namespace,
+                    "metric_name":                          metric_name,
+                    "statistic":                            statistic,
+                    "extended_statistic_present":           bool(extended_stat),
+                    "period":                               period,
+                    "comparison_operator":                  comparison_op,
+                    "threshold":                            threshold,
+                    "evaluation_periods":                   evaluation_periods,
+                    "datapoints_to_alarm":                  datapoints_to_alarm,
+                    "treat_missing_data":                   treat_missing,
+                    "dimension_key_names":                  dimension_keys,
+                    "metrics_present":                      bool(metrics),
+                    "name_sensitivity":                     name_sensitivity,
+                    "tag_keys":                             tag_keys,
+                    "config_fetch_warnings":                None,
+                })
+        except Exception as exc:
+            fc = classify_aws_cloudwatch_failure("DescribeAlarms", exc)
+            logger.warning(
+                "aws: DescribeAlarms region=%s  code=%s", region, fc.error_code,
+            )
+
+        # ── Composite alarms ───────────────────────────────────────────────────
+        try:
+            composite_alarms: list[dict] = []
+            next_token = None
+            while True:
+                kwargs = {"AlarmTypes": ["CompositeAlarm"]}
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                resp = self._call_aws(client.describe_alarms, **kwargs)
+                composite_alarms.extend(resp.get("CompositeAlarms") or [])
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+
+            for alarm in composite_alarms:
+                alarm_name = alarm.get("AlarmName") or ""
+                alarm_arn = alarm.get("AlarmArn") or ""
+                alarm_arn_hash = _hash_id(alarm_arn)
+                stable_id = f"{account_id}/cloudwatch-composite/{region}/{alarm_arn_hash}"
+
+                rule = alarm.get("AlarmRule") or ""
+                rule_hash = self._hash_filter_pattern(rule)
+                # Count component alarms: split on " AND ", " OR ", " NOT "
+                import re as _re
+                components = _re.split(r"\b(?:AND|OR|NOT)\b", rule)
+                rule_component_count = len([c for c in components if c.strip()])
+
+                alarm_actions = self._summarize_alarm_action_types(
+                    alarm.get("AlarmActions") or []
+                )
+                ok_actions = self._summarize_alarm_action_types(
+                    alarm.get("OKActions") or []
+                )
+                insuf_actions = self._summarize_alarm_action_types(
+                    alarm.get("InsufficientDataActions") or []
+                )
+                composite_alarm_action_count = sum(alarm_actions.values())
+                composite_ok_action_count = sum(ok_actions.values())
+                composite_insuf_action_count = sum(insuf_actions.values())
+                name_sensitivity = self._classify_observability_name_sensitivity(alarm_name)
+
+                tag_keys = []
+                try:
+                    tag_resp = self._call_aws(
+                        client.list_tags_for_resource,
+                        ResourceARN=alarm_arn,
+                    )
+                    tag_keys = sorted(
+                        t.get("Key") or ""
+                        for t in (tag_resp.get("Tags") or [])
+                        if t.get("Key")
+                    )
+                except Exception:
+                    pass
+
+                records.append({
+                    "record_type":                          AWS_CLOUDWATCH_COMPOSITE_ALARM,
+                    "record_id":                            stable_id,
+                    "external_id":                          stable_id,
+                    "name":                                 alarm_name,
+                    "account_id":                           account_id,
+                    "region":                               region,
+                    "alarm_arn_hash":                       alarm_arn_hash,
+                    "alarm_state_value":                    alarm.get("StateValue") or "INSUFFICIENT_DATA",
+                    "alarm_state_reason_absent":            not bool(alarm.get("StateReason")),
+                    "actions_enabled":                      alarm.get("ActionsEnabled"),
+                    "alarm_rule_present":                   bool(rule),
+                    "alarm_rule_hash":                      rule_hash,
+                    "alarm_rule_component_count":           rule_component_count,
+                    "alarm_action_type_counts":             alarm_actions,
+                    "alarm_action_count":                   composite_alarm_action_count,
+                    "ok_action_type_counts":                ok_actions,
+                    "ok_action_count":                      composite_ok_action_count,
+                    "insufficient_data_action_type_counts": insuf_actions,
+                    "insufficient_data_action_count":       composite_insuf_action_count,
+                    "name_sensitivity":                     name_sensitivity,
+                    "tag_keys":                             tag_keys,
+                    "config_fetch_warnings":                None,
+                })
+        except Exception as exc:
+            fc = classify_aws_cloudwatch_failure("DescribeAlarms", exc)
+            logger.warning(
+                "aws: DescribeAlarms(CompositeAlarm) region=%s  code=%s",
+                region, fc.error_code,
+            )
+
+        # ── Dashboards ────────────────────────────────────────────────────────
+        try:
+            dashboard_list: list[dict] = []
+            next_token = None
+            while True:
+                kwargs = {}
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                resp = self._call_aws(client.list_dashboards, **kwargs)
+                dashboard_list.extend(resp.get("DashboardEntries") or [])
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+
+            for dash in dashboard_list:
+                dash_name: str = dash.get("DashboardName") or ""
+                dash_arn: str = dash.get("DashboardArn") or ""
+                dash_arn_hash = _hash_id(dash_arn)
+                stable_id = f"{account_id}/cloudwatch-dashboard/{region}/{dash_arn_hash}"
+
+                # Fetch body to hash it — never store the body itself
+                body_hash = ""
+                widget_count = 0
+                widget_type_counts: dict = {}
+                try:
+                    body_resp = self._call_aws(
+                        client.get_dashboard,
+                        DashboardName=dash_name,
+                    )
+                    body = body_resp.get("DashboardBody") or ""
+                    body_hash = self._hash_dashboard_body(body)
+                    widget_count, widget_type_counts = self._count_dashboard_widgets(body)
+                except Exception as exc:
+                    fc = classify_aws_cloudwatch_failure("GetDashboard", exc)
+                    logger.warning(
+                        "aws: GetDashboard name=%s region=%s  code=%s",
+                        dash_name, region, fc.error_code,
+                    )
+
+                records.append({
+                    "record_type":          AWS_CLOUDWATCH_DASHBOARD,
+                    "record_id":            stable_id,
+                    "external_id":          stable_id,
+                    "name":                 dash_name,
+                    "account_id":           account_id,
+                    "region":               region,
+                    "dashboard_arn_hash":   dash_arn_hash,
+                    "dashboard_body_hash":  body_hash,
+                    "widget_count":         widget_count,
+                    "widget_type_counts":   widget_type_counts,
+                    "config_fetch_warnings": None,
+                })
+        except Exception as exc:
+            fc = classify_aws_cloudwatch_failure("ListDashboards", exc)
+            logger.warning(
+                "aws: ListDashboards region=%s  code=%s", region, fc.error_code,
+            )
+
+        # ── Metric streams ─────────────────────────────────────────────────────
+        try:
+            stream_list: list[dict] = []
+            next_token = None
+            while True:
+                kwargs = {}
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                resp = self._call_aws(client.list_metric_streams, **kwargs)
+                stream_list.extend(resp.get("Entries") or [])
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+
+            for entry in stream_list:
+                stream_name: str = entry.get("Name") or ""
+                stream_arn: str = entry.get("Arn") or ""
+                stream_arn_hash = _hash_id(stream_arn)
+                stable_id = f"{account_id}/cloudwatch-stream/{region}/{stream_arn_hash}"
+
+                # Fetch detailed config
+                firehose_arn_hash = ""
+                include_count = 0
+                exclude_count = 0
+                output_format = ""
+                state = entry.get("State") or ""
+                stats_config_count = 0
+                tag_keys_stream: list[str] = []
+
+                role_arn_hash_stream = ""
+                try:
+                    detail = self._call_aws(
+                        client.get_metric_stream,
+                        Name=stream_name,
+                    )
+                    firehose_arn = detail.get("FirehoseArn") or ""
+                    firehose_arn_hash = _hash_id(firehose_arn)
+                    role_arn_stream = detail.get("RoleArn") or ""
+                    role_arn_hash_stream = _hash_id(role_arn_stream) if role_arn_stream else ""
+                    include_count = len(detail.get("IncludeFilters") or [])
+                    exclude_count = len(detail.get("ExcludeFilters") or [])
+                    output_format = detail.get("OutputFormat") or ""
+                    state = detail.get("State") or state
+                    stats_config_count = len(detail.get("StatisticsConfigurations") or [])
+
+                    # Tags — keys only
+                    tag_keys_stream = sorted(
+                        t.get("Key") or ""
+                        for t in (detail.get("Tags") or [])
+                        if t.get("Key")
+                    )
+                except Exception as exc:
+                    fc = classify_aws_cloudwatch_failure("GetMetricStream", exc)
+                    logger.warning(
+                        "aws: GetMetricStream name=%s region=%s  code=%s",
+                        stream_name, region, fc.error_code,
+                    )
+
+                records.append({
+                    "record_type":                      AWS_CLOUDWATCH_METRIC_STREAM,
+                    "record_id":                        stable_id,
+                    "external_id":                      stable_id,
+                    "name":                             stream_name,
+                    "account_id":                       account_id,
+                    "region":                           region,
+                    "stream_arn_hash":                  stream_arn_hash,
+                    "state":                            state,
+                    "output_format":                    output_format,
+                    "firehose_arn_hash":                firehose_arn_hash,
+                    "role_arn_hash":                    role_arn_hash_stream or None,
+                    "include_filter_count":             include_count,
+                    "exclude_filter_count":             exclude_count,
+                    "statistics_configuration_count":   stats_config_count,
+                    "tag_keys":                         tag_keys_stream,
+                    "config_fetch_warnings":            None,
+                })
+        except Exception as exc:
+            fc = classify_aws_cloudwatch_failure("ListMetricStreams", exc)
+            logger.warning(
+                "aws: ListMetricStreams region=%s  code=%s", region, fc.error_code,
+            )
+
+        # ── Anomaly detectors ──────────────────────────────────────────────────
+        try:
+            detector_list: list[dict] = []
+            next_token = None
+            while True:
+                kwargs = {}
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                resp = self._call_aws(client.describe_anomaly_detectors, **kwargs)
+                detector_list.extend(resp.get("AnomalyDetectors") or [])
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+
+            for det in detector_list:
+                # Handle both SingleMetricAnomalyDetector and MetricMathAnomalyDetector
+                single = det.get("SingleMetricAnomalyDetector") or {}
+                namespace = single.get("Namespace") or det.get("Namespace") or ""
+                metric_name = single.get("MetricName") or det.get("MetricName") or ""
+                stat = single.get("Stat") or det.get("Stat") or ""
+                dimensions = single.get("Dimensions") or det.get("Dimensions") or []
+                dimension_keys = self._summarize_metric_dimensions(dimensions)
+                config = det.get("Configuration") or {}
+                excluded_ranges = config.get("ExcludedTimeRanges") or []
+                metric_tz = config.get("MetricTimezone") or ""
+                state_val = det.get("StateValue") or ""
+
+                det_name = f"{namespace}/{metric_name}/{stat}"
+                det_hash = _hash_id(f"{account_id}/{region}/{namespace}/{metric_name}/{stat}")
+                stable_id = f"{account_id}/cloudwatch-anomaly/{region}/{det_hash}"
+
+                records.append({
+                    "record_type":                              AWS_CLOUDWATCH_ANOMALY_DETECTOR,
+                    "record_id":                                stable_id,
+                    "external_id":                              stable_id,
+                    "name":                                     det_name,
+                    "account_id":                               account_id,
+                    "region":                                   region,
+                    "namespace":                                namespace,
+                    "metric_name":                              metric_name,
+                    "stat":                                     stat,
+                    "dimension_key_names":                      dimension_keys,
+                    "state":                                    state_val,
+                    "configuration_excluded_time_ranges_count": len(excluded_ranges),
+                    "configuration_metric_timezone_present":    bool(metric_tz),
+                    "config_fetch_warnings":                    None,
+                })
+        except Exception as exc:
+            fc = classify_aws_cloudwatch_failure("DescribeAnomalyDetectors", exc)
+            logger.warning(
+                "aws: DescribeAnomalyDetectors region=%s  code=%s", region, fc.error_code,
+            )
+
+        return records
+
+    # ── M49: CloudWatch Logs fetch methods ─────────────────────────────────────
+
+    def _fetch_cloudwatch_logs_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch CloudWatch Logs log groups, metric filters, and subscription
+        filters across all selected regions.
+
+        SECURITY:
+        - logs:GetLogEvents NEVER called — log event contents NEVER read.
+        - logs:FilterLogEvents NEVER called.
+        - logs:StartQuery NEVER called.
+        - logs:GetQueryResults NEVER called.
+        - Filter patterns stored as hashes only; raw values NEVER stored.
+        - Destination ARNs stored as type summaries + hashes; raw values NEVER stored.
+        - Log group names stored as hashes in stable IDs; display name is the name.
+        """
+        selected = self._selected_regions(credentials)
+        all_records: list[dict] = []
+        for region in selected:
+            try:
+                logs_client = self._make_client("logs", credentials, region)
+                region_records = self._fetch_cloudwatch_logs_in_region(
+                    logs_client, account_id, region
+                )
+                all_records.extend(region_records)
+            except Exception as exc:
+                fc = classify_aws_cloudwatch_logs_failure("DescribeLogGroups", exc)
+                logger.warning(
+                    "aws: cloudwatch_logs region=%s  code=%s",
+                    region, fc.error_code,
+                )
+        return all_records
+
+    def _fetch_cloudwatch_logs_in_region(  # noqa: C901
+        self,
+        client: object,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch all CloudWatch Logs resources in one region.
+
+        Returns records for log groups, metric filters, and subscription filters.
+
+        SECURITY: log events NEVER read; filter patterns hashed only;
+        destination ARNs type-summarized + hashed only.
+        """
+        records: list[dict] = []
+
+        # ── Log groups ─────────────────────────────────────────────────────────
+        log_groups: list[dict] = []
+        try:
+            next_token = None
+            while True:
+                kwargs: dict = {}
+                if next_token:
+                    kwargs["nextToken"] = next_token
+                resp = self._call_aws(client.describe_log_groups, **kwargs)
+                log_groups.extend(resp.get("logGroups") or [])
+                next_token = resp.get("nextToken")
+                if not next_token:
+                    break
+        except Exception as exc:
+            fc = classify_aws_cloudwatch_logs_failure("DescribeLogGroups", exc)
+            logger.warning(
+                "aws: DescribeLogGroups region=%s  code=%s", region, fc.error_code,
+            )
+
+        for lg in log_groups:
+            lg_name: str = lg.get("logGroupName") or ""
+            lg_name_hash = _hash_id(lg_name)
+            stable_id = f"{account_id}/cloudwatch-log-group/{region}/{lg_name_hash}"
+
+            retention = lg.get("retentionInDays")
+            kms_arn = lg.get("kmsKeyId") or ""
+            kms_arn_hash = _hash_id(kms_arn) if kms_arn else ""
+            stored_bytes = lg.get("storedBytes") or 0
+            metric_filter_count = lg.get("metricFilterCount") or 0
+
+            # Tags — keys only
+            tag_keys: list[str] = []
+            try:
+                tag_resp = self._call_aws(
+                    client.list_tags_log_group,
+                    logGroupName=lg_name,
+                )
+                tag_keys = sorted(
+                    k for k in (tag_resp.get("tags") or {}).keys() if k
+                )
+            except Exception:
+                pass
+
+            # Count subscription filters for this group
+            sub_filter_count = 0
+            try:
+                sf_resp = self._call_aws(
+                    client.describe_subscription_filters,
+                    logGroupName=lg_name,
+                )
+                sub_filter_count = len(sf_resp.get("subscriptionFilters") or [])
+            except Exception:
+                pass
+
+            name_sensitivity = self._classify_observability_name_sensitivity(lg_name)
+
+            records.append({
+                "record_type":                AWS_CLOUDWATCH_LOG_GROUP,
+                "record_id":                  stable_id,
+                "external_id":                stable_id,
+                "name":                       lg_name,
+                "account_id":                 account_id,
+                "region":                     region,
+                "log_group_name_hash":        lg_name_hash,
+                "retention_in_days":          retention,
+                "retention_configured":       retention is not None,
+                "kms_key_id_present":         bool(kms_arn),
+                "kms_key_id_hash":            kms_arn_hash or None,
+                "stored_bytes":               stored_bytes,
+                "metric_filter_count":        metric_filter_count,
+                "subscription_filter_count":  sub_filter_count,
+                "name_sensitivity":           name_sensitivity,
+                "tag_keys":                   tag_keys,
+                "config_fetch_warnings":      None,
+            })
+
+            # ── Metric filters for this log group ─────────────────────────────
+            try:
+                mf_resp = self._call_aws(
+                    client.describe_metric_filters,
+                    logGroupName=lg_name,
+                )
+                for mf in (mf_resp.get("metricFilters") or []):
+                    filter_name: str = mf.get("filterName") or ""
+                    filter_name_hash = _hash_id(filter_name)
+                    mf_stable_id = (
+                        f"{account_id}/cloudwatch-metric-filter/"
+                        f"{region}/{lg_name_hash}/{filter_name_hash}"
+                    )
+                    pattern: str = mf.get("filterPattern") or ""
+                    pattern_hash = self._hash_filter_pattern(pattern)
+                    pattern_len = len(pattern)
+
+                    transformations = mf.get("metricTransformations") or []
+                    target_metric = transformations[0].get("metricName") if transformations else ""
+                    target_ns = transformations[0].get("metricNamespace") if transformations else ""
+                    has_default_value = any(
+                        t.get("defaultValue") is not None for t in transformations
+                    )
+                    has_unit = any(t.get("unit") for t in transformations)
+
+                    records.append({
+                        "record_type":                  AWS_CLOUDWATCH_METRIC_FILTER,
+                        "record_id":                    mf_stable_id,
+                        "external_id":                  mf_stable_id,
+                        "name":                         filter_name,
+                        "account_id":                   account_id,
+                        "region":                       region,
+                        "log_group_name_hash":          lg_name_hash,
+                        "filter_name_hash":             filter_name_hash,
+                        "filter_pattern_present":       bool(pattern),
+                        "filter_pattern_hash":          pattern_hash,
+                        "filter_pattern_length":        pattern_len,
+                        "metric_name":                  target_metric or "",
+                        "metric_namespace":             target_ns or "",
+                        "metric_transformation_count":  len(transformations),
+                        "default_value_present":        has_default_value,
+                        "unit_present":                 has_unit,
+                        "config_fetch_warnings":        None,
+                    })
+            except Exception as exc:
+                fc = classify_aws_cloudwatch_logs_failure("DescribeMetricFilters", exc)
+                logger.warning(
+                    "aws: DescribeMetricFilters log_group=%s region=%s  code=%s",
+                    lg_name_hash, region, fc.error_code,
+                )
+
+            # ── Subscription filters for this log group ───────────────────────
+            try:
+                sf_full_resp = self._call_aws(
+                    client.describe_subscription_filters,
+                    logGroupName=lg_name,
+                )
+                for sf in (sf_full_resp.get("subscriptionFilters") or []):
+                    sf_name: str = sf.get("filterName") or ""
+                    sf_name_hash = _hash_id(sf_name)
+                    sf_stable_id = (
+                        f"{account_id}/cloudwatch-subscription-filter/"
+                        f"{region}/{lg_name_hash}/{sf_name_hash}"
+                    )
+                    sf_pattern: str = sf.get("filterPattern") or ""
+                    sf_pattern_hash = self._hash_filter_pattern(sf_pattern)
+
+                    dest_arn: str = sf.get("destinationArn") or ""
+                    dest_type = self._summarize_subscription_destination_type(dest_arn)
+                    dest_arn_hash = _hash_id(dest_arn) if dest_arn else ""
+                    distribution: str = sf.get("distribution") or ""
+                    # Role ARN — hashed only; raw value NEVER stored
+                    sf_role_arn: str = sf.get("roleArn") or sf.get("RoleArn") or ""
+                    sf_role_arn_hash = _hash_id(sf_role_arn) if sf_role_arn else ""
+
+                    records.append({
+                        "record_type":              AWS_CLOUDWATCH_SUBSCRIPTION_FILTER,
+                        "record_id":                sf_stable_id,
+                        "external_id":              sf_stable_id,
+                        "name":                     sf_name,
+                        "account_id":               account_id,
+                        "region":                   region,
+                        "log_group_name_hash":      lg_name_hash,
+                        "filter_name_hash":         sf_name_hash,
+                        "filter_pattern_present":   bool(sf_pattern),
+                        "filter_pattern_hash":      sf_pattern_hash,
+                        "filter_pattern_length":    len(sf_pattern),
+                        "destination_type":         dest_type,
+                        "destination_arn_hash":     dest_arn_hash or None,
+                        "role_arn_present":         bool(sf_role_arn),
+                        "role_arn_hash":            sf_role_arn_hash or None,
+                        "distribution":             distribution,
+                        "config_fetch_warnings":    None,
+                    })
+            except Exception as exc:
+                fc = classify_aws_cloudwatch_logs_failure("DescribeSubscriptionFilters", exc)
+                logger.warning(
+                    "aws: DescribeSubscriptionFilters log_group=%s region=%s  code=%s",
+                    lg_name_hash, region, fc.error_code,
+                )
+
+        return records

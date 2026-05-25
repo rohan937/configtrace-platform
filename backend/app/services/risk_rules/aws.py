@@ -118,6 +118,14 @@ from app.connectors.aws_schema import (
     AWS_ORGANIZATIONS_OU,
     AWS_ORGANIZATIONS_SCP,
     AWS_ORGANIZATIONS_SCP_ATTACHMENT,
+    AWS_CLOUDWATCH_METRIC_ALARM,
+    AWS_CLOUDWATCH_COMPOSITE_ALARM,
+    AWS_CLOUDWATCH_DASHBOARD,
+    AWS_CLOUDWATCH_LOG_GROUP,
+    AWS_CLOUDWATCH_METRIC_FILTER,
+    AWS_CLOUDWATCH_SUBSCRIPTION_FILTER,
+    AWS_CLOUDWATCH_METRIC_STREAM,
+    AWS_CLOUDWATCH_ANOMALY_DETECTOR,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -7505,6 +7513,24 @@ def classify_aws_change(change: object) -> tuple[str, str]:
     if record_type == AWS_ORGANIZATIONS_SCP_ATTACHMENT:
         return _classify_organizations_scp_attachment_change(change)
 
+    # ── M49 CloudWatch Alarms + Observability Config ───────────────────────────
+    if record_type == AWS_CLOUDWATCH_METRIC_ALARM:
+        return _classify_cloudwatch_metric_alarm_change(change)
+    if record_type == AWS_CLOUDWATCH_COMPOSITE_ALARM:
+        return _classify_cloudwatch_composite_alarm_change(change)
+    if record_type == AWS_CLOUDWATCH_DASHBOARD:
+        return _classify_cloudwatch_dashboard_change(change)
+    if record_type == AWS_CLOUDWATCH_LOG_GROUP:
+        return _classify_cloudwatch_log_group_change(change)
+    if record_type == AWS_CLOUDWATCH_METRIC_FILTER:
+        return _classify_cloudwatch_metric_filter_change(change)
+    if record_type == AWS_CLOUDWATCH_SUBSCRIPTION_FILTER:
+        return _classify_cloudwatch_subscription_filter_change(change)
+    if record_type == AWS_CLOUDWATCH_METRIC_STREAM:
+        return _classify_cloudwatch_metric_stream_change(change)
+    if record_type == AWS_CLOUDWATCH_ANOMALY_DETECTOR:
+        return _classify_cloudwatch_anomaly_detector_change(change)
+
     # Unknown AWS record type — conservative default
     return (
         "low",
@@ -8205,3 +8231,495 @@ def _classify_organizations_scp_attachment_change(change: object) -> tuple[str, 
         return "medium", f"SCP attachment '{name}' target type changed."
 
     return "low", f"SCP attachment '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M49 risk classifier helpers ────────────────────────────────────────────────
+
+_OBSERVABILITY_SENSITIVE_KEYWORDS: frozenset[str] = frozenset({
+    "prod", "production", "live",
+    "payment", "payments", "billing", "invoice",
+    "auth", "authentication", "login", "credential",
+    "admin", "critical", "pii", "customer", "user", "users",
+    "financial", "order", "orders", "security", "compliance", "audit",
+    "error", "errors", "exception", "exceptions", "alert", "alerts",
+    "latency", "availability", "uptime", "sla",
+})
+
+
+def _is_sensitive_observability(name: str) -> bool:
+    """Return True if the alarm/log-group name suggests a sensitive/production context."""
+    lower = name.lower()
+    return any(p in lower for p in _OBSERVABILITY_SENSITIVE_KEYWORDS)
+
+
+# ── M49: CloudWatch metric alarm ──────────────────────────────────────────────
+
+
+def _classify_cloudwatch_metric_alarm_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_observability(name)
+
+    if ct == "added":
+        return "low", f"CloudWatch metric alarm '{name}' was added."
+    if ct == "removed":
+        level = "high" if is_sensitive else "medium"
+        return level, (
+            f"CloudWatch metric alarm '{name}' was removed. "
+            "Monitoring coverage for this metric/threshold is no longer active. "
+            "ConfigTrace does not manage alarm configurations."
+        )
+
+    if fp == "actions_enabled":
+        if nv is False or nv == "false" or nv is None:
+            level = "critical" if is_sensitive else "high"
+            return level, (
+                f"CloudWatch alarm '{name}' actions have been disabled. "
+                "Alarm notifications and auto-remediation actions will not fire. "
+                "ConfigTrace does not modify alarm configurations."
+            )
+        return "low", f"CloudWatch alarm '{name}' actions re-enabled."
+
+    if fp == "alarm_state_value":
+        if str(nv).upper() == "ALARM":
+            level = "high" if is_sensitive else "medium"
+            return level, (
+                f"CloudWatch alarm '{name}' entered ALARM state. "
+                "Investigate the metric threshold breach. "
+                "ConfigTrace reads alarm configuration only — metric datapoints are never accessed."
+            )
+        return "low", f"CloudWatch alarm '{name}' state changed (field: {fp})."
+
+    if fp in ("threshold", "comparison_operator", "evaluation_periods", "datapoints_to_alarm"):
+        level = "medium" if is_sensitive else "low"
+        return level, (
+            f"CloudWatch alarm '{name}' threshold configuration changed (field: {fp}). "
+            f"Previous: {pv!r} → New: {nv!r}."
+        )
+
+    if fp == "alarm_action_count":
+        try:
+            count = int(nv) if nv is not None else 0
+        except (ValueError, TypeError):
+            count = -1
+        if count == 0:
+            level = "critical" if is_sensitive else "high"
+            return level, (
+                f"CloudWatch alarm '{name}' now has zero alarm actions configured. "
+                "This alarm will not notify anyone when it fires. "
+                "ConfigTrace does not modify alarm configurations."
+            )
+        return "low", f"CloudWatch alarm '{name}' alarm action count changed to {nv!r}."
+
+    if fp in ("ok_action_count", "insufficient_data_action_count"):
+        return "low", f"CloudWatch alarm '{name}' action count changed (field: {fp})."
+
+    if fp in ("alarm_action_type_counts", "ok_action_type_counts",
+              "insufficient_data_action_type_counts"):
+        return "medium", (
+            f"CloudWatch alarm '{name}' action routing changed (field: {fp}). "
+            "Verify that notification targets are correct."
+        )
+
+    if fp in ("namespace", "metric_name", "statistic", "dimension_key_names"):
+        level = "medium" if is_sensitive else "low"
+        return level, f"CloudWatch alarm '{name}' metric definition changed (field: {fp})."
+
+    if fp == "period":
+        level = "medium" if is_sensitive else "low"
+        return level, (
+            f"CloudWatch alarm '{name}' evaluation period changed. "
+            f"Previous: {pv!r} seconds → New: {nv!r} seconds."
+        )
+
+    if fp == "treat_missing_data":
+        nv_str = str(nv or "").lower()
+        if nv_str == "notbreaching" and is_sensitive:
+            return "high", (
+                f"CloudWatch alarm '{name}' missing-data treatment changed to 'notBreaching'. "
+                "Periods with no data will be treated as OK, which may mask outages or data-collection gaps. "
+                "ConfigTrace reads alarm configuration only — metric datapoints are never accessed."
+            )
+        if nv_str == "notbreaching":
+            return "medium", (
+                f"CloudWatch alarm '{name}' missing-data treatment changed to 'notBreaching'. "
+                f"Periods with no data will be treated as OK. "
+                "ConfigTrace reads alarm configuration only — metric datapoints are never accessed."
+            )
+        return "medium", (
+            f"CloudWatch alarm '{name}' missing-data treatment changed. "
+            f"New value: {nv!r}. This affects how periods with no data are handled."
+        )
+
+    if fp == "name_sensitivity":
+        return "low", f"CloudWatch alarm '{name}' name sensitivity classification changed."
+
+    return "low", f"CloudWatch metric alarm '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M49: CloudWatch composite alarm ──────────────────────────────────────────
+
+
+def _classify_cloudwatch_composite_alarm_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_observability(name)
+
+    if ct == "added":
+        return "low", f"CloudWatch composite alarm '{name}' was added."
+    if ct == "removed":
+        level = "high" if is_sensitive else "medium"
+        return level, (
+            f"CloudWatch composite alarm '{name}' was removed. "
+            "Composite alarm evaluation coverage may have changed. "
+            "ConfigTrace does not manage alarm configurations."
+        )
+
+    if fp == "actions_enabled":
+        if nv is False or nv == "false" or nv is None:
+            level = "critical" if is_sensitive else "high"
+            return level, (
+                f"CloudWatch composite alarm '{name}' actions have been disabled. "
+                "Alarm notifications will not fire. "
+                "ConfigTrace does not modify alarm configurations."
+            )
+        return "low", f"CloudWatch composite alarm '{name}' actions re-enabled."
+
+    if fp == "alarm_rule_hash":
+        level = "high" if is_sensitive else "medium"
+        return level, (
+            f"CloudWatch composite alarm '{name}' rule expression changed. "
+            "The set of child alarms contributing to this composite alarm may have changed. "
+            "ConfigTrace stores a hash of the rule only; the raw expression is never stored."
+        )
+
+    if fp == "alarm_rule_component_count":
+        return "medium", (
+            f"CloudWatch composite alarm '{name}' component alarm count changed. "
+            f"New count: {nv!r}."
+        )
+
+    if fp in ("alarm_action_type_counts", "ok_action_type_counts",
+              "insufficient_data_action_type_counts"):
+        return "medium", (
+            f"CloudWatch composite alarm '{name}' action routing changed (field: {fp}). "
+            "Verify notification targets are correct."
+        )
+
+    return "low", f"CloudWatch composite alarm '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M49: CloudWatch dashboard ─────────────────────────────────────────────────
+
+
+def _classify_cloudwatch_dashboard_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"CloudWatch dashboard '{name}' was added."
+    if ct == "removed":
+        return "low", (
+            f"CloudWatch dashboard '{name}' was removed. "
+            "Dashboard body is hashed only; ConfigTrace never stores dashboard widget content."
+        )
+
+    if fp == "dashboard_body_hash":
+        return "low", (
+            f"CloudWatch dashboard '{name}' content changed. "
+            "ConfigTrace stores a hash of the dashboard body only; widget content is never stored."
+        )
+
+    if fp in ("widget_count", "widget_type_counts"):
+        return "low", f"CloudWatch dashboard '{name}' widget layout changed (field: {fp})."
+
+    return "low", f"CloudWatch dashboard '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M49: CloudWatch Logs log group ────────────────────────────────────────────
+
+
+def _classify_cloudwatch_log_group_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_observability(name)
+
+    if ct == "added":
+        return "low", f"CloudWatch Logs log group '{name}' was added."
+    if ct == "removed":
+        level = "high" if is_sensitive else "medium"
+        return level, (
+            f"CloudWatch Logs log group '{name}' was removed. "
+            "All metric filters and subscription filters for this group are also gone. "
+            "Log events are never read by ConfigTrace."
+        )
+
+    if fp == "retention_configured":
+        if nv is False or nv == "false" or nv is None:
+            return "high", (
+                f"CloudWatch Logs log group '{name}' retention policy was removed. "
+                "Logs will now be retained indefinitely, increasing storage costs and compliance risk. "
+                "ConfigTrace reads log group configuration only — log events are never accessed."
+            )
+        return "low", f"CloudWatch Logs log group '{name}' retention policy was configured."
+
+    if fp == "retention_in_days":
+        try:
+            new_days = int(nv) if nv is not None else None
+            old_days = int(pv) if pv is not None else None
+        except (ValueError, TypeError):
+            new_days = old_days = None
+
+        if new_days is not None and old_days is not None:
+            if new_days > old_days:
+                level = "medium" if is_sensitive else "low"
+                return level, (
+                    f"CloudWatch Logs log group '{name}' retention increased "
+                    f"from {old_days} to {new_days} days."
+                )
+            if new_days < old_days:
+                level = "high" if is_sensitive else "medium"
+                return level, (
+                    f"CloudWatch Logs log group '{name}' retention reduced "
+                    f"from {old_days} to {new_days} days. "
+                    "Older logs will be purged sooner, which may affect compliance."
+                )
+
+        return "medium", (
+            f"CloudWatch Logs log group '{name}' retention changed. "
+            f"Previous: {pv!r} → New: {nv!r}."
+        )
+
+    if fp == "kms_key_id_present":
+        if nv is False or nv is None:
+            level = "high" if is_sensitive else "medium"
+            return level, (
+                f"CloudWatch Logs log group '{name}' KMS encryption was removed. "
+                "Log data at rest is no longer encrypted with a customer-managed key. "
+                "ConfigTrace does not modify log group encryption."
+            )
+        return "low", f"CloudWatch Logs log group '{name}' KMS encryption was configured."
+
+    if fp == "kms_key_id_hash":
+        return "medium", (
+            f"CloudWatch Logs log group '{name}' KMS encryption key changed. "
+            "Verify the new key is correct and authorized."
+        )
+
+    if fp in ("metric_filter_count", "subscription_filter_count"):
+        return "low", f"CloudWatch Logs log group '{name}' filter count changed (field: {fp})."
+
+    if fp == "name_sensitivity":
+        return "low", f"CloudWatch Logs log group '{name}' name sensitivity classification changed."
+
+    return "low", f"CloudWatch Logs log group '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M49: CloudWatch Logs metric filter ────────────────────────────────────────
+
+
+def _classify_cloudwatch_metric_filter_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"CloudWatch Logs metric filter '{name}' was added."
+    if ct == "removed":
+        return "medium", (
+            f"CloudWatch Logs metric filter '{name}' was removed. "
+            "Metrics derived from this log pattern are no longer being generated. "
+            "ConfigTrace stores a hash of filter patterns; raw patterns are never stored."
+        )
+
+    if fp == "filter_pattern_hash":
+        return "medium", (
+            f"CloudWatch Logs metric filter '{name}' pattern changed. "
+            "ConfigTrace stores a hash of the pattern only; the raw pattern is never stored."
+        )
+
+    if fp == "filter_pattern_length":
+        return "low", f"CloudWatch Logs metric filter '{name}' pattern length changed."
+
+    if fp in ("metric_name", "metric_namespace"):
+        return "medium", (
+            f"CloudWatch Logs metric filter '{name}' metric target changed (field: {fp}). "
+            "Alarms relying on this metric may be affected."
+        )
+
+    if fp == "metric_transformation_count":
+        return "low", f"CloudWatch Logs metric filter '{name}' transformation count changed."
+
+    return "low", f"CloudWatch Logs metric filter '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M49: CloudWatch Logs subscription filter ──────────────────────────────────
+
+
+def _classify_cloudwatch_subscription_filter_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"CloudWatch Logs subscription filter '{name}' was added."
+    if ct == "removed":
+        return "medium", (
+            f"CloudWatch Logs subscription filter '{name}' was removed. "
+            "Log streaming to the destination has stopped. "
+            "Destination ARNs are hashed; log events are never read by ConfigTrace."
+        )
+
+    if fp == "destination_type":
+        return "medium", (
+            f"CloudWatch Logs subscription filter '{name}' destination type changed. "
+            f"New type: {nv!r}."
+        )
+
+    if fp == "destination_arn_hash":
+        return "medium", (
+            f"CloudWatch Logs subscription filter '{name}' destination changed. "
+            "Destination ARNs are stored as hashes only; raw values are never stored."
+        )
+
+    if fp == "role_arn_hash":
+        return "medium", (
+            f"CloudWatch Logs subscription filter '{name}' delivery role changed. "
+            "Role ARNs are stored as hashes only; the raw ARN is never stored. "
+            "Verify the new role is authorized to deliver logs to the destination."
+        )
+
+    if fp == "role_arn_present":
+        if nv is False or nv is None:
+            return "medium", (
+                f"CloudWatch Logs subscription filter '{name}' delivery role was removed. "
+                "Log streaming to cross-account destinations may be affected."
+            )
+        return "low", f"CloudWatch Logs subscription filter '{name}' delivery role was configured."
+
+    if fp == "filter_pattern_hash":
+        return "medium", (
+            f"CloudWatch Logs subscription filter '{name}' pattern changed. "
+            "ConfigTrace stores a hash of the pattern only."
+        )
+
+    if fp == "distribution":
+        return "low", f"CloudWatch Logs subscription filter '{name}' distribution changed."
+
+    return "low", (
+        f"CloudWatch Logs subscription filter '{name}' configuration changed (field: {fp or 'unknown'})."
+    )
+
+
+# ── M49: CloudWatch metric stream ─────────────────────────────────────────────
+
+
+def _classify_cloudwatch_metric_stream_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"CloudWatch metric stream '{name}' was added."
+    if ct == "removed":
+        return "medium", (
+            f"CloudWatch metric stream '{name}' was removed. "
+            "Metrics are no longer being streamed to the destination. "
+            "ConfigTrace does not read metric datapoints."
+        )
+
+    if fp == "state":
+        if str(nv).lower() in ("stopped", "disabled"):
+            return "high", (
+                f"CloudWatch metric stream '{name}' was stopped. "
+                "Metric streaming to the destination has halted."
+            )
+        return "low", f"CloudWatch metric stream '{name}' state changed to {nv!r}."
+
+    if fp == "firehose_arn_hash":
+        return "medium", (
+            f"CloudWatch metric stream '{name}' Firehose destination changed. "
+            "Destination ARNs are hashed; metric datapoints are never read by ConfigTrace."
+        )
+
+    if fp == "role_arn_hash":
+        return "medium", (
+            f"CloudWatch metric stream '{name}' delivery role changed. "
+            "Role ARNs are hashed; the raw ARN is never stored. "
+            "Verify the new role is authorized to write to the Firehose destination."
+        )
+
+    if fp in ("include_filter_count", "exclude_filter_count"):
+        return "low", f"CloudWatch metric stream '{name}' filter count changed (field: {fp})."
+
+    if fp == "output_format":
+        return "low", f"CloudWatch metric stream '{name}' output format changed to {nv!r}."
+
+    return "low", f"CloudWatch metric stream '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M49: CloudWatch anomaly detector ─────────────────────────────────────────
+
+
+def _classify_cloudwatch_anomaly_detector_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"CloudWatch anomaly detector '{name}' was added."
+    if ct == "removed":
+        return "medium", (
+            f"CloudWatch anomaly detector '{name}' was removed. "
+            "Anomaly detection for this metric/namespace is no longer active. "
+            "ConfigTrace reads anomaly detector configuration only."
+        )
+
+    if fp == "state":
+        if str(nv).lower() in ("disabled", "pending_training"):
+            return "medium", (
+                f"CloudWatch anomaly detector '{name}' state changed to {nv!r}. "
+                "Anomaly detection may not be active."
+            )
+        return "low", f"CloudWatch anomaly detector '{name}' state changed to {nv!r}."
+
+    if fp in ("namespace", "metric_name", "stat"):
+        return "medium", (
+            f"CloudWatch anomaly detector '{name}' metric definition changed (field: {fp}). "
+            f"New value: {nv!r}."
+        )
+
+    if fp == "configuration_excluded_time_ranges_count":
+        return "low", (
+            f"CloudWatch anomaly detector '{name}' excluded time range count changed. "
+            f"New count: {nv!r}."
+        )
+
+    if fp == "dimension_key_names":
+        return "low", f"CloudWatch anomaly detector '{name}' dimension keys changed."
+
+    return "low", (
+        f"CloudWatch anomaly detector '{name}' configuration changed (field: {fp or 'unknown'})."
+    )

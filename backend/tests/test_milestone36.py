@@ -345,7 +345,8 @@ class TestAWSConnectorFetch:
         inventory = next(r for r in records if r["record_type"] == AWS_SERVICE_INVENTORY)
         assert "account_inventory" in inventory["enabled_surfaces"]
         assert isinstance(inventory["future_surfaces"], list)
-        assert len(inventory["future_surfaces"]) > 0
+        # M49 implemented CloudWatch (the last planned future surface),
+        # so future_surfaces is legitimately empty — just assert it's a list.
 
     def test_security_no_secret_key_in_records(self) -> None:
         """SECURITY: aws_secret_access_key must never appear in any record."""
@@ -455,8 +456,9 @@ class TestAWSConnectorServiceInventory:
         assert "security_groups" not in future
         # iam was promoted to enabled_surfaces in M39 — no longer future
         assert "iam" not in future
-        # future_surfaces list must still contain remaining planned services
-        assert len(future) > 0
+        # M49 implemented CloudWatch (the last planned future surface),
+        # so future_surfaces is legitimately empty — key must exist but may be [].
+        assert isinstance(future, list)
 
     def test_future_surfaces_not_in_diff_tracked_fields(self) -> None:
         """future_surfaces must NOT be in the tracked fields to avoid spurious diffs."""

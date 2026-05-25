@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44 / M45 / M46 / M47 / M48."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44 / M45 / M46 / M47 / M48 / M49."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -140,6 +140,24 @@ AWS_ORGANIZATIONS_SCP = "aws_organizations_scp"
 # One per SCP-to-target attachment — attachment posture; attachments not mutated.
 AWS_ORGANIZATIONS_SCP_ATTACHMENT = "aws_organizations_scp_attachment"
 
+# ── M49 record types — CloudWatch Alarms + Observability Config ──────────────
+# One per CloudWatch metric alarm per region — config/threshold posture; metric datapoints NEVER read.
+AWS_CLOUDWATCH_METRIC_ALARM = "aws_cloudwatch_metric_alarm"
+# One per CloudWatch composite alarm per region — rule/action posture; evaluation state NEVER read.
+AWS_CLOUDWATCH_COMPOSITE_ALARM = "aws_cloudwatch_composite_alarm"
+# One per CloudWatch dashboard per region — widget count + body hash; dashboard body NEVER stored.
+AWS_CLOUDWATCH_DASHBOARD = "aws_cloudwatch_dashboard"
+# One per CloudWatch Logs log group per region — retention/encryption posture; log events NEVER read.
+AWS_CLOUDWATCH_LOG_GROUP = "aws_cloudwatch_log_group"
+# One per CloudWatch Logs metric filter per log group — pattern hash/counts; raw patterns NEVER stored.
+AWS_CLOUDWATCH_METRIC_FILTER = "aws_cloudwatch_metric_filter"
+# One per CloudWatch Logs subscription filter per log group — destination type/posture; log events NEVER read.
+AWS_CLOUDWATCH_SUBSCRIPTION_FILTER = "aws_cloudwatch_subscription_filter"
+# One per CloudWatch metric stream per region — filter/destination posture; metric datapoints NEVER read.
+AWS_CLOUDWATCH_METRIC_STREAM = "aws_cloudwatch_metric_stream"
+# One per CloudWatch anomaly detector per namespace/metric — config posture; anomaly results NEVER read.
+AWS_CLOUDWATCH_ANOMALY_DETECTOR = "aws_cloudwatch_anomaly_detector"
+
 # ── M44 record types — Load Balancers + WAF Config ───────────────────────────
 # One per ELBv2 load balancer (Application, Network, Gateway) — metadata only.
 AWS_ELBV2_LOAD_BALANCER = "aws_elbv2_load_balancer"
@@ -266,4 +284,13 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_ORGANIZATIONS_OU,
     AWS_ORGANIZATIONS_SCP,
     AWS_ORGANIZATIONS_SCP_ATTACHMENT,
+    # M49
+    AWS_CLOUDWATCH_METRIC_ALARM,
+    AWS_CLOUDWATCH_COMPOSITE_ALARM,
+    AWS_CLOUDWATCH_DASHBOARD,
+    AWS_CLOUDWATCH_LOG_GROUP,
+    AWS_CLOUDWATCH_METRIC_FILTER,
+    AWS_CLOUDWATCH_SUBSCRIPTION_FILTER,
+    AWS_CLOUDWATCH_METRIC_STREAM,
+    AWS_CLOUDWATCH_ANOMALY_DETECTOR,
 })
