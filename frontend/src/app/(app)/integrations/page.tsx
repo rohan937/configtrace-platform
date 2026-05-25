@@ -120,7 +120,7 @@ export default function IntegrationsPage() {
     <>
       <PageHeader
         title="Integrations"
-        description="Connect Cloudflare, GitHub, Vercel, Stripe, and AWS — trigger syncs and monitor configuration drift."
+        description="Connect your cloud and developer accounts — trigger syncs and monitor configuration drift across all providers."
       />
 
       <div className="px-6 py-6">

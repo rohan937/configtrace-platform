@@ -44,7 +44,7 @@ export default function ResourcesPage() {
     <>
       <PageHeader
         title="Resources"
-        description="Cloudflare zones, GitHub repositories, Vercel projects, and other configuration surfaces monitored by ConfigTrace."
+        description="Configuration surfaces monitored by ConfigTrace — zones, repositories, projects, accounts, and more across all connected providers."
       />
 
       <div className="px-6 py-6">

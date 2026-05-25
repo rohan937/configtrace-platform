@@ -260,15 +260,17 @@ function AddedRemovedPanel({
 
 // ── Provider-aware helpers ────────────────────────────────────────────────────
 
-/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" | "Stripe account configuration" | "AWS account configuration" */
+/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" | "Stripe account configuration" | "AWS account configuration" | "Firebase project configuration" | "Supabase project configuration" */
 function getProviderLabel(change: ChangeDetail): string {
   const rt = (
     (change.provider_metadata?.record_type as string | undefined) ?? ""
   ).toLowerCase();
-  if (rt.startsWith("github_")) return "GitHub repo configuration";
-  if (rt.startsWith("vercel_")) return "Vercel project configuration";
-  if (rt.startsWith("stripe_")) return "Stripe account configuration";
-  if (rt.startsWith("aws_"))    return "AWS account configuration";
+  if (rt.startsWith("github_"))   return "GitHub repo configuration";
+  if (rt.startsWith("vercel_"))   return "Vercel project configuration";
+  if (rt.startsWith("stripe_"))   return "Stripe account configuration";
+  if (rt.startsWith("aws_"))      return "AWS account configuration";
+  if (rt.startsWith("firebase_")) return "Firebase project configuration";
+  if (rt.startsWith("supabase_")) return "Supabase project configuration";
   if (change.provider_metadata?.record_type) return "Cloudflare DNS";
   return "Cloudflare DNS";
 }
@@ -1232,6 +1234,116 @@ function getChangeSummary(change: ChangeDetail): string {
 
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
+  }
+
+  // Firebase
+  if (rt === "firebase_project") {
+    if (change.change_type === "added")   return "Firebase project was added to monitoring.";
+    if (change.change_type === "removed") return "Firebase project was removed from monitoring.";
+    return `Firebase project settings changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_auth_config") {
+    if (fp === "sign_in_providers") return `Firebase Auth sign-in providers changed${fp ? "" : ""}.`;
+    return `Firebase Auth configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_auth_provider") {
+    if (change.change_type === "added")   return `Firebase Auth provider ${rn || change.record_identifier} was enabled.`;
+    if (change.change_type === "removed") return `Firebase Auth provider ${rn || change.record_identifier} was disabled.`;
+    return `Firebase Auth provider configuration changed for ${rn || change.record_identifier}${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_authorized_domain") {
+    if (change.change_type === "added")   return `Domain ${rn || change.record_identifier} was added to Firebase Auth authorized domains.`;
+    if (change.change_type === "removed") return `Domain ${rn || change.record_identifier} was removed from Firebase Auth authorized domains.`;
+    return `Firebase authorized domain changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_firestore_ruleset") {
+    if (change.change_type === "added")   return "A new Firestore security ruleset was deployed.";
+    if (change.change_type === "removed") return "A Firestore security ruleset was removed.";
+    if (fp === "rules_hash") return "The Firestore security ruleset content changed.";
+    return `Firestore security ruleset configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_storage_bucket") {
+    if (change.change_type === "added")   return `Firebase Storage bucket ${rn || change.record_identifier} was added to monitoring.`;
+    if (change.change_type === "removed") return `Firebase Storage bucket ${rn || change.record_identifier} was removed.`;
+    return `Firebase Storage bucket ${rn || change.record_identifier} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_storage_ruleset") {
+    if (change.change_type === "added")   return "A new Firebase Storage security ruleset was deployed.";
+    if (change.change_type === "removed") return "A Firebase Storage security ruleset was removed.";
+    if (fp === "rules_hash") return "Firebase Storage security ruleset content changed.";
+    return `Firebase Storage security ruleset changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_hosting_site") {
+    if (change.change_type === "added")   return `Firebase Hosting site ${rn || change.record_identifier} was added to monitoring.`;
+    if (change.change_type === "removed") return `Firebase Hosting site ${rn || change.record_identifier} was removed.`;
+    return `Firebase Hosting site ${rn || change.record_identifier} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_hosting_domain") {
+    if (change.change_type === "added")   return `Custom domain ${rn || change.record_identifier} was added to Firebase Hosting.`;
+    if (change.change_type === "removed") return `Custom domain ${rn || change.record_identifier} was removed from Firebase Hosting.`;
+    return `Firebase Hosting domain ${rn || change.record_identifier} changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "firebase_function_metadata") {
+    if (change.change_type === "added")   return `Cloud Function ${rn || change.record_identifier} was added.`;
+    if (change.change_type === "removed") return `Cloud Function ${rn || change.record_identifier} was removed.`;
+    return `Cloud Function ${rn || change.record_identifier} metadata changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt.startsWith("firebase_")) {
+    return `A Firebase configuration record changed (${rt}).`;
+  }
+
+  // Supabase
+  if (rt === "supabase_project") {
+    if (change.change_type === "added")   return "Supabase project was added to monitoring.";
+    if (change.change_type === "removed") return "Supabase project was removed from monitoring.";
+    if (fp === "status") return `Supabase project status changed to ${String(nv)}.`;
+    return `Supabase project settings changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_auth_config") {
+    if (fp === "external_email_enabled" && nv === false) return "Email authentication was disabled in Supabase Auth.";
+    if (fp === "mfa_totp_enabled" && nv === false) return "TOTP multi-factor authentication was disabled in Supabase Auth.";
+    if (fp === "jwt_verification") return "Supabase JWT verification setting changed.";
+    if (fp === "password_min_length") return `Supabase Auth minimum password length changed to ${String(nv)}.`;
+    return `Supabase Auth configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_oauth_provider") {
+    if (change.change_type === "added")   return `OAuth provider ${rn || change.record_identifier} was enabled in Supabase Auth.`;
+    if (change.change_type === "removed") return `OAuth provider ${rn || change.record_identifier} was disabled in Supabase Auth.`;
+    return `Supabase OAuth provider ${rn || change.record_identifier} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_database_config") {
+    return `Supabase database configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_storage_config") {
+    return `Supabase Storage configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_edge_function") {
+    if (change.change_type === "added")   return `Edge Function ${rn || change.record_identifier} was deployed to Supabase.`;
+    if (change.change_type === "removed") return `Edge Function ${rn || change.record_identifier} was removed from Supabase.`;
+    return `Supabase Edge Function ${rn || change.record_identifier} metadata changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_rls_status") {
+    if (fp === "rls_enabled" && nv === false) return `Row Level Security was disabled on a Supabase table.`;
+    if (fp === "rls_enabled" && nv === true)  return `Row Level Security was enabled on a Supabase table.`;
+    if (fp === "rls_forced" && nv === false)  return `RLS enforcement was relaxed on a Supabase table.`;
+    return `Supabase RLS status changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_api_config") {
+    return `Supabase API configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_network_restriction") {
+    if (change.change_type === "added")   return "Network restrictions were added to this Supabase project.";
+    if (change.change_type === "removed") return "Network restrictions were removed from this Supabase project — the database is now reachable from any IP.";
+    if (fp === "allowed_cidrs") return "The list of allowed IP ranges for this Supabase project changed.";
+    return `Supabase network restriction changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "supabase_custom_domain") {
+    if (change.change_type === "added")   return `Custom domain ${rn || change.record_identifier} was configured for this Supabase project.`;
+    if (change.change_type === "removed") return `Custom domain was removed from this Supabase project.`;
+    return `Supabase custom domain configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt.startsWith("supabase_")) {
+    return `A Supabase configuration record changed (${rt}).`;
   }
 
   // Cloudflare DNS

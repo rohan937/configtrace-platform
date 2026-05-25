@@ -126,6 +126,10 @@ function providerLabel(provider: string | null | undefined): string {
     case "cloudflare": return "Cloudflare";
     case "github":     return "GitHub";
     case "vercel":     return "Vercel";
+    case "stripe":     return "Stripe";
+    case "aws":        return "AWS";
+    case "firebase":   return "Firebase";
+    case "supabase":   return "Supabase";
     default:           return provider ?? "Unknown";
   }
 }

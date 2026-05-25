@@ -489,7 +489,14 @@ export default function IntegrationList({
                   className="shrink-0 uppercase tracking-wider"
                   style={{ fontSize: "11px", color: "#8b90a0", width: "100px" }}
                 >
-                  {integration.provider === "cloudflare" ? "Cloudflare" : integration.provider === "github" ? "GitHub" : integration.provider === "vercel" ? "Vercel" : integration.provider === "stripe" ? "Stripe" : integration.provider === "aws" ? "AWS" : integration.provider}
+                  {integration.provider === "cloudflare" ? "Cloudflare"
+                    : integration.provider === "github"    ? "GitHub"
+                    : integration.provider === "vercel"    ? "Vercel"
+                    : integration.provider === "stripe"    ? "Stripe"
+                    : integration.provider === "aws"       ? "AWS"
+                    : integration.provider === "firebase"  ? "Firebase"
+                    : integration.provider === "supabase"  ? "Supabase"
+                    : integration.provider}
                 </span>
 
                 {/* Last synced */}
@@ -575,7 +582,7 @@ export default function IntegrationList({
                 ) : (
                   <span className="flex items-center gap-1.5">
                     Scheduled sync:{" "}
-                    <span style={{ color: "#3ccf7e" }}>
+                    <span style={{ color: integration.last_sync_status === "failed" ? "#f5a623" : "#8b90a0" }}>
                       {formatInterval(integration.sync_interval_minutes)}
                     </span>
                     <SyncIntervalSelector

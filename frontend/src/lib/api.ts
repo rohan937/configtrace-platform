@@ -474,16 +474,37 @@ export async function deleteIntegration(
 
 /**
  * Token-only reconnect — replaces the API token while keeping the existing
- * resource (zone_id / repo_owner+repo_name) pinned.
+ * resource pinned.
  *
- * Provide api_token for Cloudflare integrations.
- * Provide github_token for GitHub integrations.
+ * Provider field mapping:
+ *   Cloudflare → api_token
+ *   GitHub     → github_token
+ *   Vercel     → vercel_token
+ *   Stripe     → stripe_api_key
+ *   Firebase   → firebase_service_account_json
+ *   Supabase   → supabase_access_token
+ *
  * Never store the token in frontend state after this call returns.
  */
 export interface IntegrationReconnectRequest {
+  /** Cloudflare API token. */
   api_token?: string;
+  /** GitHub fine-grained PAT. */
   github_token?: string;
+  /** Vercel personal access token. */
   vercel_token?: string;
+  /** Stripe restricted API key. */
+  stripe_api_key?: string;
+  /**
+   * Firebase service account JSON key file contents.
+   * SECURITY: contains a private_key — cleared immediately after submission.
+   */
+  firebase_service_account_json?: string;
+  /**
+   * Supabase Management API personal access token (sbp_...).
+   * SECURITY: cleared immediately after submission.
+   */
+  supabase_access_token?: string;
 }
 
 export async function reconnectIntegration(

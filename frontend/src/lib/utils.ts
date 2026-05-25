@@ -174,10 +174,13 @@ export function formatSnapshotHash(hash: string): string {
  */
 export function formatResourceType(rawType: string): string {
   switch (rawType.toLowerCase()) {
-    case "cloudflare_dns_zone":
-      return "Cloudflare DNS zone";
-    case "github_repo":
-      return "GitHub repository";
+    case "cloudflare_dns_zone": return "Cloudflare DNS zone";
+    case "github_repo":         return "GitHub repository";
+    case "vercel_project":      return "Vercel project";
+    case "stripe_account":      return "Stripe account";
+    case "aws_account":         return "AWS account";
+    case "firebase_project":    return "Firebase project";
+    case "supabase_project":    return "Supabase project";
     default:
       return rawType.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
   }

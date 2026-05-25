@@ -317,14 +317,16 @@ function TimelineContent() {
           className="flex flex-col gap-2.5 mb-6 p-4"
           style={{ background: "#13151a", border: "1px solid #2a2d38", borderRadius: "6px" }}
         >
-          {/* Provider */}
-          <FilterRow label="Provider">
-            <FilterPill label="All" active={filters.provider === "all"} onClick={() => setFilter("provider", "all")} />
+          {/* Source (provider) */}
+          <FilterRow label="Source">
+            <FilterPill label="All"        active={filters.provider === "all"}        onClick={() => setFilter("provider", "all")} />
             <FilterPill label="Cloudflare" active={filters.provider === "cloudflare"} onClick={() => setFilter("provider", "cloudflare")} />
-            <FilterPill label="GitHub" active={filters.provider === "github"} onClick={() => setFilter("provider", "github")} />
-            <FilterPill label="Vercel" active={filters.provider === "vercel"} onClick={() => setFilter("provider", "vercel")} />
-            <FilterPill label="Stripe" active={filters.provider === "stripe"} onClick={() => setFilter("provider", "stripe")} />
-            <FilterPill label="AWS" active={filters.provider === "aws"} onClick={() => setFilter("provider", "aws")} />
+            <FilterPill label="GitHub"     active={filters.provider === "github"}     onClick={() => setFilter("provider", "github")} />
+            <FilterPill label="Vercel"     active={filters.provider === "vercel"}     onClick={() => setFilter("provider", "vercel")} />
+            <FilterPill label="Stripe"     active={filters.provider === "stripe"}     onClick={() => setFilter("provider", "stripe")} />
+            <FilterPill label="AWS"        active={filters.provider === "aws"}        onClick={() => setFilter("provider", "aws")} />
+            <FilterPill label="Firebase"   active={filters.provider === "firebase"}   onClick={() => setFilter("provider", "firebase")} />
+            <FilterPill label="Supabase"   active={filters.provider === "supabase"}   onClick={() => setFilter("provider", "supabase")} />
           </FilterRow>
 
           {/* Integration */}

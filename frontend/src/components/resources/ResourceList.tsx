@@ -41,6 +41,16 @@ function ProviderBadge({ resourceType }: { resourceType: string }) {
     color = "#f5a623";
     bg = "rgba(245,166,35,0.10)";
     border = "rgba(245,166,35,0.25)";
+  } else if (type === "firebase_project") {
+    label = "Firebase";
+    color = "#ffca28";
+    bg = "rgba(255,202,40,0.10)";
+    border = "rgba(255,202,40,0.25)";
+  } else if (type === "supabase_project") {
+    label = "Supabase";
+    color = "#3ecf8e";
+    bg = "rgba(62,207,142,0.10)";
+    border = "rgba(62,207,142,0.25)";
   }
 
   if (!label) return null;
