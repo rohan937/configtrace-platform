@@ -364,10 +364,63 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="Alert preferences, sync defaults, and account configuration."
+        description="Personal alert preferences, sync defaults, and UI configuration."
       />
 
       <div className="px-6 py-6" style={{ maxWidth: "720px" }}>
+        {/* ── Workspace admin quick links ──────────────────────────────── */}
+        <div
+          style={{
+            background: "#13151a",
+            border: "1px solid #2a2d38",
+            borderRadius: "6px",
+            padding: "14px 18px",
+            marginBottom: "24px",
+          }}
+        >
+          <p style={{ margin: "0 0 10px", fontSize: "11px", fontWeight: 600, color: "#565b6e", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Workspace admin
+          </p>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            {[
+              { label: "Workspace",    href: "/settings/workspace" },
+              { label: "Members",      href: "/settings/workspace/members" },
+              { label: "Audit Log",    href: "/settings/workspace/audit" },
+              { label: "Billing",      href: "/settings/workspace/billing" },
+              { label: "Data Access",  href: "/settings/workspace/data-access" },
+            ].map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  background: "transparent",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "4px",
+                  padding: "3px 10px",
+                  textDecoration: "none",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+                onMouseOver={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.color = "#c4c8d4";
+                  (e.currentTarget as HTMLAnchorElement).style.borderColor = "#3a3d4a";
+                }}
+                onMouseOut={(e) => {
+                  (e.currentTarget as HTMLAnchorElement).style.color = "#8b90a0";
+                  (e.currentTarget as HTMLAnchorElement).style.borderColor = "#2a2d38";
+                }}
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+          <p style={{ margin: "8px 0 0", fontSize: "11px", color: "#565b6e" }}>
+            Manage team members, billing plan, and data access from the Workspace admin area.
+          </p>
+        </div>
+
         {loading && <LoadingState />}
         {!loading && error && <ErrorState message={error} />}
 
