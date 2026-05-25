@@ -13,6 +13,7 @@ from app.models.base import Base, BaseMixin
 if TYPE_CHECKING:
     from app.models.resource import Resource
     from app.models.user import User
+    from app.models.workspace import Workspace
 
 
 class Integration(BaseMixin, Base):
@@ -31,6 +32,14 @@ class Integration(BaseMixin, Base):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    # ── M50: workspace ownership ──────────────────────────────────────────────
+    # Nullable during migration backfill; non-null after 004_m50_workspaces.
+    workspace_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -76,6 +85,9 @@ class Integration(BaseMixin, Base):
 
     # ── Relationships ────────────────────────────────────────────────────────
     user: Mapped[User] = relationship("User", back_populates="integrations")
+    workspace: Mapped[Optional[Workspace]] = relationship(
+        "Workspace", foreign_keys=[workspace_id]
+    )
     resources: Mapped[list[Resource]] = relationship(
         "Resource",
         back_populates="integration",

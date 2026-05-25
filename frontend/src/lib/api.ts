@@ -29,6 +29,10 @@ import type {
   Integration,
   IntegrationCreateRequest,
   IntegrationListResponse,
+  InviteCreateResponse,
+  InviteListResponse,
+  InvitePreview,
+  MemberListResponse,
   PaginatedResponse,
   ResourceDetail,
   ResourceListItem,
@@ -37,6 +41,12 @@ import type {
   SyncRunListResponse,
   UserSettings,
   UserSettingsUpdateRequest,
+  Workspace,
+  WorkspaceInvite,
+  WorkspaceListResponse,
+  WorkspaceMember,
+  WorkspaceRole,
+  InviteRole,
 } from "@/types";
 
 const BASE_URL =
@@ -106,6 +116,146 @@ function buildQuery(params: object): string {
   }
   const qs = q.toString();
   return qs ? `?${qs}` : "";
+}
+
+// ── Workspaces (M50) ──────────────────────────────────────────────────────────
+
+export async function getWorkspaces(
+  token?: string | null,
+): Promise<WorkspaceListResponse> {
+  return apiFetch("/workspaces", { token });
+}
+
+export async function createWorkspace(
+  name: string,
+  token?: string | null,
+): Promise<Workspace> {
+  return apiFetch("/workspaces", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+    token,
+  });
+}
+
+export async function getWorkspace(
+  workspaceId: string,
+  token?: string | null,
+): Promise<Workspace> {
+  return apiFetch(`/workspaces/${workspaceId}`, { token });
+}
+
+export async function patchWorkspace(
+  workspaceId: string,
+  name: string,
+  token?: string | null,
+): Promise<Workspace> {
+  return apiFetch(`/workspaces/${workspaceId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+    token,
+  });
+}
+
+// ── Workspace members ─────────────────────────────────────────────────────────
+
+export async function getWorkspaceMembers(
+  workspaceId: string,
+  token?: string | null,
+): Promise<MemberListResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/members`, { token });
+}
+
+export async function updateMemberRole(
+  workspaceId: string,
+  memberId: string,
+  role: WorkspaceRole,
+  token?: string | null,
+): Promise<WorkspaceMember> {
+  return apiFetch(`/workspaces/${workspaceId}/members/${memberId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+    token,
+  });
+}
+
+export async function removeMember(
+  workspaceId: string,
+  memberId: string,
+  token?: string | null,
+): Promise<void> {
+  const url = `${BASE_URL}/workspaces/${workspaceId}/members/${memberId}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: buildHeaders(token),
+  });
+  if (!res.ok && res.status !== 204) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+}
+
+// ── Workspace invites ─────────────────────────────────────────────────────────
+
+export async function getWorkspaceInvites(
+  workspaceId: string,
+  activeOnly?: boolean,
+  token?: string | null,
+): Promise<InviteListResponse> {
+  const qs = activeOnly ? "?active_only=true" : "";
+  return apiFetch(`/workspaces/${workspaceId}/invites${qs}`, { token });
+}
+
+export async function createInvite(
+  workspaceId: string,
+  email: string,
+  role: InviteRole,
+  token?: string | null,
+): Promise<InviteCreateResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/invites`, {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+    token,
+  });
+}
+
+export async function revokeInvite(
+  workspaceId: string,
+  inviteId: string,
+  token?: string | null,
+): Promise<void> {
+  const url = `${BASE_URL}/workspaces/${workspaceId}/invites/${inviteId}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: buildHeaders(token),
+  });
+  if (!res.ok && res.status !== 204) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+}
+
+// ── Invite accept flow ────────────────────────────────────────────────────────
+
+export async function getInvitePreview(token: string): Promise<InvitePreview> {
+  return apiFetch(`/invites/${token}`);
+}
+
+export async function acceptInvite(
+  token: string,
+  authToken?: string | null,
+): Promise<WorkspaceMember> {
+  return apiFetch(`/invites/${token}/accept`, {
+    method: "POST",
+    token: authToken,
+  });
 }
 
 // ── Changes ───────────────────────────────────────────────────────────────────

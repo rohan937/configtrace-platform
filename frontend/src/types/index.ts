@@ -361,3 +361,71 @@ export interface UserSettings {
 }
 
 export type UserSettingsUpdateRequest = Partial<UserSettings>;
+
+// ── Workspaces (M50) ──────────────────────────────────────────────────────────
+
+export type WorkspaceRole = "owner" | "admin" | "member";
+export type InviteRole = "admin" | "member";
+
+export interface Workspace {
+  id: string;
+  name: string;
+  created_by_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceListResponse {
+  workspaces: Workspace[];
+  total: number;
+}
+
+export interface WorkspaceMember {
+  id: string;
+  workspace_id: string;
+  user_id: string;
+  role: WorkspaceRole;
+  email: string | null;
+  display_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemberListResponse {
+  members: WorkspaceMember[];
+  total: number;
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  workspace_id: string;
+  email: string;
+  role: InviteRole;
+  invited_by_user_id: string | null;
+  expires_at: string;
+  accepted_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  is_active: boolean;
+}
+
+export interface InviteCreateResponse extends WorkspaceInvite {
+  /** Raw token — returned once; display or copy immediately. */
+  invite_token: string;
+  invite_url: string;
+}
+
+export interface InviteListResponse {
+  invites: WorkspaceInvite[];
+  total: number;
+}
+
+/** Returned by GET /invites/{token} — no auth required. */
+export interface InvitePreview {
+  workspace_name: string;
+  inviter_email: string | null;
+  role: InviteRole;
+  email: string;
+  expires_at: string;
+  is_active: boolean;
+}

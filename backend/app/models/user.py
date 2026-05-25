@@ -9,6 +9,7 @@ from app.models.base import Base, BaseMixin
 
 if TYPE_CHECKING:
     from app.models.integration import Integration
+    from app.models.workspace import WorkspaceMember
 
 
 class User(BaseMixin, Base):
@@ -23,6 +24,12 @@ class User(BaseMixin, Base):
     # ── Relationships ────────────────────────────────────────────────────────
     integrations: Mapped[list[Integration]] = relationship(
         "Integration",
+        back_populates="user",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+    workspace_memberships: Mapped[list[WorkspaceMember]] = relationship(
+        "WorkspaceMember",
         back_populates="user",
         lazy="selectin",
         cascade="all, delete-orphan",

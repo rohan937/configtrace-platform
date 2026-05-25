@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import uuid
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
@@ -166,6 +168,34 @@ def create_integration(
     # actually affects behavior (not just persisted state).
     user_settings = get_or_create_settings(current_user.id, db)
 
+    # Resolve workspace: use body.workspace_id if provided, else user's default.
+    from app.services.workspace_service import (
+        get_membership,
+        get_or_create_default_workspace,
+    )
+
+    _INTEGRATION_ALLOWED_ROLES = {"owner", "admin"}
+
+    target_workspace_id = getattr(body, "workspace_id", None)
+    if target_workspace_id is not None:
+        membership = get_membership(target_workspace_id, current_user.id, db)
+        if membership is None:
+            raise HTTPException(
+                status_code=403, detail="Not a member of this workspace."
+            )
+        # Members are view-only — only admins and owners can add integrations.
+        if membership.role not in _INTEGRATION_ALLOWED_ROLES:
+            raise HTTPException(
+                status_code=403,
+                detail="Only workspace owners and admins can add integrations.",
+            )
+        resolved_workspace_id = target_workspace_id
+    else:
+        default_ws = get_or_create_default_workspace(
+            current_user.id, current_user.display_name, db
+        )
+        resolved_workspace_id = default_ws.id
+
     try:
         integration = integration_service.create_integration(
             user_id=current_user.id,
@@ -174,6 +204,7 @@ def create_integration(
             credentials=credentials,
             scheduled_sync_enabled=user_settings.default_sync_enabled,
             sync_interval_minutes=user_settings.default_sync_interval_minutes,
+            workspace_id=resolved_workspace_id,
             db=db,
         )
     except AuthenticationError as exc:
@@ -204,18 +235,39 @@ def create_integration(
 
 @router.get("", response_model=IntegrationListResponse)
 def list_integrations(
+    workspace_id: Optional[uuid.UUID] = Query(
+        None,
+        description=(
+            "M50: filter to a specific workspace. "
+            "When provided, user must be a member of that workspace."
+        ),
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IntegrationListResponse:
     """List all non-deleted integrations belonging to the authenticated user.
 
+    When ``workspace_id`` is provided, results are scoped to that workspace
+    and the caller must be a member.  Without ``workspace_id``, all integrations
+    owned by the user are returned (backward-compatible behaviour).
+
     Soft-deleted integrations (status='deleted') are excluded.  Their
     historical changes remain accessible via GET /changes.
-
-    The response includes only safe metadata fields.  Encrypted credentials,
-    IVs, and provider tokens are never included.
     """
-    rows = integration_service.get_integrations(user_id=current_user.id, db=db)
+    if workspace_id is not None:
+        # Workspace-scoped path: verify membership first.
+        from app.services.workspace_service import get_membership
+        membership = get_membership(workspace_id, current_user.id, db)
+        if membership is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Not a member of this workspace.",
+            )
+        rows = integration_service.get_integrations_by_workspace(
+            workspace_id=workspace_id, db=db
+        )
+    else:
+        rows = integration_service.get_integrations(user_id=current_user.id, db=db)
     return IntegrationListResponse(
         integrations=[_build_response(r, db) for r in rows],
         total=len(rows),

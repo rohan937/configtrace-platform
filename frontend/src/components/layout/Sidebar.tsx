@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton, useUser } from "@clerk/nextjs";
+import WorkspaceSwitcher from "./WorkspaceSwitcher";
 
 interface NavItem {
   label: string;
@@ -15,6 +16,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Integrations", href: "/integrations" },
   { label: "Resources",    href: "/resources" },
   { label: "Settings",     href: "/settings" },
+  { label: "Workspace",    href: "/settings/workspace" },
 ];
 
 export default function Sidebar() {
@@ -43,6 +45,9 @@ export default function Sidebar() {
           ConfigTrace
         </span>
       </div>
+
+      {/* Workspace switcher — M50 */}
+      <WorkspaceSwitcher />
 
       {/* Nav links */}
       <nav className="flex-1 overflow-y-auto py-3">

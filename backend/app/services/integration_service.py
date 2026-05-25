@@ -49,6 +49,7 @@ def create_integration(
     credentials: dict,
     scheduled_sync_enabled: bool = False,
     sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
     db: Session,
 ) -> Integration:
     """Create a new integration after validating and encrypting credentials.
@@ -95,6 +96,7 @@ def create_integration(
             credentials=credentials,
             scheduled_sync_enabled=scheduled_sync_enabled,
             sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
             db=db,
         )
     elif provider == "github":
@@ -104,6 +106,7 @@ def create_integration(
             credentials=credentials,
             scheduled_sync_enabled=scheduled_sync_enabled,
             sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
             db=db,
         )
     elif provider == "vercel":
@@ -113,6 +116,7 @@ def create_integration(
             credentials=credentials,
             scheduled_sync_enabled=scheduled_sync_enabled,
             sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
             db=db,
         )
     elif provider == "stripe":
@@ -122,6 +126,7 @@ def create_integration(
             credentials=credentials,
             scheduled_sync_enabled=scheduled_sync_enabled,
             sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
             db=db,
         )
     elif provider == "aws":
@@ -131,6 +136,7 @@ def create_integration(
             credentials=credentials,
             scheduled_sync_enabled=scheduled_sync_enabled,
             sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
             db=db,
         )
     else:
@@ -149,6 +155,7 @@ def _create_cloudflare_integration(
     credentials: dict,
     scheduled_sync_enabled: bool = False,
     sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
     db: Session,
 ) -> Integration:
     """Create a Cloudflare integration + DNS-zone resource."""
@@ -168,6 +175,7 @@ def _create_cloudflare_integration(
         status="active",
         scheduled_sync_enabled=scheduled_sync_enabled,
         sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference
@@ -198,6 +206,7 @@ def _create_github_integration(
     credentials: dict,
     scheduled_sync_enabled: bool = False,
     sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
     db: Session,
 ) -> Integration:
     """Create a GitHub integration + repository resource.
@@ -249,6 +258,7 @@ def _create_github_integration(
         status="active",
         scheduled_sync_enabled=scheduled_sync_enabled,
         sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference
@@ -278,6 +288,7 @@ def _create_vercel_integration(
     credentials: dict,
     scheduled_sync_enabled: bool = False,
     sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
     db: Session,
 ) -> Integration:
     """Create a Vercel integration + project resource.
@@ -325,6 +336,7 @@ def _create_vercel_integration(
         status="active",
         scheduled_sync_enabled=scheduled_sync_enabled,
         sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference
@@ -354,6 +366,7 @@ def _create_stripe_integration(
     credentials: dict,
     scheduled_sync_enabled: bool = False,
     sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
     db: Session,
 ) -> Integration:
     """Create a Stripe integration + account resource.
@@ -416,6 +429,7 @@ def _create_stripe_integration(
         status="active",
         scheduled_sync_enabled=scheduled_sync_enabled,
         sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
     )
     db.add(integration)
     db.flush()  # Populate integration.id before the Resource FK reference
@@ -450,6 +464,7 @@ def _create_aws_integration(
     credentials: dict,
     scheduled_sync_enabled: bool = False,
     sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
     db: Session,
 ) -> Integration:
     """Create an AWS integration + account resource.
@@ -501,6 +516,7 @@ def _create_aws_integration(
         status="active",
         scheduled_sync_enabled=scheduled_sync_enabled,
         sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
     )
     db.add(integration)
     db.flush()
@@ -528,6 +544,27 @@ def _create_aws_integration(
     db.commit()
     db.refresh(integration)
     return integration
+
+
+def get_integrations_by_workspace(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+) -> list[Integration]:
+    """Return non-deleted integrations for a workspace.
+
+    Called when workspace_id is provided in the list request (M50).
+    Membership verification is done at the router level before this call.
+    """
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.status != "deleted",
+        )
+        .order_by(Integration.created_at.desc())
+        .all()
+    )
 
 
 def get_integrations(*, user_id: uuid.UUID, db: Session) -> list[Integration]:

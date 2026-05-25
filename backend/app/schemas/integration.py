@@ -172,6 +172,16 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── M50: workspace assignment ─────────────────────────────────────────────
+    workspace_id: Optional[UUID4] = Field(
+        None,
+        description=(
+            "M50: workspace to create this integration in. "
+            "If omitted, the user's default workspace is used. "
+            "Caller must be a member of the workspace."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_provider_fields(self) -> "IntegrationCreateRequest":
         """Ensure the correct credential fields are present for the provider."""
