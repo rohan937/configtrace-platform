@@ -121,6 +121,9 @@ from app.core.failure_classifier import (
     classify_aws_eventbridge_failure,
     classify_aws_sqs_failure,
     classify_aws_sns_failure,
+    classify_aws_kms_failure,
+    classify_aws_backup_failure,
+    classify_aws_organizations_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -191,6 +194,17 @@ from app.connectors.aws_schema import (
     AWS_SQS_QUEUE,
     AWS_SNS_TOPIC,
     AWS_SNS_SUBSCRIPTION,
+    AWS_KMS_KEY,
+    AWS_KMS_ALIAS,
+    AWS_BACKUP_VAULT,
+    AWS_BACKUP_PLAN,
+    AWS_BACKUP_SELECTION,
+    AWS_BACKUP_RECOVERY_POINT,
+    AWS_ORGANIZATIONS_ORGANIZATION,
+    AWS_ORGANIZATIONS_ACCOUNT,
+    AWS_ORGANIZATIONS_OU,
+    AWS_ORGANIZATIONS_SCP,
+    AWS_ORGANIZATIONS_SCP_ATTACHMENT,
 )
 
 logger = logging.getLogger(__name__)
@@ -1471,6 +1485,312 @@ def _summarize_redrive_allow_policy(raw_json: str) -> str | None:
         return None
 
 
+# ── M48: KMS / Backup / Organizations helpers ────────────────────────────────
+
+_GOVERNANCE_SENSITIVE_PATTERNS: frozenset[str] = frozenset({
+    "prod", "production", "live",
+    "payment", "payments", "billing", "invoice", "stripe",
+    "auth", "authentication", "login", "credential",
+    "admin", "critical", "pii", "customer", "user", "users",
+    "financial", "order", "orders",
+    "backup", "backups", "restore", "recovery",
+    "master", "root", "cmk", "compliance", "audit",
+})
+
+
+def _classify_governance_name_sensitivity(name: str) -> str:
+    """Return sensitivity category for a KMS/Backup/Organizations resource name.
+
+    Returns one of: production, payment, auth, admin, backup, none.
+    """
+    lower = name.lower()
+    if any(p in lower for p in ("prod", "production", "live")):
+        return "production"
+    if any(p in lower for p in ("payment", "payments", "billing", "invoice", "stripe", "financial", "order", "orders")):
+        return "payment"
+    if any(p in lower for p in ("auth", "authentication", "login", "credential")):
+        return "auth"
+    if any(p in lower for p in ("backup", "backups", "restore", "recovery")):
+        return "backup"
+    if any(p in lower for p in ("admin", "critical", "pii", "customer", "user", "users", "master", "root", "cmk", "compliance", "audit")):
+        return "admin"
+    return "none"
+
+
+def _is_sensitive_governance_resource(name: str) -> bool:
+    """Return True if the resource name suggests a sensitive/production context."""
+    lower = name.lower()
+    return any(p in lower for p in _GOVERNANCE_SENSITIVE_PATTERNS)
+
+
+def _hash_id(id_str: str) -> str | None:
+    """Return a 12-character hex SHA-256 of an ID (key ID, org ID, policy ID, etc.).
+
+    SECURITY: Raw IDs may be used as inputs to other operations; hashing
+    prevents accidental enumeration while still detecting changes.
+    """
+    if not id_str:
+        return None
+    return hashlib.sha256(id_str.encode("utf-8")).hexdigest()[:12]
+
+
+def _hash_email(email: str) -> str | None:
+    """Return a 12-character hex SHA-256 of an email address.
+
+    SECURITY: Raw account email addresses are never stored.
+    """
+    if not email:
+        return None
+    return hashlib.sha256(email.lower().encode("utf-8")).hexdigest()[:12]
+
+
+def _kms_policy_is_public(policy_json: str, account_id: str) -> bool:
+    """Return True if a KMS key policy grants access outside the account.
+
+    Checks ALLOW statements for Principal="*" or cross-account ARNs.
+    Returns False on parse failure (fail-closed).
+
+    SECURITY: Raw policy JSON is NEVER stored.  Only the boolean result is returned.
+    """
+    # Reuse the messaging policy check logic
+    return _messaging_policy_is_public(policy_json, account_id)
+
+
+def _kms_policy_has_wildcard_admin(policy_json: str, account_id: str) -> bool:
+    """Return True if a KMS key policy has a wildcard-action Allow for any principal.
+
+    Detects overly broad KMS policies where Action is '*' or 'kms:*' in an
+    Allow statement for a principal outside the account.
+
+    SECURITY: Raw policy JSON is NEVER stored.  Only the boolean result is returned.
+    """
+    if not policy_json:
+        return False
+    try:
+        import json as _json
+        policy = _json.loads(policy_json)
+        for stmt in policy.get("Statement") or []:
+            effect = (stmt.get("Effect") or "").upper()
+            if effect != "ALLOW":
+                continue
+            principal = stmt.get("Principal")
+            # Determine if principal is external
+            is_external = False
+            if principal == "*":
+                is_external = True
+            elif isinstance(principal, dict):
+                for _pkey, pval in principal.items():
+                    vals = [pval] if isinstance(pval, str) else (pval if isinstance(pval, list) else [])
+                    for v in vals:
+                        sv = str(v)
+                        if sv == "*" or (account_id and account_id not in sv):
+                            is_external = True
+                            break
+                    if is_external:
+                        break
+            if not is_external:
+                continue
+            # Check for wildcard actions
+            actions = stmt.get("Action") or []
+            if isinstance(actions, str):
+                actions = [actions]
+            for action in actions:
+                a = str(action).lower()
+                if a in ("*", "kms:*"):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _summarize_scp_content(policy_json: str) -> dict:
+    """Parse and summarize SCP content without storing raw JSON.
+
+    Returns a dict with safe summary fields:
+    - allow_statement_count
+    - deny_statement_count
+    - denied_action_count
+    - denied_service_prefixes (sorted list of unique service prefixes)
+    - wildcard_action_present (bool)
+    - wildcard_resource_present (bool)
+    - denies_full_admin_escape (bool)
+
+    SECURITY: Raw SCP JSON is NEVER stored.  Only the summary dict is returned.
+    """
+    empty: dict = {
+        "allow_statement_count": 0,
+        "deny_statement_count": 0,
+        "denied_action_count": 0,
+        "denied_service_prefixes": [],
+        "wildcard_action_present": False,
+        "wildcard_resource_present": False,
+        "denies_full_admin_escape": False,
+    }
+    if not policy_json:
+        return empty
+    try:
+        import json as _json
+        policy = _json.loads(policy_json)
+        allow_count = 0
+        deny_count = 0
+        denied_actions: set[str] = set()
+        denied_prefixes: set[str] = set()
+        wildcard_action = False
+        wildcard_resource = False
+        denies_escape = False
+
+        # Admin/escape action patterns to check
+        _ADMIN_ESCAPE_PREFIXES = frozenset({
+            "*", "iam", "sts", "organizations", "kms", "s3", "ec2", "cloudtrail",
+        })
+        _ADMIN_ESCAPE_ACTIONS = frozenset({
+            "*", "iam:*", "sts:*", "organizations:*", "iam:createuser",
+            "iam:createrolepolicy", "iam:attachrolepolicy", "iam:createrole",
+            "iam:putrolepolicy", "iam:attachusergroup", "iam:addusertogroup",
+        })
+
+        for stmt in policy.get("Statement") or []:
+            effect = (stmt.get("Effect") or "").upper()
+            actions = stmt.get("Action") or []
+            if isinstance(actions, str):
+                actions = [actions]
+            resources = stmt.get("Resource") or []
+            if isinstance(resources, str):
+                resources = [resources]
+
+            # Check for wildcard actions across all effects
+            for action in actions:
+                a = str(action).lower()
+                if "*" in a:
+                    wildcard_action = True
+
+            if effect == "ALLOW":
+                allow_count += 1
+            elif effect == "DENY":
+                deny_count += 1
+                for action in actions:
+                    a = str(action).lower()
+                    denied_actions.add(a)
+                    if ":" in a:
+                        prefix = a.split(":")[0]
+                        denied_prefixes.add(prefix)
+                    # Check if this deny covers admin-escape actions
+                    for esc in _ADMIN_ESCAPE_ACTIONS:
+                        if a == esc or a == "*":
+                            denies_escape = True
+                            break
+                    if a.split(":")[0] in _ADMIN_ESCAPE_PREFIXES and a.endswith(":*"):
+                        denies_escape = True
+                for resource in resources:
+                    if str(resource) == "*":
+                        wildcard_resource = True
+
+        return {
+            "allow_statement_count": allow_count,
+            "deny_statement_count": deny_count,
+            "denied_action_count": len(denied_actions),
+            "denied_service_prefixes": sorted(denied_prefixes),
+            "wildcard_action_present": wildcard_action,
+            "wildcard_resource_present": wildcard_resource,
+            "denies_full_admin_escape": denies_escape,
+        }
+    except Exception:
+        return empty
+
+
+def _summarize_backup_rules(rules: list[dict]) -> dict:
+    """Summarize AWS Backup plan rules without storing raw content.
+
+    Returns a dict with safe summary fields.
+    SECURITY: Raw rule content never stored.
+    """
+    if not rules:
+        return {
+            "rule_count": 0,
+            "rule_names": [],
+            "target_vault_names": [],
+            "schedule_expression_present_count": 0,
+            "continuous_backup_enabled_count": 0,
+            "lifecycle_delete_after_days_min": None,
+            "lifecycle_delete_after_days_max": None,
+            "lifecycle_move_to_cold_after_days_min": None,
+            "lifecycle_move_to_cold_after_days_max": None,
+            "copy_action_count": 0,
+        }
+    rule_names: list[str] = []
+    vault_names: list[str] = []
+    sched_count = 0
+    continuous_count = 0
+    delete_days: list[int] = []
+    cold_days: list[int] = []
+    copy_count = 0
+
+    for rule in rules:
+        name = rule.get("RuleName") or ""
+        if name:
+            rule_names.append(name)
+        vault = rule.get("TargetBackupVaultName") or ""
+        if vault and vault not in vault_names:
+            vault_names.append(vault)
+        if rule.get("ScheduleExpression"):
+            sched_count += 1
+        if rule.get("EnableContinuousBackup"):
+            continuous_count += 1
+        lc = rule.get("Lifecycle") or {}
+        dd = lc.get("DeleteAfterDays")
+        ca = lc.get("MoveToColdStorageAfterDays")
+        if dd is not None:
+            try:
+                delete_days.append(int(dd))
+            except (TypeError, ValueError):
+                pass
+        if ca is not None:
+            try:
+                cold_days.append(int(ca))
+            except (TypeError, ValueError):
+                pass
+        copy_count += len(rule.get("CopyActions") or [])
+
+    return {
+        "rule_count": len(rules),
+        "rule_names": rule_names,
+        "target_vault_names": sorted(set(vault_names)),
+        "schedule_expression_present_count": sched_count,
+        "continuous_backup_enabled_count": continuous_count,
+        "lifecycle_delete_after_days_min": min(delete_days) if delete_days else None,
+        "lifecycle_delete_after_days_max": max(delete_days) if delete_days else None,
+        "lifecycle_move_to_cold_after_days_min": min(cold_days) if cold_days else None,
+        "lifecycle_move_to_cold_after_days_max": max(cold_days) if cold_days else None,
+        "copy_action_count": copy_count,
+    }
+
+
+def _summarize_backup_selection_resources(resources: list[str], conditions: dict) -> dict:
+    """Summarize backup selection resources by type/count without storing raw ARNs.
+
+    SECURITY: Raw resource ARNs are never stored.
+    """
+    type_counts: dict[str, int] = {}
+    for r in resources:
+        # Extract resource type from ARN pattern like arn:aws:ec2:*:*:instance/*
+        parts = r.split(":")
+        if len(parts) >= 3:
+            svc = parts[2].lower() if len(parts) > 2 else "unknown"
+            type_counts[svc] = type_counts.get(svc, 0) + 1
+        else:
+            type_counts["unknown"] = type_counts.get("unknown", 0) + 1
+    tag_conditions = 0
+    if isinstance(conditions, dict):
+        for _k, v in conditions.items():
+            if isinstance(v, list):
+                tag_conditions += len(v)
+    return {
+        "resource_count": len(resources),
+        "resource_type_counts": type_counts if type_counts else None,
+        "condition_count": tag_conditions,
+    }
+
+
 # ── M39: IAM policy and trust analysis helpers ────────────────────────────────
 
 # Services whose actions in a policy are considered sensitive for privilege
@@ -2230,6 +2550,36 @@ class AWSConnector(BaseConnector):
             len(sns_records),
         )
 
+        # 27. KMS keys and aliases (M48).
+        #     SECURITY: kms:Decrypt/Encrypt/GenerateDataKey and ALL cryptographic
+        #     operations NEVER called.  Only key configuration posture collected.
+        kms_records = self._fetch_kms_resources(credentials, account_id)
+        records.extend(kms_records)
+        logger.info(
+            "AWSConnector.fetch: kms_resources fetched  count=%d",
+            len(kms_records),
+        )
+
+        # 28. AWS Backup vaults, plans, selections, recovery points (M48).
+        #     SECURITY: backup:StartBackupJob/StartRestoreJob/DeleteRecoveryPoint NEVER called.
+        #     Backup contents and protected resource data NEVER read.
+        backup_records = self._fetch_backup_resources(credentials, account_id)
+        records.extend(backup_records)
+        logger.info(
+            "AWSConnector.fetch: backup_resources fetched  count=%d",
+            len(backup_records),
+        )
+
+        # 29. AWS Organizations structure and SCPs (M48).
+        #     SECURITY: Organizations/SCP write/mutate operations NEVER called.
+        #     SCPs never created, attached, detached, or deleted.
+        organizations_records = self._fetch_organizations_resources(credentials, account_id)
+        records.extend(organizations_records)
+        logger.info(
+            "AWSConnector.fetch: organizations_resources fetched  count=%d",
+            len(organizations_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -2331,6 +2681,18 @@ class AWSConnector(BaseConnector):
             1 for r in sns_records
             if r.get("record_type") == AWS_SNS_TOPIC
         )
+        kms_key_count = sum(
+            1 for r in kms_records
+            if r.get("record_type") == AWS_KMS_KEY
+        )
+        backup_vault_count = sum(
+            1 for r in backup_records
+            if r.get("record_type") == AWS_BACKUP_VAULT
+        )
+        org_account_count = sum(
+            1 for r in organizations_records
+            if r.get("record_type") == AWS_ORGANIZATIONS_ACCOUNT
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -2359,6 +2721,9 @@ class AWSConnector(BaseConnector):
             eventbridge_bus_count=eventbridge_bus_count,
             sqs_queue_count=sqs_queue_count,
             sns_topic_count=sns_topic_count,
+            kms_key_count=kms_key_count,
+            backup_vault_count=backup_vault_count,
+            org_account_count=org_account_count,
         )
         records.append(inventory_record)
 
@@ -2483,6 +2848,9 @@ class AWSConnector(BaseConnector):
         eventbridge_bus_count: int = 0,
         sqs_queue_count: int = 0,
         sns_topic_count: int = 0,
+        kms_key_count: int = 0,
+        backup_vault_count: int = 0,
+        org_account_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -2498,6 +2866,7 @@ class AWSConnector(BaseConnector):
                 "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr",
                 "eventbridge", "sqs", "sns",
+                "kms", "backup", "organizations",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -2525,8 +2894,11 @@ class AWSConnector(BaseConnector):
             "eventbridge_bus_count":          eventbridge_bus_count,
             "sqs_queue_count":                sqs_queue_count,
             "sns_topic_count":                sns_topic_count,
+            "kms_key_count":                  kms_key_count,
+            "backup_vault_count":             backup_vault_count,
+            "org_account_count":              org_account_count,
             "future_surfaces": [
-                "kms", "backup", "organizations", "cloudwatch",
+                "cloudwatch",
             ],
         }
 
@@ -10751,3 +11123,858 @@ class AWSConnector(BaseConnector):
                 })
 
         return records
+
+    # ── M48: KMS fetch methods ────────────────────────────────────────────────
+
+    def _fetch_kms_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch KMS key and alias configuration posture across all regions.
+
+        SECURITY:
+        - kms:Decrypt NEVER called.
+        - kms:Encrypt NEVER called.
+        - kms:GenerateDataKey NEVER called.
+        - No cryptographic operations performed.
+        - Only key configuration posture metadata is collected.
+        """
+        records: list[dict] = []
+        selected = self._selected_regions(credentials)
+        for region in selected:
+            try:
+                client = self._make_client("kms", credentials, region=region)
+                region_records = self._fetch_kms_in_region(client, account_id, region)
+                records.extend(region_records)
+            except Exception as exc:
+                fc = classify_aws_kms_failure("ListKeys", exc)
+                logger.warning(
+                    "aws: KMS region fetch failed  region=%s  code=%s",
+                    region, fc.error_code,
+                )
+        return records
+
+    def _fetch_kms_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch KMS keys and aliases for one region.
+
+        SECURITY: Cryptographic APIs (Decrypt, Encrypt, GenerateDataKey,
+        ReEncrypt, Sign, Verify) NEVER called.
+        """
+        import json as _json
+        records: list[dict] = []
+
+        # ── ListKeys (paginated) ───────────────────────────────────────────────
+        key_entries: list[dict] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                response = self._call_aws(client.list_keys, **kwargs)
+                key_entries.extend(response.get("Keys") or [])
+                next_token = response.get("NextMarker")
+                if not next_token:
+                    break
+                kwargs["Marker"] = next_token
+        except Exception as exc:
+            fc = classify_aws_kms_failure("ListKeys", exc)
+            logger.warning(
+                "aws: ListKeys failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+            return records
+
+        for entry in key_entries:
+            key_id: str = entry.get("KeyId") or ""
+            key_arn: str = entry.get("KeyArn") or ""
+            key_warnings: list[str] = []
+
+            # ── DescribeKey ────────────────────────────────────────────────────
+            key_meta: dict = {}
+            try:
+                desc_resp = self._call_aws(client.describe_key, KeyId=key_id)
+                key_meta = (desc_resp.get("KeyMetadata") or {})
+            except Exception as exc:
+                fc = classify_aws_kms_failure("DescribeKey", exc)
+                key_warnings.append(f"DescribeKey: {fc.error_code}")
+
+            key_state: str = key_meta.get("KeyState") or "Unknown"
+            enabled: bool = key_meta.get("Enabled", False)
+            key_usage: str = key_meta.get("KeyUsage") or ""
+            key_spec: str = key_meta.get("KeySpec") or key_meta.get("CustomerMasterKeySpec") or ""
+            key_manager: str = key_meta.get("KeyManager") or ""
+            origin: str = key_meta.get("Origin") or ""
+            multi_region: bool = key_meta.get("MultiRegion", False)
+            deletion_date_present: bool = bool(key_meta.get("DeletionDate"))
+            valid_to_present: bool = bool(key_meta.get("ValidTo"))
+            creation_date_present: bool = bool(key_meta.get("CreationDate"))
+
+            # ── GetKeyRotationStatus ───────────────────────────────────────────
+            rotation_enabled: bool | None = None
+            # Only applicable to symmetric keys managed by AWS KMS
+            if key_manager == "CUSTOMER" and origin == "AWS_KMS":
+                try:
+                    rot_resp = self._call_aws(client.get_key_rotation_status, KeyId=key_id)
+                    rotation_enabled = rot_resp.get("KeyRotationEnabled", False)
+                except Exception as exc:
+                    fc = classify_aws_kms_failure("GetKeyRotationStatus", exc)
+                    key_warnings.append(f"GetKeyRotationStatus: {fc.error_code}")
+
+            # ── GetKeyPolicy ───────────────────────────────────────────────────
+            policy_present = False
+            policy_is_public = False
+            wildcard_admin_policy = False
+            try:
+                pol_resp = self._call_aws(
+                    client.get_key_policy, KeyId=key_id, PolicyName="default"
+                )
+                raw_policy: str = pol_resp.get("Policy") or ""
+                if raw_policy:
+                    policy_present = True
+                    # SECURITY: raw policy never stored
+                    policy_is_public = _kms_policy_is_public(raw_policy, account_id)
+                    wildcard_admin_policy = _kms_policy_has_wildcard_admin(raw_policy, account_id)
+            except Exception as exc:
+                fc = classify_aws_kms_failure("GetKeyPolicy", exc)
+                key_warnings.append(f"GetKeyPolicy: {fc.error_code}")
+
+            # ── ListResourceTags — keys only ───────────────────────────────────
+            tag_keys: list[str] | None = None
+            try:
+                tags_resp = self._call_aws(client.list_resource_tags, KeyId=key_id)
+                raw_tags = tags_resp.get("Tags") or []
+                # SECURITY: tag values never stored
+                tag_keys = sorted({t["TagKey"] for t in raw_tags if "TagKey" in t}) or None
+            except Exception as exc:
+                fc = classify_aws_kms_failure("ListResourceTags", exc)
+                key_warnings.append(f"ListResourceTags: {fc.error_code}")
+
+            name_sensitivity = _classify_governance_name_sensitivity(key_id)
+            key_id_hash = _hash_id(key_id) or "unknown"
+            key_stable_id = f"{account_id}/{region}/kms/{key_id_hash}"
+            records.append({
+                "record_type":                AWS_KMS_KEY,
+                "record_id":                  key_stable_id,
+                "external_id":                key_stable_id,
+                "name":                       f"kms-key-{key_id_hash}",
+                "account_id":                 account_id,
+                "region":                     region,
+                # SECURITY: raw key ID and ARN never stored — hashed
+                "key_id_hash":                key_id_hash,
+                "key_arn_hash":               _hash_arn(key_arn),
+                "key_state":                  key_state,
+                "enabled":                    enabled,
+                "key_usage":                  key_usage,
+                "key_spec":                   key_spec,
+                "key_manager":                key_manager,
+                "origin":                     origin,
+                "multi_region":               multi_region,
+                "deletion_date_present":      deletion_date_present,
+                "valid_to_present":           valid_to_present,
+                "creation_date_present":      creation_date_present,
+                "rotation_enabled":           rotation_enabled,
+                "policy_present":             policy_present,
+                "public_or_cross_account_policy": policy_is_public,
+                "wildcard_admin_policy":      wildcard_admin_policy,
+                "name_sensitivity":           name_sensitivity,
+                "tag_keys":                   tag_keys,
+                "config_fetch_warnings":      key_warnings if key_warnings else None,
+            })
+
+        # ── ListAliases (paginated) ────────────────────────────────────────────
+        try:
+            alias_kwargs: dict = {}
+            while True:
+                alias_resp = self._call_aws(client.list_aliases, **alias_kwargs)
+                for alias in alias_resp.get("Aliases") or []:
+                    alias_name: str = alias.get("AliasName") or ""
+                    alias_arn: str = alias.get("AliasArn") or ""
+                    target_key_id: str = alias.get("TargetKeyId") or ""
+
+                    alias_stable_id = f"{account_id}/{region}/kms-alias/{alias_name}"
+                    records.append({
+                        "record_type":            AWS_KMS_ALIAS,
+                        "record_id":              alias_stable_id,
+                        "external_id":            alias_stable_id,
+                        "name":                   alias_name,
+                        "account_id":             account_id,
+                        "region":                 region,
+                        "alias_name":             alias_name,
+                        "alias_arn_hash":         _hash_arn(alias_arn),
+                        # SECURITY: raw target key ID not stored — hash only
+                        "target_key_id_hash":     _hash_id(target_key_id),
+                        "target_key_present":     bool(target_key_id),
+                        "config_fetch_warnings":  None,
+                    })
+                next_marker = alias_resp.get("NextMarker")
+                if not next_marker:
+                    break
+                alias_kwargs["Marker"] = next_marker
+        except Exception as exc:
+            fc = classify_aws_kms_failure("ListAliases", exc)
+            logger.warning(
+                "aws: ListAliases failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+
+        return records
+
+    # ── M48: Backup fetch methods ─────────────────────────────────────────────
+
+    def _fetch_backup_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch AWS Backup vault, plan, selection, and recovery point posture.
+
+        SECURITY:
+        - backup:StartBackupJob NEVER called.
+        - backup:StartRestoreJob NEVER called.
+        - backup:DeleteRecoveryPoint NEVER called.
+        - Backup contents and protected resource data NEVER read.
+        - Only backup configuration posture metadata is collected.
+        """
+        records: list[dict] = []
+        selected = self._selected_regions(credentials)
+        for region in selected:
+            try:
+                client = self._make_client("backup", credentials, region=region)
+                region_records = self._fetch_backup_in_region(client, account_id, region)
+                records.extend(region_records)
+            except Exception as exc:
+                fc = classify_aws_backup_failure("ListBackupVaults", exc)
+                logger.warning(
+                    "aws: Backup region fetch failed  region=%s  code=%s",
+                    region, fc.error_code,
+                )
+        return records
+
+    def _fetch_backup_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch AWS Backup configuration for one region.
+
+        SECURITY: Backup restore, start, delete operations NEVER called.
+        """
+        records: list[dict] = []
+
+        # ── ListBackupVaults (paginated) ───────────────────────────────────────
+        vaults: list[dict] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                response = self._call_aws(client.list_backup_vaults, **kwargs)
+                vaults.extend(response.get("BackupVaultList") or [])
+                next_token = response.get("NextToken")
+                if not next_token:
+                    break
+                kwargs["NextToken"] = next_token
+        except Exception as exc:
+            fc = classify_aws_backup_failure("ListBackupVaults", exc)
+            logger.warning(
+                "aws: ListBackupVaults failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+            return records
+
+        for vault in vaults:
+            vault_name: str = vault.get("BackupVaultName") or ""
+            vault_arn: str = vault.get("BackupVaultArn") or ""
+            vault_warnings: list[str] = []
+
+            # ── DescribeBackupVault — lock config ──────────────────────────────
+            locked = False
+            min_retention_days: int | None = None
+            max_retention_days: int | None = None
+            recovery_points_count: int | None = vault.get("NumberOfRecoveryPoints")
+            backup_vault_lock_configuration_present = False
+            encryption_key_arn: str = vault.get("EncryptionKeyArn") or ""
+            try:
+                desc = self._call_aws(client.describe_backup_vault, BackupVaultName=vault_name)
+                encryption_key_arn = desc.get("EncryptionKeyArn") or encryption_key_arn
+                recovery_points_count = desc.get("NumberOfRecoveryPoints") or recovery_points_count
+                lock_cfg = desc.get("Locked")
+                if lock_cfg is not None:
+                    locked = bool(lock_cfg)
+                min_ret = desc.get("MinRetentionDays")
+                max_ret = desc.get("MaxRetentionDays")
+                if min_ret is not None:
+                    min_retention_days = int(min_ret)
+                    backup_vault_lock_configuration_present = True
+                if max_ret is not None:
+                    max_retention_days = int(max_ret)
+                    backup_vault_lock_configuration_present = True
+            except Exception as exc:
+                fc = classify_aws_backup_failure("DescribeBackupVault", exc)
+                vault_warnings.append(f"DescribeBackupVault: {fc.error_code}")
+
+            # ── ListTags — keys only ───────────────────────────────────────────
+            tag_keys: list[str] | None = None
+            if vault_arn:
+                try:
+                    tags_resp = self._call_aws(client.list_tags, ResourceArn=vault_arn)
+                    raw_tags = tags_resp.get("Tags") or {}
+                    # SECURITY: tag values never stored
+                    tag_keys = sorted(raw_tags.keys()) or None
+                except Exception as exc:
+                    fc = classify_aws_backup_failure("ListTags", exc)
+                    vault_warnings.append(f"ListTags: {fc.error_code}")
+
+            name_sensitivity = _classify_governance_name_sensitivity(vault_name)
+            vault_stable_id = f"{account_id}/{region}/backup-vault/{vault_name}"
+            records.append({
+                "record_type":                          AWS_BACKUP_VAULT,
+                "record_id":                            vault_stable_id,
+                "external_id":                          vault_stable_id,
+                "name":                                 vault_name,
+                "account_id":                           account_id,
+                "region":                               region,
+                "vault_arn_hash":                       _hash_arn(vault_arn),
+                "encryption_key_arn_present":           bool(encryption_key_arn),
+                "encryption_key_arn_hash":              _hash_arn(encryption_key_arn),
+                "locked":                               locked,
+                "min_retention_days":                   min_retention_days,
+                "max_retention_days":                   max_retention_days,
+                "recovery_points_count":                recovery_points_count,
+                "backup_vault_lock_configuration_present": backup_vault_lock_configuration_present,
+                "name_sensitivity":                     name_sensitivity,
+                "tag_keys":                             tag_keys,
+                "config_fetch_warnings":                vault_warnings if vault_warnings else None,
+            })
+
+            # ── ListRecoveryPointsByBackupVault (bounded — up to 100) ─────────
+            try:
+                rp_kwargs: dict = {"BackupVaultName": vault_name, "MaxResults": 100}
+                rp_resp = self._call_aws(client.list_recovery_points_by_backup_vault, **rp_kwargs)
+                for rp in rp_resp.get("RecoveryPoints") or []:
+                    rp_arn: str = rp.get("RecoveryPointArn") or ""
+                    resource_type: str = rp.get("ResourceType") or ""
+                    status: str = rp.get("Status") or ""
+                    rp_vault: str = rp.get("BackupVaultName") or vault_name
+                    enc_key: str = rp.get("EncryptionKeyArn") or ""
+                    size_bytes: int | None = rp.get("BackupSizeInBytes")
+
+                    rp_arn_hash = _hash_arn(rp_arn) or "unknown"
+                    rp_stable_id = f"{account_id}/{region}/backup-recovery-point/{rp_arn_hash}"
+                    records.append({
+                        "record_type":                      AWS_BACKUP_RECOVERY_POINT,
+                        "record_id":                        rp_stable_id,
+                        "external_id":                      rp_stable_id,
+                        "name":                             f"rp-{rp_arn_hash}",
+                        "account_id":                       account_id,
+                        "region":                           region,
+                        "recovery_point_arn_hash":          rp_arn_hash,
+                        "backup_vault_name":                rp_vault,
+                        "resource_type":                    resource_type,
+                        "status":                           status,
+                        "creation_date_present":            bool(rp.get("CreationDate")),
+                        "completion_date_present":          bool(rp.get("CompletionDate")),
+                        "lifecycle_present":                bool(rp.get("Lifecycle")),
+                        "calculated_lifecycle_delete_at_present": bool(rp.get("CalculatedLifecycle")),
+                        "encryption_key_arn_present":       bool(enc_key),
+                        "encryption_key_arn_hash":          _hash_arn(enc_key),
+                        "is_encrypted":                     rp.get("IsEncrypted", False),
+                        "size_bytes":                       size_bytes,
+                        "config_fetch_warnings":            None,
+                    })
+            except Exception as exc:
+                fc = classify_aws_backup_failure("ListRecoveryPointsByBackupVault", exc)
+                vault_warnings.append(f"ListRecoveryPoints: {fc.error_code}")
+
+        # ── ListBackupPlans (paginated) ────────────────────────────────────────
+        try:
+            plan_kwargs: dict = {}
+            while True:
+                plan_list_resp = self._call_aws(client.list_backup_plans, **plan_kwargs)
+                for plan_entry in plan_list_resp.get("BackupPlansList") or []:
+                    plan_id: str = plan_entry.get("BackupPlanId") or ""
+                    plan_arn: str = plan_entry.get("BackupPlanArn") or ""
+                    version_id: str = plan_entry.get("VersionId") or ""
+                    plan_warnings: list[str] = []
+
+                    # ── GetBackupPlan ──────────────────────────────────────────
+                    rules: list[dict] = []
+                    plan_name: str = plan_entry.get("BackupPlanName") or ""
+                    try:
+                        plan_resp = self._call_aws(
+                            client.get_backup_plan,
+                            BackupPlanId=plan_id,
+                        )
+                        bp = plan_resp.get("BackupPlan") or {}
+                        plan_name = bp.get("BackupPlanName") or plan_name
+                        rules = bp.get("Rules") or []
+                    except Exception as exc:
+                        fc = classify_aws_backup_failure("GetBackupPlan", exc)
+                        plan_warnings.append(f"GetBackupPlan: {fc.error_code}")
+
+                    rule_summary = _summarize_backup_rules(rules)
+
+                    # ── ListBackupSelections ───────────────────────────────────
+                    selections: list[dict] = []
+                    try:
+                        sel_resp = self._call_aws(
+                            client.list_backup_selections,
+                            BackupPlanId=plan_id,
+                        )
+                        selections = sel_resp.get("BackupSelectionsList") or []
+                    except Exception as exc:
+                        fc = classify_aws_backup_failure("ListBackupSelections", exc)
+                        plan_warnings.append(f"ListBackupSelections: {fc.error_code}")
+
+                    plan_id_hash = _hash_id(plan_id) or "unknown"
+                    plan_stable_id = f"{account_id}/{region}/backup-plan/{plan_id_hash}"
+                    plan_name_sensitivity = _classify_governance_name_sensitivity(plan_name)
+                    records.append({
+                        "record_type":                          AWS_BACKUP_PLAN,
+                        "record_id":                            plan_stable_id,
+                        "external_id":                          plan_stable_id,
+                        "name":                                 plan_name,
+                        "account_id":                           account_id,
+                        "region":                               region,
+                        "backup_plan_id_hash":                  plan_id_hash,
+                        "backup_plan_name":                     plan_name,
+                        "version_id_hash":                      _hash_id(version_id),
+                        "rule_count":                           rule_summary["rule_count"],
+                        "rule_names":                           rule_summary["rule_names"],
+                        "target_vault_names":                   rule_summary["target_vault_names"],
+                        "schedule_expression_present_count":    rule_summary["schedule_expression_present_count"],
+                        "continuous_backup_enabled_count":      rule_summary["continuous_backup_enabled_count"],
+                        "lifecycle_delete_after_days_min":      rule_summary["lifecycle_delete_after_days_min"],
+                        "lifecycle_delete_after_days_max":      rule_summary["lifecycle_delete_after_days_max"],
+                        "lifecycle_move_to_cold_after_days_min": rule_summary["lifecycle_move_to_cold_after_days_min"],
+                        "lifecycle_move_to_cold_after_days_max": rule_summary["lifecycle_move_to_cold_after_days_max"],
+                        "copy_action_count":                    rule_summary["copy_action_count"],
+                        "name_sensitivity":                     plan_name_sensitivity,
+                        "config_fetch_warnings":                plan_warnings if plan_warnings else None,
+                    })
+
+                    # ── Backup selection records ───────────────────────────────
+                    for sel_entry in selections:
+                        sel_id: str = sel_entry.get("SelectionId") or ""
+                        sel_name: str = sel_entry.get("SelectionName") or ""
+                        sel_warnings: list[str] = []
+
+                        # ── GetBackupSelection ─────────────────────────────────
+                        resources: list[str] = []
+                        conditions: dict = {}
+                        iam_role_arn: str = ""
+                        list_of_tags_count: int = 0
+                        not_resources_count: int = 0
+                        try:
+                            sel_resp = self._call_aws(
+                                client.get_backup_selection,
+                                BackupPlanId=plan_id,
+                                SelectionId=sel_id,
+                            )
+                            bs = sel_resp.get("BackupSelection") or {}
+                            sel_name = bs.get("SelectionName") or sel_name
+                            iam_role_arn = bs.get("IamRoleArn") or ""
+                            resources = bs.get("Resources") or []
+                            conditions = bs.get("Conditions") or {}
+                            list_of_tags_count = len(bs.get("ListOfTags") or [])
+                            not_resources_count = len(bs.get("NotResources") or [])
+                        except Exception as exc:
+                            fc = classify_aws_backup_failure("GetBackupSelection", exc)
+                            sel_warnings.append(f"GetBackupSelection: {fc.error_code}")
+
+                        res_summary = _summarize_backup_selection_resources(resources, conditions)
+                        sel_id_hash = _hash_id(sel_id) or "unknown"
+                        sel_stable_id = f"{account_id}/{region}/backup-selection/{plan_id_hash}/{sel_id_hash}"
+                        records.append({
+                            "record_type":            AWS_BACKUP_SELECTION,
+                            "record_id":              sel_stable_id,
+                            "external_id":            sel_stable_id,
+                            "name":                   sel_name,
+                            "account_id":             account_id,
+                            "region":                 region,
+                            "backup_plan_id_hash":    plan_id_hash,
+                            "selection_id_hash":      sel_id_hash,
+                            "selection_name":         sel_name,
+                            "iam_role_arn_present":   bool(iam_role_arn),
+                            # SECURITY: raw IAM role ARN not stored
+                            "iam_role_arn_hash":      _hash_arn(iam_role_arn),
+                            "resource_count":         res_summary["resource_count"],
+                            "resource_type_counts":   res_summary["resource_type_counts"],
+                            "condition_count":        res_summary["condition_count"],
+                            "list_of_tags_count":     list_of_tags_count,
+                            "not_resources_count":    not_resources_count,
+                            "config_fetch_warnings":  sel_warnings if sel_warnings else None,
+                        })
+
+                next_plan_token = plan_list_resp.get("NextToken")
+                if not next_plan_token:
+                    break
+                plan_kwargs["NextToken"] = next_plan_token
+        except Exception as exc:
+            fc = classify_aws_backup_failure("ListBackupPlans", exc)
+            logger.warning(
+                "aws: ListBackupPlans failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+
+        return records
+
+    # ── M48: Organizations fetch methods ─────────────────────────────────────
+
+    def _fetch_organizations_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch AWS Organizations structure and SCP posture.
+
+        Organizations is a global service — fetched once from us-east-1
+        (or the default region), not per-region.
+
+        SECURITY:
+        - Organizations write/mutate APIs NEVER called.
+        - SCPs never created, updated, deleted, attached, or detached.
+        - Raw SCP policy JSON never stored — summary only.
+        - Raw account email addresses never stored — hashed only.
+        """
+        region = self._default_region(credentials)
+        try:
+            client = self._make_client("organizations", credentials, region=region)
+            return self._fetch_organizations_global(client, account_id)
+        except Exception as exc:
+            fc = classify_aws_organizations_failure("DescribeOrganization", exc)
+            logger.warning(
+                "aws: Organizations global fetch failed  code=%s",
+                fc.error_code,
+            )
+            return []
+
+    def _fetch_organizations_global(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch Organizations organization, accounts, OUs, and SCPs.
+
+        SECURITY: All Organizations write operations NEVER called.
+        Raw policy content never stored — summary only.
+        """
+        import json as _json
+        records: list[dict] = []
+
+        # ── DescribeOrganization ───────────────────────────────────────────────
+        org_id: str = ""
+        feature_set: str = ""
+        master_account_id: str = ""
+        policy_types: list[dict] = []
+        root_count: int = 0
+        account_count: int = 0
+        ou_count: int = 0
+        scp_count: int = 0
+        org_warnings: list[str] = []
+
+        try:
+            org_resp = self._call_aws(client.describe_organization)
+            org = org_resp.get("Organization") or {}
+            org_id = org.get("Id") or ""
+            feature_set = org.get("FeatureSet") or ""
+            master_account_id = org.get("MasterAccountId") or ""
+            policy_types = org.get("AvailablePolicyTypes") or []
+        except Exception as exc:
+            fc = classify_aws_organizations_failure("DescribeOrganization", exc)
+            org_warnings.append(f"DescribeOrganization: {fc.error_code}")
+            # Cannot proceed without org info — return warning record only
+            return records
+
+        # ── ListRoots ─────────────────────────────────────────────────────────
+        roots: list[dict] = []
+        try:
+            roots_resp = self._call_aws(client.list_roots)
+            roots = roots_resp.get("Roots") or []
+            root_count = len(roots)
+        except Exception as exc:
+            fc = classify_aws_organizations_failure("ListRoots", exc)
+            org_warnings.append(f"ListRoots: {fc.error_code}")
+
+        # ── ListAccounts (paginated) ───────────────────────────────────────────
+        accounts: list[dict] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                acct_resp = self._call_aws(client.list_accounts, **kwargs)
+                accounts.extend(acct_resp.get("Accounts") or [])
+                next_token = acct_resp.get("NextToken")
+                if not next_token:
+                    break
+                kwargs["NextToken"] = next_token
+            account_count = len(accounts)
+        except Exception as exc:
+            fc = classify_aws_organizations_failure("ListAccounts", exc)
+            org_warnings.append(f"ListAccounts: {fc.error_code}")
+
+        # ── ListPolicies for SERVICE_CONTROL_POLICY ───────────────────────────
+        scps: list[dict] = []
+        try:
+            scp_kwargs: dict = {"Filter": "SERVICE_CONTROL_POLICY"}
+            while True:
+                scp_list_resp = self._call_aws(client.list_policies, **scp_kwargs)
+                scps.extend(scp_list_resp.get("Policies") or [])
+                next_token = scp_list_resp.get("NextToken")
+                if not next_token:
+                    break
+                scp_kwargs["NextToken"] = next_token
+            scp_count = len(scps)
+        except Exception as exc:
+            fc = classify_aws_organizations_failure("ListPolicies", exc)
+            org_warnings.append(f"ListPolicies: {fc.error_code}")
+
+        # Summarize policy types enabled
+        policy_types_summary = [
+            {"type": pt.get("Type", ""), "status": pt.get("Status", "")}
+            for pt in policy_types
+        ]
+
+        org_id_hash = _hash_id(org_id) or "unknown"
+        master_id_hash = _hash_id(master_account_id)
+        org_stable_id = f"{account_id}/organizations/{org_id_hash}"
+        records.append({
+            "record_type":              AWS_ORGANIZATIONS_ORGANIZATION,
+            "record_id":               org_stable_id,
+            "external_id":             org_stable_id,
+            "name":                    f"org-{org_id_hash}",
+            "account_id":              account_id,
+            "region":                  "global",
+            # SECURITY: raw org ID and master account ID not stored — hashed
+            "organization_id_hash":    org_id_hash,
+            "management_account_id_hash": master_id_hash,
+            "feature_set":             feature_set,
+            "root_count":              root_count,
+            "account_count":           account_count,
+            "ou_count":                ou_count,  # updated below
+            "scp_count":               scp_count,
+            "policy_types_summary":    policy_types_summary,
+            "config_fetch_warnings":   org_warnings if org_warnings else None,
+        })
+
+        # ── Account records ────────────────────────────────────────────────────
+        for acct in accounts:
+            acct_id: str = acct.get("Id") or ""
+            acct_name: str = acct.get("Name") or ""
+            acct_email: str = acct.get("Email") or ""
+            acct_status: str = acct.get("Status") or ""
+            joined_method: str = acct.get("JoinedMethod") or ""
+
+            acct_id_hash = _hash_id(acct_id) or "unknown"
+            acct_name_hash = _hash_id(acct_name)
+            # SECURITY: raw email never stored — hash only
+            acct_email_hash = _hash_email(acct_email)
+
+            acct_stable_id = f"{account_id}/org-account/{acct_id_hash}"
+            records.append({
+                "record_type":              AWS_ORGANIZATIONS_ACCOUNT,
+                "record_id":               acct_stable_id,
+                "external_id":             acct_stable_id,
+                "name":                    f"org-acct-{acct_id_hash}",
+                "account_id":              account_id,
+                "region":                  "global",
+                "org_account_id_hash":     acct_id_hash,
+                "account_name_hash":       acct_name_hash,
+                # SECURITY: raw email never stored
+                "account_email_hash":      acct_email_hash,
+                "status":                  acct_status,
+                "joined_method":           joined_method,
+                "joined_timestamp_present": bool(acct.get("JoinedTimestamp")),
+                "config_fetch_warnings":   None,
+            })
+
+        # ── OU records (from each root, one level deep + recursive) ───────────
+        total_ou_count = 0
+        for root in roots:
+            root_id: str = root.get("Id") or ""
+            root_ou_count = self._fetch_ou_children(
+                client, account_id, root_id, root_id, records, depth=0, max_depth=5
+            )
+            total_ou_count += root_ou_count
+
+        # Update org record ou_count
+        for r in records:
+            if r.get("record_type") == AWS_ORGANIZATIONS_ORGANIZATION:
+                r["ou_count"] = total_ou_count
+
+        # ── SCP records ────────────────────────────────────────────────────────
+        for scp in scps:
+            policy_id: str = scp.get("Id") or ""
+            policy_name: str = scp.get("Name") or ""
+            policy_arn: str = scp.get("Arn") or ""
+            aws_managed: bool = scp.get("AwsManaged", False)
+            description: str = scp.get("Description") or ""
+            scp_warnings: list[str] = []
+
+            # ── DescribePolicy — get content for summary ───────────────────────
+            scp_summary: dict = {}
+            try:
+                desc_resp = self._call_aws(client.describe_policy, PolicyId=policy_id)
+                policy_content_raw = (desc_resp.get("Policy") or {}).get("Content") or ""
+                # SECURITY: raw policy JSON never stored — summary only
+                scp_summary = _summarize_scp_content(policy_content_raw)
+            except Exception as exc:
+                fc = classify_aws_organizations_failure("DescribePolicy", exc)
+                scp_warnings.append(f"DescribePolicy: {fc.error_code}")
+
+            # ── ListTargetsForPolicy ───────────────────────────────────────────
+            targets: list[dict] = []
+            try:
+                tgt_resp = self._call_aws(client.list_targets_for_policy, PolicyId=policy_id)
+                targets = tgt_resp.get("Targets") or []
+            except Exception as exc:
+                fc = classify_aws_organizations_failure("ListTargetsForPolicy", exc)
+                scp_warnings.append(f"ListTargetsForPolicy: {fc.error_code}")
+
+            target_type_counts: dict[str, int] = {}
+            for tgt in targets:
+                ttype = (tgt.get("Type") or "UNKNOWN").upper()
+                target_type_counts[ttype] = target_type_counts.get(ttype, 0) + 1
+
+            policy_id_hash = _hash_id(policy_id) or "unknown"
+            policy_name_sensitivity = _classify_governance_name_sensitivity(policy_name)
+            scp_stable_id = f"{account_id}/org-scp/{policy_id_hash}"
+            records.append({
+                "record_type":              AWS_ORGANIZATIONS_SCP,
+                "record_id":               scp_stable_id,
+                "external_id":             scp_stable_id,
+                "name":                    policy_name,
+                "account_id":              account_id,
+                "region":                  "global",
+                "policy_id_hash":          policy_id_hash,
+                "policy_name":             policy_name,
+                "arn_hash":                _hash_arn(policy_arn),
+                "aws_managed":             aws_managed,
+                "description_present":     bool(description),
+                # SCP content summary — raw JSON never stored
+                "allow_statement_count":   scp_summary.get("allow_statement_count", 0),
+                "deny_statement_count":    scp_summary.get("deny_statement_count", 0),
+                "denied_action_count":     scp_summary.get("denied_action_count", 0),
+                "denied_service_prefixes": scp_summary.get("denied_service_prefixes", []),
+                "wildcard_action_present": scp_summary.get("wildcard_action_present", False),
+                "wildcard_resource_present": scp_summary.get("wildcard_resource_present", False),
+                "denies_full_admin_escape": scp_summary.get("denies_full_admin_escape", False),
+                "attached_target_count":   len(targets),
+                "attached_target_type_counts": target_type_counts if target_type_counts else None,
+                "name_sensitivity":        policy_name_sensitivity,
+                "config_fetch_warnings":   scp_warnings if scp_warnings else None,
+            })
+
+            # ── SCP attachment records ─────────────────────────────────────────
+            for tgt in targets:
+                tgt_id: str = tgt.get("TargetId") or ""
+                tgt_name: str = tgt.get("Name") or ""
+                tgt_type: str = (tgt.get("Type") or "UNKNOWN").upper()
+
+                tgt_id_hash = _hash_id(tgt_id) or "unknown"
+                tgt_name_hash = _hash_id(tgt_name)
+                attachment_stable_id = f"{account_id}/org-scp-attachment/{policy_id_hash}/{tgt_id_hash}"
+                records.append({
+                    "record_type":          AWS_ORGANIZATIONS_SCP_ATTACHMENT,
+                    "record_id":           attachment_stable_id,
+                    "external_id":         attachment_stable_id,
+                    "name":                f"scp-attach-{policy_id_hash}-{tgt_id_hash}",
+                    "account_id":          account_id,
+                    "region":              "global",
+                    "policy_id_hash":      policy_id_hash,
+                    "policy_name":         policy_name,
+                    "target_id_hash":      tgt_id_hash,
+                    "target_name_hash":    tgt_name_hash,
+                    "target_type":         tgt_type,
+                    "config_fetch_warnings": None,
+                })
+
+        return records
+
+    def _fetch_ou_children(
+        self,
+        client: Any,
+        account_id: str,
+        parent_id: str,
+        root_id: str,
+        records: list[dict],
+        depth: int = 0,
+        max_depth: int = 5,
+    ) -> int:
+        """Recursively fetch OUs for a parent (root or OU), up to max_depth.
+
+        Returns the total number of OUs found.
+        """
+        if depth >= max_depth:
+            return 0
+        total_ous = 0
+        try:
+            resp = self._call_aws(
+                client.list_organizational_units_for_parent,
+                ParentId=parent_id,
+            )
+            for ou in resp.get("OrganizationalUnits") or []:
+                ou_id: str = ou.get("Id") or ""
+                ou_name: str = ou.get("Name") or ""
+                total_ous += 1
+
+                # Count child accounts for this OU
+                child_account_count = 0
+                try:
+                    children_resp = self._call_aws(
+                        client.list_children,
+                        ParentId=ou_id,
+                        ChildType="ACCOUNT",
+                    )
+                    child_account_count = len(children_resp.get("Children") or [])
+                except Exception:
+                    pass
+
+                # Count attached SCPs
+                attached_scp_count = 0
+                try:
+                    pol_resp = self._call_aws(
+                        client.list_policies_for_target,
+                        TargetId=ou_id,
+                        Filter="SERVICE_CONTROL_POLICY",
+                    )
+                    attached_scp_count = len(pol_resp.get("Policies") or [])
+                except Exception:
+                    pass
+
+                ou_id_hash = _hash_id(ou_id) or "unknown"
+                ou_name_hash = _hash_id(ou_name)
+                parent_id_hash = _hash_id(parent_id)
+                ou_stable_id = f"{account_id}/org-ou/{ou_id_hash}"
+
+                # Count child OUs recursively
+                child_ou_count = self._fetch_ou_children(
+                    client, account_id, ou_id, root_id, records,
+                    depth=depth + 1, max_depth=max_depth,
+                )
+                total_ous += child_ou_count
+
+                records.append({
+                    "record_type":           AWS_ORGANIZATIONS_OU,
+                    "record_id":            ou_stable_id,
+                    "external_id":          ou_stable_id,
+                    "name":                 f"ou-{ou_id_hash}",
+                    "account_id":           account_id,
+                    "region":               "global",
+                    "ou_id_hash":           ou_id_hash,
+                    "ou_name_hash":         ou_name_hash,
+                    "parent_id_hash":       parent_id_hash,
+                    "child_ou_count":       child_ou_count,
+                    "child_account_count":  child_account_count,
+                    "attached_scp_count":   attached_scp_count,
+                    "config_fetch_warnings": None,
+                })
+        except Exception as exc:
+            fc = classify_aws_organizations_failure("ListOrganizationalUnitsForParent", exc)
+            logger.warning(
+                "aws: ListOrganizationalUnitsForParent failed  parent=%s  code=%s",
+                parent_id, fc.error_code,
+            )
+        return total_ous

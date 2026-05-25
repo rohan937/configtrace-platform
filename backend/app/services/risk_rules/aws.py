@@ -107,6 +107,17 @@ from app.connectors.aws_schema import (
     AWS_SQS_QUEUE,
     AWS_SNS_TOPIC,
     AWS_SNS_SUBSCRIPTION,
+    AWS_KMS_KEY,
+    AWS_KMS_ALIAS,
+    AWS_BACKUP_VAULT,
+    AWS_BACKUP_PLAN,
+    AWS_BACKUP_SELECTION,
+    AWS_BACKUP_RECOVERY_POINT,
+    AWS_ORGANIZATIONS_ORGANIZATION,
+    AWS_ORGANIZATIONS_ACCOUNT,
+    AWS_ORGANIZATIONS_OU,
+    AWS_ORGANIZATIONS_SCP,
+    AWS_ORGANIZATIONS_SCP_ATTACHMENT,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -7470,8 +7481,727 @@ def classify_aws_change(change: object) -> tuple[str, str]:
     if record_type == AWS_SNS_SUBSCRIPTION:
         return _classify_sns_subscription_change(change)
 
+    # ── M48: KMS + Backup + Organizations/SCPs ────────────────────────────
+    if record_type == AWS_KMS_KEY:
+        return _classify_kms_key_change(change)
+    if record_type == AWS_KMS_ALIAS:
+        return _classify_kms_alias_change(change)
+    if record_type == AWS_BACKUP_VAULT:
+        return _classify_backup_vault_change(change)
+    if record_type == AWS_BACKUP_PLAN:
+        return _classify_backup_plan_change(change)
+    if record_type == AWS_BACKUP_SELECTION:
+        return _classify_backup_selection_change(change)
+    if record_type == AWS_BACKUP_RECOVERY_POINT:
+        return _classify_backup_recovery_point_change(change)
+    if record_type == AWS_ORGANIZATIONS_ORGANIZATION:
+        return _classify_organizations_org_change(change)
+    if record_type == AWS_ORGANIZATIONS_ACCOUNT:
+        return _classify_organizations_account_change(change)
+    if record_type == AWS_ORGANIZATIONS_OU:
+        return _classify_organizations_ou_change(change)
+    if record_type == AWS_ORGANIZATIONS_SCP:
+        return _classify_organizations_scp_change(change)
+    if record_type == AWS_ORGANIZATIONS_SCP_ATTACHMENT:
+        return _classify_organizations_scp_attachment_change(change)
+
     # Unknown AWS record type — conservative default
     return (
         "low",
         f"AWS configuration changed ({record_type or 'unknown record type'}).",
     )
+
+
+# ── M48 risk classifier helpers ───────────────────────────────────────────────
+
+_GOVERNANCE_SENSITIVE_KEYWORDS: frozenset[str] = frozenset({
+    "prod", "production", "live",
+    "payment", "payments", "billing", "invoice", "stripe",
+    "auth", "authentication", "login", "credential",
+    "admin", "critical", "pii", "customer", "user", "users",
+    "financial", "order", "orders",
+    "backup", "backups", "restore", "recovery",
+    "master", "root", "cmk", "compliance", "audit",
+})
+
+
+def _is_sensitive_governance(name: str) -> bool:
+    """Return True if the resource name suggests a sensitive/production context."""
+    lower = name.lower()
+    return any(p in lower for p in _GOVERNANCE_SENSITIVE_KEYWORDS)
+
+
+# ── M48: KMS key ─────────────────────────────────────────────────────────────
+
+
+def _classify_kms_key_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_governance(name)
+
+    if ct == "added":
+        return "low", f"KMS key '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"KMS key '{name}' was removed from monitoring. "
+            "Verify the key was not accidentally deleted or scheduled for deletion."
+        )
+
+    if fp == "enabled":
+        if nv is False:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"KMS key '{name}' was disabled. "
+                "Services using this key may fail to encrypt or decrypt data. "
+                "Verify whether this disable was intentional. "
+                "ConfigTrace does not call KMS cryptographic APIs."
+            )
+        return "low", f"KMS key '{name}' was re-enabled."
+
+    if fp == "key_state":
+        new_s = str(nv or "").upper()
+        if new_s in ("PENDINGDELETION", "PENDING_DELETION"):
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"KMS key '{name}' is now scheduled for deletion (state: {new_s}). "
+                "Once deleted, data encrypted with this key cannot be recovered. "
+                "Verify whether this deletion was intentional and cancel if needed. "
+                "ConfigTrace does not call KMS cryptographic APIs."
+            )
+        if new_s in ("DISABLED",):
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"KMS key '{name}' state changed to {new_s}. "
+                "Services relying on this key may fail cryptographic operations. "
+                "ConfigTrace does not call KMS cryptographic APIs."
+            )
+        if new_s in ("ENABLED",):
+            return "low", f"KMS key '{name}' state changed to {new_s}."
+        return "medium", f"KMS key '{name}' state changed to {new_s}."
+
+    if fp == "deletion_date_present":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"KMS key '{name}' now has a pending deletion date. "
+                "Data encrypted with this key may become permanently inaccessible. "
+                "Verify and cancel the deletion if needed. "
+                "ConfigTrace does not call KMS cryptographic APIs."
+            )
+        return "low", f"KMS key '{name}' pending deletion was cancelled."
+
+    if fp == "public_or_cross_account_policy":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"KMS key '{name}' policy now grants access to external principals or '*'. "
+                "This may allow cross-account cryptographic operations. "
+                "Review the key policy immediately. "
+                "ConfigTrace does not call KMS cryptographic APIs."
+            )
+        return "low", f"KMS key '{name}' policy no longer grants public/cross-account access."
+
+    if fp == "wildcard_admin_policy":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"KMS key '{name}' policy contains a wildcard-action Allow for an external principal. "
+                "This may grant broad KMS permissions to unauthorized parties. "
+                "Review the key policy immediately."
+            )
+        return "low", f"KMS key '{name}' wildcard admin policy was removed."
+
+    if fp == "rotation_enabled":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"KMS key '{name}' automatic rotation was disabled. "
+                "Verify encryption governance requirements are still met. "
+                "ConfigTrace does not call KMS cryptographic APIs."
+            )
+        return "low", f"KMS key '{name}' automatic rotation was enabled."
+
+    if fp == "policy_present":
+        if nv is True:
+            return "medium", (
+                f"A resource policy was added to KMS key '{name}'. "
+                "Review the policy to ensure it grants only intended access."
+            )
+        return "low", f"KMS key '{name}' resource policy was removed."
+
+    if fp == "multi_region":
+        return "medium", f"KMS key '{name}' multi-region configuration changed."
+
+    if fp == "tag_keys":
+        return "low", f"KMS key '{name}' tag keys changed."
+
+    return "low", f"KMS key '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: KMS alias ────────────────────────────────────────────────────────────
+
+
+def _classify_kms_alias_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_governance(name)
+
+    if ct == "added":
+        return "low", f"KMS alias '{name}' was added."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"KMS alias '{name}' was removed. "
+            "Services referencing this alias may fail cryptographic operations."
+        )
+
+    if fp == "target_key_id_hash":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"KMS alias '{name}' target key changed. "
+            "Services using this alias will now encrypt/decrypt with a different key. "
+            "Verify whether this alias retargeting was intentional. "
+            "ConfigTrace does not call KMS cryptographic APIs."
+        )
+
+    if fp == "target_key_present":
+        if nv is False:
+            return "medium", f"KMS alias '{name}' no longer points to a key."
+        return "low", f"KMS alias '{name}' now points to a key."
+
+    return "low", f"KMS alias '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Backup vault ─────────────────────────────────────────────────────────
+
+
+def _classify_backup_vault_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_governance(name)
+
+    if ct == "added":
+        return "low", f"Backup vault '{name}' was added to monitoring."
+    if ct == "removed":
+        return "high", (
+            f"Backup vault '{name}' was removed from monitoring. "
+            "Verify the vault was not accidentally deleted. "
+            "ConfigTrace does not restore backups or read backup contents."
+        )
+
+    if fp == "locked":
+        if nv is False:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"Backup vault lock was disabled on vault '{name}'. "
+                "Recovery points may now be deletable before their retention period expires. "
+                "Verify whether this change meets compliance requirements. "
+                "ConfigTrace does not restore backups or read backup contents."
+            )
+        return "low", f"Backup vault '{name}' lock was enabled — recovery points are now immutable."
+
+    if fp == "backup_vault_lock_configuration_present":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Backup vault lock configuration was removed from vault '{name}'. "
+                "Recovery points may no longer be protected by immutability settings."
+            )
+        return "low", f"Backup vault '{name}' lock configuration was added."
+
+    if fp == "encryption_key_arn_present":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Encryption key was removed from backup vault '{name}'. "
+                "Recovery points may no longer be protected by customer-managed encryption."
+            )
+        return "low", f"Backup vault '{name}' encryption key was configured."
+
+    if fp == "encryption_key_arn_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"Backup vault '{name}' encryption key changed."
+
+    if fp == "min_retention_days":
+        old_v = int(pv) if isinstance(pv, (int, float)) else None
+        new_v = int(nv) if isinstance(nv, (int, float)) else None
+        if old_v is not None and new_v is not None and new_v < old_v:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Backup vault '{name}' minimum retention reduced "
+                f"({old_v} → {new_v} days). Recovery points may be deletable sooner."
+            )
+        return "low", f"Backup vault '{name}' minimum retention days changed."
+
+    if fp == "max_retention_days":
+        return "low", f"Backup vault '{name}' maximum retention days changed."
+
+    if fp == "recovery_points_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Backup vault '{name}' recovery point count decreased "
+                f"({old_c} → {new_c}). Verify whether recovery points were intentionally deleted. "
+                "ConfigTrace does not delete recovery points."
+            )
+        return "low", f"Backup vault '{name}' recovery point count changed."
+
+    if fp == "tag_keys":
+        return "low", f"Backup vault '{name}' tag keys changed."
+
+    return "low", f"Backup vault '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Backup plan ──────────────────────────────────────────────────────────
+
+
+def _classify_backup_plan_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_governance(name)
+
+    if ct == "added":
+        return "low", f"Backup plan '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "critical" if is_sensitive else "high"
+        return sev, (
+            f"Backup plan '{name}' was removed from monitoring. "
+            "Resources covered by this plan may no longer have scheduled backups. "
+            "ConfigTrace does not restore backups or read backup contents."
+        )
+
+    if fp == "rule_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Backup plan '{name}' rule count decreased ({old_c} → {new_c}). "
+                "Some backup schedules may have been removed."
+            )
+        return "low", f"Backup plan '{name}' rule count changed."
+
+    if fp == "continuous_backup_enabled_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Backup plan '{name}' continuous backup rule count decreased "
+                f"({old_c} → {new_c}). Point-in-time recovery may be reduced."
+            )
+        return "low", f"Backup plan '{name}' continuous backup count changed."
+
+    if fp == "lifecycle_delete_after_days_min":
+        old_v = int(pv) if isinstance(pv, (int, float)) else None
+        new_v = int(nv) if isinstance(nv, (int, float)) else None
+        if old_v is not None and new_v is not None:
+            if new_v == 0:
+                sev = "critical" if is_sensitive else "high"
+                return sev, (
+                    f"Backup plan '{name}' minimum retention reduced to 0 days. "
+                    "Recovery points may be deleted immediately. Verify this was intentional."
+                )
+            if new_v < old_v:
+                sev = "high" if is_sensitive else "medium"
+                return sev, (
+                    f"Backup plan '{name}' minimum retention reduced "
+                    f"({old_v} → {new_v} days). Recovery points will expire sooner."
+                )
+        return "low", f"Backup plan '{name}' minimum retention days changed."
+
+    if fp == "lifecycle_delete_after_days_max":
+        old_v = int(pv) if isinstance(pv, (int, float)) else None
+        new_v = int(nv) if isinstance(nv, (int, float)) else None
+        if old_v is not None and new_v is not None and new_v < old_v:
+            return "medium", (
+                f"Backup plan '{name}' maximum retention reduced ({old_v} → {new_v} days)."
+            )
+        return "low", f"Backup plan '{name}' maximum retention days changed."
+
+    if fp == "schedule_expression_present_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            sev = "medium" if is_sensitive else "low"
+            return sev, (
+                f"Backup plan '{name}' scheduled backup rule count decreased."
+            )
+        return "low", f"Backup plan '{name}' schedule configuration changed."
+
+    if fp in ("rule_names", "target_vault_names"):
+        return "medium", f"Backup plan '{name}' rule/vault configuration changed ({fp})."
+
+    if fp == "copy_action_count":
+        return "low", f"Backup plan '{name}' copy action count changed."
+
+    return "low", f"Backup plan '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Backup selection ─────────────────────────────────────────────────────
+
+
+def _classify_backup_selection_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_governance(name)
+
+    if ct == "added":
+        return "low", f"Backup selection '{name}' was added — new resources are now scheduled for backup."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"Backup selection '{name}' was removed. "
+            "Resources previously covered by this selection may no longer be backed up. "
+            "ConfigTrace does not restore backups or read protected resource contents."
+        )
+
+    if fp == "resource_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Backup selection '{name}' resource count decreased ({old_c} → {new_c}). "
+                "Fewer resources may now be protected by scheduled backups."
+            )
+        return "low", f"Backup selection '{name}' resource count changed."
+
+    if fp == "iam_role_arn_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"Backup selection '{name}' IAM role changed."
+
+    if fp == "resource_type_counts":
+        return "medium", f"Backup selection '{name}' resource type distribution changed."
+
+    if fp in ("condition_count", "list_of_tags_count", "not_resources_count"):
+        return "low", f"Backup selection '{name}' filter configuration changed ({fp})."
+
+    return "low", f"Backup selection '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Backup recovery point ────────────────────────────────────────────────
+
+
+def _classify_backup_recovery_point_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_governance(name)
+
+    if ct == "added":
+        return "low", f"Backup recovery point '{name}' was added — a new backup is available."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"Backup recovery point '{name}' was removed from monitoring. "
+            "Verify whether the recovery point was intentionally expired or deleted. "
+            "ConfigTrace does not delete or restore recovery points."
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("EXPIRED", "DELETING", "DELETED"):
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Backup recovery point '{name}' status changed to {new_s}. "
+                "Verify whether this expiry/deletion was intentional. "
+                "ConfigTrace does not restore or delete recovery points."
+            )
+        return "low", f"Backup recovery point '{name}' status changed to {new_s}."
+
+    if fp == "is_encrypted":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, f"Backup recovery point '{name}' encryption changed to unencrypted."
+        return "low", f"Backup recovery point '{name}' is now encrypted."
+
+    if fp == "encryption_key_arn_present":
+        if nv is False:
+            return "medium", f"Backup recovery point '{name}' encryption key was removed."
+        return "low", f"Backup recovery point '{name}' encryption key was added."
+
+    if fp == "lifecycle_present":
+        if nv is False:
+            return "medium", (
+                f"Backup recovery point '{name}' lifecycle configuration was removed. "
+                "Expiration behavior may have changed."
+            )
+        return "low", f"Backup recovery point '{name}' lifecycle configuration was added."
+
+    return "low", f"Backup recovery point '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Organizations organization ──────────────────────────────────────────
+
+
+def _classify_organizations_org_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", "AWS Organization was added to monitoring."
+    if ct == "removed":
+        return "medium", "AWS Organization was removed from monitoring."
+
+    if fp == "feature_set":
+        old_v = str(pv or "").upper()
+        new_v = str(nv or "").upper()
+        if old_v == "ALL" and new_v != "ALL":
+            return "high", (
+                f"AWS Organization feature set changed from {old_v} to {new_v}. "
+                "SCPs and advanced governance features may no longer be available. "
+                "ConfigTrace does not mutate Organizations settings."
+            )
+        return "medium", f"AWS Organization feature set changed to {new_v}."
+
+    if fp == "scp_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "high", (
+                f"AWS Organization SCP count decreased ({old_c} → {new_c}). "
+                "Some Service Control Policies may have been removed."
+            )
+        return "low", f"AWS Organization SCP count changed to {new_c}."
+
+    if fp == "policy_types_summary":
+        return "high", (
+            "AWS Organization available policy types changed. "
+            "Service Control Policies or other governance policy types may have been enabled or disabled. "
+            "ConfigTrace does not mutate Organizations settings."
+        )
+
+    if fp == "account_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "medium", f"AWS Organization account count decreased ({old_c} → {new_c})."
+        return "low", f"AWS Organization account count changed to {new_c}."
+
+    if fp in ("root_count", "ou_count"):
+        return "medium", f"AWS Organization {fp.replace('_', ' ')} changed."
+
+    return "low", f"AWS Organization configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Organizations account ────────────────────────────────────────────────
+
+
+def _classify_organizations_account_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"Organizations account '{name}' was added to monitoring."
+    if ct == "removed":
+        return "medium", (
+            f"Organizations account '{name}' was removed from monitoring. "
+            "Verify whether the account was intentionally removed or suspended."
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s in ("SUSPENDED", "PENDING_CLOSURE", "CLOSED"):
+            return "high", (
+                f"Organizations account '{name}' status changed to {new_s}. "
+                "Verify whether this account lifecycle change was expected."
+            )
+        if new_s == "ACTIVE":
+            return "low", f"Organizations account '{name}' status changed to ACTIVE."
+        return "medium", f"Organizations account '{name}' status changed to {new_s}."
+
+    if fp == "joined_method":
+        return "medium", f"Organizations account '{name}' join method changed."
+
+    return "low", f"Organizations account '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Organizations OU ─────────────────────────────────────────────────────
+
+
+def _classify_organizations_ou_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"Organizational Unit '{name}' was added to monitoring."
+    if ct == "removed":
+        return "medium", (
+            f"Organizational Unit '{name}' was removed from monitoring. "
+            "Verify whether the OU was intentionally removed or restructured."
+        )
+
+    if fp == "attached_scp_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "high", (
+                f"Organizational Unit '{name}' SCP attachment count decreased "
+                f"({old_c} → {new_c}). Governance guardrails on this OU may have been reduced."
+            )
+        return "low", f"Organizational Unit '{name}' SCP attachment count changed."
+
+    if fp == "parent_id_hash":
+        return "medium", (
+            f"Organizational Unit '{name}' was reparented to a different location in the org hierarchy. "
+            "Verify whether SCP inheritance changed as a result."
+        )
+
+    if fp in ("child_ou_count", "child_account_count"):
+        return "medium", f"Organizational Unit '{name}' {fp.replace('_', ' ')} changed."
+
+    return "low", f"Organizational Unit '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Organizations SCP ────────────────────────────────────────────────────
+
+
+def _classify_organizations_scp_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_governance(name)
+
+    if ct == "added":
+        return "low", f"Service Control Policy '{name}' was added to monitoring."
+    if ct == "removed":
+        # Whether it had critical protections is unknown after removal — high by default
+        sev = "critical" if is_sensitive else "high"
+        return sev, (
+            f"Service Control Policy '{name}' was removed. "
+            "If this SCP contained deny protections, organizational guardrails may have been reduced. "
+            "ConfigTrace does not mutate SCP attachments."
+        )
+
+    if fp == "denies_full_admin_escape":
+        if nv is False and pv is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"SCP '{name}' no longer denies admin/security escape actions. "
+                "Organizational guardrails may now allow privilege escalation or sensitive mutations. "
+                "Review the SCP immediately. ConfigTrace does not mutate SCPs."
+            )
+        if nv is True:
+            return "low", f"SCP '{name}' now includes deny protections for admin escape actions."
+
+    if fp == "denied_action_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"SCP '{name}' denied action count decreased ({old_c} → {new_c}). "
+                "Fewer actions may be blocked by this SCP. Verify whether guardrails were intentionally relaxed."
+            )
+        return "low", f"SCP '{name}' denied action count changed."
+
+    if fp == "denied_service_prefixes":
+        old_len = len(pv) if isinstance(pv, list) else 0
+        new_len = len(nv) if isinstance(nv, list) else 0
+        if new_len < old_len:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"SCP '{name}' denied service prefix count decreased ({old_len} → {new_len}). "
+                "Fewer services may be restricted by this SCP."
+            )
+        return "low", f"SCP '{name}' denied service prefixes changed."
+
+    if fp == "attached_target_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            return "high", (
+                f"SCP '{name}' was detached from {old_c - new_c} target(s). "
+                "Those accounts/OUs may no longer have SCP guardrails."
+            )
+        return "low", f"SCP '{name}' attachment count changed."
+
+    if fp == "deny_statement_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c < old_c:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"SCP '{name}' deny statement count decreased ({old_c} → {new_c}). "
+                "SCP guardrails may have been weakened."
+            )
+        return "low", f"SCP '{name}' deny statement count changed."
+
+    if fp in ("wildcard_action_present", "wildcard_resource_present"):
+        label = "wildcard action" if fp == "wildcard_action_present" else "wildcard resource"
+        if nv is False:
+            return "medium", f"SCP '{name}' {label} was removed."
+        return "low", f"SCP '{name}' now includes a {label}."
+
+    if fp == "allow_statement_count":
+        return "medium", f"SCP '{name}' allow statement count changed to {nv}."
+
+    if fp in ("policy_name", "description_present"):
+        return "low", f"SCP '{name}' metadata changed ({fp})."
+
+    return "low", f"SCP '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M48: Organizations SCP attachment ─────────────────────────────────────────
+
+
+def _classify_organizations_scp_attachment_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    # Extract policy and target info from record name if possible
+    fp = (_get(change, "field_path") or "").lower()
+
+    if ct == "added":
+        return "low", f"SCP attachment '{name}' was added — SCP is now applied to a target."
+    if ct == "removed":
+        return "high", (
+            f"SCP attachment '{name}' was removed. "
+            "The target account/OU may no longer have these SCP guardrails applied. "
+            "Verify whether this detachment was intentional. "
+            "ConfigTrace does not mutate SCP attachments."
+        )
+
+    if fp == "target_type":
+        return "medium", f"SCP attachment '{name}' target type changed."
+
+    return "low", f"SCP attachment '{name}' configuration changed (field: {fp or 'unknown'})."

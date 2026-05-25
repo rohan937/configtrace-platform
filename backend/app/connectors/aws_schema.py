@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44 / M45 / M46 / M47."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44 / M45 / M46 / M47 / M48."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -116,6 +116,30 @@ AWS_SNS_TOPIC = "aws_sns_topic"
 # One per SNS subscription per topic per region — protocol/filter metadata; endpoints hashed only.
 AWS_SNS_SUBSCRIPTION = "aws_sns_subscription"
 
+# ── M48 record types — KMS + Backup + Organizations/SCPs ────────────────────
+# One per KMS key per region — config/policy posture; cryptographic ops NEVER called.
+AWS_KMS_KEY = "aws_kms_key"
+# One per KMS alias per region — alias name/target mapping; key material NEVER accessed.
+AWS_KMS_ALIAS = "aws_kms_alias"
+# One per AWS Backup vault per region — lock/encryption posture; backup contents NEVER read.
+AWS_BACKUP_VAULT = "aws_backup_vault"
+# One per AWS Backup plan per region — rule/schedule/lifecycle posture; backup jobs NEVER started.
+AWS_BACKUP_PLAN = "aws_backup_plan"
+# One per AWS Backup selection per plan — resource coverage posture; protected data NEVER accessed.
+AWS_BACKUP_SELECTION = "aws_backup_selection"
+# One per AWS Backup recovery point per vault — metadata only; backup contents NEVER read or restored.
+AWS_BACKUP_RECOVERY_POINT = "aws_backup_recovery_point"
+# One per AWS Organization — feature/policy type posture; org not mutated.
+AWS_ORGANIZATIONS_ORGANIZATION = "aws_organizations_organization"
+# One per AWS Organizations member account — status/membership posture; account not mutated.
+AWS_ORGANIZATIONS_ACCOUNT = "aws_organizations_account"
+# One per Organizational Unit — structure/SCP attachment posture; OU not mutated.
+AWS_ORGANIZATIONS_OU = "aws_organizations_ou"
+# One per Service Control Policy — deny/allow structure posture; SCP not mutated.
+AWS_ORGANIZATIONS_SCP = "aws_organizations_scp"
+# One per SCP-to-target attachment — attachment posture; attachments not mutated.
+AWS_ORGANIZATIONS_SCP_ATTACHMENT = "aws_organizations_scp_attachment"
+
 # ── M44 record types — Load Balancers + WAF Config ───────────────────────────
 # One per ELBv2 load balancer (Application, Network, Gateway) — metadata only.
 AWS_ELBV2_LOAD_BALANCER = "aws_elbv2_load_balancer"
@@ -230,4 +254,16 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_SQS_QUEUE,
     AWS_SNS_TOPIC,
     AWS_SNS_SUBSCRIPTION,
+    # M48
+    AWS_KMS_KEY,
+    AWS_KMS_ALIAS,
+    AWS_BACKUP_VAULT,
+    AWS_BACKUP_PLAN,
+    AWS_BACKUP_SELECTION,
+    AWS_BACKUP_RECOVERY_POINT,
+    AWS_ORGANIZATIONS_ORGANIZATION,
+    AWS_ORGANIZATIONS_ACCOUNT,
+    AWS_ORGANIZATIONS_OU,
+    AWS_ORGANIZATIONS_SCP,
+    AWS_ORGANIZATIONS_SCP_ATTACHMENT,
 })

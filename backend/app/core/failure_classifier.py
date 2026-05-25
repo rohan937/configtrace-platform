@@ -2448,3 +2448,314 @@ def classify_aws_sns_failure(
             "other AWS checks may still work."
         ),
     )
+
+
+def _looks_like_access_denied(exc: Exception) -> bool:
+    """Return True if the exception carries an AWS access-denied response code.
+
+    Handles raw boto3 ClientError exceptions (which have a ``.response`` dict)
+    that have not yet been wrapped by ``_call_aws`` into a ``ConnectorError``.
+    This lets failure-classifier unit tests pass a plain MagicMock that mimics
+    the real boto3 response shape without importing botocore.
+    """
+    _ACCESS_DENIED_CODES = {
+        "AccessDenied",
+        "AccessDeniedException",
+        "UnauthorizedOperation",
+        "AuthorizationError",
+    }
+    try:
+        code = exc.response["Error"]["Code"]  # type: ignore[attr-defined]
+        return code in _ACCESS_DENIED_CODES
+    except (AttributeError, KeyError, TypeError):
+        return False
+
+
+def classify_aws_kms_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify a KMS API failure for ConfigTrace sync reporting.
+
+    Covers: ListKeys, DescribeKey, GetKeyRotationStatus, GetKeyPolicy,
+    ListAliases, ListResourceTags.
+
+    SECURITY: kms:Decrypt, kms:Encrypt, kms:GenerateDataKey, and all
+    cryptographic operations are NEVER called.  Only key configuration
+    posture metadata is collected.
+
+    Args:
+        api_name: The KMS API name (e.g. ``"ListKeys"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _KMS_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only KMS read permissions. "
+        "Required: kms:ListKeys, kms:DescribeKey, kms:GetKeyRotationStatus, "
+        "kms:GetKeyPolicy, kms:ListAliases, kms:ListResourceTags. "
+        "ConfigTrace reads KMS key configuration posture only; "
+        "cryptographic key-usage APIs are never called by ConfigTrace. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _KMS_API_CODES: dict[str, str] = {
+        "ListKeys":             "aws_kms_keys_unavailable",
+        "DescribeKey":          "aws_kms_keys_unavailable",
+        "GetKeyRotationStatus": "aws_kms_rotation_unavailable",
+        "GetKeyPolicy":         "aws_kms_policy_unavailable",
+        "ListAliases":          "aws_kms_aliases_unavailable",
+        "ListResourceTags":     "aws_kms_api_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ) or _looks_like_access_denied(exc):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_kms_access_denied",
+            recommended_action=_KMS_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_kms_rate_limited",
+            recommended_action=(
+                "AWS throttled KMS metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented KMS API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_kms_api_unavailable",
+            recommended_action=(
+                "The KMS API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _KMS_API_CODES.get(api_name, "aws_kms_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional KMS metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_backup_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify an AWS Backup API failure for ConfigTrace sync reporting.
+
+    Covers: ListBackupVaults, DescribeBackupVault, ListBackupPlans, GetBackupPlan,
+    ListBackupSelections, GetBackupSelection, ListRecoveryPointsByBackupVault,
+    DescribeRecoveryPoint, ListTags.
+
+    SECURITY: backup:StartBackupJob, backup:StartRestoreJob,
+    backup:DeleteRecoveryPoint, and all write operations are NEVER called.
+    Only backup configuration posture metadata is collected.
+
+    Args:
+        api_name: The AWS Backup API name (e.g. ``"ListBackupVaults"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _BACKUP_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only AWS Backup read permissions. "
+        "Required: backup:ListBackupVaults, backup:DescribeBackupVault, "
+        "backup:ListBackupPlans, backup:GetBackupPlan, backup:ListBackupSelections, "
+        "backup:GetBackupSelection, backup:ListRecoveryPointsByBackupVault, "
+        "backup:DescribeRecoveryPoint, backup:ListTags. "
+        "ConfigTrace reads backup configuration metadata only; "
+        "no backup write operations are performed by ConfigTrace. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _BACKUP_API_CODES: dict[str, str] = {
+        "ListBackupVaults":                "aws_backup_vaults_unavailable",
+        "DescribeBackupVault":             "aws_backup_vaults_unavailable",
+        "ListBackupPlans":                 "aws_backup_plans_unavailable",
+        "GetBackupPlan":                   "aws_backup_plans_unavailable",
+        "ListBackupSelections":            "aws_backup_selections_unavailable",
+        "GetBackupSelection":              "aws_backup_selections_unavailable",
+        "ListRecoveryPointsByBackupVault": "aws_backup_recovery_points_unavailable",
+        "DescribeRecoveryPoint":           "aws_backup_recovery_points_unavailable",
+        "ListTags":                        "aws_backup_api_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ) or _looks_like_access_denied(exc):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_backup_access_denied",
+            recommended_action=_BACKUP_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_backup_rate_limited",
+            recommended_action=(
+                "AWS throttled Backup metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented AWS Backup API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_backup_api_unavailable",
+            recommended_action=(
+                "The AWS Backup API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _BACKUP_API_CODES.get(api_name, "aws_backup_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional AWS Backup metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_organizations_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify an AWS Organizations API failure for ConfigTrace sync reporting.
+
+    Covers: DescribeOrganization, ListRoots, ListAccounts, DescribeAccount,
+    ListOrganizationalUnitsForParent, ListChildren, ListPolicies, DescribePolicy,
+    ListTargetsForPolicy, ListPoliciesForTarget, ListTagsForResource.
+
+    SECURITY: All Organizations write/mutate operations are NEVER called.
+    No policies created, updated, deleted, attached, or detached.
+    Only organization structure and SCP posture metadata is collected.
+
+    Args:
+        api_name: The Organizations API name (e.g. ``"DescribeOrganization"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _ORG_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only Organizations read permissions. "
+        "Required: organizations:DescribeOrganization, organizations:ListRoots, "
+        "organizations:ListAccounts, organizations:DescribeAccount, "
+        "organizations:ListOrganizationalUnitsForParent, organizations:ListChildren, "
+        "organizations:ListPolicies, organizations:DescribePolicy, "
+        "organizations:ListTargetsForPolicy, organizations:ListPoliciesForTarget, "
+        "organizations:ListTagsForResource. "
+        "ConfigTrace reads Organizations structure and SCP posture only; "
+        "no policy or account changes are made by ConfigTrace. "
+        "Missing permissions are skipped; other AWS checks may still work. "
+        "Note: Organizations APIs often require the management account or a delegated admin."
+    )
+
+    _ORG_API_CODES: dict[str, str] = {
+        "DescribeOrganization":                "aws_organizations_org_unavailable",
+        "ListRoots":                           "aws_organizations_org_unavailable",
+        "ListAccounts":                        "aws_organizations_accounts_unavailable",
+        "DescribeAccount":                     "aws_organizations_accounts_unavailable",
+        "ListOrganizationalUnitsForParent":    "aws_organizations_ous_unavailable",
+        "ListChildren":                        "aws_organizations_ous_unavailable",
+        "ListPolicies":                        "aws_organizations_policies_unavailable",
+        "DescribePolicy":                      "aws_organizations_policies_unavailable",
+        "ListTargetsForPolicy":                "aws_organizations_policy_targets_unavailable",
+        "ListPoliciesForTarget":               "aws_organizations_policy_targets_unavailable",
+        "ListTagsForResource":                 "aws_organizations_api_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ) or _looks_like_access_denied(exc):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_organizations_access_denied",
+            recommended_action=_ORG_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_organizations_rate_limited",
+            recommended_action=(
+                "AWS throttled Organizations metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented Organizations API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_organizations_api_unavailable",
+            recommended_action=(
+                "The Organizations API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _ORG_API_CODES.get(api_name, "aws_organizations_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional Organizations metadata; "
+            "other AWS checks may still work."
+        ),
+    )

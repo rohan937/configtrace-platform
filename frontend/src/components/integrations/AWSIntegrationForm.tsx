@@ -706,6 +706,66 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* KMS — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              KMS key and alias metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ kms:ListKeys &nbsp;○ kms:DescribeKey &nbsp;○ kms:GetKeyRotationStatus
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ kms:GetKeyPolicy &nbsp;○ kms:ListResourceTags &nbsp;○ kms:ListAliases
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls kms:Decrypt, kms:Encrypt, kms:GenerateDataKey, or any cryptographic operation.
+              Key policy content is evaluated for posture only; raw policy JSON is not stored.
+              Only key metadata, rotation status, and alias mappings are collected.
+            </span>
+            <br />
+
+            {/* Backup — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              AWS Backup vault, plan, selection, and recovery point metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ backup:ListBackupVaults &nbsp;○ backup:DescribeBackupVault &nbsp;○ backup:ListRecoveryPointsByBackupVault
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ backup:ListBackupPlans &nbsp;○ backup:GetBackupPlan &nbsp;○ backup:ListBackupSelections &nbsp;○ backup:GetBackupSelection &nbsp;○ backup:ListTags
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never starts backup jobs, restores backups, deletes recovery points, or reads protected resource contents.
+              Only vault lock/encryption posture, plan rule structure, and recovery point metadata is collected.
+            </span>
+            <br />
+
+            {/* Organizations — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              AWS Organizations and SCP posture — all optional, skipped if unavailable (management account or delegated admin required):
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ organizations:DescribeOrganization &nbsp;○ organizations:ListRoots &nbsp;○ organizations:ListAccounts
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ organizations:ListPolicies &nbsp;○ organizations:DescribePolicy &nbsp;○ organizations:ListTargetsForPolicy
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ organizations:ListOrganizationalUnitsForParent &nbsp;○ organizations:ListChildren &nbsp;○ organizations:ListPoliciesForTarget
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never creates, modifies, deletes, attaches, or detaches SCPs or OUs.
+              SCP policy content is summarized for posture (allow/deny counts, denied actions); raw policy JSON is not stored.
+              Only organization structure, account membership, and SCP attachment posture is collected.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.

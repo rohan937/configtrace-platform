@@ -1335,6 +1335,155 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "delivery_policy_present",
         "config_fetch_warnings",
     ),
+
+    # ── M48: KMS / Backup / Organizations ────────────────────────────────────
+
+    # aws_kms_key — one per KMS key per region.
+    # SECURITY: cryptographic operations (Decrypt/Encrypt/GenerateDataKey) NEVER tracked.
+    "aws_kms_key": (
+        "key_state",
+        "enabled",
+        "key_usage",
+        "key_spec",
+        "key_manager",
+        "origin",
+        "multi_region",
+        "deletion_date_present",
+        "valid_to_present",
+        "rotation_enabled",
+        "policy_present",
+        "public_or_cross_account_policy",
+        "wildcard_admin_policy",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_kms_alias — one per KMS alias per region.
+    "aws_kms_alias": (
+        "alias_name",
+        "target_key_id_hash",
+        "target_key_present",
+        "config_fetch_warnings",
+    ),
+
+    # aws_backup_vault — one per AWS Backup vault per region.
+    # SECURITY: backup contents NEVER tracked. Restore/start/delete ops NEVER called.
+    "aws_backup_vault": (
+        "encryption_key_arn_present",
+        "encryption_key_arn_hash",
+        "locked",
+        "min_retention_days",
+        "max_retention_days",
+        "recovery_points_count",
+        "backup_vault_lock_configuration_present",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_backup_plan — one per AWS Backup plan per region.
+    "aws_backup_plan": (
+        "backup_plan_name",
+        "rule_count",
+        "rule_names",
+        "target_vault_names",
+        "schedule_expression_present_count",
+        "continuous_backup_enabled_count",
+        "lifecycle_delete_after_days_min",
+        "lifecycle_delete_after_days_max",
+        "lifecycle_move_to_cold_after_days_min",
+        "lifecycle_move_to_cold_after_days_max",
+        "copy_action_count",
+        "name_sensitivity",
+        "config_fetch_warnings",
+    ),
+
+    # aws_backup_selection — one per selection per plan.
+    "aws_backup_selection": (
+        "selection_name",
+        "iam_role_arn_present",
+        "iam_role_arn_hash",
+        "resource_count",
+        "resource_type_counts",
+        "condition_count",
+        "list_of_tags_count",
+        "not_resources_count",
+        "config_fetch_warnings",
+    ),
+
+    # aws_backup_recovery_point — one per recovery point per vault.
+    # SECURITY: backup contents NEVER read or restored.
+    "aws_backup_recovery_point": (
+        "backup_vault_name",
+        "resource_type",
+        "status",
+        "creation_date_present",
+        "completion_date_present",
+        "lifecycle_present",
+        "calculated_lifecycle_delete_at_present",
+        "encryption_key_arn_present",
+        "encryption_key_arn_hash",
+        "is_encrypted",
+        "size_bytes",
+        "config_fetch_warnings",
+    ),
+
+    # aws_organizations_organization — one per AWS Organization.
+    # SECURITY: org structure/SCPs NEVER mutated.
+    "aws_organizations_organization": (
+        "feature_set",
+        "root_count",
+        "account_count",
+        "ou_count",
+        "scp_count",
+        "policy_types_summary",
+        "config_fetch_warnings",
+    ),
+
+    # aws_organizations_account — one per member account.
+    # SECURITY: raw account email NEVER stored — hash only.
+    "aws_organizations_account": (
+        "status",
+        "joined_method",
+        "joined_timestamp_present",
+        "config_fetch_warnings",
+    ),
+
+    # aws_organizations_ou — one per Organizational Unit.
+    "aws_organizations_ou": (
+        "parent_id_hash",
+        "child_ou_count",
+        "child_account_count",
+        "attached_scp_count",
+        "config_fetch_warnings",
+    ),
+
+    # aws_organizations_scp — one per Service Control Policy.
+    # SECURITY: raw SCP content NEVER stored — summary only. SCPs NEVER mutated.
+    "aws_organizations_scp": (
+        "policy_name",
+        "aws_managed",
+        "description_present",
+        "allow_statement_count",
+        "deny_statement_count",
+        "denied_action_count",
+        "denied_service_prefixes",
+        "wildcard_action_present",
+        "wildcard_resource_present",
+        "denies_full_admin_escape",
+        "attached_target_count",
+        "attached_target_type_counts",
+        "name_sensitivity",
+        "config_fetch_warnings",
+    ),
+
+    # aws_organizations_scp_attachment — one per SCP-to-target attachment.
+    "aws_organizations_scp_attachment": (
+        "policy_name",
+        "target_type",
+        "config_fetch_warnings",
+    ),
 }
 
 
