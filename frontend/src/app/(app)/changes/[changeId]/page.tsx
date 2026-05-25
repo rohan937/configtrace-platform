@@ -996,6 +996,78 @@ function getChangeSummary(change: ChangeDetail): string {
     return `ECR registry scanning configuration changed in ${scanName}${fp ? ` (${fp})` : ""}.`;
   }
 
+  // ── M47: EventBridge ──────────────────────────────────────────────────────
+  if (rt === "aws_eventbridge_event_bus") {
+    const busName = rn || (change.record_identifier ?? "event-bus");
+    if (change.change_type === "removed") return `EventBridge event bus ${busName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `EventBridge event bus ${busName} was added.`;
+    if (fp === "public_or_cross_account_policy") return `EventBridge event bus ${busName} policy ${change.new_value ? "now grants external/cross-account access" : "no longer grants external access"}.`;
+    if (fp === "policy_present") return `EventBridge event bus ${busName} resource policy was ${change.new_value ? "added" : "removed"}.`;
+    return `EventBridge event bus ${busName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_eventbridge_rule") {
+    const ruleName = rn || (change.record_identifier ?? "rule");
+    if (change.change_type === "removed") return `EventBridge rule ${ruleName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `EventBridge rule ${ruleName} was added.`;
+    if (fp === "state") return `EventBridge rule ${ruleName} state changed to ${change.new_value ?? "unknown"}.`;
+    if (fp === "target_count") return `EventBridge rule ${ruleName} target count changed to ${change.new_value ?? "unknown"}.`;
+    if (fp === "event_pattern_hash") return `EventBridge rule ${ruleName} event pattern changed.`;
+    if (fp === "dlq_target_present") return `EventBridge rule ${ruleName} dead-letter queue target was ${change.new_value ? "added" : "removed"}.`;
+    return `EventBridge rule ${ruleName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_eventbridge_target") {
+    const tgtName = rn || (change.record_identifier ?? "target");
+    if (change.change_type === "removed") return `EventBridge target ${tgtName} was removed.`;
+    if (change.change_type === "added")   return `EventBridge target ${tgtName} was added.`;
+    if (fp === "target_type") return `EventBridge target ${tgtName} type changed to ${change.new_value ?? "unknown"}.`;
+    if (fp === "dead_letter_config_present") return `EventBridge target ${tgtName} dead-letter queue was ${change.new_value ? "configured" : "removed"}.`;
+    return `EventBridge target ${tgtName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_eventbridge_archive") {
+    const archName = rn || (change.record_identifier ?? "archive");
+    if (change.change_type === "removed") return `EventBridge archive ${archName} was removed.`;
+    if (change.change_type === "added")   return `EventBridge archive ${archName} was added.`;
+    if (fp === "state") return `EventBridge archive ${archName} state changed to ${change.new_value ?? "unknown"}.`;
+    if (fp === "retention_days") return `EventBridge archive ${archName} retention changed to ${change.new_value ?? "unknown"} days.`;
+    return `EventBridge archive ${archName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  // ── M47: SQS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_sqs_queue") {
+    const queueName = rn || (change.record_identifier ?? "queue");
+    if (change.change_type === "removed") return `SQS queue ${queueName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `SQS queue ${queueName} was added.`;
+    if (fp === "public_or_cross_account_policy") return `SQS queue ${queueName} policy ${change.new_value ? "now grants external/cross-account access" : "no longer grants external access"}.`;
+    if (fp === "sqs_managed_sse_enabled") return `SQS managed SSE ${change.new_value ? "enabled" : "disabled"} on queue ${queueName}.`;
+    if (fp === "kms_master_key_id_present") return `KMS encryption ${change.new_value ? "enabled" : "removed"} on SQS queue ${queueName}.`;
+    if (fp === "redrive_policy_present") return `SQS queue ${queueName} redrive/DLQ policy was ${change.new_value ? "added" : "removed"}.`;
+    if (fp === "message_retention_period") return `SQS queue ${queueName} message retention period changed to ${change.new_value ?? "unknown"}s.`;
+    if (fp === "visibility_timeout") return `SQS queue ${queueName} visibility timeout changed to ${change.new_value ?? "unknown"}s.`;
+    return `SQS queue ${queueName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
+  // ── M47: SNS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_sns_topic") {
+    const topicName = rn || (change.record_identifier ?? "topic");
+    if (change.change_type === "removed") return `SNS topic ${topicName} was removed from monitoring.`;
+    if (change.change_type === "added")   return `SNS topic ${topicName} was added.`;
+    if (fp === "public_or_cross_account_policy") return `SNS topic ${topicName} policy ${change.new_value ? "now grants external/cross-account access" : "no longer grants external access"}.`;
+    if (fp === "kms_master_key_id_present") return `KMS encryption ${change.new_value ? "enabled" : "removed"} on SNS topic ${topicName}.`;
+    if (fp === "subscription_count") return `SNS topic ${topicName} subscription count changed to ${change.new_value ?? "unknown"}.`;
+    if (fp === "subscription_protocol_counts") return `SNS topic ${topicName} subscription protocol distribution changed.`;
+    return `SNS topic ${topicName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "aws_sns_subscription") {
+    const subName = rn || (change.record_identifier ?? "subscription");
+    if (change.change_type === "removed") return `SNS subscription ${subName} was removed.`;
+    if (change.change_type === "added")   return `SNS subscription ${subName} was added.`;
+    if (fp === "endpoint_hash") return `SNS subscription ${subName} endpoint changed.`;
+    if (fp === "protocol") return `SNS subscription ${subName} protocol changed to ${change.new_value ?? "unknown"}.`;
+    if (fp === "filter_policy_hash") return `SNS subscription ${subName} filter policy changed.`;
+    if (fp === "raw_message_delivery") return `SNS subscription ${subName} raw message delivery was ${change.new_value ? "enabled" : "disabled"}.`;
+    return `SNS subscription ${subName} configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+
   if (rt.startsWith("aws_")) {
     return `An AWS configuration record changed (${rt}).`;
   }
@@ -2637,6 +2709,162 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       ];
     }
     return ["Confirm the ECR registry scanning configuration change was authorized.", "ConfigTrace never reads vulnerability scan findings."];
+  }
+
+  // ── M47: EventBridge ──────────────────────────────────────────────────────
+  if (rt === "aws_eventbridge_event_bus") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "public_or_cross_account_policy" && change.new_value === true) {
+      return [
+        "EventBridge event bus policy now allows external or '*' principals — review immediately.",
+        "Restrict the bus resource policy to only authorized accounts and roles.",
+        "Confirm no unauthorized cross-account event publishing is now possible.",
+        "ConfigTrace does not read EventBridge event payloads.",
+      ];
+    }
+    return [
+      "Confirm this EventBridge event bus should exist in this region.",
+      "If policy changed, review public/cross-account event access.",
+      "ConfigTrace does not read EventBridge event payloads.",
+    ];
+  }
+  if (rt === "aws_eventbridge_rule") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "state" && change.new_value === "DISABLED") {
+      return [
+        "EventBridge rule was disabled — events matching this rule will not route to targets.",
+        "Verify the disable was intentional and not caused by an automated process.",
+        "Re-enable the rule if event routing must be restored.",
+        "ConfigTrace does not read EventBridge event payloads.",
+      ];
+    }
+    if (sfp === "target_count" && Number(change.new_value) === 0) {
+      return [
+        "EventBridge rule has zero targets — matching events will be silently discarded.",
+        "Add at least one target to restore event routing.",
+        "ConfigTrace does not read EventBridge event payloads.",
+      ];
+    }
+    if (sfp === "event_pattern_hash") {
+      return [
+        "EventBridge rule event pattern changed — verify the new pattern routes the correct events.",
+        "If accidental, restore the previous event pattern from version history.",
+        "ConfigTrace does not read EventBridge event payloads.",
+      ];
+    }
+    return [
+      "Confirm this EventBridge rule should exist in this region.",
+      "If target changed, confirm events still route to the expected destination.",
+      "If DLQ/retry changed, confirm failure handling requirements are still met.",
+      "ConfigTrace does not read EventBridge event payloads.",
+    ];
+  }
+  if (rt === "aws_eventbridge_target") {
+    return [
+      "Confirm the EventBridge target change was authorized.",
+      "Verify events still route to the expected destination.",
+      "If DLQ was removed, confirm failure handling and replay requirements.",
+      "ConfigTrace does not read EventBridge event payloads.",
+    ];
+  }
+  if (rt === "aws_eventbridge_archive") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "retention_days") {
+      return [
+        "EventBridge archive retention changed — verify event replay requirements are still met.",
+        "Confirm the new retention period aligns with compliance and debugging needs.",
+        "ConfigTrace does not read archived EventBridge event payloads.",
+      ];
+    }
+    return [
+      "Confirm the EventBridge archive change was authorized.",
+      "Verify archive state and retention meet event replay requirements.",
+      "ConfigTrace does not read archived EventBridge event payloads.",
+    ];
+  }
+
+  // ── M47: SQS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_sqs_queue") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "public_or_cross_account_policy" && change.new_value === true) {
+      return [
+        "SQS queue policy now allows external principals or '*' — review immediately.",
+        "Restrict the queue policy to only authorized accounts and roles.",
+        "Verify no unauthorized cross-account send/receive access is now possible.",
+        "ConfigTrace does not read SQS messages.",
+      ];
+    }
+    if ((sfp === "sqs_managed_sse_enabled" || sfp === "kms_master_key_id_present") && change.new_value === false) {
+      return [
+        "SQS queue encryption was removed or disabled — messages may no longer be encrypted at rest.",
+        "Re-enable SSE or KMS encryption to meet security requirements.",
+        "ConfigTrace does not read SQS messages.",
+      ];
+    }
+    if (sfp === "redrive_policy_present" && change.new_value === false) {
+      return [
+        "SQS queue dead-letter/redrive policy was removed — failed messages will not be redirected to a DLQ.",
+        "Re-add a redrive policy if failed message handling is required.",
+        "ConfigTrace does not read SQS messages.",
+      ];
+    }
+    return [
+      "Confirm this SQS queue should exist in this region.",
+      "If queue policy changed, review public/cross-account send/receive access.",
+      "If encryption changed, confirm KMS/SSE requirements.",
+      "If redrive policy changed, confirm failed-message handling.",
+      "ConfigTrace does not read SQS messages.",
+    ];
+  }
+
+  // ── M47: SNS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_sns_topic") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "public_or_cross_account_policy" && change.new_value === true) {
+      return [
+        "SNS topic policy now allows external principals or '*' — review immediately.",
+        "Restrict the topic policy to only authorized publishers and subscribers.",
+        "Confirm no unauthorized cross-account publish access is now possible.",
+        "ConfigTrace does not publish SNS messages or read notification contents.",
+      ];
+    }
+    if (sfp === "kms_master_key_id_present" && change.new_value === false) {
+      return [
+        "SNS topic KMS encryption was removed — published messages may no longer be encrypted at rest.",
+        "Re-enable KMS encryption if encryption requirements apply to this topic.",
+        "ConfigTrace does not publish SNS messages or read notification contents.",
+      ];
+    }
+    return [
+      "Confirm this SNS topic should exist in this region.",
+      "If topic policy changed, review public/cross-account publish/subscribe access.",
+      "If subscription count changed, confirm endpoints are expected.",
+      "If filter/redrive/delivery policy changed, confirm routing and failure handling.",
+      "ConfigTrace does not publish SNS messages or read notification contents.",
+    ];
+  }
+  if (rt === "aws_sns_subscription") {
+    const sfp = change.field_path ?? "";
+    if (sfp === "endpoint_hash") {
+      return [
+        "SNS subscription endpoint changed — verify the new destination is authorized.",
+        "Confirm the endpoint change was intentional and not the result of unauthorized access.",
+        "ConfigTrace does not store raw endpoint values or publish SNS messages.",
+      ];
+    }
+    if (sfp === "filter_policy_hash" || sfp === "filter_policy_present") {
+      return [
+        "SNS subscription filter policy changed — verify the new filter routes expected message types.",
+        "If the filter was removed, all topic messages will now be delivered to this endpoint.",
+        "ConfigTrace does not publish SNS messages or read notification contents.",
+      ];
+    }
+    return [
+      "Confirm this SNS subscription should exist in this region.",
+      "If endpoint changed, confirm the new destination is expected and authorized.",
+      "If filter/redrive/delivery policy changed, confirm routing and failure handling.",
+      "ConfigTrace does not publish SNS messages or read notification contents.",
+    ];
   }
 
   // AWS

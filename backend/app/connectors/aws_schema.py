@@ -1,4 +1,4 @@
-"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44 / M45."""
+"""AWS connector record type constants — M36 / M37 / M38 / M39 / M40 / M41 / M42 / M43 / M44 / M45 / M46 / M47."""
 from __future__ import annotations
 
 # ── M36 record types ──────────────────────────────────────────────────────────
@@ -99,6 +99,22 @@ AWS_EKS_ADDON = "aws_eks_addon"
 AWS_ECR_REPOSITORY = "aws_ecr_repository"
 # One per ECR registry scanning configuration per region.
 AWS_ECR_REGISTRY_SCANNING_CONFIG = "aws_ecr_registry_scanning_config"
+
+# ── M47 record types — EventBridge + SQS/SNS Messaging Config ────────────────
+# One per EventBridge event bus per region — policy/posture; event payloads NEVER read.
+AWS_EVENTBRIDGE_EVENT_BUS = "aws_eventbridge_event_bus"
+# One per EventBridge rule per bus per region — schedule/pattern/target metadata; events NEVER read.
+AWS_EVENTBRIDGE_RULE = "aws_eventbridge_rule"
+# One per EventBridge target per rule per bus per region — routing metadata; event payloads NEVER read.
+AWS_EVENTBRIDGE_TARGET = "aws_eventbridge_target"
+# One per EventBridge archive per region — retention/state metadata; archived events NEVER read.
+AWS_EVENTBRIDGE_ARCHIVE = "aws_eventbridge_archive"
+# One per SQS queue per region — config/policy metadata; messages NEVER read.
+AWS_SQS_QUEUE = "aws_sqs_queue"
+# One per SNS topic per region — config/policy/subscription posture; notifications NEVER read.
+AWS_SNS_TOPIC = "aws_sns_topic"
+# One per SNS subscription per topic per region — protocol/filter metadata; endpoints hashed only.
+AWS_SNS_SUBSCRIPTION = "aws_sns_subscription"
 
 # ── M44 record types — Load Balancers + WAF Config ───────────────────────────
 # One per ELBv2 load balancer (Application, Network, Gateway) — metadata only.
@@ -206,4 +222,12 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_EKS_ADDON,
     AWS_ECR_REPOSITORY,
     AWS_ECR_REGISTRY_SCANNING_CONFIG,
+    # M47
+    AWS_EVENTBRIDGE_EVENT_BUS,
+    AWS_EVENTBRIDGE_RULE,
+    AWS_EVENTBRIDGE_TARGET,
+    AWS_EVENTBRIDGE_ARCHIVE,
+    AWS_SQS_QUEUE,
+    AWS_SNS_TOPIC,
+    AWS_SNS_SUBSCRIPTION,
 })

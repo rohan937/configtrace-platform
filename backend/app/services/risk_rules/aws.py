@@ -100,6 +100,13 @@ from app.connectors.aws_schema import (
     AWS_EKS_ADDON,
     AWS_ECR_REPOSITORY,
     AWS_ECR_REGISTRY_SCANNING_CONFIG,
+    AWS_EVENTBRIDGE_EVENT_BUS,
+    AWS_EVENTBRIDGE_RULE,
+    AWS_EVENTBRIDGE_TARGET,
+    AWS_EVENTBRIDGE_ARCHIVE,
+    AWS_SQS_QUEUE,
+    AWS_SNS_TOPIC,
+    AWS_SNS_SUBSCRIPTION,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -6728,6 +6735,579 @@ def _classify_ecr_registry_scanning_config_change(change: object) -> tuple[str, 
     return "low", f"ECR registry scanning configuration changed in '{name}' (field: {fp or 'unknown'})."
 
 
+# ── M47 helpers ───────────────────────────────────────────────────────────────
+
+_MESSAGING_SENSITIVE_KEYWORDS: frozenset[str] = frozenset({
+    "prod", "production", "live",
+    "payment", "payments", "billing", "invoice", "stripe", "financial",
+    "order", "orders", "auth", "authentication", "login",
+    "admin", "critical", "pii", "customer",
+})
+
+
+def _is_sensitive_messaging(name: str) -> bool:
+    """Return True if the resource name suggests production/sensitive context."""
+    lower = name.lower()
+    return any(k in lower for k in _MESSAGING_SENSITIVE_KEYWORDS)
+
+
+# ── M47: EventBridge event bus ────────────────────────────────────────────────
+
+
+def _classify_eventbridge_bus_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_messaging(name)
+
+    if ct == "added":
+        return "low", f"EventBridge event bus '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"EventBridge event bus '{name}' was removed from monitoring. "
+            "Verify the bus was not accidentally deleted."
+        )
+
+    if fp == "public_or_cross_account_policy":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"EventBridge event bus '{name}' policy now grants access to "
+                "external principals or '*'. This may allow cross-account event "
+                "publishing. Review the bus resource policy immediately."
+            )
+        return "low", f"EventBridge event bus '{name}' policy no longer grants public/cross-account access."
+
+    if fp == "policy_present":
+        if nv is True:
+            return "medium", (
+                f"A resource policy was added to EventBridge event bus '{name}'. "
+                "Review the policy to ensure it grants only intended access."
+            )
+        return "low", f"EventBridge event bus '{name}' resource policy was removed."
+
+    if fp == "tag_keys":
+        return "low", f"EventBridge event bus '{name}' tag keys changed."
+
+    return "low", f"EventBridge event bus '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M47: EventBridge rule ─────────────────────────────────────────────────────
+
+
+def _classify_eventbridge_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_messaging(name)
+
+    if ct == "added":
+        return "low", f"EventBridge rule '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"EventBridge rule '{name}' was removed from monitoring. "
+            "Verify the rule was not accidentally deleted."
+        )
+
+    if fp == "state":
+        new_s = str(nv or "").upper()
+        if new_s == "DISABLED":
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"EventBridge rule '{name}' was disabled. "
+                "Events matching this rule will no longer route to targets."
+            )
+        if new_s == "ENABLED":
+            return "low", f"EventBridge rule '{name}' was enabled."
+        return "medium", f"EventBridge rule '{name}' state changed to '{new_s}'."
+
+    if fp == "target_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c == 0 and old_c > 0:
+                sev = "high" if is_sensitive else "medium"
+                return sev, (
+                    f"EventBridge rule '{name}' now has zero targets. "
+                    "Events matching this rule will not be delivered."
+                )
+            if new_c < old_c:
+                sev = "high" if is_sensitive else "medium"
+                return sev, (
+                    f"EventBridge rule '{name}' target count decreased "
+                    f"({old_c} → {new_c}). Some event routing may be broken."
+                )
+        return "low", f"EventBridge rule '{name}' target count changed."
+
+    if fp == "event_pattern_hash":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"EventBridge rule '{name}' event pattern changed. "
+            "Verify the new pattern routes the correct events to the correct targets. "
+            "ConfigTrace does not read EventBridge event payloads."
+        )
+
+    if fp == "schedule_expression_present":
+        if nv is False:
+            return "medium", f"EventBridge rule '{name}' schedule expression was removed."
+        return "low", f"EventBridge rule '{name}' schedule expression was added."
+
+    if fp == "dlq_target_present":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return sev, (
+                f"EventBridge rule '{name}' no longer has a dead-letter queue target. "
+                "Failed event deliveries may be silently dropped."
+            )
+        return "low", f"EventBridge rule '{name}' now has a dead-letter queue target."
+
+    if fp == "retry_policy_present":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return sev, (
+                f"EventBridge rule '{name}' retry policy was removed. "
+                "Failed deliveries may not be retried."
+            )
+        return "low", f"EventBridge rule '{name}' retry policy was added."
+
+    if fp == "target_type_counts":
+        return "medium", f"EventBridge rule '{name}' target types changed."
+
+    if fp == "tag_keys":
+        return "low", f"EventBridge rule '{name}' tag keys changed."
+
+    return "low", f"EventBridge rule '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M47: EventBridge target ───────────────────────────────────────────────────
+
+
+def _classify_eventbridge_target_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    # Infer sensitivity from rule_name embedded in provider_metadata if available
+    rule_name = str(pm.get("rule_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_messaging(rule_name) or _is_sensitive_messaging(name)
+
+    if ct == "added":
+        return "low", f"EventBridge target '{name}' was added."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"EventBridge target '{name}' was removed. "
+            "Events may no longer be routed to the expected destination."
+        )
+
+    if fp == "target_type":
+        return "medium", (
+            f"EventBridge target '{name}' type changed to '{nv}'. "
+            "Verify events are still routing to the expected destination."
+        )
+
+    if fp == "role_arn_hash":
+        sev = "high" if is_sensitive else "medium"
+        return sev, f"EventBridge target '{name}' IAM role changed."
+
+    if fp == "dead_letter_config_present":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return sev, (
+                f"EventBridge target '{name}' dead-letter queue was removed. "
+                "Failed event deliveries may be silently dropped."
+            )
+        return "low", f"EventBridge target '{name}' dead-letter queue was configured."
+
+    if fp == "retry_policy_present":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return sev, (
+                f"EventBridge target '{name}' retry policy was removed. "
+                "Failed deliveries may not be retried."
+            )
+        return "low", f"EventBridge target '{name}' retry policy was added."
+
+    if fp in ("retry_max_event_age_seconds", "retry_max_attempts"):
+        return "low", f"EventBridge target '{name}' retry configuration changed ({fp})."
+
+    if fp == "input_transformer_present":
+        return "medium", (
+            f"EventBridge target '{name}' input transformer changed. "
+            "Verify the target receives event data in the expected format. "
+            "ConfigTrace does not read EventBridge event payloads."
+        )
+
+    return "low", f"EventBridge target '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M47: EventBridge archive ──────────────────────────────────────────────────
+
+
+def _classify_eventbridge_archive_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+
+    if ct == "added":
+        return "low", f"EventBridge archive '{name}' was added to monitoring."
+    if ct == "removed":
+        return "high", (
+            f"EventBridge archive '{name}' was removed. "
+            "Archived events can no longer be replayed from this archive."
+        )
+
+    if fp == "state":
+        new_s = str(nv or "").upper()
+        if new_s in ("DISABLED", "UPDATE_FAILED", "CREATE_FAILED"):
+            return "high", f"EventBridge archive '{name}' state changed to '{new_s}'."
+        return "medium", f"EventBridge archive '{name}' state changed to '{new_s}'."
+
+    if fp == "retention_days":
+        old_v = int(pv) if isinstance(pv, (int, float)) else None
+        new_v = int(nv) if isinstance(nv, (int, float)) else None
+        if old_v is not None and new_v is not None:
+            if new_v == 0 and old_v != 0:
+                return "high", (
+                    f"EventBridge archive '{name}' retention was changed to indefinite (0). "
+                    "Review if this was intentional."
+                )
+            if new_v < old_v:
+                return "medium", (
+                    f"EventBridge archive '{name}' retention reduced "
+                    f"({old_v} → {new_v} days). Older events will be purged sooner."
+                )
+        return "low", f"EventBridge archive '{name}' retention days changed."
+
+    if fp in ("event_count", "size_bytes"):
+        return "low", f"EventBridge archive '{name}' {fp.replace('_', ' ')} changed."
+
+    return "low", f"EventBridge archive '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M47: SQS queue ────────────────────────────────────────────────────────────
+
+
+def _classify_sqs_queue_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_messaging(name)
+
+    if ct == "added":
+        return "low", f"SQS queue '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"SQS queue '{name}' was removed from monitoring. "
+            "Verify the queue was not accidentally deleted."
+        )
+
+    if fp == "public_or_cross_account_policy":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"SQS queue '{name}' policy now grants access to external principals "
+                "or '*'. This may allow cross-account send/receive access. "
+                "Review the queue policy immediately. "
+                "ConfigTrace does not read SQS messages."
+            )
+        return "low", f"SQS queue '{name}' policy no longer grants public/cross-account access."
+
+    if fp == "sqs_managed_sse_enabled":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"SQS managed SSE was disabled on queue '{name}'. "
+                "Messages may no longer be encrypted at rest."
+            )
+        return "low", f"SQS managed SSE was enabled on queue '{name}'."
+
+    if fp == "kms_master_key_id_present":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"KMS encryption was removed from SQS queue '{name}'. "
+                "Messages may no longer be encrypted with a customer-managed key."
+            )
+        return "low", f"KMS encryption was enabled on SQS queue '{name}'."
+
+    if fp == "kms_master_key_id_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"KMS key changed on SQS queue '{name}'."
+
+    if fp == "redrive_policy_present":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"Dead-letter/redrive policy was removed from SQS queue '{name}'. "
+                "Failed messages will no longer be routed to a DLQ."
+            )
+        return "low", f"Dead-letter/redrive policy was added to SQS queue '{name}'."
+
+    if fp == "dead_letter_target_arn_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"SQS queue '{name}' dead-letter target changed."
+
+    if fp == "max_receive_count":
+        old_v = int(pv) if isinstance(pv, (int, float)) else None
+        new_v = int(nv) if isinstance(nv, (int, float)) else None
+        if old_v is not None and new_v is not None and new_v > old_v:
+            return "medium", (
+                f"SQS queue '{name}' maxReceiveCount increased ({old_v} → {new_v}). "
+                "Messages will be retried more times before moving to the DLQ."
+            )
+        return "low", f"SQS queue '{name}' maxReceiveCount changed."
+
+    if fp == "message_retention_period":
+        old_v = int(pv) if isinstance(pv, (int, float)) else None
+        new_v = int(nv) if isinstance(nv, (int, float)) else None
+        if old_v is not None and new_v is not None and new_v < old_v:
+            return "medium", (
+                f"SQS queue '{name}' message retention period reduced "
+                f"({old_v} → {new_v} seconds). Messages may expire sooner."
+            )
+        return "low", f"SQS queue '{name}' message retention period changed."
+
+    if fp == "visibility_timeout":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"SQS queue '{name}' visibility timeout changed to {nv}s."
+
+    if fp == "policy_present":
+        if nv is True:
+            return "medium", (
+                f"A resource policy was added to SQS queue '{name}'. "
+                "Review the policy to ensure it grants only intended access. "
+                "ConfigTrace does not read SQS messages."
+            )
+        return "low", f"SQS queue '{name}' resource policy was removed."
+
+    if fp == "content_based_deduplication":
+        if nv is False:
+            return "medium", (
+                f"Content-based deduplication was disabled on FIFO SQS queue '{name}'. "
+                "Duplicate messages may now be delivered."
+            )
+        return "low", f"Content-based deduplication was enabled on SQS queue '{name}'."
+
+    if fp in ("fifo_queue",):
+        return "medium", f"SQS queue '{name}' FIFO configuration changed."
+
+    if fp in ("delay_seconds", "maximum_message_size", "long_polling_wait_time_seconds"):
+        return "low", f"SQS queue '{name}' configuration changed ({fp})."
+
+    if fp == "redrive_allow_policy_summary":
+        return "medium", f"SQS queue '{name}' redrive allow policy changed to '{nv}'."
+
+    if fp == "tag_keys":
+        return "low", f"SQS queue '{name}' tag keys changed."
+
+    return "low", f"SQS queue '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M47: SNS topic ────────────────────────────────────────────────────────────
+
+
+def _classify_sns_topic_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    is_sensitive = _is_sensitive_messaging(name)
+
+    if ct == "added":
+        return "low", f"SNS topic '{name}' was added to monitoring."
+    if ct == "removed":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"SNS topic '{name}' was removed from monitoring. "
+            "Verify the topic was not accidentally deleted."
+        )
+
+    if fp == "public_or_cross_account_policy":
+        if nv is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"SNS topic '{name}' policy now grants access to external principals "
+                "or '*'. This may allow cross-account publish/subscribe access. "
+                "Review the topic policy immediately. "
+                "ConfigTrace does not publish SNS messages."
+            )
+        return "low", f"SNS topic '{name}' policy no longer grants public/cross-account access."
+
+    if fp == "kms_master_key_id_present":
+        if nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return sev, (
+                f"KMS encryption was removed from SNS topic '{name}'. "
+                "Messages published to this topic may no longer be encrypted at rest."
+            )
+        return "low", f"KMS encryption was enabled on SNS topic '{name}'."
+
+    if fp == "kms_master_key_id_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, f"KMS key changed on SNS topic '{name}'."
+
+    if fp == "subscription_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None:
+            if new_c > old_c:
+                sev = "medium" if is_sensitive else "low"
+                return sev, (
+                    f"SNS topic '{name}' subscription count increased "
+                    f"({old_c} → {new_c}). Verify new subscriptions are expected. "
+                    "ConfigTrace does not publish SNS messages."
+                )
+            if new_c < old_c:
+                sev = "medium" if is_sensitive else "low"
+                return sev, (
+                    f"SNS topic '{name}' subscription count decreased "
+                    f"({old_c} → {new_c}). Some subscribers may no longer receive notifications."
+                )
+        return "low", f"SNS topic '{name}' subscription count changed."
+
+    if fp == "pending_subscription_count":
+        old_c = int(pv) if isinstance(pv, (int, float)) else None
+        new_c = int(nv) if isinstance(nv, (int, float)) else None
+        if old_c is not None and new_c is not None and new_c > old_c:
+            return "medium", (
+                f"SNS topic '{name}' pending subscription count increased "
+                f"({old_c} → {new_c}). Verify pending subscriptions are expected."
+            )
+        return "low", f"SNS topic '{name}' pending subscription count changed."
+
+    if fp == "subscription_protocol_counts":
+        return "medium", (
+            f"SNS topic '{name}' subscription protocol distribution changed. "
+            "Verify the endpoint types are expected."
+        )
+
+    if fp == "policy_present":
+        if nv is True:
+            return "medium", (
+                f"A resource policy was added to SNS topic '{name}'. "
+                "Review the policy to ensure it grants only intended publish/subscribe access."
+            )
+        return "low", f"SNS topic '{name}' resource policy was removed."
+
+    if fp == "delivery_policy_present":
+        if nv is False:
+            return "low", f"SNS topic '{name}' delivery policy was removed."
+        return "low", f"SNS topic '{name}' delivery policy was added."
+
+    if fp in ("fifo_topic", "content_based_deduplication"):
+        return "medium", f"SNS topic '{name}' {fp.replace('_', ' ')} changed."
+
+    if fp == "tag_keys":
+        return "low", f"SNS topic '{name}' tag keys changed."
+
+    return "low", f"SNS topic '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
+# ── M47: SNS subscription ─────────────────────────────────────────────────────
+
+
+def _classify_sns_subscription_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pm = _get(change, "provider_metadata")
+    name = str(pm.get("record_name") or "") if isinstance(pm, dict) else ""
+    # Infer from topic_arn_hash presence in provider_metadata if needed
+    is_sensitive = _is_sensitive_messaging(name)
+
+    if ct == "added":
+        return "low", (
+            f"SNS subscription '{name}' was added. "
+            "Verify the new subscription endpoint is expected. "
+            "ConfigTrace does not publish SNS messages or read notification contents."
+        )
+    if ct == "removed":
+        sev = "medium" if is_sensitive else "low"
+        return sev, (
+            f"SNS subscription '{name}' was removed. "
+            "The associated endpoint will no longer receive notifications."
+        )
+
+    if fp == "endpoint_hash":
+        sev = "high" if is_sensitive else "medium"
+        return sev, (
+            f"SNS subscription '{name}' endpoint changed. "
+            "Verify the new endpoint is expected and authorized. "
+            "ConfigTrace does not read or store raw endpoint values."
+        )
+
+    if fp == "protocol":
+        return "medium", (
+            f"SNS subscription '{name}' protocol changed to '{nv}'. "
+            "Verify the new protocol and endpoint are expected."
+        )
+
+    if fp == "raw_message_delivery":
+        if nv is True:
+            sev = "medium" if is_sensitive else "low"
+            return sev, (
+                f"SNS subscription '{name}' raw message delivery was enabled. "
+                "Messages will be delivered without SNS metadata wrapping."
+            )
+        return "low", f"SNS subscription '{name}' raw message delivery was disabled."
+
+    if fp == "filter_policy_hash":
+        sev = "medium" if is_sensitive else "low"
+        return sev, (
+            f"SNS subscription '{name}' filter policy changed. "
+            "Verify the new filter routes the expected message types. "
+            "ConfigTrace does not read or store raw filter policy contents."
+        )
+
+    if fp == "filter_policy_present":
+        if nv is False:
+            sev = "medium" if is_sensitive else "low"
+            return sev, (
+                f"SNS subscription '{name}' filter policy was removed. "
+                "All messages published to the topic will now be delivered."
+            )
+        return "low", f"SNS subscription '{name}' filter policy was added."
+
+    if fp == "redrive_policy_present":
+        if nv is False:
+            return "low", f"SNS subscription '{name}' redrive policy was removed."
+        return "low", f"SNS subscription '{name}' redrive policy was added."
+
+    if fp == "delivery_policy_present":
+        return "low", f"SNS subscription '{name}' delivery policy changed."
+
+    if fp == "confirmation_was_authenticated":
+        return "low", f"SNS subscription '{name}' confirmation authentication status changed."
+
+    if fp == "pending_confirmation":
+        if nv is True:
+            return "medium", (
+                f"SNS subscription '{name}' is now pending confirmation. "
+                "The subscription endpoint must confirm to receive notifications."
+            )
+        return "low", f"SNS subscription '{name}' confirmation status changed."
+
+    return "low", f"SNS subscription '{name}' configuration changed (field: {fp or 'unknown'})."
+
+
 def classify_aws_change(change: object) -> tuple[str, str]:
     """Route an AWS change to the appropriate risk rule.
 
@@ -6873,6 +7453,22 @@ def classify_aws_change(change: object) -> tuple[str, str]:
         return _classify_ecr_repository_change(change)
     if record_type == AWS_ECR_REGISTRY_SCANNING_CONFIG:
         return _classify_ecr_registry_scanning_config_change(change)
+
+    # ── M47 EventBridge / SQS / SNS ───────────────────────────────────────────
+    if record_type == AWS_EVENTBRIDGE_EVENT_BUS:
+        return _classify_eventbridge_bus_change(change)
+    if record_type == AWS_EVENTBRIDGE_RULE:
+        return _classify_eventbridge_rule_change(change)
+    if record_type == AWS_EVENTBRIDGE_TARGET:
+        return _classify_eventbridge_target_change(change)
+    if record_type == AWS_EVENTBRIDGE_ARCHIVE:
+        return _classify_eventbridge_archive_change(change)
+    if record_type == AWS_SQS_QUEUE:
+        return _classify_sqs_queue_change(change)
+    if record_type == AWS_SNS_TOPIC:
+        return _classify_sns_topic_change(change)
+    if record_type == AWS_SNS_SUBSCRIPTION:
+        return _classify_sns_subscription_change(change)
 
     # Unknown AWS record type — conservative default
     return (

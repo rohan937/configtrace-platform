@@ -118,6 +118,9 @@ from app.core.failure_classifier import (
     classify_aws_ecs_failure,
     classify_aws_eks_failure,
     classify_aws_ecr_failure,
+    classify_aws_eventbridge_failure,
+    classify_aws_sqs_failure,
+    classify_aws_sns_failure,
 )
 from app.connectors.aws_schema import (
     AWS_ACCOUNT_IDENTITY,
@@ -181,6 +184,13 @@ from app.connectors.aws_schema import (
     AWS_EKS_ADDON,
     AWS_ECR_REPOSITORY,
     AWS_ECR_REGISTRY_SCANNING_CONFIG,
+    AWS_EVENTBRIDGE_EVENT_BUS,
+    AWS_EVENTBRIDGE_RULE,
+    AWS_EVENTBRIDGE_TARGET,
+    AWS_EVENTBRIDGE_ARCHIVE,
+    AWS_SQS_QUEUE,
+    AWS_SNS_TOPIC,
+    AWS_SNS_SUBSCRIPTION,
 )
 
 logger = logging.getLogger(__name__)
@@ -1248,6 +1258,219 @@ def _eks_public_access_cidrs_open(cidrs: list[str]) -> bool:
     return any(c in ("0.0.0.0/0", "::/0") for c in cidrs)
 
 
+# ── M47: EventBridge / SQS / SNS helpers ─────────────────────────────────────
+
+# Keyword patterns shared by all messaging resource name classifiers.
+_MESSAGING_SENSITIVE_PATTERNS: frozenset[str] = frozenset({
+    "prod", "production", "live",
+    "payment", "payments", "billing", "invoice", "stripe",
+    "auth", "authentication", "login", "credential",
+    "admin", "critical", "pii", "customer", "user", "users",
+    "financial", "order", "orders",
+})
+
+
+def _classify_messaging_name_sensitivity(name: str) -> str:
+    """Return sensitivity category for an EventBridge/SQS/SNS resource name.
+
+    Returns one of: production, payment, auth, admin, none.
+
+    SECURITY: The raw name is already stored in the record; this only adds
+    a sensitivity category derived from known pattern keywords.
+    """
+    lower = name.lower()
+    if any(p in lower for p in ("prod", "production", "live")):
+        return "production"
+    if any(p in lower for p in ("payment", "payments", "billing", "invoice", "stripe", "financial", "order", "orders")):
+        return "payment"
+    if any(p in lower for p in ("auth", "authentication", "login", "credential")):
+        return "auth"
+    if any(p in lower for p in ("admin", "critical", "pii", "customer", "user", "users")):
+        return "admin"
+    return "none"
+
+
+def _is_sensitive_messaging_resource(name: str) -> bool:
+    """Return True if the resource name suggests production/sensitive context."""
+    lower = name.lower()
+    return any(p in lower for p in _MESSAGING_SENSITIVE_PATTERNS)
+
+
+def _messaging_policy_is_public(policy_json: str, account_id: str) -> bool:
+    """Return True if an AWS resource policy grants access beyond the account.
+
+    Checks ALLOW statements for principal ``"*"`` or cross-account ARNs.
+    Returns False on any parse failure (conservative, fail-closed).
+
+    SECURITY: Raw policy JSON is NEVER stored.  Only the boolean result is
+    returned and stored.
+    """
+    if not policy_json:
+        return False
+    try:
+        import json as _json
+        policy = _json.loads(policy_json)
+        for stmt in policy.get("Statement") or []:
+            effect = (stmt.get("Effect") or "").upper()
+            if effect != "ALLOW":
+                continue
+            principal = stmt.get("Principal")
+            if principal == "*":
+                return True
+            if isinstance(principal, dict):
+                for _key, val in principal.items():
+                    if isinstance(val, str):
+                        if val == "*":
+                            return True
+                        if account_id and account_id not in val:
+                            return True
+                    elif isinstance(val, list):
+                        for v in val:
+                            if v == "*":
+                                return True
+                            if account_id and account_id not in str(v):
+                                return True
+    except Exception:
+        pass
+    return False
+
+
+def _hash_arn(arn: str) -> str | None:
+    """Return a 12-character hex SHA-256 of an ARN, or None if empty.
+
+    SECURITY: Raw ARNs are never stored.  The hash detects ARN changes
+    without exposing account IDs, resource names, or paths.
+    """
+    if not arn:
+        return None
+    return hashlib.sha256(arn.encode("utf-8")).hexdigest()[:12]
+
+
+def _hash_endpoint(endpoint: str) -> str | None:
+    """Return a 12-character hex SHA-256 of an SNS subscription endpoint.
+
+    SECURITY: Raw endpoint values (email, phone, URL, queue ARN) are NEVER
+    stored.  Only the hash is retained to detect endpoint changes.
+    """
+    if not endpoint:
+        return None
+    return hashlib.sha256(endpoint.encode("utf-8")).hexdigest()[:12]
+
+
+def _classify_endpoint_type(endpoint: str, protocol: str) -> str:
+    """Return a safe endpoint type string from a protocol and endpoint value.
+
+    Returns one of: email, sms, http, https, sqs, lambda, firehose, application,
+    arn_based, unknown.
+
+    SECURITY: The raw endpoint value is never returned or stored.
+    """
+    p = (protocol or "").lower()
+    if p in ("email", "email-json"):
+        return "email"
+    if p == "sms":
+        return "sms"
+    if p == "http":
+        return "http"
+    if p == "https":
+        return "https"
+    if p == "sqs":
+        return "sqs"
+    if p == "lambda":
+        return "lambda"
+    if p == "firehose":
+        return "firehose"
+    if p == "application":
+        return "application"
+    # ARN-based endpoints
+    e = (endpoint or "").lower()
+    if ":arn:" in e or e.startswith("arn:"):
+        return "arn_based"
+    return "unknown"
+
+
+def _summarize_target_type(target_arn: str) -> str:
+    """Classify an EventBridge target type from its ARN.
+
+    Returns a safe type string such as: lambda, sqs, sns, kinesis, firehose,
+    step_functions, ecs, api_gateway, events, logs, ssm, sagemaker, unknown.
+
+    SECURITY: The raw ARN is never stored.
+    """
+    arn = (target_arn or "").lower()
+    if ":lambda:" in arn or ":function:" in arn:
+        return "lambda"
+    if ":sqs:" in arn:
+        return "sqs"
+    if ":sns:" in arn:
+        return "sns"
+    if ":kinesis:" in arn:
+        return "kinesis"
+    if ":firehose:" in arn or ":deliverystream/" in arn:
+        return "firehose"
+    if ":states:" in arn or ":stateMachine:" in arn:
+        return "step_functions"
+    if ":ecs:" in arn:
+        return "ecs"
+    if ":execute-api:" in arn or ":apigateway:" in arn:
+        return "api_gateway"
+    if ":events:" in arn:
+        return "events"
+    if ":logs:" in arn:
+        return "logs"
+    if ":ssm:" in arn:
+        return "ssm"
+    if ":sagemaker:" in arn:
+        return "sagemaker"
+    return "unknown"
+
+
+def _hash_event_pattern(pattern_json: str) -> str | None:
+    """Return a 12-character SHA-256 hash of an EventBridge event pattern.
+
+    SECURITY: Raw event pattern JSON is never stored.  The hash detects
+    pattern changes without exposing event routing logic.
+    """
+    if not pattern_json:
+        return None
+    return hashlib.sha256(pattern_json.encode("utf-8")).hexdigest()[:12]
+
+
+def _hash_filter_policy(policy_json: str) -> str | None:
+    """Return a 12-character SHA-256 hash of an SNS filter policy.
+
+    SECURITY: Raw filter policy JSON is never stored.  The hash detects
+    policy changes without exposing filtering criteria.
+    """
+    if not policy_json:
+        return None
+    return hashlib.sha256(policy_json.encode("utf-8")).hexdigest()[:12]
+
+
+def _summarize_redrive_allow_policy(raw_json: str) -> str | None:
+    """Return a safe summary of an SQS RedriveAllowPolicy.
+
+    Returns one of: "allowAll", "denyAll", "byQueue", or None on parse failure.
+
+    SECURITY: Raw policy JSON is never stored.
+    """
+    if not raw_json:
+        return None
+    try:
+        import json as _json
+        pol = _json.loads(raw_json)
+        permission = (pol.get("redrivePermission") or "").lower()
+        if permission == "allowall":
+            return "allowAll"
+        if permission == "denyall":
+            return "denyAll"
+        if permission == "bysourcequeue":
+            return "byQueue"
+        return permission or None
+    except Exception:
+        return None
+
+
 # ── M39: IAM policy and trust analysis helpers ────────────────────────────────
 
 # Services whose actions in a policy are considered sensitive for privilege
@@ -1977,6 +2200,36 @@ class AWSConnector(BaseConnector):
             len(ecr_records),
         )
 
+        # 24. EventBridge event buses, rules, targets, archives (M47).
+        #     SECURITY: events:PutEvents NEVER called. Event payloads NEVER read or stored.
+        #     Only bus/rule/target/archive configuration metadata is collected.
+        eventbridge_records = self._fetch_eventbridge_resources(credentials, account_id)
+        records.extend(eventbridge_records)
+        logger.info(
+            "AWSConnector.fetch: eventbridge_resources fetched  count=%d",
+            len(eventbridge_records),
+        )
+
+        # 25. SQS queues (M47).
+        #     SECURITY: sqs:ReceiveMessage/SendMessage/DeleteMessage/PurgeQueue NEVER called.
+        #     Message bodies and queue contents NEVER read or stored.
+        sqs_records = self._fetch_sqs_resources(credentials, account_id)
+        records.extend(sqs_records)
+        logger.info(
+            "AWSConnector.fetch: sqs_resources fetched  count=%d",
+            len(sqs_records),
+        )
+
+        # 26. SNS topics and subscriptions (M47).
+        #     SECURITY: sns:Publish NEVER called. Notification contents NEVER read.
+        #     Subscription endpoints hashed only; raw values NEVER stored.
+        sns_records = self._fetch_sns_resources(credentials, account_id)
+        records.extend(sns_records)
+        logger.info(
+            "AWSConnector.fetch: sns_resources fetched  count=%d",
+            len(sns_records),
+        )
+
         # 10. Service inventory (always last — reflects all active surfaces)
         sg_count = sum(
             1 for r in network_records
@@ -2066,6 +2319,18 @@ class AWSConnector(BaseConnector):
             1 for r in ecr_records
             if r.get("record_type") == AWS_ECR_REPOSITORY
         )
+        eventbridge_bus_count = sum(
+            1 for r in eventbridge_records
+            if r.get("record_type") == AWS_EVENTBRIDGE_EVENT_BUS
+        )
+        sqs_queue_count = sum(
+            1 for r in sqs_records
+            if r.get("record_type") == AWS_SQS_QUEUE
+        )
+        sns_topic_count = sum(
+            1 for r in sns_records
+            if r.get("record_type") == AWS_SNS_TOPIC
+        )
         inventory_record = self._fetch_service_inventory(
             credentials,
             s3_count=len(s3_records),
@@ -2091,6 +2356,9 @@ class AWSConnector(BaseConnector):
             ecs_cluster_count=ecs_cluster_count,
             eks_cluster_count=eks_cluster_count,
             ecr_repository_count=ecr_repository_count,
+            eventbridge_bus_count=eventbridge_bus_count,
+            sqs_queue_count=sqs_queue_count,
+            sns_topic_count=sns_topic_count,
         )
         records.append(inventory_record)
 
@@ -2212,6 +2480,9 @@ class AWSConnector(BaseConnector):
         ecs_cluster_count: int = 0,
         eks_cluster_count: int = 0,
         ecr_repository_count: int = 0,
+        eventbridge_bus_count: int = 0,
+        sqs_queue_count: int = 0,
+        sns_topic_count: int = 0,
     ) -> dict:
         """Return a service inventory record reflecting active monitored surfaces."""
         selected = self._selected_regions(credentials)
@@ -2226,6 +2497,7 @@ class AWSConnector(BaseConnector):
                 "rds", "lambda", "api_gateway", "load_balancers", "waf",
                 "cloudtrail", "guardduty", "security_hub",
                 "ecs", "eks", "ecr",
+                "eventbridge", "sqs", "sns",
             ],
             "s3_bucket_count":                s3_count,
             "security_group_count":           security_group_count,
@@ -2250,8 +2522,10 @@ class AWSConnector(BaseConnector):
             "ecs_cluster_count":              ecs_cluster_count,
             "eks_cluster_count":              eks_cluster_count,
             "ecr_repository_count":           ecr_repository_count,
+            "eventbridge_bus_count":          eventbridge_bus_count,
+            "sqs_queue_count":                sqs_queue_count,
+            "sns_topic_count":                sns_topic_count,
             "future_surfaces": [
-                "eventbridge", "sqs", "sns",
                 "kms", "backup", "organizations", "cloudwatch",
             ],
         }
@@ -9741,5 +10015,739 @@ class AWSConnector(BaseConnector):
                 "aws: GetRegistryScanningConfiguration failed  region=%s  code=%s",
                 region, fc.error_code,
             )
+
+        return records
+
+    # ── M47: EventBridge fetch methods ────────────────────────────────────────
+
+    def _fetch_eventbridge_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch EventBridge event buses, rules, targets, and archives across all regions.
+
+        SECURITY:
+        - events:PutEvents NEVER called.
+        - EventBridge event payloads NEVER read or stored.
+        - Only bus/rule/target/archive configuration posture metadata collected.
+        - No write operations performed.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                eb_client = self._make_client("events", credentials, region=region)
+                region_records = self._fetch_eventbridge_in_region(eb_client, account_id, region)
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: eventbridge fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: eventbridge fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_eventbridge_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch EventBridge buses, rules, targets, and archives for one region.
+
+        SECURITY: event payloads are NEVER read. events:PutEvents NEVER called.
+        """
+        records: list[dict] = []
+
+        # ── ListEventBuses (paginated) ─────────────────────────────────────────
+        buses: list[dict] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                response = self._call_aws(client.list_event_buses, **kwargs)
+                buses.extend(response.get("EventBuses") or [])
+                next_token = response.get("NextToken")
+                if not next_token:
+                    break
+                kwargs["NextToken"] = next_token
+        except Exception as exc:
+            fc = classify_aws_eventbridge_failure("ListEventBuses", exc)
+            logger.warning(
+                "aws: ListEventBuses failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+            return records  # cannot proceed without bus list
+
+        for bus in buses:
+            bus_name: str = bus.get("Name") or "default"
+            bus_arn: str = bus.get("Arn") or ""
+            bus_warnings: list[str] = []
+
+            # ── DescribeEventBus — policy details ──────────────────────────────
+            policy_present = False
+            policy_is_public = False
+            try:
+                desc = self._call_aws(client.describe_event_bus, Name=bus_name)
+                raw_policy: str = desc.get("Policy") or ""
+                if raw_policy:
+                    policy_present = True
+                    # SECURITY: raw policy JSON never stored, only boolean
+                    policy_is_public = _messaging_policy_is_public(raw_policy, account_id)
+            except Exception as exc:
+                fc = classify_aws_eventbridge_failure("DescribeEventBus", exc)
+                bus_warnings.append(f"DescribeEventBus: {fc.error_code}")
+
+            # ── Tags — ListTagsForResource ─────────────────────────────────────
+            tag_keys: list[str] | None = None
+            if bus_arn:
+                try:
+                    tags_resp = self._call_aws(
+                        client.list_tags_for_resource, ResourceARN=bus_arn
+                    )
+                    raw_tags = tags_resp.get("Tags") or []
+                    tag_keys = sorted({t["Key"] for t in raw_tags if "Key" in t}) or None
+                except Exception as exc:
+                    fc = classify_aws_eventbridge_failure("ListTagsForResource", exc)
+                    bus_warnings.append(f"ListTagsForResource: {fc.error_code}")
+
+            name_sensitivity = _classify_messaging_name_sensitivity(bus_name)
+            bus_stable_id = f"{account_id}/{region}/eventbridge-bus/{bus_name}"
+            records.append({
+                "record_type":              AWS_EVENTBRIDGE_EVENT_BUS,
+                "record_id":               bus_stable_id,
+                "external_id":             bus_arn,
+                "name":                    bus_name,
+                "account_id":              account_id,
+                "region":                  region,
+                "arn_hash":                _hash_arn(bus_arn),
+                "policy_present":                  policy_present,
+                "public_or_cross_account_policy":  policy_is_public,
+                "name_sensitivity":                name_sensitivity,
+                "tag_keys":                        tag_keys,
+                "config_fetch_warnings":           bus_warnings if bus_warnings else None,
+            })
+
+            # ── ListRules per bus (paginated) ──────────────────────────────────
+            rules: list[dict] = []
+            try:
+                kwargs = {"EventBusName": bus_name}
+                while True:
+                    response = self._call_aws(client.list_rules, **kwargs)
+                    rules.extend(response.get("Rules") or [])
+                    next_token = response.get("NextToken")
+                    if not next_token:
+                        break
+                    kwargs["NextToken"] = next_token
+            except Exception as exc:
+                fc = classify_aws_eventbridge_failure("ListRules", exc)
+                logger.warning(
+                    "aws: ListRules failed  region=%s  bus=%s  code=%s",
+                    region, bus_name, fc.error_code,
+                )
+                continue  # skip rules for this bus
+
+            for rule in rules:
+                rule_name: str = rule.get("Name") or ""
+                rule_arn: str = rule.get("Arn") or ""
+                rule_state: str = rule.get("State") or "UNKNOWN"
+                schedule_expression: str = rule.get("ScheduleExpression") or ""
+                event_pattern_raw: str = rule.get("EventPattern") or ""
+                rule_warnings: list[str] = []
+
+                # ── ListTargetsByRule (paginated) ──────────────────────────────
+                targets: list[dict] = []
+                try:
+                    kwargs = {"Rule": rule_name, "EventBusName": bus_name}
+                    while True:
+                        response = self._call_aws(client.list_targets_by_rule, **kwargs)
+                        targets.extend(response.get("Targets") or [])
+                        next_token = response.get("NextToken")
+                        if not next_token:
+                            break
+                        kwargs["NextToken"] = next_token
+                except Exception as exc:
+                    fc = classify_aws_eventbridge_failure("ListTargetsByRule", exc)
+                    rule_warnings.append(f"ListTargetsByRule: {fc.error_code}")
+
+                # Summarize target types (no raw ARNs stored)
+                target_count = len(targets)
+                target_type_counts: dict[str, int] = {}
+                dlq_target_present = False
+                retry_policy_present = False
+                for tgt in targets:
+                    ttype = _summarize_target_type(tgt.get("Arn") or "")
+                    target_type_counts[ttype] = target_type_counts.get(ttype, 0) + 1
+                    if tgt.get("DeadLetterConfig") and (tgt["DeadLetterConfig"].get("Arn")):
+                        dlq_target_present = True
+                    if tgt.get("RetryPolicy"):
+                        retry_policy_present = True
+
+                # Tags for rule
+                rule_tag_keys: list[str] | None = None
+                if rule_arn:
+                    try:
+                        tags_resp = self._call_aws(
+                            client.list_tags_for_resource, ResourceARN=rule_arn
+                        )
+                        raw_tags = tags_resp.get("Tags") or []
+                        rule_tag_keys = sorted({t["Key"] for t in raw_tags if "Key" in t}) or None
+                    except Exception as exc:
+                        fc = classify_aws_eventbridge_failure("ListTagsForResource", exc)
+                        rule_warnings.append(f"ListTagsForResource: {fc.error_code}")
+
+                rule_name_sensitivity = _classify_messaging_name_sensitivity(rule_name)
+                rule_stable_id = f"{account_id}/{region}/eventbridge-rule/{bus_name}/{rule_name}"
+                records.append({
+                    "record_type":              AWS_EVENTBRIDGE_RULE,
+                    "record_id":               rule_stable_id,
+                    "external_id":             rule_arn,
+                    "name":                    rule_name,
+                    "account_id":              account_id,
+                    "region":                  region,
+                    "event_bus_name":          bus_name,
+                    "arn_hash":                _hash_arn(rule_arn),
+                    "state":                   rule_state,
+                    "schedule_expression_present": bool(schedule_expression),
+                    "event_pattern_present":   bool(event_pattern_raw),
+                    # SECURITY: raw event pattern never stored — hash only
+                    "event_pattern_hash":      _hash_event_pattern(event_pattern_raw),
+                    "target_count":            target_count,
+                    "target_type_counts":      target_type_counts if target_type_counts else None,
+                    "dlq_target_present":      dlq_target_present,
+                    "retry_policy_present":    retry_policy_present,
+                    "name_sensitivity":        rule_name_sensitivity,
+                    "tag_keys":                rule_tag_keys,
+                    "config_fetch_warnings":   rule_warnings if rule_warnings else None,
+                })
+
+                # ── Target records ─────────────────────────────────────────────
+                for tgt in targets:
+                    tgt_id: str = tgt.get("Id") or ""
+                    tgt_arn: str = tgt.get("Arn") or ""
+                    tgt_id_hash = _hash_arn(tgt_id) or _hash_arn(tgt_arn) or "unknown"
+                    tgt_role_arn: str = tgt.get("RoleArn") or ""
+                    dlq_arn: str = (tgt.get("DeadLetterConfig") or {}).get("Arn") or ""
+                    retry_cfg = tgt.get("RetryPolicy") or {}
+                    input_transformer = tgt.get("InputTransformer")
+                    input_path = tgt.get("InputPath")
+                    raw_input = tgt.get("Input")
+
+                    tgt_stable_id = (
+                        f"{account_id}/{region}/eventbridge-target"
+                        f"/{bus_name}/{rule_name}/{tgt_id_hash}"
+                    )
+                    records.append({
+                        "record_type":              AWS_EVENTBRIDGE_TARGET,
+                        "record_id":               tgt_stable_id,
+                        "external_id":             tgt_stable_id,
+                        "name":                    f"target-{tgt_id_hash}",
+                        "account_id":              account_id,
+                        "region":                  region,
+                        "event_bus_name":          bus_name,
+                        "rule_name":               rule_name,
+                        "target_id_hash":          tgt_id_hash,
+                        # SECURITY: raw ARN never stored
+                        "target_arn_hash":         _hash_arn(tgt_arn),
+                        "target_type":             _summarize_target_type(tgt_arn),
+                        "role_arn_present":        bool(tgt_role_arn),
+                        "role_arn_hash":           _hash_arn(tgt_role_arn),
+                        "dead_letter_config_present": bool(dlq_arn),
+                        "dead_letter_arn_hash":    _hash_arn(dlq_arn),
+                        "retry_policy_present":    bool(retry_cfg),
+                        "retry_max_event_age_seconds": retry_cfg.get("MaximumEventAgeInSeconds"),
+                        "retry_max_attempts":      retry_cfg.get("MaximumRetryAttempts"),
+                        "input_transformer_present": bool(input_transformer),
+                        "input_path_present":      bool(input_path),
+                        # SECURITY: raw input/payload never stored — boolean only
+                        "input_present":           bool(raw_input),
+                        "config_fetch_warnings":   None,
+                    })
+
+        # ── ListArchives (paginated) ───────────────────────────────────────────
+        try:
+            archives: list[dict] = []
+            kwargs = {}
+            while True:
+                response = self._call_aws(client.list_archives, **kwargs)
+                archives.extend(response.get("Archives") or [])
+                next_token = response.get("NextToken")
+                if not next_token:
+                    break
+                kwargs["NextToken"] = next_token
+
+            for archive in archives:
+                archive_name: str = archive.get("ArchiveName") or ""
+                archive_arn: str = archive.get("ArchiveArn") or ""
+                event_source_arn: str = archive.get("EventSourceArn") or ""
+                archive_state: str = archive.get("State") or "UNKNOWN"
+                retention_days: int | None = archive.get("RetentionDays")
+                event_count: int | None = archive.get("EventCount")
+                size_bytes: int | None = archive.get("SizeBytes")
+
+                archive_stable_id = f"{account_id}/{region}/eventbridge-archive/{archive_name}"
+                records.append({
+                    "record_type":              AWS_EVENTBRIDGE_ARCHIVE,
+                    "record_id":               archive_stable_id,
+                    "external_id":             archive_arn,
+                    "name":                    archive_name,
+                    "account_id":              account_id,
+                    "region":                  region,
+                    "arn_hash":                _hash_arn(archive_arn),
+                    # SECURITY: event source ARN hashed, not stored raw
+                    "event_source_arn_hash":   _hash_arn(event_source_arn),
+                    "state":                   archive_state,
+                    "retention_days":          retention_days,
+                    "event_count":             event_count,
+                    "size_bytes":              size_bytes,
+                    "config_fetch_warnings":   None,
+                })
+        except Exception as exc:
+            fc = classify_aws_eventbridge_failure("ListArchives", exc)
+            logger.warning(
+                "aws: ListArchives failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+
+        return records
+
+    # ── M47: SQS fetch methods ────────────────────────────────────────────────
+
+    def _fetch_sqs_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch SQS queue configuration posture across all regions.
+
+        SECURITY:
+        - sqs:ReceiveMessage NEVER called.
+        - sqs:SendMessage NEVER called.
+        - sqs:DeleteMessage NEVER called.
+        - sqs:PurgeQueue NEVER called.
+        - Message bodies and queue contents NEVER read or stored.
+        - Only queue configuration metadata is collected.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                sqs_client = self._make_client("sqs", credentials, region=region)
+                region_records = self._fetch_sqs_in_region(sqs_client, account_id, region)
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: sqs fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: sqs fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_sqs_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch SQS queues for one region.
+
+        SECURITY: message bodies NEVER read. ReceiveMessage/SendMessage/DeleteMessage/PurgeQueue NEVER called.
+        """
+        records: list[dict] = []
+
+        # ── ListQueues (paginated) ─────────────────────────────────────────────
+        queue_urls: list[str] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                response = self._call_aws(client.list_queues, **kwargs)
+                queue_urls.extend(response.get("QueueUrls") or [])
+                next_token = response.get("NextToken")
+                if not next_token:
+                    break
+                kwargs["NextToken"] = next_token
+        except Exception as exc:
+            fc = classify_aws_sqs_failure("ListQueues", exc)
+            logger.warning(
+                "aws: ListQueues failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+            return records
+
+        for queue_url in queue_urls:
+            queue_warnings: list[str] = []
+
+            # Extract queue name from URL (last path segment)
+            queue_name = queue_url.rstrip("/").rsplit("/", 1)[-1]
+
+            # ── GetQueueAttributes ─────────────────────────────────────────────
+            attrs: dict = {}
+            try:
+                resp = self._call_aws(
+                    client.get_queue_attributes,
+                    QueueUrl=queue_url,
+                    AttributeNames=["All"],
+                )
+                attrs = resp.get("Attributes") or {}
+            except Exception as exc:
+                fc = classify_aws_sqs_failure("GetQueueAttributes", exc)
+                queue_warnings.append(f"GetQueueAttributes: {fc.error_code}")
+
+            # Safe attribute extraction — never read MessageBody
+            queue_arn = attrs.get("QueueArn") or ""
+            fifo_queue = attrs.get("FifoQueue", "false").lower() == "true"
+            content_based_dedup = attrs.get("ContentBasedDeduplication", "false").lower() == "true"
+            sqs_managed_sse = attrs.get("SqsManagedSseEnabled", "false").lower() == "true"
+            kms_key_raw = attrs.get("KmsMasterKeyId") or ""
+            kms_key_present = bool(kms_key_raw)
+            kms_key_hash = _hash_arn(kms_key_raw) if kms_key_raw else None
+
+            def _safe_int(val: str | None) -> int | None:
+                try:
+                    return int(val) if val is not None else None
+                except (ValueError, TypeError):
+                    return None
+
+            visibility_timeout = _safe_int(attrs.get("VisibilityTimeout"))
+            message_retention = _safe_int(attrs.get("MessageRetentionPeriod"))
+            delay_seconds = _safe_int(attrs.get("DelaySeconds"))
+            max_message_size = _safe_int(attrs.get("MaximumMessageSize"))
+            receive_wait_time = _safe_int(attrs.get("ReceiveMessageWaitTimeSeconds"))
+            approx_msgs = _safe_int(attrs.get("ApproximateNumberOfMessages"))
+            approx_msgs_not_visible = _safe_int(attrs.get("ApproximateNumberOfMessagesNotVisible"))
+            approx_msgs_delayed = _safe_int(attrs.get("ApproximateNumberOfMessagesDelayed"))
+
+            # Redrive policy — parse JSON, store only structural metadata
+            redrive_raw = attrs.get("RedrivePolicy") or ""
+            redrive_present = bool(redrive_raw)
+            dlq_arn_hash: str | None = None
+            max_receive_count: int | None = None
+            if redrive_raw:
+                try:
+                    import json as _json
+                    rdp = _json.loads(redrive_raw)
+                    dlq_arn_hash = _hash_arn(rdp.get("deadLetterTargetArn") or "")
+                    max_receive_count = _safe_int(str(rdp.get("maxReceiveCount") or ""))
+                except Exception:
+                    queue_warnings.append("RedrivePolicy: parse error")
+
+            # Redrive allow policy
+            redrive_allow_raw = attrs.get("RedriveAllowPolicy") or ""
+            redrive_allow_summary = _summarize_redrive_allow_policy(redrive_allow_raw)
+
+            # Queue policy — parse for public access, never store raw
+            policy_raw = attrs.get("Policy") or ""
+            policy_present = bool(policy_raw)
+            policy_is_public = False
+            if policy_raw:
+                # SECURITY: raw policy JSON never stored
+                policy_is_public = _messaging_policy_is_public(policy_raw, account_id)
+
+            # ── ListQueueTags ──────────────────────────────────────────────────
+            tag_keys: list[str] | None = None
+            try:
+                tags_resp = self._call_aws(client.list_queue_tags, QueueUrl=queue_url)
+                # SECURITY: tag values never stored — keys only
+                raw_tags = tags_resp.get("Tags") or {}
+                tag_keys = sorted(raw_tags.keys()) or None
+            except Exception as exc:
+                fc = classify_aws_sqs_failure("ListQueueTags", exc)
+                queue_warnings.append(f"ListQueueTags: {fc.error_code}")
+
+            name_sensitivity = _classify_messaging_name_sensitivity(queue_name)
+            queue_stable_id = f"{account_id}/{region}/sqs/{queue_name}"
+            records.append({
+                "record_type":                          AWS_SQS_QUEUE,
+                "record_id":                            queue_stable_id,
+                "external_id":                          queue_stable_id,
+                "name":                                 queue_name,
+                "account_id":                           account_id,
+                "region":                               region,
+                # SECURITY: raw URL and ARN never stored as-is — hashed
+                "queue_url_hash":                       _hash_endpoint(queue_url),
+                "queue_arn_hash":                       _hash_arn(queue_arn),
+                "fifo_queue":                           fifo_queue,
+                "content_based_deduplication":          content_based_dedup,
+                "sqs_managed_sse_enabled":              sqs_managed_sse,
+                "kms_master_key_id_present":            kms_key_present,
+                "kms_master_key_id_hash":               kms_key_hash,
+                "visibility_timeout":                   visibility_timeout,
+                "message_retention_period":             message_retention,
+                "delay_seconds":                        delay_seconds,
+                "maximum_message_size":                 max_message_size,
+                "long_polling_wait_time_seconds":        receive_wait_time,
+                "redrive_policy_present":               redrive_present,
+                "dead_letter_target_arn_hash":          dlq_arn_hash,
+                "max_receive_count":                    max_receive_count,
+                "redrive_allow_policy_summary":         redrive_allow_summary,
+                "policy_present":                       policy_present,
+                "public_or_cross_account_policy":       policy_is_public,
+                "approximate_number_of_messages":       approx_msgs,
+                "approximate_number_of_messages_not_visible": approx_msgs_not_visible,
+                "approximate_number_of_messages_delayed": approx_msgs_delayed,
+                "name_sensitivity":                     name_sensitivity,
+                "tag_keys":                             tag_keys,
+                "config_fetch_warnings":                queue_warnings if queue_warnings else None,
+            })
+
+        return records
+
+    # ── M47: SNS fetch methods ────────────────────────────────────────────────
+
+    def _fetch_sns_resources(
+        self,
+        credentials: dict,
+        account_id: str,
+    ) -> list[dict]:
+        """Fetch SNS topic and subscription configuration posture across all regions.
+
+        SECURITY:
+        - sns:Publish NEVER called.
+        - Notification contents and message bodies NEVER read or stored.
+        - Subscription endpoints are hashed; raw email/phone/URL NEVER stored.
+        - Only topic and subscription configuration metadata is collected.
+        """
+        selected_regions = self._selected_regions(credentials)
+        all_records: list[dict] = []
+
+        for region in selected_regions:
+            try:
+                sns_client = self._make_client("sns", credentials, region=region)
+                region_records = self._fetch_sns_in_region(sns_client, account_id, region)
+                all_records.extend(region_records)
+                logger.debug(
+                    "aws: sns fetched  region=%s  count=%d",
+                    region, len(region_records),
+                )
+            except Exception:
+                logger.warning(
+                    "aws: sns fetch unexpected error  region=%s",
+                    region, exc_info=True,
+                )
+
+        return all_records
+
+    def _fetch_sns_in_region(  # noqa: C901
+        self,
+        client: Any,
+        account_id: str,
+        region: str,
+    ) -> list[dict]:
+        """Fetch SNS topics and subscriptions for one region.
+
+        SECURITY: sns:Publish NEVER called. Notification contents NEVER read.
+        Raw subscription endpoints NEVER stored — hashed only.
+        """
+        records: list[dict] = []
+
+        # ── ListTopics (paginated) ─────────────────────────────────────────────
+        topic_arns: list[str] = []
+        try:
+            kwargs: dict = {}
+            while True:
+                response = self._call_aws(client.list_topics, **kwargs)
+                for t in response.get("Topics") or []:
+                    arn = t.get("TopicArn") or ""
+                    if arn:
+                        topic_arns.append(arn)
+                next_token = response.get("NextToken")
+                if not next_token:
+                    break
+                kwargs["NextToken"] = next_token
+        except Exception as exc:
+            fc = classify_aws_sns_failure("ListTopics", exc)
+            logger.warning(
+                "aws: ListTopics failed  region=%s  code=%s",
+                region, fc.error_code,
+            )
+            return records
+
+        for topic_arn in topic_arns:
+            topic_warnings: list[str] = []
+
+            # Extract topic name from ARN (last segment)
+            topic_name = topic_arn.rsplit(":", 1)[-1] if ":" in topic_arn else topic_arn
+
+            # ── GetTopicAttributes ─────────────────────────────────────────────
+            attrs: dict = {}
+            try:
+                resp = self._call_aws(client.get_topic_attributes, TopicArn=topic_arn)
+                attrs = resp.get("Attributes") or {}
+            except Exception as exc:
+                fc = classify_aws_sns_failure("GetTopicAttributes", exc)
+                topic_warnings.append(f"GetTopicAttributes: {fc.error_code}")
+
+            # FIFO / dedup
+            fifo_topic = (attrs.get("FifoTopic") or "false").lower() == "true"
+            content_based_dedup = (attrs.get("ContentBasedDeduplication") or "false").lower() == "true"
+
+            # KMS
+            kms_key_raw = attrs.get("KmsMasterKeyId") or ""
+            kms_key_present = bool(kms_key_raw)
+            kms_key_hash = _hash_arn(kms_key_raw) if kms_key_raw else None
+
+            # Delivery / policy — presence only, never raw
+            delivery_policy_present = bool(attrs.get("DeliveryPolicy"))
+            effective_delivery_policy_present = bool(attrs.get("EffectiveDeliveryPolicy"))
+
+            # Topic policy — parse for public access, never store raw
+            policy_raw = attrs.get("Policy") or ""
+            policy_present = bool(policy_raw)
+            policy_is_public = False
+            if policy_raw:
+                # SECURITY: raw policy JSON never stored
+                policy_is_public = _messaging_policy_is_public(policy_raw, account_id)
+
+            # Subscription counts
+            def _safe_int(v: str | None) -> int:
+                try:
+                    return int(v or 0)
+                except (ValueError, TypeError):
+                    return 0
+
+            confirmed_count = _safe_int(attrs.get("SubscriptionsConfirmed"))
+            pending_count = _safe_int(attrs.get("SubscriptionsPending"))
+            deleted_count = _safe_int(attrs.get("SubscriptionsDeleted"))
+            subscription_count = confirmed_count + pending_count
+
+            # ── Tags — ListTagsForResource ─────────────────────────────────────
+            tag_keys: list[str] | None = None
+            try:
+                tags_resp = self._call_aws(
+                    client.list_tags_for_resource, ResourceArn=topic_arn
+                )
+                raw_tags = tags_resp.get("Tags") or []
+                # SECURITY: tag values never stored — keys only
+                tag_keys = sorted({t["Key"] for t in raw_tags if "Key" in t}) or None
+            except Exception as exc:
+                fc = classify_aws_sns_failure("ListTagsForResource", exc)
+                topic_warnings.append(f"ListTagsForResource: {fc.error_code}")
+
+            # ── ListSubscriptionsByTopic (paginated) ───────────────────────────
+            subscriptions: list[dict] = []
+            protocol_counts: dict[str, int] = {}
+            try:
+                kwargs = {"TopicArn": topic_arn}
+                while True:
+                    response = self._call_aws(client.list_subscriptions_by_topic, **kwargs)
+                    for sub in response.get("Subscriptions") or []:
+                        subscriptions.append(sub)
+                        proto = (sub.get("Protocol") or "unknown").lower()
+                        protocol_counts[proto] = protocol_counts.get(proto, 0) + 1
+                    next_token = response.get("NextToken")
+                    if not next_token:
+                        break
+                    kwargs["NextToken"] = next_token
+            except Exception as exc:
+                fc = classify_aws_sns_failure("ListSubscriptionsByTopic", exc)
+                topic_warnings.append(f"ListSubscriptionsByTopic: {fc.error_code}")
+
+            name_sensitivity = _classify_messaging_name_sensitivity(topic_name)
+            topic_arn_hash = _hash_arn(topic_arn) or ""
+            topic_stable_id = f"{account_id}/{region}/sns/{topic_arn_hash}"
+            records.append({
+                "record_type":                          AWS_SNS_TOPIC,
+                "record_id":                            topic_stable_id,
+                "external_id":                          topic_arn,
+                "name":                                 topic_name,
+                "account_id":                           account_id,
+                "region":                               region,
+                # SECURITY: raw ARN not stored as primary key — hash only
+                "topic_arn_hash":                       topic_arn_hash,
+                "fifo_topic":                           fifo_topic,
+                "content_based_deduplication":          content_based_dedup,
+                "kms_master_key_id_present":            kms_key_present,
+                "kms_master_key_id_hash":               kms_key_hash,
+                "delivery_policy_present":              delivery_policy_present,
+                "effective_delivery_policy_present":    effective_delivery_policy_present,
+                "policy_present":                       policy_present,
+                "public_or_cross_account_policy":       policy_is_public,
+                "subscription_count":                   subscription_count,
+                "confirmed_subscription_count":         confirmed_count,
+                "pending_subscription_count":           pending_count,
+                "subscription_protocol_counts":         protocol_counts if protocol_counts else None,
+                "name_sensitivity":                     name_sensitivity,
+                "tag_keys":                             tag_keys,
+                "config_fetch_warnings":                topic_warnings if topic_warnings else None,
+            })
+
+            # ── Subscription records ───────────────────────────────────────────
+            for sub in subscriptions:
+                sub_arn: str = sub.get("SubscriptionArn") or ""
+                # Skip pending subscriptions that have no stable ARN yet
+                if sub_arn in ("PendingConfirmation", "Deleted", ""):
+                    continue
+
+                protocol: str = (sub.get("Protocol") or "unknown").lower()
+                endpoint_raw: str = sub.get("Endpoint") or ""
+
+                # SECURITY: raw endpoint never stored — hash only
+                endpoint_hash = _hash_endpoint(endpoint_raw)
+                endpoint_type = _classify_endpoint_type(endpoint_raw, protocol)
+
+                # ── GetSubscriptionAttributes (optional) ───────────────────────
+                sub_attrs: dict = {}
+                sub_warnings: list[str] = []
+                try:
+                    sub_resp = self._call_aws(
+                        client.get_subscription_attributes, SubscriptionArn=sub_arn
+                    )
+                    sub_attrs = sub_resp.get("Attributes") or {}
+                except Exception as exc:
+                    fc = classify_aws_sns_failure("GetSubscriptionAttributes", exc)
+                    sub_warnings.append(f"GetSubscriptionAttributes: {fc.error_code}")
+
+                confirmation_was_authenticated = (
+                    sub_attrs.get("ConfirmationWasAuthenticated") or "false"
+                ).lower() == "true"
+                pending_confirmation = (
+                    sub_attrs.get("PendingConfirmation") or "false"
+                ).lower() == "true"
+                raw_message_delivery = (
+                    sub_attrs.get("RawMessageDelivery") or "false"
+                ).lower() == "true"
+
+                filter_policy_raw = sub_attrs.get("FilterPolicy") or ""
+                filter_policy_present = bool(filter_policy_raw)
+                # SECURITY: raw filter policy never stored — hash only
+                filter_policy_hash = _hash_filter_policy(filter_policy_raw)
+
+                redrive_policy_present = bool(sub_attrs.get("RedrivePolicy"))
+                delivery_policy_present = bool(sub_attrs.get("DeliveryPolicy"))
+
+                sub_arn_hash = _hash_arn(sub_arn) or ""
+                sub_stable_id = f"{account_id}/{region}/sns-sub/{sub_arn_hash}"
+                records.append({
+                    "record_type":                      AWS_SNS_SUBSCRIPTION,
+                    "record_id":                        sub_stable_id,
+                    "external_id":                      sub_arn,
+                    "name":                             f"sub-{protocol}-{endpoint_hash or 'unknown'}",
+                    "account_id":                       account_id,
+                    "region":                           region,
+                    "topic_arn_hash":                   topic_arn_hash,
+                    "subscription_arn_hash":            sub_arn_hash,
+                    "protocol":                         protocol,
+                    # SECURITY: raw endpoint never stored
+                    "endpoint_hash":                    endpoint_hash,
+                    "endpoint_type":                    endpoint_type,
+                    "confirmation_was_authenticated":   confirmation_was_authenticated,
+                    "pending_confirmation":             pending_confirmation,
+                    "raw_message_delivery":             raw_message_delivery,
+                    "filter_policy_present":            filter_policy_present,
+                    "filter_policy_hash":               filter_policy_hash,
+                    "redrive_policy_present":           redrive_policy_present,
+                    "delivery_policy_present":          delivery_policy_present,
+                    "config_fetch_warnings":            sub_warnings if sub_warnings else None,
+                })
 
         return records

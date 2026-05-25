@@ -2178,3 +2178,273 @@ def classify_aws_ecr_failure(
             "other AWS checks may still work."
         ),
     )
+
+
+def classify_aws_eventbridge_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify an EventBridge API failure for ConfigTrace sync reporting.
+
+    Covers: ListEventBuses, DescribeEventBus, ListRules, ListTargetsByRule,
+    ListArchives, DescribeArchive, ListTagsForResource.
+
+    SECURITY: events:PutEvents is NEVER called.  EventBridge event payloads
+    are NEVER read or stored.  Only bus/rule/target/archive configuration
+    metadata is collected.
+
+    Args:
+        api_name: The EventBridge API name (e.g. ``"ListEventBuses"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _EB_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only EventBridge read permissions. "
+        "Required: events:ListEventBuses, events:DescribeEventBus, events:ListRules, "
+        "events:ListTargetsByRule, events:ListArchives, events:DescribeArchive, "
+        "events:ListTagsForResource. "
+        "ConfigTrace reads EventBridge configuration posture only; "
+        "event payloads are never read and write APIs are never called. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _EB_API_CODES: dict[str, str] = {
+        "ListEventBuses":      "aws_eventbridge_buses_unavailable",
+        "DescribeEventBus":    "aws_eventbridge_buses_unavailable",
+        "ListRules":           "aws_eventbridge_rules_unavailable",
+        "ListTargetsByRule":   "aws_eventbridge_targets_unavailable",
+        "ListArchives":        "aws_eventbridge_archives_unavailable",
+        "DescribeArchive":     "aws_eventbridge_archives_unavailable",
+        "ListTagsForResource": "aws_eventbridge_api_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_eventbridge_access_denied",
+            recommended_action=_EB_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_eventbridge_rate_limited",
+            recommended_action=(
+                "AWS throttled EventBridge metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented EventBridge API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_eventbridge_api_unavailable",
+            recommended_action=(
+                "The EventBridge API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _EB_API_CODES.get(api_name, "aws_eventbridge_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional EventBridge metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_sqs_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify an SQS API failure for ConfigTrace sync reporting.
+
+    Covers: ListQueues, GetQueueAttributes, ListQueueTags.
+
+    SECURITY: sqs:ReceiveMessage, sqs:SendMessage, sqs:DeleteMessage, and
+    sqs:PurgeQueue are NEVER called.  SQS message bodies and contents are
+    NEVER read or stored.  Only queue configuration metadata is collected.
+
+    Args:
+        api_name: The SQS API name (e.g. ``"ListQueues"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _SQS_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only SQS read permissions. "
+        "Required: sqs:ListQueues, sqs:GetQueueAttributes, sqs:ListQueueTags. "
+        "ConfigTrace reads SQS queue configuration only; "
+        "messages are never read, sent, deleted, or purged. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _SQS_API_CODES: dict[str, str] = {
+        "ListQueues":          "aws_sqs_queues_unavailable",
+        "GetQueueAttributes":  "aws_sqs_queue_attributes_unavailable",
+        "ListQueueTags":       "aws_sqs_queue_tags_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_sqs_access_denied",
+            recommended_action=_SQS_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_sqs_rate_limited",
+            recommended_action=(
+                "AWS throttled SQS metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented SQS API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_sqs_api_unavailable",
+            recommended_action=(
+                "The SQS API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _SQS_API_CODES.get(api_name, "aws_sqs_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional SQS metadata; "
+            "other AWS checks may still work."
+        ),
+    )
+
+
+def classify_aws_sns_failure(
+    api_name: str, exc: Exception
+) -> "FailureClassification":
+    """Classify an SNS API failure for ConfigTrace sync reporting.
+
+    Covers: ListTopics, GetTopicAttributes, ListSubscriptionsByTopic,
+    GetSubscriptionAttributes, ListTagsForResource.
+
+    SECURITY: sns:Publish, sns:Subscribe, and sns:Unsubscribe are NEVER called.
+    SNS message contents and notification payloads are NEVER read or stored.
+    Only topic and subscription configuration metadata is collected.
+
+    Args:
+        api_name: The SNS API name (e.g. ``"ListTopics"``).
+        exc:      The exception raised by the failed call.
+    """
+    from app.connectors.exceptions import (
+        AuthenticationError,
+        ConnectorError,
+        NetworkError,
+        RateLimitError,
+    )
+
+    _SNS_ACCESS_DENIED_ACTION = (
+        "Grant ConfigTrace metadata-only SNS read permissions. "
+        "Required: sns:ListTopics, sns:GetTopicAttributes, "
+        "sns:ListSubscriptionsByTopic, sns:GetSubscriptionAttributes, "
+        "sns:ListTagsForResource. "
+        "ConfigTrace reads SNS topic and subscription configuration only; "
+        "messages are never published or read. "
+        "Missing permissions are skipped; other AWS checks may still work."
+    )
+
+    _SNS_API_CODES: dict[str, str] = {
+        "ListTopics":                "aws_sns_topics_unavailable",
+        "GetTopicAttributes":        "aws_sns_topic_attributes_unavailable",
+        "ListSubscriptionsByTopic":  "aws_sns_subscriptions_unavailable",
+        "GetSubscriptionAttributes": "aws_sns_subscription_attributes_unavailable",
+        "ListTagsForResource":       "aws_sns_api_unavailable",
+    }
+
+    if isinstance(exc, AuthenticationError) or (
+        isinstance(exc, ConnectorError) and exc.status_code == 403
+    ):
+        return FailureClassification(
+            category="authentication",
+            error_code="aws_sns_access_denied",
+            recommended_action=_SNS_ACCESS_DENIED_ACTION,
+        )
+
+    if isinstance(exc, RateLimitError):
+        return FailureClassification(
+            category="rate_limited",
+            error_code="aws_sns_rate_limited",
+            recommended_action=(
+                "AWS throttled SNS metadata calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, NetworkError):
+        return FailureClassification(
+            category="network",
+            error_code="network_error",
+            recommended_action=(
+                "A network error prevented SNS API calls. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    if isinstance(exc, ConnectorError) and exc.status_code is not None and exc.status_code >= 500:
+        return FailureClassification(
+            category="provider_unavailable",
+            error_code="aws_sns_api_unavailable",
+            recommended_action=(
+                "The SNS API returned a server error. "
+                "ConfigTrace will retry on the next sync."
+            ),
+        )
+
+    error_code = _SNS_API_CODES.get(api_name, "aws_sns_api_unavailable")
+    return FailureClassification(
+        category="provider_unavailable",
+        error_code=error_code,
+        recommended_action=(
+            "ConfigTrace could not read optional SNS metadata; "
+            "other AWS checks may still work."
+        ),
+    )

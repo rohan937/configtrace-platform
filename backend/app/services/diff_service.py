@@ -1215,6 +1215,126 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "repo_filter_count",
         "scan_frequency_types",
     ),
+
+    # ── M47: EventBridge / SQS / SNS ─────────────────────────────────────────
+
+    # aws_eventbridge_event_bus — one per EventBridge event bus per region.
+    # SECURITY: event payloads NEVER tracked. events:PutEvents NEVER called.
+    "aws_eventbridge_event_bus": (
+        "policy_present",
+        "public_or_cross_account_policy",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_eventbridge_rule — one per rule per bus per region.
+    # SECURITY: raw event patterns NEVER tracked — hash only.
+    "aws_eventbridge_rule": (
+        "state",
+        "schedule_expression_present",
+        "event_pattern_present",
+        "event_pattern_hash",
+        "target_count",
+        "target_type_counts",
+        "dlq_target_present",
+        "retry_policy_present",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_eventbridge_target — one per target per rule per bus per region.
+    # SECURITY: target ARNs stored as hashes only. Raw input/event data NEVER stored.
+    "aws_eventbridge_target": (
+        "target_type",
+        "target_arn_hash",
+        "role_arn_present",
+        "role_arn_hash",
+        "dead_letter_config_present",
+        "dead_letter_arn_hash",
+        "retry_policy_present",
+        "retry_max_event_age_seconds",
+        "retry_max_attempts",
+        "input_transformer_present",
+        "input_path_present",
+        "input_present",
+        "config_fetch_warnings",
+    ),
+
+    # aws_eventbridge_archive — one per archive per region.
+    # SECURITY: archived event contents NEVER read or stored.
+    "aws_eventbridge_archive": (
+        "state",
+        "retention_days",
+        "event_count",
+        "size_bytes",
+        "config_fetch_warnings",
+    ),
+
+    # aws_sqs_queue — one per SQS queue per region.
+    # SECURITY: message bodies and queue contents NEVER tracked.
+    # sqs:ReceiveMessage/SendMessage/DeleteMessage/PurgeQueue NEVER called.
+    "aws_sqs_queue": (
+        "fifo_queue",
+        "content_based_deduplication",
+        "sqs_managed_sse_enabled",
+        "kms_master_key_id_present",
+        "kms_master_key_id_hash",
+        "visibility_timeout",
+        "message_retention_period",
+        "delay_seconds",
+        "maximum_message_size",
+        "long_polling_wait_time_seconds",
+        "redrive_policy_present",
+        "dead_letter_target_arn_hash",
+        "max_receive_count",
+        "redrive_allow_policy_summary",
+        "policy_present",
+        "public_or_cross_account_policy",
+        "approximate_number_of_messages",
+        "approximate_number_of_messages_not_visible",
+        "approximate_number_of_messages_delayed",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_sns_topic — one per SNS topic per region.
+    # SECURITY: notification contents NEVER tracked. sns:Publish NEVER called.
+    "aws_sns_topic": (
+        "fifo_topic",
+        "content_based_deduplication",
+        "kms_master_key_id_present",
+        "kms_master_key_id_hash",
+        "delivery_policy_present",
+        "effective_delivery_policy_present",
+        "policy_present",
+        "public_or_cross_account_policy",
+        "subscription_count",
+        "confirmed_subscription_count",
+        "pending_subscription_count",
+        "subscription_protocol_counts",
+        "name_sensitivity",
+        "tag_keys",
+        "config_fetch_warnings",
+    ),
+
+    # aws_sns_subscription — one per subscription per topic per region.
+    # SECURITY: endpoint raw values NEVER stored — hash only.
+    "aws_sns_subscription": (
+        "protocol",
+        "endpoint_hash",
+        "endpoint_type",
+        "confirmation_was_authenticated",
+        "pending_confirmation",
+        "raw_message_delivery",
+        "filter_policy_present",
+        "filter_policy_hash",
+        "redrive_policy_present",
+        "delivery_policy_present",
+        "config_fetch_warnings",
+    ),
 }
 
 

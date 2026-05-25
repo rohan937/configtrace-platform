@@ -652,6 +652,60 @@ export default function AWSIntegrationForm({
             </span>
             <br />
 
+            {/* EventBridge — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              EventBridge event bus, rule, target, and archive metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ events:ListEventBuses &nbsp;○ events:DescribeEventBus &nbsp;○ events:ListRules
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ events:ListTargetsByRule &nbsp;○ events:ListArchives &nbsp;○ events:DescribeArchive &nbsp;○ events:ListTagsForResource
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls events:PutEvents.
+              EventBridge event payloads and event content are never read or stored.
+              Only bus policy posture, rule state, target routing, and archive configuration metadata is collected.
+            </span>
+            <br />
+
+            {/* SQS — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              SQS queue configuration metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ sqs:ListQueues &nbsp;○ sqs:GetQueueAttributes &nbsp;○ sqs:ListQueueTags
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls sqs:ReceiveMessage, sqs:SendMessage, sqs:DeleteMessage, or sqs:PurgeQueue.
+              SQS message bodies and queue contents are never read or stored.
+              Only queue configuration, policy posture, and encryption metadata is collected.
+            </span>
+            <br />
+
+            {/* SNS — optional */}
+            <span style={{ color: "#4a5060", display: "block", marginTop: "6px", marginBottom: "2px", fontStyle: "italic" }}>
+              SNS topic and subscription metadata — all optional, skipped if unavailable:
+            </span>
+            <span style={{ color: "#3a3d4a" }}>
+              ○ sns:ListTopics &nbsp;○ sns:GetTopicAttributes &nbsp;○ sns:ListSubscriptionsByTopic
+            </span>
+            <br />
+            <span style={{ color: "#3a3d4a" }}>
+              ○ sns:GetSubscriptionAttributes &nbsp;○ sns:ListTagsForResource
+            </span>
+            <br />
+            <span style={{ color: "#565b6e", fontSize: "11px", fontStyle: "italic" }}>
+              ConfigTrace never calls sns:Publish, sns:Subscribe, or sns:Unsubscribe.
+              Notification contents and message bodies are never read or stored.
+              Subscription endpoints are hashed for privacy; raw email/phone/URL values are never stored.
+              Only topic policy posture, subscription protocol counts, and encryption metadata is collected.
+            </span>
+            <br />
+
             <span style={{ color: "#3a3d4a", marginTop: "8px", display: "block" }}>
               ConfigTrace performs read-only operations only. It never modifies, deletes, or creates
               any AWS resource. Customer data, billing, and secrets are never accessed.
