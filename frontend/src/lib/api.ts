@@ -42,6 +42,8 @@ import type {
   UserSettings,
   UserSettingsUpdateRequest,
   Workspace,
+  WorkspaceAuditLog,
+  AuditLogListResponse,
   WorkspaceInvite,
   WorkspaceListResponse,
   WorkspaceMember,
@@ -240,6 +242,21 @@ export async function revokeInvite(
     } catch { /* ignore */ }
     throw new Error(detail);
   }
+}
+
+// ── Workspace audit log (M51) ─────────────────────────────────────────────────
+
+export async function getWorkspaceAuditLogs(
+  workspaceId: string,
+  token?: string | null,
+  params?: { limit?: number; offset?: number; event_type?: string },
+): Promise<AuditLogListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
+  if (params?.event_type) qs.set("event_type", params.event_type);
+  const query = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch(`/workspaces/${workspaceId}/audit-logs${query}`, { token });
 }
 
 // ── Invite accept flow ────────────────────────────────────────────────────────

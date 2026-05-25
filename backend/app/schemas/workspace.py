@@ -1,10 +1,10 @@
-"""Pydantic schemas for workspace, member, and invite resources — M50."""
+"""Pydantic schemas for workspace, member, invite, and audit log resources — M50/M51."""
 
 from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -121,3 +121,31 @@ class InvitePreviewResponse(BaseModel):
     email: str
     expires_at: datetime
     is_active: bool
+
+
+# ── Audit log (M51) ───────────────────────────────────────────────────────────
+
+
+class WorkspaceAuditLogResponse(BaseModel):
+    """A single audit log entry — safe to display in the UI."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    workspace_id: UUID
+    actor_user_id: Optional[UUID]
+    event_type: str
+    target_type: Optional[str]
+    target_id: Optional[str]
+    target_display_name: Optional[str]
+    metadata_json: Optional[Dict[str, Any]]
+    created_at: datetime
+
+    # Joined from User (populated by service layer).
+    actor_email: Optional[str] = None
+    actor_display_name: Optional[str] = None
+
+
+class AuditLogListResponse(BaseModel):
+    logs: list[WorkspaceAuditLogResponse]
+    total: int

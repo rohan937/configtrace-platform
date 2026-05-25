@@ -1,4 +1,4 @@
-"""Workspace, WorkspaceMember, and WorkspaceInvite models — M50."""
+"""Workspace, WorkspaceMember, WorkspaceInvite, and WorkspaceAuditLog models — M50/M51."""
 
 from __future__ import annotations
 
@@ -7,10 +7,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, BaseMixin, _utcnow
+from app.models.base import Base, BaseImmutable, BaseMixin, _utcnow
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -151,4 +152,61 @@ class WorkspaceInvite(BaseMixin, Base):
         return (
             f"<WorkspaceInvite workspace={self.workspace_id} "
             f"email={self.email!r} role={self.role!r}>"
+        )
+
+
+# ── M51: Workspace Audit Log ──────────────────────────────────────────────────
+
+
+class WorkspaceAuditLog(BaseImmutable, Base):
+    """Append-only record of important workspace actions.
+
+    Security guarantees
+    -------------------
+    * ``target_id`` stores a human-safe identifier (UUID as string, email,
+      or display name) — never a raw token, credential, or secret.
+    * ``metadata_json`` contains display-safe context only.
+    * Raw invite tokens, provider API keys, and credential values are
+      NEVER stored here.
+
+    Common event_type values
+    ------------------------
+    workspace_created / workspace_renamed
+    member_invited / invite_revoked / invite_accepted
+    member_removed / member_role_changed
+    integration_created / integration_deleted
+    manual_sync_triggered
+    """
+
+    __tablename__ = "workspace_audit_logs"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # NULL when the action was system-initiated (e.g. migration backfill).
+    actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    # "workspace" | "integration" | "member" | "invite" | "sync" | …
+    target_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # UUID or other non-secret identifier of the affected object.
+    target_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Human-readable label, e.g. "alice@example.com", "My AWS Integration".
+    target_display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Small, safe JSON blob — display context only, no secrets.
+    metadata_json: Mapped[Optional[dict]] = mapped_column(
+        "metadata_json",
+        JSONB,
+        nullable=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<WorkspaceAuditLog workspace={self.workspace_id} "
+            f"event={self.event_type!r} actor={self.actor_user_id}>"
         )

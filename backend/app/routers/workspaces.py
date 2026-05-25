@@ -1,4 +1,4 @@
-"""Workspace and member management routes — M50.
+"""Workspace and member management routes — M50/M51.
 
 Routes
 ------
@@ -12,6 +12,7 @@ DELETE /workspaces/{workspace_id}/members/{id}       — remove member
 GET    /workspaces/{workspace_id}/invites            — list invites
 POST   /workspaces/{workspace_id}/invites            — create invite
 DELETE /workspaces/{workspace_id}/invites/{id}       — revoke invite
+GET    /workspaces/{workspace_id}/audit-logs         — workspace audit history (M51)
 """
 
 from __future__ import annotations
@@ -29,12 +30,14 @@ from app.database import get_db
 from app.models.user import User
 from app.models.workspace import WorkspaceMember
 from app.schemas.workspace import (
+    AuditLogListResponse,
     InviteCreateRequest,
     InviteCreateResponse,
     InviteListResponse,
     InviteRole,
     MemberListResponse,
     MemberUpdateRequest,
+    WorkspaceAuditLogResponse,
     WorkspaceCreateRequest,
     WorkspaceInviteResponse,
     WorkspaceListResponse,
@@ -308,3 +311,49 @@ def revoke_invite(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return Response(status_code=204)
+
+
+# ── Audit log (M51) ───────────────────────────────────────────────────────────
+
+
+@router.get("/{workspace_id}/audit-logs", response_model=AuditLogListResponse)
+def list_audit_logs(
+    workspace_id: UUID4,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    event_type: Optional[str] = Query(None, description="Filter by event type."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AuditLogListResponse:
+    """Return workspace audit history.  Any workspace member can view logs."""
+    try:
+        logs, total = workspace_service.get_audit_logs(
+            workspace_id=workspace_id,
+            actor_user_id=current_user.id,
+            db=db,
+            limit=limit,
+            offset=offset,
+            event_type_filter=event_type,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return AuditLogListResponse(
+        logs=[
+            WorkspaceAuditLogResponse(
+                id=log.id,
+                workspace_id=log.workspace_id,
+                actor_user_id=log.actor_user_id,
+                event_type=log.event_type,
+                target_type=log.target_type,
+                target_id=log.target_id,
+                target_display_name=log.target_display_name,
+                metadata_json=log.metadata_json,
+                created_at=log.created_at,
+                actor_email=getattr(log, "actor_email", None),
+                actor_display_name=getattr(log, "actor_display_name", None),
+            )
+            for log in logs
+        ],
+        total=total,
+    )

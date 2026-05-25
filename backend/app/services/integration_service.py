@@ -1070,3 +1070,81 @@ def get_latest_sync_run_summary(
     if run is None:
         return None, None
     return run.status, run.error_message
+
+
+# ── Workspace-scoped integration access (M51) ─────────────────────────────────
+
+
+def get_integration_for_viewer(
+    *,
+    integration_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    db: Session,
+) -> Integration | None:
+    """Return integration if actor is the owner OR a workspace member.
+
+    Any workspace role (member/admin/owner) may view an integration.
+    Returns None (→ 404) if not found, deleted, or actor has no access.
+    """
+    from app.services.workspace_service import get_membership
+
+    integration = (
+        db.query(Integration)
+        .filter(
+            Integration.id == integration_id,
+            Integration.status != "deleted",
+        )
+        .first()
+    )
+    if integration is None:
+        return None
+
+    # Direct owner access.
+    if integration.user_id == actor_user_id:
+        return integration
+
+    # Workspace member access.
+    if integration.workspace_id is not None:
+        membership = get_membership(integration.workspace_id, actor_user_id, db)
+        if membership is not None:
+            return integration
+
+    return None
+
+
+def get_integration_for_manager(
+    *,
+    integration_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    db: Session,
+) -> Integration | None:
+    """Return integration if actor can manage it (owner OR workspace admin+).
+
+    'Manage' means update or delete.  Workspace members (view-only) are
+    rejected (returns None so the router raises 404 — avoids leaking
+    whether the integration exists).
+    """
+    from app.services.workspace_service import get_membership
+
+    integration = (
+        db.query(Integration)
+        .filter(
+            Integration.id == integration_id,
+            Integration.status != "deleted",
+        )
+        .first()
+    )
+    if integration is None:
+        return None
+
+    # Direct owner always has management access.
+    if integration.user_id == actor_user_id:
+        return integration
+
+    # Workspace admin or owner can also manage.
+    if integration.workspace_id is not None:
+        membership = get_membership(integration.workspace_id, actor_user_id, db)
+        if membership is not None and membership.role in ("owner", "admin"):
+            return integration
+
+    return None

@@ -1,12 +1,14 @@
-"""Workspace business logic — M50.
+"""Workspace business logic — M50/M51.
 
 Responsibilities
 ----------------
 * Create, read, update workspaces.
 * Manage workspace members (invite, role change, removal).
 * Invite token lifecycle (create, accept, revoke, lookup).
+* Audit log: append workspace action records (M51).
 * Helper: ensure every user has a default workspace (called on first login).
 * Helper: verify workspace membership for scoped queries.
+* Helper: verify workspace role for RBAC enforcement.
 
 Security invariants
 -------------------
@@ -16,19 +18,28 @@ Security invariants
 * admin cannot remove or demote owner.
 * member cannot invite, remove, or change roles.
 * Users cannot access workspaces they are not members of.
+* Audit logs never store raw tokens, credentials, or secret values.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.workspace import Workspace, WorkspaceInvite, WorkspaceMember
+from app.models.workspace import (
+    Workspace,
+    WorkspaceAuditLog,
+    WorkspaceInvite,
+    WorkspaceMember,
+)
+
+logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +64,104 @@ def _rank(role: str) -> int:
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# ── Audit log helpers ─────────────────────────────────────────────────────────
+
+
+def log_audit_event(
+    workspace_id: uuid.UUID,
+    actor_user_id: Optional[uuid.UUID],
+    event_type: str,
+    db: Session,
+    *,
+    target_type: Optional[str] = None,
+    target_id: Optional[str] = None,
+    target_display_name: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Append an audit log entry in the current transaction.
+
+    Fire-and-forget — caller commits; if the outer tx rolls back so does this.
+    Never stores raw tokens, credentials, or secret values.
+    """
+    entry = WorkspaceAuditLog(
+        workspace_id=workspace_id,
+        actor_user_id=actor_user_id,
+        event_type=event_type,
+        target_type=target_type,
+        target_id=target_id,
+        target_display_name=target_display_name,
+        metadata_json=metadata,
+    )
+    db.add(entry)
+
+
+def get_audit_logs(
+    workspace_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    db: Session,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    event_type_filter: Optional[str] = None,
+) -> tuple[list[WorkspaceAuditLog], int]:
+    """Return (logs, total) for a workspace.  Actor must be a member.
+
+    Joins actor User for email/display_name enrichment.
+    Raises LookupError if actor is not a member.
+    """
+    from app.models.user import User
+
+    _require_membership(workspace_id, actor_user_id, db)
+
+    q = db.query(WorkspaceAuditLog).filter(
+        WorkspaceAuditLog.workspace_id == workspace_id
+    )
+    if event_type_filter:
+        q = q.filter(WorkspaceAuditLog.event_type == event_type_filter)
+
+    total = q.count()
+    logs = (
+        q.order_by(WorkspaceAuditLog.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    # Enrich with actor user info (best-effort; actor may have been deleted).
+    actor_ids = {log.actor_user_id for log in logs if log.actor_user_id}
+    if actor_ids:
+        users = (
+            db.query(User).filter(User.id.in_(actor_ids)).all()
+        )
+        user_map: Dict[uuid.UUID, Any] = {u.id: u for u in users}
+        for log in logs:
+            if log.actor_user_id and log.actor_user_id in user_map:
+                u = user_map[log.actor_user_id]
+                log.actor_email = getattr(u, "email", None)  # type: ignore[attr-defined]
+                log.actor_display_name = getattr(u, "display_name", None)  # type: ignore[attr-defined]
+
+    return logs, total
+
+
+def require_role(
+    workspace_id: uuid.UUID,
+    user_id: uuid.UUID,
+    min_role: str,
+    db: Session,
+) -> WorkspaceMember:
+    """Return the membership row if user has at least min_role, else raise.
+
+    Raises LookupError if not a member.
+    Raises PermissionError if role is insufficient.
+    """
+    member = _require_membership(workspace_id, user_id, db)
+    if _rank(member.role) < _rank(min_role):
+        raise PermissionError(
+            f"This action requires at least the '{min_role}' role."
+        )
+    return member
 
 
 # ── Workspace CRUD ────────────────────────────────────────────────────────────
@@ -80,6 +189,17 @@ def create_workspace(
         role="owner",
     )
     db.add(member)
+
+    log_audit_event(
+        workspace.id,
+        created_by_user_id,
+        "workspace_created",
+        db,
+        target_type="workspace",
+        target_id=str(workspace.id),
+        target_display_name=workspace.name,
+    )
+
     db.commit()
     db.refresh(workspace)
     db.refresh(member)
@@ -136,7 +256,20 @@ def update_workspace_name(
     workspace = db.get(Workspace, workspace_id)
     if workspace is None:
         raise LookupError("Workspace not found.")
+    old_name = workspace.name
     workspace.name = new_name.strip()
+
+    log_audit_event(
+        workspace_id,
+        actor_user_id,
+        "workspace_renamed",
+        db,
+        target_type="workspace",
+        target_id=str(workspace_id),
+        target_display_name=workspace.name,
+        metadata={"old_name": old_name, "new_name": workspace.name},
+    )
+
     db.commit()
     db.refresh(workspace)
     return workspace
@@ -228,7 +361,19 @@ def update_member_role(
                 "Transfer ownership first or add another owner."
             )
 
+    old_role = target.role
     target.role = new_role
+
+    log_audit_event(
+        workspace_id,
+        actor_user_id,
+        "member_role_changed",
+        db,
+        target_type="member",
+        target_id=str(target.user_id),
+        metadata={"old_role": old_role, "new_role": new_role},
+    )
+
     db.commit()
     db.refresh(target)
     return target
@@ -279,6 +424,16 @@ def remove_member(
                 "Cannot remove the sole owner. "
                 "Transfer ownership first or add another owner."
             )
+
+    log_audit_event(
+        workspace_id,
+        actor_user_id,
+        "member_removed",
+        db,
+        target_type="member",
+        target_id=str(target.user_id),
+        metadata={"removed_role": target.role},
+    )
 
     db.delete(target)
     db.commit()
@@ -352,6 +507,18 @@ def create_invite(
         expires_at=_utcnow() + timedelta(days=_INVITE_EXPIRY_DAYS),
     )
     db.add(invite)
+
+    log_audit_event(
+        workspace_id,
+        actor_user_id,
+        "member_invited",
+        db,
+        target_type="invite",
+        target_id=None,  # invite.id not yet populated before flush; omit
+        target_display_name=normalised_email,
+        metadata={"role": role},
+    )
+
     db.commit()
     db.refresh(invite)
     return invite, raw_token
@@ -400,6 +567,17 @@ def revoke_invite(
         raise ValueError("Cannot revoke an already-accepted invite.")
 
     invite.revoked_at = _utcnow()
+
+    log_audit_event(
+        workspace_id,
+        actor_user_id,
+        "invite_revoked",
+        db,
+        target_type="invite",
+        target_id=str(invite_id),
+        target_display_name=invite.email,
+    )
+
     db.commit()
 
 
@@ -455,6 +633,18 @@ def accept_invite(
     db.add(member)
 
     invite.accepted_at = _utcnow()
+
+    log_audit_event(
+        invite.workspace_id,
+        accepting_user_id,
+        "invite_accepted",
+        db,
+        target_type="invite",
+        target_id=str(invite.id),
+        target_display_name=invite.email,
+        metadata={"role": invite.role},
+    )
+
     db.commit()
     db.refresh(member)
     return member

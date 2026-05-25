@@ -230,6 +230,24 @@ def create_integration(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Audit: integration_created (fire-and-forget in separate transaction).
+    if resolved_workspace_id is not None:
+        try:
+            from app.services.workspace_service import log_audit_event
+            log_audit_event(
+                resolved_workspace_id,
+                current_user.id,
+                "integration_created",
+                db,
+                target_type="integration",
+                target_id=str(integration.id),
+                target_display_name=integration.display_name,
+                metadata={"provider": integration.provider},
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001
+            pass  # Audit failure must never break the main flow.
+
     return _build_response(integration, db)
 
 
@@ -290,9 +308,10 @@ def get_integration(
     Credentials (api_token, zone_id, github_token, encrypted bytes) are never
     included in the response — this is enforced at the schema level.
     """
-    integration = integration_service.get_integration_by_id(
+    # Allow owner OR workspace member to view (M51 workspace scoping).
+    integration = integration_service.get_integration_for_viewer(
         integration_id=integration_id,
-        user_id=current_user.id,
+        actor_user_id=current_user.id,
         db=db,
     )
     if integration is None:
@@ -400,10 +419,22 @@ def update_integration(
     Returns HTTP 404 if the integration does not exist, is already deleted,
     or belongs to a different user (no object-existence leak).
     """
+    # Allow owner OR workspace admin+ to update (M51 workspace scoping).
+    managed = integration_service.get_integration_for_manager(
+        integration_id=integration_id,
+        actor_user_id=current_user.id,
+        db=db,
+    )
+    if managed is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Integration not found or does not belong to this user.",
+        )
+
     try:
         integration = integration_service.update_integration(
             integration_id=integration_id,
-            user_id=current_user.id,
+            user_id=managed.user_id,  # use integration owner's ID for the DB write
             display_name=body.display_name,
             sync_interval_minutes=body.sync_interval_minutes,
             status=body.status,
@@ -436,14 +467,47 @@ def delete_integration(
     Returns HTTP 404 if the integration never existed or belongs to a
     different user.
     """
+    # Allow owner OR workspace admin+ to delete (M51 workspace scoping).
+    managed = integration_service.get_integration_for_manager(
+        integration_id=integration_id,
+        actor_user_id=current_user.id,
+        db=db,
+    )
+    if managed is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Integration not found or does not belong to this user.",
+        )
+
+    # Capture display name before delete (status changes; name stays).
+    _integration_display_name = managed.display_name
+    _integration_workspace_id = managed.workspace_id
+
     try:
         integration_service.soft_delete_integration(
             integration_id=integration_id,
-            user_id=current_user.id,
+            user_id=managed.user_id,  # use integration owner's ID for the DB write
             db=db,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Audit: integration_deleted.
+    if _integration_workspace_id is not None:
+        try:
+            from app.services.workspace_service import log_audit_event
+            log_audit_event(
+                _integration_workspace_id,
+                current_user.id,
+                "integration_deleted",
+                db,
+                target_type="integration",
+                target_id=str(integration_id),
+                target_display_name=_integration_display_name,
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001
+            pass  # Audit failure must never break the main flow.
 
     return Response(status_code=204)
 

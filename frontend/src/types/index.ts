@@ -429,3 +429,25 @@ export interface InvitePreview {
   expires_at: string;
   is_active: boolean;
 }
+
+// ── Workspace Audit Log (M51) ─────────────────────────────────────────────────
+
+export interface WorkspaceAuditLog {
+  id: string;
+  workspace_id: string;
+  actor_user_id: string | null;
+  event_type: string;
+  target_type: string | null;
+  target_id: string | null;
+  target_display_name: string | null;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string;
+  /** Joined from User (populated by service layer). */
+  actor_email: string | null;
+  actor_display_name: string | null;
+}
+
+export interface AuditLogListResponse {
+  logs: WorkspaceAuditLog[];
+  total: number;
+}
