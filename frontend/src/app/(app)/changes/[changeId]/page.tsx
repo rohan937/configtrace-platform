@@ -18,6 +18,12 @@ import {
   formatDiffValue,
   formatSnapshotHash,
 } from "@/lib/utils";
+import {
+  getTimelineEventTitle,
+  getTimelineProvider,
+  getTimelineCategory,
+} from "@/lib/timeline";
+import { getProviderMeta } from "@/lib/providers";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -35,6 +41,14 @@ const RISK_PANEL_BORDER: Record<string, string> = {
   medium:   "rgba(245,166,35,0.25)",
   low:      "rgba(107,156,248,0.25)",
   unknown:  "#2a2d38",
+};
+
+const RISK_TEXT: Record<string, string> = {
+  critical: "#e84040",
+  high:     "#f5632a",
+  medium:   "#f5a623",
+  low:      "#6b9cf8",
+  unknown:  "#565b6e",
 };
 
 // ── Small layout helpers ──────────────────────────────────────────────────────
@@ -1361,14 +1375,226 @@ function getChangeSummary(change: ChangeDetail): string {
   return `${recordLabel} was modified.`;
 }
 
+// ── Why it matters ───────────────────────────────────────────────────────────
+
+/**
+ * Provider-specific explanation of why this change category matters
+ * from a security/ops perspective. Uses may/could language.
+ * Returns null for trivial resource-type changes with no meaningful context.
+ */
+function getWhyItMatters(change: ChangeDetail): string | null {
+  const rt = (
+    (change.provider_metadata?.record_type as string | undefined) ?? ""
+  ).toLowerCase();
+  const fp = change.field_path ?? "";
+  const nv = change.new_value;
+
+  // ── AWS ──────────────────────────────────────────────────────────────
+  if (rt === "aws_security_group" || rt === "aws_security_group_rule") {
+    if (["has_public_ssh", "has_public_rdp", "has_public_database_port", "has_public_inbound"].includes(fp)) {
+      return "Security group rule changes that open public ports may expose services attached to this group to the internet. Actual exposure depends on subnet, route table, public IP assignment, and resource attachment context.";
+    }
+    return "Security group changes affect inbound and outbound traffic rules for all resources attached to this group. Inbound rule additions can expand the network attack surface.";
+  }
+  if (rt.startsWith("aws_iam_")) {
+    return "Identity and access changes can affect who can read, write, or administer production resources. IAM changes should always be tied to an expected, authorized activity and reviewed for least-privilege compliance.";
+  }
+  if (rt === "aws_s3_bucket") {
+    if ((fp.includes("public") || fp.includes("acl")) && nv === true) {
+      return "Public access changes on S3 buckets may expose objects stored in the bucket to anyone on the internet, depending on bucket policy and Block Public Access settings.";
+    }
+    if (fp === "encryption_enabled" && nv === false) {
+      return "Disabling default encryption means future objects written to this bucket will not be encrypted at rest unless the uploading client explicitly specifies encryption.";
+    }
+    return "S3 bucket configuration changes can affect data access, encryption, versioning, and compliance posture for all objects stored in the bucket.";
+  }
+  if (rt.startsWith("aws_route53_") || rt === "aws_cloudfront_distribution") {
+    return "DNS and CDN changes can affect how traffic routes to your application, service availability, and domain ownership verification. Unexpected changes may redirect users or cause service outages.";
+  }
+  if (rt.startsWith("aws_cloudtrail_") || rt.startsWith("aws_guardduty_") || rt.startsWith("aws_securityhub_")) {
+    return "Detection and audit infrastructure changes can reduce visibility into security events. Disabling or modifying audit tools makes it harder to investigate incidents and may leave gaps in compliance coverage.";
+  }
+  if (rt.startsWith("aws_kms_")) {
+    return "KMS key configuration changes can affect encryption for many dependent services including S3, RDS, Lambda, and Secrets Manager. Key deletion or policy changes may be irreversible and could make encrypted data permanently inaccessible.";
+  }
+  if (rt.startsWith("aws_lambda_")) {
+    return "Lambda function changes can affect execution behavior, access to private resources, and security posture. Role, VPC, URL authentication, and environment key changes are especially sensitive.";
+  }
+  if (rt.startsWith("aws_rds_")) {
+    return "Database configuration changes can affect data availability, encryption at rest, access controls, and disaster recovery posture. Changes to public accessibility or deletion protection should be reviewed carefully.";
+  }
+  if (rt.startsWith("aws_elbv2_") || rt === "aws_elb_classic_load_balancer") {
+    return "Load balancer changes affect how traffic is distributed to backend services. Scheme changes from internal to internet-facing can expose previously private services. Listener and security group changes affect both availability and security.";
+  }
+  if (rt.startsWith("aws_apigateway")) {
+    return "API Gateway configuration affects how client requests reach your backend services. Authorizer removal, routing, and logging changes can affect both authentication security and operational observability.";
+  }
+  if (rt.startsWith("aws_wafv2_")) {
+    return "WAF configuration changes affect protection against web-layer attacks. Removing rules or disabling logging can reduce defense-in-depth and audit coverage for your API or application.";
+  }
+  if (rt.startsWith("aws_organizations_")) {
+    return "AWS Organizations and SCP changes affect governance guardrails across all member accounts. Removing or modifying SCPs can allow previously blocked API actions throughout your organization hierarchy.";
+  }
+  if (rt.startsWith("aws_backup_")) {
+    return "Backup configuration changes can affect data recoverability. Removing backup plans, vault locks, or recovery points could leave workloads without a recovery path in a disaster scenario.";
+  }
+  if (rt.startsWith("aws_cloudwatch_")) {
+    return "CloudWatch configuration changes can affect monitoring, alerting, and log retention. Removing alarms or disabling access logging reduces operational visibility and incident response capability.";
+  }
+  if (rt.startsWith("aws_ecs_") || rt.startsWith("aws_eks_") || rt.startsWith("aws_ecr_")) {
+    return "Container infrastructure changes can affect workload security and runtime isolation. Public IP assignment, privileged container flags, image scan settings, and public endpoint exposure are especially sensitive.";
+  }
+  if (rt.startsWith("aws_eventbridge_") || rt.startsWith("aws_sqs_") || rt.startsWith("aws_sns_")) {
+    return "Messaging infrastructure changes can affect event routing, data delivery, and service integrations. Cross-account policy changes may allow external principals to publish or receive events from your queues and topics.";
+  }
+  if (rt.startsWith("aws_secretsmanager_") || rt.startsWith("aws_ssm_")) {
+    return "Secrets and parameter store changes can affect how applications retrieve credentials or configuration. ConfigTrace monitors metadata only and never reads secret values. Rotation disablement or scheduled deletion should be reviewed carefully.";
+  }
+  if (rt.startsWith("aws_vpc") || rt.startsWith("aws_subnet") ||
+      rt.startsWith("aws_route") || rt === "aws_internet_gateway" ||
+      rt === "aws_network_acl") {
+    return "Network configuration changes affect how traffic flows between resources, subnets, and the internet. Route table and internet gateway changes can make previously private resources publicly reachable.";
+  }
+  if (rt.startsWith("aws_")) {
+    return "AWS configuration changes may affect security posture, compliance, or service behavior for connected resources.";
+  }
+
+  // ── Firebase ──────────────────────────────────────────────────────────
+  if (rt === "firebase_firestore_ruleset") {
+    return "Firestore rules control client-side access to database documents. Broad rules may allow unintended reads or writes by any authenticated or unauthenticated user — without affecting server-side admin SDK access.";
+  }
+  if (rt === "firebase_storage_ruleset") {
+    return "Storage rules control access to uploaded files. Broad rules may expose files to unauthorized users or allow unwanted uploads from unauthenticated clients.";
+  }
+  if (rt === "firebase_auth_config" || rt === "firebase_auth_provider") {
+    return "Auth configuration changes affect how users can sign in to your app. Enabling anonymous auth or additional sign-in providers can expand the authentication surface if not intentional.";
+  }
+  if (rt === "firebase_authorized_domain") {
+    return "Authorized domains affect where Firebase Auth sign-in flows can be initiated. Adding unrecognized domains may allow auth flows from origins your team does not control.";
+  }
+  if (rt.startsWith("firebase_")) {
+    return "Firebase configuration changes can affect authentication, database access, hosting, and function behavior for your application.";
+  }
+
+  // ── Supabase ──────────────────────────────────────────────────────────
+  if (rt === "supabase_rls_status") {
+    if (fp === "rls_enabled" && nv === false) {
+      return "RLS controls row-level access through the Supabase API. Disabling it may allow any authenticated or anonymous user to read or write all rows in this table, depending on applied policies and API exposure.";
+    }
+    return "RLS status changes affect access control for this table through the Supabase API and client libraries.";
+  }
+  if (rt === "supabase_auth_config") {
+    if (fp === "jwt_verification") {
+      return "JWT verification helps protect Edge Functions and API routes from unauthenticated requests. Disabling it may expose functions to callers without a valid session.";
+    }
+    return "Supabase Auth configuration changes affect how users authenticate and what session properties are enforced across your application.";
+  }
+  if (rt === "supabase_network_restriction") {
+    return "Network restrictions control which IP ranges can connect to the Supabase database directly. Removing restrictions may allow connections from any IP address.";
+  }
+  if (rt === "supabase_edge_function") {
+    return "Edge Function changes affect serverless functionality running close to users. JWT verification and deployment changes can affect security and availability.";
+  }
+  if (rt.startsWith("supabase_")) {
+    return "Supabase configuration changes can affect authentication, database access controls, storage policies, and function behavior.";
+  }
+
+  // ── GitHub ────────────────────────────────────────────────────────────
+  if (rt === "github_branch_protection") {
+    return "Branch protection changes can weaken code review and deployment controls. Removing required approvals or status checks may allow code to be merged or deployed without proper peer review.";
+  }
+  if (rt === "github_webhook") {
+    return "Webhook changes can affect CI/CD pipelines, security integrations, and third-party automations. Unexpected endpoint URL changes may indicate an unauthorized configuration modification or supply chain risk.";
+  }
+  if (rt === "github_actions_secret") {
+    return "Actions secrets are used in CI/CD workflows for authentication and deployment. Unintended rotation or deletion may break pipelines or indicate that a credential was exposed.";
+  }
+  if (rt === "github_deploy_key") {
+    return "Deploy keys grant repository read (or write) access. Write-enabled keys can push code directly to the repository. Unexpected key additions should be investigated immediately.";
+  }
+  if (rt === "github_repo_settings") {
+    if (fp === "visibility") {
+      return "Repository visibility changes affect who can view the source code and its history. Making a private repository public could expose proprietary code, credentials, or sensitive commit history.";
+    }
+    return "Repository setting changes can affect access control, branch policies, integrations, and deployment pipelines.";
+  }
+  if (rt.startsWith("github_")) {
+    return "GitHub configuration changes can affect code security, CI/CD pipelines, and repository access control.";
+  }
+
+  // ── Vercel ────────────────────────────────────────────────────────────
+  if (rt === "vercel_domain") {
+    return "Domain changes affect production routing. Removing or modifying domains can break live deployments and make your app unreachable at its expected URL.";
+  }
+  if (rt === "vercel_env_var") {
+    return "Environment variable metadata changes can indicate deployment configuration drift. ConfigTrace monitors key names and metadata only — variable values are never read or stored.";
+  }
+  if (rt === "vercel_project") {
+    if (fp === "sso_protection" || fp === "password_protection") {
+      return "Access protection changes affect whether deployment previews and branch deployments are publicly accessible. Disabling protection may expose preview environments to unintended visitors.";
+    }
+    return "Vercel project setting changes can affect build behavior, production branch routing, and deployment configuration.";
+  }
+  if (rt.startsWith("vercel_")) {
+    return "Vercel configuration changes can affect how your application is built, deployed, and served to users.";
+  }
+
+  // ── Stripe ────────────────────────────────────────────────────────────
+  if (rt === "stripe_webhook_endpoint") {
+    return "Webhook endpoint changes can break payment fulfillment, subscription lifecycle events, and financial reconciliation. An unexpected URL change may indicate an unauthorized modification to payment event delivery.";
+  }
+  if (rt === "stripe_account_settings") {
+    if (fp === "charges_enabled" || fp === "payouts_enabled") {
+      return "Enabling or disabling charges or payouts affects whether your Stripe account can process payments or transfer funds. These changes can have immediate business impact.";
+    }
+    return "Stripe account setting changes can affect payment processing, payout schedules, and how customers interact with your checkout flows.";
+  }
+  if (rt.startsWith("stripe_payment_")) {
+    return "Payment method configuration changes affect which payment options are available to customers at checkout. Removing methods may reduce checkout completion rates.";
+  }
+  if (rt.startsWith("stripe_")) {
+    return "Stripe configuration changes can affect payment processing, webhook delivery, and account behavior.";
+  }
+
+  // ── Cloudflare ────────────────────────────────────────────────────────
+  if (rt.startsWith("cloudflare_firewall_") || rt.startsWith("cloudflare_ssl_") ||
+      rt.startsWith("cloudflare_zone_") || rt.startsWith("cloudflare_page_")) {
+    return "Edge security settings affect how traffic reaches your application at the CDN layer. Firewall, SSL/TLS, and zone setting changes can expose or restrict services for all requests through Cloudflare.";
+  }
+  // Bare DNS record types (A, CNAME, MX, TXT, etc.) have no underscore in record_type
+  if (!rt.includes("_") || rt.startsWith("cloudflare_dns_")) {
+    const recType = ((change.provider_metadata?.record_type as string | undefined) ?? "").toUpperCase();
+    if (recType === "MX" || recType === "TXT") {
+      return "Email authentication record changes (MX, SPF, DKIM, DMARC) can affect mail deliverability and email spoofing protections. Changes should be verified against your email provider's expected configuration.";
+    }
+    return "DNS changes can affect where traffic for this hostname is routed. Unintended changes may cause service outages or redirect users to unexpected destinations.";
+  }
+  if (rt.startsWith("cloudflare_")) {
+    return "Cloudflare configuration changes affect how traffic is routed, secured, and delivered for your domain.";
+  }
+
+  return null;
+}
+
 /** Suggested next steps for high/critical changes. Returns [] for low/medium. */
 function getSuggestedChecks(change: ChangeDetail): string[] {
   const riskKey = (change.risk_level ?? "").toLowerCase();
-  if (riskKey !== "high" && riskKey !== "critical") return [];
+  if (riskKey === "low" || riskKey === "unknown") return [];
 
   const rt = (
     (change.provider_metadata?.record_type as string | undefined) ?? ""
   ).toLowerCase();
+
+  // For medium risk: concise per-provider checklist
+  if (riskKey === "medium") {
+    if (rt.startsWith("aws_"))        return ["Confirm this AWS change was expected.", "Check AWS CloudTrail for who made the change.", "Review the affected resource in the AWS Console."];
+    if (rt.startsWith("github_"))     return ["Confirm this GitHub change was intentional.", "Review the GitHub repository audit log.", "Verify workflows and deployments still pass."];
+    if (rt.startsWith("vercel_"))     return ["Confirm this Vercel change was intentional.", "Verify recent deployments are functioning correctly.", "Review the affected setting in the Vercel Dashboard."];
+    if (rt.startsWith("stripe_"))     return ["Confirm this Stripe change was intentional.", "Verify payment and checkout flows are working.", "Review the Stripe Dashboard for related settings."];
+    if (rt.startsWith("firebase_"))   return ["Confirm this Firebase change was intentional.", "Review the affected setting in the Firebase Console.", "Verify app functionality is not affected."];
+    if (rt.startsWith("supabase_"))   return ["Confirm this Supabase change was intentional.", "Review the Supabase Dashboard for the affected setting.", "Verify database connectivity and auth are functioning."];
+    return ["Confirm this change was intentional.", "Test DNS resolution for the affected hostname.", "Check Cloudflare audit logs for who made the change."];
+  }
 
   if (rt === "github_actions_secret") {
     return [
@@ -3638,6 +3864,78 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
     ];
   }
 
+  // Firebase
+  if (rt === "firebase_firestore_ruleset") {
+    return [
+      "Review the active Firestore security ruleset in the Firebase Console.",
+      "Confirm public read/write access is intentional — require request.auth for sensitive paths.",
+      "Redeploy the previous ruleset if the change was accidental.",
+      "Check Firebase audit logs for who deployed the ruleset.",
+    ];
+  }
+  if (rt === "firebase_storage_ruleset") {
+    return [
+      "Review the active Storage security ruleset in the Firebase Console.",
+      "Confirm public read/write access is intentional.",
+      "Redeploy the previous ruleset if the change was accidental.",
+      "Check Firebase audit logs for who deployed the ruleset.",
+    ];
+  }
+  if (rt === "firebase_auth_config" || rt === "firebase_auth_provider") {
+    return [
+      "Confirm the Auth configuration change was intentional.",
+      "Verify existing users can still sign in after the change.",
+      "Check Firebase audit logs for who made the change.",
+      "Revert the change in Firebase Console → Authentication if accidental.",
+    ];
+  }
+  if (rt === "firebase_authorized_domain") {
+    return [
+      "Confirm the authorized domain change was intentional.",
+      "Remove unrecognized domains from Firebase Console → Authentication → Settings → Authorized domains.",
+      "Verify your app sign-in flows still work correctly.",
+    ];
+  }
+  if (rt.startsWith("firebase_")) {
+    return [
+      "Confirm this Firebase configuration change was intentional.",
+      "Review the affected setting in the Firebase Console.",
+      "Verify app functionality is not affected.",
+      "Check Firebase audit logs for recent changes.",
+    ];
+  }
+
+  // Supabase
+  if (rt === "supabase_rls_status") {
+    return [
+      "Confirm RLS should be enabled for this table if it is client-accessible via the API.",
+      "Review anon and public role policies in the Supabase Dashboard → Authentication.",
+      "Re-enable RLS if it was disabled unintentionally.",
+    ];
+  }
+  if (rt === "supabase_auth_config") {
+    return [
+      "Confirm Auth settings were changed intentionally.",
+      "Verify JWT verification is enabled if it was modified.",
+      "Test user authentication flows after the change.",
+      "Review the Supabase Dashboard → Authentication → Settings.",
+    ];
+  }
+  if (rt === "supabase_network_restriction") {
+    return [
+      "Confirm network restriction changes were intentional.",
+      "Verify the allowed IP ranges include all expected connection sources.",
+      "Re-add restrictions in the Supabase Dashboard if removed accidentally.",
+    ];
+  }
+  if (rt.startsWith("supabase_")) {
+    return [
+      "Confirm this Supabase configuration change was intentional.",
+      "Review the affected setting in the Supabase Dashboard.",
+      "Verify database connectivity and auth are functioning.",
+    ];
+  }
+
   // Cloudflare DNS
   const recordType = ((change.provider_metadata?.record_type as string | undefined) ?? "").toUpperCase();
   const recordName = ((change.provider_metadata?.record_name as string | undefined) ?? "").toLowerCase();
@@ -4060,22 +4358,30 @@ export default function ChangeDetailPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────
 
-  const riskKey       = (change.risk_level ?? "unknown").toLowerCase();
-  const riskBg        = RISK_PANEL_BG[riskKey]     ?? RISK_PANEL_BG.unknown;
-  const riskBorder    = RISK_PANEL_BORDER[riskKey] ?? RISK_PANEL_BORDER.unknown;
-  const providerLabel = getProviderLabel(change);
+  const riskKey        = (change.risk_level ?? "unknown").toLowerCase();
+  const riskBg         = RISK_PANEL_BG[riskKey]     ?? RISK_PANEL_BG.unknown;
+  const riskBorder     = RISK_PANEL_BORDER[riskKey] ?? RISK_PANEL_BORDER.unknown;
+  const riskTextColor  = RISK_TEXT[riskKey]          ?? RISK_TEXT.unknown;
+  const riskLabel      = riskKey.charAt(0).toUpperCase() + riskKey.slice(1);
+
+  // Human-readable title + provider/category metadata from timeline helpers
+  const eventTitle    = getTimelineEventTitle(change);
+  const provider      = getTimelineProvider(change);
+  const category      = getTimelineCategory(change);
+  const providerMeta  = getProviderMeta(provider);
+
   const summary       = getChangeSummary(change);
+  const whyItMatters  = getWhyItMatters(change);
   const checks        = getSuggestedChecks(change);
-  const isGitHub      = providerLabel === "GitHub repo configuration";
-  const isVercel      = providerLabel === "Vercel project configuration";
-  const isStripe      = providerLabel === "Stripe account configuration";
-  const isAWS         = providerLabel === "AWS account configuration";
+
+  // Non-Cloudflare providers show "Configuration added/removed" instead of "DNS record added/removed"
+  const showConfigLabel = provider !== "cloudflare";
 
   return (
     <>
       <PageHeader
-        title={change.record_identifier}
-        description={`${changeTypeLabel(change.change_type)}${change.field_path ? ` · ${change.field_path}` : ""}`}
+        title={eventTitle}
+        description={`${formatRelativeTime(change.created_at)} · ${providerMeta.shortLabel}${category ? ` · ${category}` : ""} · ${changeTypeLabel(change.change_type)}`}
       />
 
       <div
@@ -4092,179 +4398,363 @@ export default function ChangeDetailPage() {
           </Link>
         </div>
 
-        {/* ── Change header ───────────────────────────────────────────── */}
+        {/* ── Hero card ───────────────────────────────────────────────── */}
         <Panel>
-          {/* Top row: identifier + risk badge */}
-          <div
-            className="flex items-start justify-between gap-4"
-            style={{ marginBottom: "12px" }}
-          >
-            <span
-              className="font-mono"
-              style={{ fontSize: "15px", color: "#e8eaf0", fontWeight: 600, wordBreak: "break-all" }}
-            >
-              {change.record_identifier}
-            </span>
-            <div style={{ flexShrink: 0 }}>
-              <RiskBadge level={change.risk_level} />
-            </div>
-          </div>
-
-          {/* Provider label pill */}
-          <div style={{ marginBottom: "10px" }}>
-            <span
-              style={{
-                display: "inline-block",
-                fontSize: "11px",
-                color: "#8b90a0",
-                background: "#1c1e26",
-                border: "1px solid #2a2d38",
-                borderRadius: "4px",
-                padding: "2px 8px",
-                letterSpacing: "0.03em",
-              }}
-            >
-              {providerLabel}
-            </span>
-          </div>
-
-          {/* Metadata rows */}
-          <MetaRow label="Change type">
-            <span
-              className="uppercase tracking-wider"
-              style={{ fontSize: "11px", color: "#b0b5c4" }}
-            >
-              {changeTypeLabel(change.change_type)}
-            </span>
-          </MetaRow>
-
-          {change.field_path && (
-            <MetaRow label="Field">
-              <span className="font-mono" style={{ color: "#b0b5c4", fontSize: "12px" }}>
-                {change.field_path}
-              </span>
-            </MetaRow>
-          )}
-
-          <MetaRow label="Detected">
-            <span
-              title={formatAbsoluteTime(change.created_at)}
-              style={{ color: "#8b90a0", fontSize: "12px" }}
-            >
-              {formatRelativeTime(change.created_at)}{" "}
-              <span style={{ color: "#565b6e" }}>
-                ({formatAbsoluteTime(change.created_at)})
-              </span>
-            </span>
-          </MetaRow>
-        </Panel>
-
-        {/* ── Summary card ────────────────────────────────────────────── */}
-        <Panel>
+          {/* Risk level label */}
           <p
             style={{
-              fontSize: "13px",
-              color: "#b0b5c4",
-              lineHeight: 1.6,
-              margin: 0,
+              fontSize: "11px",
+              fontWeight: 600,
+              color: riskTextColor,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              margin: "0 0 6px",
             }}
           >
-            {summary}
+            {riskLabel} risk
           </p>
+
+          {/* Human-readable title */}
+          <h1
+            style={{
+              fontSize: "18px",
+              fontWeight: 700,
+              color: "#e8eaf0",
+              margin: "0 0 10px",
+              lineHeight: 1.3,
+            }}
+          >
+            {eventTitle}
+          </h1>
+
+          {/* Metadata breadcrumb: detected · provider · category · change type */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "4px",
+              fontSize: "12px",
+            }}
+          >
+            <span style={{ color: "#8b90a0" }}>
+              Detected {formatRelativeTime(change.created_at)}
+            </span>
+            <span style={{ color: "#2a2d38", padding: "0 2px" }}>·</span>
+            <span style={{ color: providerMeta.color, fontWeight: 600 }}>
+              {providerMeta.shortLabel}
+            </span>
+            {category && (
+              <>
+                <span style={{ color: "#2a2d38", padding: "0 2px" }}>·</span>
+                <span style={{ color: "#8b90a0" }}>{category}</span>
+              </>
+            )}
+            <span style={{ color: "#2a2d38", padding: "0 2px" }}>·</span>
+            <span style={{ color: "#8b90a0" }}>{changeTypeLabel(change.change_type)}</span>
+          </div>
         </Panel>
 
-        {/* ── Risk explanation ────────────────────────────────────────── */}
-        <div>
-          <SectionLabel>Risk explanation</SectionLabel>
+        {/* ── Risk summary ────────────────────────────────────────────── */}
+        <section aria-labelledby="section-risk">
+          <h2
+            id="section-risk"
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              margin: "0 0 8px",
+              fontWeight: 500,
+            }}
+          >
+            Risk summary
+          </h2>
           <Panel bg={riskBg} border={riskBorder}>
-            <div className="flex items-start gap-3" style={{ marginBottom: checks.length > 0 ? "14px" : "0" }}>
-              <div style={{ flexShrink: 0, paddingTop: "2px" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
+              <div style={{ flexShrink: 0, paddingTop: "1px" }}>
                 <RiskBadge level={change.risk_level} />
               </div>
               <p
                 style={{
                   fontSize: "13px",
                   color: change.risk_reason ? "#b0b5c4" : "#565b6e",
-                  lineHeight: 1.6,
                   fontStyle: change.risk_reason ? "normal" : "italic",
+                  lineHeight: 1.6,
+                  margin: 0,
                 }}
               >
-                {change.risk_reason ?? "No risk reason recorded."}
+                {change.risk_reason ?? (
+                  riskKey === "low"
+                    ? "This change is currently classified as low risk."
+                    : "Review this change to confirm it was intentional."
+                )}
               </p>
             </div>
 
-            {/* Suggested checks for high/critical */}
-            {checks.length > 0 && (
-              <div
+            {/* Compact context row */}
+            <div
+              style={{
+                marginTop: "12px",
+                paddingTop: "10px",
+                borderTop: `1px solid ${riskBorder}`,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "6px 24px",
+              }}
+            >
+              <MetaRow label="Provider">
+                <span style={{ color: providerMeta.color, fontWeight: 500 }}>
+                  {providerMeta.label}
+                </span>
+              </MetaRow>
+              <MetaRow label="Change type">
+                {changeTypeLabel(change.change_type)}
+              </MetaRow>
+              {change.field_path && (
+                <MetaRow label="Field">
+                  <span className="font-mono" style={{ fontSize: "12px" }}>
+                    {change.field_path}
+                  </span>
+                </MetaRow>
+              )}
+              <MetaRow label="Detected">
+                <span
+                  title={formatAbsoluteTime(change.created_at)}
+                  style={{ fontSize: "12px" }}
+                >
+                  {formatRelativeTime(change.created_at)}
+                </span>
+              </MetaRow>
+            </div>
+          </Panel>
+        </section>
+
+        {/* ── What changed ────────────────────────────────────────────── */}
+        <section aria-labelledby="section-what-changed">
+          <h2
+            id="section-what-changed"
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              margin: "0 0 8px",
+              fontWeight: 500,
+            }}
+          >
+            What changed
+          </h2>
+          <Panel>
+            <p
+              style={{
+                fontSize: "13px",
+                color: "#b0b5c4",
+                lineHeight: 1.6,
+                margin: 0,
+              }}
+            >
+              {summary}
+            </p>
+          </Panel>
+        </section>
+
+        {/* ── Why it matters ──────────────────────────────────────────── */}
+        {whyItMatters && (
+          <section aria-labelledby="section-why-matters">
+            <h2
+              id="section-why-matters"
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                margin: "0 0 8px",
+                fontWeight: 500,
+              }}
+            >
+              Why it matters
+            </h2>
+            <Panel>
+              <p
                 style={{
-                  borderTop: `1px solid ${riskBorder}`,
-                  paddingTop: "12px",
-                  marginTop: "4px",
+                  fontSize: "13px",
+                  color: "#b0b5c4",
+                  lineHeight: 1.6,
+                  margin: 0,
                 }}
               >
-                <p
-                  style={{
-                    fontSize: "11px",
-                    color: "#565b6e",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    marginBottom: "8px",
-                    fontWeight: 500,
-                  }}
-                >
-                  Suggested checks
-                </p>
-                <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-                  {checks.map((check, i) => (
-                    <li
-                      key={i}
-                      style={{
-                        fontSize: "13px",
-                        color: "#8b90a0",
-                        lineHeight: 1.6,
-                        display: "flex",
-                        gap: "8px",
-                        marginBottom: "4px",
-                      }}
+                {whyItMatters}
+              </p>
+            </Panel>
+          </section>
+        )}
+
+        {/* ── What to check ────────────────────────────────────────────── */}
+        {checks.length > 0 && (
+          <section aria-labelledby="section-checks">
+            <h2
+              id="section-checks"
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                margin: "0 0 8px",
+                fontWeight: 500,
+              }}
+            >
+              What to check
+            </h2>
+            <Panel bg={riskBg} border={riskBorder}>
+              <ul
+                style={{ margin: 0, padding: 0, listStyle: "none" }}
+                role="list"
+              >
+                {checks.map((check, i) => (
+                  <li
+                    key={i}
+                    style={{
+                      fontSize: "13px",
+                      color: "#8b90a0",
+                      lineHeight: 1.6,
+                      display: "flex",
+                      gap: "8px",
+                      marginBottom: i < checks.length - 1 ? "6px" : "0",
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      style={{ flexShrink: 0, color: "#565b6e", marginTop: "1px" }}
                     >
-                      <span style={{ flexShrink: 0, color: "#565b6e" }}>•</span>
-                      <span>{check}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+                      →
+                    </span>
+                    <span>{check}</span>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          </section>
+        )}
 
-            <ProviderMetaRows metadata={change.provider_metadata} />
-          </Panel>
-        </div>
-
-        {/* ── Field-level diff ────────────────────────────────────────── */}
-        <div>
-          <SectionLabel>
+        {/* ── Raw configuration diff ──────────────────────────────────── */}
+        <section aria-labelledby="section-diff">
+          <h2
+            id="section-diff"
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              margin: "0 0 8px",
+              fontWeight: 500,
+            }}
+          >
             {change.change_type === "modified"
-              ? "What changed"
+              ? "Raw configuration diff"
               : change.change_type === "added"
-              ? (isGitHub || isVercel || isStripe || isAWS) ? "Configuration added" : "DNS record added"
-              : (isGitHub || isVercel || isStripe || isAWS) ? "Configuration removed" : "DNS record removed"}
-          </SectionLabel>
-
+              ? (showConfigLabel ? "Configuration added" : "DNS record added")
+              : (showConfigLabel ? "Configuration removed" : "DNS record removed")}
+          </h2>
           <Panel>
             {change.change_type === "modified" ? (
               <ModifiedDiffPanel change={change} />
             ) : (
-              <AddedRemovedPanel change={change} isGitHub={isGitHub || isVercel || isStripe || isAWS} />
+              <AddedRemovedPanel change={change} isGitHub={showConfigLabel} />
             )}
           </Panel>
-        </div>
+        </section>
 
         {/* ── Snapshot context ────────────────────────────────────────── */}
         {(change.prev_snapshot_id || change.new_snapshot_id) && (
-          <div>
-            <SectionLabel>Snapshot context</SectionLabel>
+          <section aria-labelledby="section-snapshot">
+            <h2
+              id="section-snapshot"
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                margin: "0 0 8px",
+                fontWeight: 500,
+              }}
+            >
+              Snapshot context
+            </h2>
             <SnapshotContextPanel change={change} />
-          </div>
+          </section>
         )}
+
+        {/* ── Context metadata ────────────────────────────────────────── */}
+        <section aria-labelledby="section-context">
+          <h2
+            id="section-context"
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              margin: "0 0 8px",
+              fontWeight: 500,
+            }}
+          >
+            Context
+          </h2>
+          <Panel>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <MetaRow label="Provider">
+                <span style={{ color: providerMeta.color, fontWeight: 500 }}>
+                  {providerMeta.label}
+                </span>
+              </MetaRow>
+              {category && (
+                <MetaRow label="Category">{category}</MetaRow>
+              )}
+              <MetaRow label="Change type">
+                {changeTypeLabel(change.change_type)}
+              </MetaRow>
+              {change.field_path && (
+                <MetaRow label="Field">
+                  <span className="font-mono" style={{ fontSize: "12px" }}>
+                    {change.field_path}
+                  </span>
+                </MetaRow>
+              )}
+              <MetaRow label="Record">
+                <span
+                  className="font-mono"
+                  style={{ fontSize: "12px", wordBreak: "break-all" }}
+                >
+                  {change.record_identifier}
+                </span>
+              </MetaRow>
+              <MetaRow label="Detected">
+                <span
+                  title={formatAbsoluteTime(change.created_at)}
+                  style={{ fontSize: "12px" }}
+                >
+                  {formatRelativeTime(change.created_at)}{" "}
+                  <span style={{ color: "#565b6e" }}>
+                    ({formatAbsoluteTime(change.created_at)})
+                  </span>
+                </span>
+              </MetaRow>
+              <MetaRow label="Risk level">
+                <RiskBadge level={change.risk_level} />
+              </MetaRow>
+              <MetaRow label="Resource">
+                <Link
+                  href={`/resources/${change.resource_id}`}
+                  style={{ color: "#4f80f7", fontSize: "12px", textDecoration: "none" }}
+                >
+                  View resource →
+                </Link>
+              </MetaRow>
+            </div>
+
+            <ProviderMetaRows metadata={change.provider_metadata} />
+          </Panel>
+        </section>
 
         {/* ── Technical details (collapsed) ────────────────────────────── */}
         <div>
@@ -4289,7 +4779,7 @@ export default function ChangeDetailPage() {
                 gap: "6px",
               }}
             >
-              <span>▶</span>
+              <span aria-hidden="true">▶</span>
               <span>Technical details</span>
             </summary>
             <div style={{ background: "#0e0f11", padding: "14px 16px" }}>
@@ -4331,7 +4821,7 @@ export default function ChangeDetailPage() {
           </details>
         </div>
 
-        {/* ── Raw / debug ─────────────────────────────────────────────── */}
+        {/* ── Raw change data (collapsed) ─────────────────────────────── */}
         <div>
           <RawSection change={change} />
         </div>
