@@ -27,27 +27,10 @@ export default function ChangeList({
 
   return (
     <div
+      role="feed"
+      aria-label="Configuration change events"
       style={{ border: "1px solid #2a2d38", borderRadius: "6px", overflow: "hidden" }}
     >
-      {/* Column header — must match ChangeRow column widths exactly */}
-      <div
-        className="flex items-center gap-3 px-4 py-2"
-        style={{
-          borderBottom: "1px solid #2a2d38",
-          background: "#1a1d26",
-          fontSize: "11px",
-          color: "#565b6e",
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-        }}
-      >
-        <span style={{ width: "96px" }}>When</span>
-        <span className="flex-1">Record</span>
-        <span style={{ width: "72px", textAlign: "right" }}>Type</span>
-        <span style={{ width: "72px", textAlign: "right" }}>Field</span>
-        <span style={{ width: "72px", textAlign: "right" }}>Risk</span>
-      </div>
-
       {changes.map((change) => (
         <ChangeRow key={change.id} change={change} />
       ))}

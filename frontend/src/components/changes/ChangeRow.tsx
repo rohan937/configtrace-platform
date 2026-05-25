@@ -1,164 +1,202 @@
 import Link from "next/link";
 import type { ChangeListItem } from "@/types";
-import RiskBadge from "@/components/common/RiskBadge";
-import {
-  formatRelativeTime,
-  formatAbsoluteTime,
-  changeTypeLabel,
-  formatValue,
-  formatValueChange,
-} from "@/lib/utils";
+import { formatRelativeTime, formatAbsoluteTime, changeTypeLabel } from "@/lib/utils";
+import { getTimelineEventData } from "@/lib/timeline";
 
 interface ChangeRowProps {
   change: ChangeListItem;
 }
 
-/**
- * Returns the secondary value line text for a change row.
- *
- * - added:    "→ {content of new record}"
- * - removed:  "{content of old record} → removed"
- * - modified: "{prev} → {new}"   (field-level values)
- */
-function valueDisplay(change: ChangeListItem): string | null {
-  switch (change.change_type) {
-    case "added": {
-      const v = formatValue(change.new_value);
-      return v !== "—" ? `→ ${v}` : null;
-    }
-    case "removed": {
-      const v = formatValue(change.prev_value);
-      return v !== "—" ? `${v} → removed` : null;
-    }
-    case "modified": {
-      if (
-        change.prev_value === undefined &&
-        change.new_value === undefined
-      )
-        return null;
-      return formatValueChange(change.prev_value, change.new_value);
-    }
-    default:
-      return null;
-  }
-}
+// ── Risk-level colours ────────────────────────────────────────────────────────
 
-// ── Risk-level left edge indicator ───────────────────────────────────────────
-// An inset box-shadow paints a 2px left stripe for alarming risk levels
-// without touching the padding or layout — it sits inside the border-box.
-
-const RISK_LEFT_SHADOW: Partial<Record<string, string>> = {
-  critical: "inset 2px 0 0 #e84040",
-  high:     "inset 2px 0 0 #f5632a",
+const RISK_DOT_COLOR: Record<string, string> = {
+  critical: "#e84040",
+  high:     "#f5632a",
+  medium:   "#f5a623",
+  low:      "#6b9cf8",
+  unknown:  "#565b6e",
 };
 
+const RISK_BADGE_STYLE: Record<string, { bg: string; text: string; border: string }> = {
+  critical: { bg: "rgba(232,64,64,0.15)",  text: "#e84040", border: "rgba(232,64,64,0.35)" },
+  high:     { bg: "rgba(245,99,42,0.15)",  text: "#f5632a", border: "rgba(245,99,42,0.35)" },
+  medium:   { bg: "rgba(245,166,35,0.15)", text: "#f5a623", border: "rgba(245,166,35,0.35)" },
+  low:      { bg: "rgba(107,156,248,0.12)", text: "#6b9cf8", border: "rgba(107,156,248,0.35)" },
+  unknown:  { bg: "rgba(139,144,160,0.10)", text: "#8b90a0", border: "#2a2d38" },
+};
+
+// An inset left stripe for critical/high rows — strong at-a-glance signal.
+const RISK_LEFT_SHADOW: Partial<Record<string, string>> = {
+  critical: "inset 3px 0 0 #e84040",
+  high:     "inset 3px 0 0 #f5632a",
+};
+
+// ── Inline risk badge ─────────────────────────────────────────────────────────
+
+function InlineRiskBadge({ level }: { level: string }) {
+  const key = (level ?? "unknown").toLowerCase();
+  const s = RISK_BADGE_STYLE[key] ?? RISK_BADGE_STYLE.unknown;
+  return (
+    <span
+      aria-label={`Risk level: ${key}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        background: s.bg,
+        color: s.text,
+        border: `1px solid ${s.border}`,
+        borderRadius: "4px",
+        padding: "1px 7px",
+        fontSize: "10px",
+        fontWeight: 600,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      {key}
+    </span>
+  );
+}
+
+// ── Change-type chip ──────────────────────────────────────────────────────────
+
+function ChangeTypeChip({ changeType }: { changeType: string }) {
+  const label = changeTypeLabel(changeType);
+  const color =
+    changeType === "added"   ? "#3ccf7e" :
+    changeType === "removed" ? "#e84040" :
+    "#8b90a0";
+  return (
+    <span style={{ color, fontSize: "11px" }}>
+      {label}
+    </span>
+  );
+}
+
+// ── Row ───────────────────────────────────────────────────────────────────────
+
 /**
- * A single flat row in a change list.
+ * Security event feed row.
  *
- * Layout (fixed-width columns for alignment):
- *   [timestamp 96px] [record flex-1] [type 72px] [field 72px] [risk 72px]
+ * Layout:
+ *   [risk dot]  [title]                          [risk badge]
+ *               [description — optional]
+ *               [time · provider · category · type]
  *
- * Secondary line (when present):
- *   [value diff in monospace] · [risk_reason in italic]
- *
- * Critical and High rows show a 2px coloured left edge via inset box-shadow
- * so scanners can spot alarming changes without reading the badge.
+ * Critical/High rows show a 3px coloured left edge for rapid scanning.
  */
 export default function ChangeRow({ change }: ChangeRowProps) {
-  const valLine = valueDisplay(change);
-  const showSecondary = Boolean(valLine || change.risk_reason);
-  const leftShadow = RISK_LEFT_SHADOW[change.risk_level] ?? "none";
+  const { title, description, providerLabel, category } = getTimelineEventData(change);
+  const riskKey = (change.risk_level ?? "unknown").toLowerCase();
+  const dotColor = RISK_DOT_COLOR[riskKey] ?? RISK_DOT_COLOR.unknown;
+  const leftShadow = RISK_LEFT_SHADOW[riskKey] ?? "none";
 
   return (
     <Link
       href={`/changes/${change.id}`}
-      className="flex flex-col px-4 py-2.5 hover:bg-surface3"
       style={{
-        borderBottom: "1px solid #2a2d38",
-        gap: "3px",
-        textDecoration: "none",
         display: "flex",
+        alignItems: "flex-start",
+        gap: "10px",
+        padding: "10px 16px",
+        borderBottom: "1px solid #2a2d38",
+        textDecoration: "none",
         cursor: "pointer",
         boxShadow: leftShadow,
+        transition: "background 0.1s",
       }}
+      className="hover:bg-surface3"
     >
-      {/* ── Main row ───────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 min-w-0">
+      {/* Risk indicator dot */}
+      <span
+        aria-hidden="true"
+        style={{
+          flexShrink: 0,
+          width: "8px",
+          height: "8px",
+          borderRadius: "50%",
+          background: dotColor,
+          marginTop: "5px",
+        }}
+      />
 
-        {/* Timestamp — compact relative, exact on hover */}
-        <span
-          className="shrink-0 tabular-nums"
-          title={formatAbsoluteTime(change.created_at)}
-          style={{ fontSize: "12px", color: "#8b90a0", width: "96px" }}
-        >
-          {formatRelativeTime(change.created_at)}
-        </span>
+      {/* Content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
 
-        {/* Record identifier — most prominent, monospace */}
-        <span
-          className="font-mono truncate flex-1"
-          style={{ fontSize: "13px", color: "#e8eaf0" }}
-          title={change.record_identifier}
-        >
-          {change.record_identifier}
-        </span>
-
-        {/* Change type — uppercase label */}
-        <span
-          className="shrink-0 uppercase tracking-wider"
+        {/* Line 1: title + risk badge */}
+        <div
           style={{
-            fontSize: "11px",
-            color: "#8b90a0",
-            width: "72px",
-            textAlign: "right",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "12px",
           }}
         >
-          {changeTypeLabel(change.change_type)}
-        </span>
+          <span
+            style={{
+              fontSize: "13px",
+              color: "#e8eaf0",
+              fontWeight: 500,
+              lineHeight: 1.4,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={title}
+          >
+            {title}
+          </span>
+          <InlineRiskBadge level={riskKey} />
+        </div>
 
-        {/* Field path — always present column, "—" when not applicable */}
-        <span
-          className="shrink-0 font-mono"
+        {/* Line 2: description (optional) */}
+        {description && (
+          <p
+            style={{
+              margin: "3px 0 0",
+              fontSize: "12px",
+              color: "#8b90a0",
+              lineHeight: 1.5,
+              overflow: "hidden",
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+            }}
+          >
+            {description}
+          </p>
+        )}
+
+        {/* Line 3: metadata */}
+        <div
           style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "4px",
+            marginTop: description ? "5px" : "4px",
             fontSize: "11px",
-            color: change.field_path ? "#8b90a0" : "#3a3d4a",
-            width: "72px",
-            textAlign: "right",
+            color: "#565b6e",
           }}
         >
-          {change.field_path ?? "—"}
-        </span>
-
-        {/* Risk badge */}
-        <div className="shrink-0 flex justify-end" style={{ width: "72px" }}>
-          <RiskBadge level={change.risk_level} />
+          <span title={formatAbsoluteTime(change.created_at)}>
+            {formatRelativeTime(change.created_at)}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>{providerLabel}</span>
+          {category && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{category}</span>
+            </>
+          )}
+          <span aria-hidden="true">·</span>
+          <ChangeTypeChip changeType={change.change_type} />
         </div>
       </div>
-
-      {/* ── Secondary line ─────────────────────────────────────────── */}
-      {showSecondary && (
-        <div
-          className="flex items-baseline gap-3 min-w-0"
-          style={{ paddingLeft: "108px" }}
-        >
-          {valLine && (
-            <span
-              className="font-mono truncate"
-              style={{ fontSize: "12px", color: "#8b90a0" }}
-            >
-              {valLine}
-            </span>
-          )}
-          {change.risk_reason && (
-            <span
-              className="truncate"
-              style={{ fontSize: "12px", color: "#565b6e", fontStyle: "italic" }}
-            >
-              {change.risk_reason}
-            </span>
-          )}
-        </div>
-      )}
     </Link>
   );
 }

@@ -1,12 +1,13 @@
 "use client";
 
-import { Suspense, useRef, useState, useEffect, useCallback } from "react";
+import { Suspense, useRef, useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import type { ChangeListItem, Integration } from "@/types";
 import type { GetChangesParams } from "@/lib/api";
 import { getChanges, getIntegrations, getSettings } from "@/lib/api";
 import { timeRangeToSince } from "@/lib/utils";
+import { computeRiskCounts } from "@/lib/timeline";
 import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import PageHeader from "@/components/common/PageHeader";
 import ChangeList from "@/components/changes/ChangeList";
@@ -20,7 +21,7 @@ const PAGE_SIZE = 20;
 // ── Filter state type ─────────────────────────────────────────────────────────
 
 interface Filters {
-  provider: string;        // "all" | "cloudflare" | "github" | "vercel" | "stripe" | "aws"
+  provider: string;        // "all" | "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase" | "supabase"
   integrationId: string;   // "all" | <uuid>
   riskLevel: string;       // "all" | "critical" | "high" | "medium" | "low"
   changeType: string;      // "all" | "added" | "removed" | "modified"
@@ -42,9 +43,9 @@ const RISK_PILL_COLORS: Record<
   { activeBg: string; activeText: string; activeBorder: string }
 > = {
   critical: { activeBg: "rgba(232,64,64,0.12)", activeText: "#e84040", activeBorder: "rgba(232,64,64,0.35)" },
-  high: { activeBg: "rgba(245,99,42,0.12)", activeText: "#f5632a", activeBorder: "rgba(245,99,42,0.35)" },
-  medium: { activeBg: "rgba(245,166,35,0.12)", activeText: "#f5a623", activeBorder: "rgba(245,166,35,0.35)" },
-  low: { activeBg: "rgba(107,156,248,0.12)", activeText: "#6b9cf8", activeBorder: "rgba(107,156,248,0.35)" },
+  high:     { activeBg: "rgba(245,99,42,0.12)",  activeText: "#f5632a", activeBorder: "rgba(245,99,42,0.35)" },
+  medium:   { activeBg: "rgba(245,166,35,0.12)", activeText: "#f5a623", activeBorder: "rgba(245,166,35,0.35)" },
+  low:      { activeBg: "rgba(107,156,248,0.12)", activeText: "#6b9cf8", activeBorder: "rgba(107,156,248,0.35)" },
 };
 
 // ── FilterPill ────────────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@ function FilterPill({ label, active, onClick, riskKey }: FilterPillProps) {
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       style={{
         background: "#1c1e26",
         border: "1px solid #2a2d38",
@@ -107,6 +109,94 @@ function FilterRow({ label, children }: { label: string; children: React.ReactNo
         {label}
       </span>
       <div className="flex flex-wrap gap-1.5">{children}</div>
+    </div>
+  );
+}
+
+// ── Risk summary strip ────────────────────────────────────────────────────────
+
+interface RiskSummaryStripProps {
+  changes: ChangeListItem[];
+  total: number;
+  timeRange: string;
+}
+
+const RISK_SUMMARY_COLORS: Record<string, string> = {
+  critical: "#e84040",
+  high:     "#f5632a",
+  medium:   "#f5a623",
+  low:      "#6b9cf8",
+};
+
+function RiskSummaryStrip({ changes, total, timeRange }: RiskSummaryStripProps) {
+  const counts = useMemo(() => computeRiskCounts(changes), [changes]);
+
+  const timeLabel =
+    timeRange === "24h" ? "Last 24 hours" :
+    timeRange === "7d"  ? "Last 7 days" :
+    timeRange === "30d" ? "Last 30 days" :
+    "All time";
+
+  const isPartial = changes.length < total;
+
+  if (total === 0) return null;
+
+  const riskItems: { key: string; label: string; count: number }[] = [
+    { key: "critical", label: "Critical", count: counts.critical },
+    { key: "high",     label: "High",     count: counts.high },
+    { key: "medium",   label: "Medium",   count: counts.medium },
+    { key: "low",      label: "Low",      count: counts.low },
+  ];
+
+  return (
+    <div
+      aria-label="Risk summary for current results"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: "6px",
+        padding: "8px 12px",
+        background: "#13151a",
+        border: "1px solid #2a2d38",
+        borderRadius: "6px",
+        marginBottom: "12px",
+        fontSize: "12px",
+        color: "#565b6e",
+      }}
+    >
+      <span style={{ color: "#8b90a0", fontWeight: 500 }}>{timeLabel}</span>
+      {isPartial && (
+        <span style={{ fontSize: "11px", color: "#3a3d4a" }}>
+          ({changes.length} of {total} loaded)
+        </span>
+      )}
+      <span aria-hidden="true" style={{ color: "#2a2d38" }}>·</span>
+      {riskItems.map(({ key, label, count }, i) => (
+        <span key={key} style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-block",
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: RISK_SUMMARY_COLORS[key],
+              flexShrink: 0,
+            }}
+          />
+          <span>
+            <span style={{ color: count > 0 ? RISK_SUMMARY_COLORS[key] : "#3a3d4a", fontWeight: count > 0 ? 600 : 400 }}>
+              {count}
+            </span>
+            {" "}
+            <span style={{ color: "#565b6e" }}>{label}</span>
+          </span>
+          {i < riskItems.length - 1 && (
+            <span aria-hidden="true" style={{ color: "#2a2d38", marginLeft: "2px" }}>·</span>
+          )}
+        </span>
+      ))}
     </div>
   );
 }
@@ -404,12 +494,9 @@ function TimelineContent() {
           </FilterRow>
         </div>
 
-        {/* ── Result count + clear filters + refresh ──────────────────── */}
+        {/* ── Toolbar: clear filters + refresh ────────────────────────── */}
         {!loading && !error && (
           <div className="flex items-center justify-between mb-3">
-            <p style={{ fontSize: "12px", color: "#565b6e", margin: 0 }}>
-              {total === 0 ? null : `${total} change${total === 1 ? "" : "s"} total`}
-            </p>
             <div className="flex items-center gap-4">
               {hasFilters && (
                 <button
@@ -435,6 +522,8 @@ function TimelineContent() {
                   Email alerts: high-risk and critical only
                 </p>
               )}
+            </div>
+            <div className="flex items-center gap-3">
               {lastUpdatedAt && (
                 <span style={{ fontSize: "11px", color: "#3a3d4a" }}>
                   Updated {(() => {
@@ -447,6 +536,7 @@ function TimelineContent() {
               )}
               <button
                 onClick={manualRefresh}
+                aria-label="Refresh timeline"
                 title="Refresh timeline"
                 style={{
                   background: "transparent",
@@ -463,6 +553,15 @@ function TimelineContent() {
               </button>
             </div>
           </div>
+        )}
+
+        {/* ── Risk summary strip ───────────────────────────────────────── */}
+        {!loading && !error && total > 0 && (
+          <RiskSummaryStrip
+            changes={changes}
+            total={total}
+            timeRange={filters.timeRange}
+          />
         )}
 
         {/* ── Content ─────────────────────────────────────────────────── */}
@@ -497,12 +596,12 @@ function TimelineContent() {
             emptyTitle={
               hasFilters
                 ? "No changes match these filters."
-                : "Your change timeline is empty."
+                : "No configuration changes yet."
             }
             emptyDescription={
               hasFilters
-                ? "Try clearing the filters or expanding the time range."
-                : "The first sync creates a baseline — no changes are recorded on that run because there's nothing to compare against yet. Changes appear here from the second sync onwards whenever records differ from the baseline."
+                ? "Try clearing filters or widening the time range."
+                : "Run a sync or connect another provider to start building your security timeline. Changes appear from the second sync onwards when records differ from the baseline."
             }
           />
         )}
