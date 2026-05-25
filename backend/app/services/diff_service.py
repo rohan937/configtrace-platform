@@ -1617,6 +1617,90 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# ── Firebase-specific tracked fields (M53) ────────────────────────────────────
+
+_FIREBASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "firebase_project": (
+        "display_name",
+        "lifecycle_state",
+        "hosting_site",
+        "has_realtime_db",
+        "has_storage",
+        "config_fetch_warnings",
+    ),
+    "firebase_auth_config": (
+        "sign_in_email_enabled",
+        "sign_in_phone_enabled",
+        "anonymous_enabled",
+        "mfa_enabled",
+        "mfa_state",
+        "authorized_domain_count",
+        "saml_provider_count",
+        "oidc_provider_count",
+        "config_fetch_warnings",
+    ),
+    "firebase_auth_provider": (
+        "enabled",
+        "provider_type",
+        "config_fetch_warnings",
+    ),
+    "firebase_authorized_domain": (
+        "domain",
+        "is_localhost",
+        "is_default_firebase_domain",
+        "config_fetch_warnings",
+    ),
+    "firebase_firestore_ruleset": (
+        "release_name",
+        "ruleset_name_hash",
+        "rules_hash",
+        "public_read_detected",
+        "public_write_detected",
+        "authenticated_only_detected",
+        "rule_summary",
+        "parser_confidence",
+        "config_fetch_warnings",
+    ),
+    "firebase_storage_bucket": (
+        "location",
+        "storage_class",
+        "uniform_bucket_level_access",
+        "public_access_prevention",
+        "versioning_enabled",
+        "config_fetch_warnings",
+    ),
+    "firebase_storage_ruleset": (
+        "release_name",
+        "ruleset_name_hash",
+        "rules_hash",
+        "public_read_detected",
+        "public_write_detected",
+        "authenticated_only_detected",
+        "rule_summary",
+        "parser_confidence",
+        "config_fetch_warnings",
+    ),
+    "firebase_hosting_site": (
+        "default_url",
+        "app_id",
+        "custom_domain_count",
+        "config_fetch_warnings",
+    ),
+    "firebase_hosting_domain": (
+        "domain_type",
+        "status",
+        "config_fetch_warnings",
+    ),
+    "firebase_function_metadata": (
+        "runtime",
+        "trigger_type",
+        "status",
+        "env_var_key_count",
+        "config_fetch_warnings",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -1628,6 +1712,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_VERCEL_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"stripe_"`` look up in
       ``_STRIPE_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"firebase_"`` look up in
+      ``_FIREBASE_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -1645,6 +1731,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _STRIPE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("aws_"):
         return _AWS_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("firebase_"):
+        return _FIREBASE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     return _TRACKED_FIELDS
 
 

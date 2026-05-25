@@ -262,7 +262,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     # All currently-supported providers.  If a new provider is added, extend
     # this tuple so its integrations are automatically included in scheduling.
     _SUPPORTED_PROVIDERS = (
-        "cloudflare", "github", "vercel", "stripe", "aws",
+        "cloudflare", "github", "vercel", "stripe", "aws", "firebase",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

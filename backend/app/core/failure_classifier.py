@@ -293,6 +293,18 @@ def _classify_auth(
                 "with a valid read-only key."
             ),
         )
+    if provider == "firebase":
+        return FailureClassification(
+            category="authentication",
+            error_code="firebase_credentials_invalid",
+            recommended_action=(
+                "The Firebase service account JSON is invalid, the private key has been revoked, "
+                "or the service account does not have access to this Firebase project. "
+                "Verify the service account in the Google Cloud Console and reconnect "
+                "with a valid service account JSON. "
+                "Do not grant data read/write permissions — metadata-only roles are sufficient."
+            ),
+        )
     # Unknown provider
     return FailureClassification(
         category="authentication",
@@ -347,6 +359,17 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "or reconnect with a valid key."
                 ),
             )
+        if provider == "firebase":
+            return FailureClassification(
+                category="authentication",
+                error_code="firebase_permission_denied",
+                recommended_action=(
+                    "The Firebase service account does not have permission to read project "
+                    "metadata. Grant the service account roles/firebase.viewer and "
+                    "roles/firebaserules.viewer on the Firebase project. "
+                    "Do not grant data read/write permissions — metadata-only roles are sufficient."
+                ),
+            )
         # Other providers: treat as auth failure.
         return _classify_auth(provider, None)
 
@@ -396,6 +419,16 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "Verify the AWS account and region configuration."
                 ),
             )
+        if provider == "firebase":
+            return FailureClassification(
+                category="resource_missing",
+                error_code="firebase_project_unavailable",
+                recommended_action=(
+                    "The Firebase project was not found or the service account does not "
+                    "have access to it. Verify the project_id in the service account JSON "
+                    "and that the service account is a member of the project."
+                ),
+            )
         return FailureClassification(
             category="resource_missing",
             error_code="resource_not_found",
@@ -416,6 +449,8 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
             code = "stripe_api_unavailable"
         elif provider == "aws":
             code = "aws_api_unavailable"
+        elif provider == "firebase":
+            code = "firebase_api_unavailable"
         else:
             code = "provider_unavailable"
         return FailureClassification(

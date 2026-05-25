@@ -9,6 +9,10 @@ Available connectors
 --------------------
 CloudflareConnector
     Fetches DNS records from the Cloudflare Zones API.
+FirebaseConnector
+    Fetches Firebase/Google Cloud project metadata, Auth config, Security Rules,
+    Storage bucket metadata, Hosting sites, and Cloud Functions metadata.
+    Customer data (Firestore documents, Storage objects, Auth users) is NEVER read.
 
 Exceptions
 ----------
@@ -29,9 +33,11 @@ from app.connectors.exceptions import (
     NetworkError,
     RateLimitError,
 )
+from app.connectors.firebase import FirebaseConnector
 
 __all__ = [
     "CloudflareConnector",
+    "FirebaseConnector",
     "AuthenticationError",
     "ConnectorError",
     "NetworkError",

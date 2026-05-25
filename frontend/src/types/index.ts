@@ -108,7 +108,7 @@ export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
  *             aws_selected_regions (optional, defaults to [aws_default_region])
  */
 export interface IntegrationCreateRequest {
-  provider: "cloudflare" | "github" | "vercel" | "stripe" | "aws";
+  provider: "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -149,6 +149,14 @@ export interface IntegrationCreateRequest {
   aws_default_region?: string;
   /** Regions to actively monitor. Defaults to [aws_default_region] if omitted. */
   aws_selected_regions?: string[];
+  // ── Firebase fields ────────────────────────────────────────────────────────
+  /**
+   * Full contents of the Firebase service account JSON key file.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: contains a private_key — never stored in localStorage/sessionStorage;
+   * never returned by backend; stored encrypted at rest.
+   */
+  firebase_service_account_json?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

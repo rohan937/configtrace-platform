@@ -91,6 +91,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.aws import classify_aws_change
         return classify_aws_change(change)
 
+    if record_type.startswith("firebase_"):
+        from app.services.risk_rules.firebase import classify_firebase_change
+        return classify_firebase_change(change)
+
     return classify_dns_change(change)
 
 

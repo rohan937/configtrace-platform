@@ -13,10 +13,11 @@ import GitHubAppConnectCard from "@/components/integrations/GitHubAppConnectCard
 import VercelIntegrationForm from "@/components/integrations/VercelIntegrationForm";
 import StripeIntegrationForm from "@/components/integrations/StripeIntegrationForm";
 import AWSIntegrationForm from "@/components/integrations/AWSIntegrationForm";
+import FirebaseIntegrationForm from "@/components/integrations/FirebaseIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 
-type Provider = "cloudflare" | "github" | "vercel" | "stripe" | "aws";
+type Provider = "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase";
 // GitHub sub-modes: "app" = recommended GitHub App flow, "pat" = advanced PAT flow
 type GitHubMode = "app" | "pat";
 
@@ -137,7 +138,7 @@ export default function IntegrationsPage() {
           >
             {/* Provider tabs */}
             <div style={{ display: "flex", gap: "8px", marginBottom: "18px" }}>
-              {(["cloudflare", "github", "vercel", "stripe", "aws"] as Provider[]).map((p) => (
+              {(["cloudflare", "github", "vercel", "stripe", "aws", "firebase"] as Provider[]).map((p) => (
                 <button
                   key={p}
                   onClick={() => setSelectedProvider(p)}
@@ -156,7 +157,7 @@ export default function IntegrationsPage() {
                     borderColor: selectedProvider === p ? "rgba(79,128,247,0.35)" : "#2a2d38",
                   }}
                 >
-                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : p === "vercel" ? "Vercel" : p === "stripe" ? "Stripe" : "AWS"}
+                  {p === "cloudflare" ? "Cloudflare" : p === "github" ? "GitHub" : p === "vercel" ? "Vercel" : p === "stripe" ? "Stripe" : p === "aws" ? "AWS" : "Firebase"}
                 </button>
               ))}
             </div>
@@ -333,6 +334,40 @@ export default function IntegrationsPage() {
                 </p>
               </>
             )}
+
+            {/* Firebase guide */}
+            {selectedProvider === "firebase" && (
+              <>
+                <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+                  How to connect a Firebase project
+                </p>
+                <SetupSteps steps={[
+                  {
+                    heading: "Open Firebase Console → Project settings.",
+                    body: <>console.firebase.google.com → select your project → ⚙️ gear icon → Project settings → Service accounts tab.</>,
+                  },
+                  {
+                    heading: "Generate a new private key.",
+                    body: <>Click &ldquo;Generate new private key&rdquo; → confirm. A{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>.json</code> file
+                      will download. This file contains the service account credentials ConfigTrace
+                      uses to read your project configuration.</>,
+                  },
+                  {
+                    heading: "Connect below.",
+                    body: <>Open the downloaded JSON file in a text editor, select all, and paste it
+                      into the form. ConfigTrace validates access before saving. The{" "}
+                      <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>private_key</code>{" "}
+                      is encrypted before storage and is never returned in any API response.</>,
+                  },
+                ]} />
+                <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+                  ConfigTrace uses read-only access only — it never modifies your Firebase project.
+                  Firestore documents, Storage file contents, Auth user data, and Secret Manager
+                  values are NEVER fetched or stored.
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -419,6 +454,22 @@ export default function IntegrationsPage() {
             >
               Add AWS Integration
             </button>
+            <button
+              onClick={() => { setSelectedProvider("firebase"); setShowForm(true); }}
+              style={{
+                background: "#1e2030",
+                color: "#b0b5c4",
+                border: "1px solid #3a3d4a",
+                borderRadius: "6px",
+                padding: "8px 16px",
+                fontSize: "13px",
+                fontWeight: 500,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              Add Firebase Integration
+            </button>
           </div>
         ) : selectedProvider === "cloudflare" ? (
           <CloudflareIntegrationForm
@@ -437,6 +488,11 @@ export default function IntegrationsPage() {
           />
         ) : selectedProvider === "aws" ? (
           <AWSIntegrationForm
+            onCreated={handleCreated}
+            onCancel={() => setShowForm(false)}
+          />
+        ) : selectedProvider === "firebase" ? (
+          <FirebaseIntegrationForm
             onCreated={handleCreated}
             onCancel={() => setShowForm(false)}
           />

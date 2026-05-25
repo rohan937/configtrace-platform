@@ -41,11 +41,11 @@ class IntegrationCreateRequest(BaseModel):
     is present for the chosen provider.
     """
 
-    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws"] = Field(
+    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws", "firebase"] = Field(
         ...,
         description=(
             "Provider identifier. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase'."
         ),
     )
     display_name: str = Field(
@@ -172,6 +172,20 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Firebase fields ───────────────────────────────────────────────────────
+    firebase_service_account_json: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Firebase service account JSON (the full contents of the key file "
+            "downloaded from Firebase Console → Project settings → Service accounts). "
+            "Required when provider='firebase'. "
+            "Stored encrypted — never returned in API responses. "
+            "SECURITY: The private_key embedded in this JSON is encrypted at rest "
+            "and is NEVER logged, returned to the frontend, or stored in plaintext."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -229,6 +243,11 @@ class IntegrationCreateRequest(BaseModel):
             if not self.aws_secret_access_key:
                 raise ValueError(
                     "aws_secret_access_key is required for AWS integrations."
+                )
+        elif self.provider == "firebase":
+            if not self.firebase_service_account_json:
+                raise ValueError(
+                    "firebase_service_account_json is required for Firebase integrations."
                 )
         return self
 
@@ -342,6 +361,14 @@ class IntegrationReconnectRequest(BaseModel):
         min_length=1,
         description=(
             "New AWS secret access key. Required for AWS integrations."
+        ),
+    )
+    firebase_service_account_json: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Firebase service account JSON. Required for Firebase integrations. "
+            "Stored encrypted — never returned in API responses."
         ),
     )
 

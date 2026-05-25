@@ -67,7 +67,7 @@ def create_integration(
     Args:
         user_id:                UUID of the authenticated user.
         provider:               ``"cloudflare"``, ``"github"``, ``"vercel"``,
-                                ``"stripe"``, or ``"aws"``.
+                                ``"stripe"``, ``"aws"``, or ``"firebase"``.
         display_name:           User-supplied label shown in the integrations list.
         credentials:            Provider-specific dict — see module docstring.
         scheduled_sync_enabled: Whether to enable scheduled sync immediately.
@@ -139,10 +139,20 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    elif provider == "firebase":
+        return create_firebase_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase'."
         )
 
 
@@ -546,6 +556,104 @@ def _create_aws_integration(
     return integration
 
 
+def create_firebase_integration(
+    *,
+    credentials: dict,
+    display_name: str,
+    user_id: uuid.UUID,
+    workspace_id: uuid.UUID | None = None,
+    scheduled_sync_enabled: bool = True,
+    sync_interval_minutes: int = 60,
+    db: Session,
+) -> Integration:
+    """Create and validate a Firebase integration using a service account JSON.
+
+    SECURITY:
+    - credentials["service_account_json"]["private_key"] is never logged.
+    - The service account JSON is stored encrypted only.
+    - Firebase project metadata is fetched to confirm access.
+    """
+    import json as _json
+
+    from app.connectors.firebase import FirebaseConnector
+
+    connector = FirebaseConnector()
+
+    # Parse the service account JSON to extract project_id for dedup.
+    raw_sa = credentials.get("service_account_json", "")
+    if isinstance(raw_sa, str):
+        try:
+            sa_dict = _json.loads(raw_sa)
+        except _json.JSONDecodeError as exc:
+            raise ValueError(
+                "Firebase service account JSON is not valid JSON. "
+                "Paste the complete service account JSON file."
+            ) from exc
+    else:
+        sa_dict = raw_sa or {}
+
+    project_id = sa_dict.get("project_id", "")
+
+    # ── 1. Validate credentials ───────────────────────────────────────────────
+    connector.validate_credentials(credentials)
+
+    # ── 2. Duplicate-project check (non-deleted only) ─────────────────────────
+    if project_id:
+        existing = (
+            db.query(Resource)
+            .join(Integration, Integration.id == Resource.integration_id)
+            .filter(
+                Resource.user_id == user_id,
+                Resource.provider_resource_type == "firebase_project",
+                Resource.provider_resource_id == project_id,
+                Integration.status != "deleted",
+            )
+            .first()
+        )
+        if existing is not None:
+            raise ValueError(
+                f"Firebase project {project_id!r} is already connected."
+            )
+
+    # ── 3. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 4. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="firebase",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 5. Create Resource row ────────────────────────────────────────────────
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="firebase_project",
+        provider_resource_id=project_id or str(integration.id),
+        display_name=f"{display_name} ({project_id})" if project_id else display_name,
+        resource_metadata={
+            "project_id": project_id,
+            "client_email": sa_dict.get("client_email", ""),
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 6. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
 def get_integrations_by_workspace(
     *,
     workspace_id: uuid.UUID,
@@ -865,6 +973,62 @@ def reconnect_credentials_aws(
 
     # Validate new credentials before saving.
     AWSConnector().validate_credentials(new_creds)
+
+    # Encrypt and store.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
+    if integration.status == "error":
+        integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_firebase(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_service_account_json: str,
+    db: Session,
+) -> Integration:
+    """Replace the service account JSON for an existing Firebase integration.
+
+    The new credentials are validated against the live Firebase API before the
+    database row is updated.  If validation fails, the existing credentials
+    remain unchanged.
+
+    SECURITY: The service account private_key is stored encrypted only.
+    It is NEVER logged or returned.
+    """
+    import json as _json
+
+    from app.connectors.firebase import FirebaseConnector
+    from app.core.encryption import encrypt_credentials
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # Parse the service account JSON to validate it is well-formed.
+    if isinstance(new_service_account_json, str):
+        try:
+            _json.loads(new_service_account_json)
+        except _json.JSONDecodeError as exc:
+            raise ValueError(
+                "Firebase service account JSON is not valid JSON."
+            ) from exc
+
+    new_creds = {"service_account_json": new_service_account_json}
+
+    # Validate new credentials against the live Firebase API.
+    FirebaseConnector().validate_credentials(new_creds)
 
     # Encrypt and store.
     ciphertext, iv = encrypt_credentials(new_creds)

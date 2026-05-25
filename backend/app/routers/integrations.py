@@ -141,6 +141,14 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "aws_default_region":    body.aws_default_region or "us-east-1",
             "aws_selected_regions":  body.aws_selected_regions or [body.aws_default_region or "us-east-1"],
         }
+    elif body.provider == "firebase":
+        # SECURITY: The service account private_key is stored encrypted only.
+        # It is NEVER logged, NEVER returned to the frontend, and NEVER stored
+        # in plaintext.  The service_account_json string is parsed here and the
+        # private_key is embedded in the encrypted credentials dict.
+        return {
+            "service_account_json": body.firebase_service_account_json,
+        }
     return {}
 
 
@@ -633,6 +641,37 @@ def reconnect_integration(
             raise HTTPException(
                 status_code=502,
                 detail=f"Could not reach AWS: {exc}",
+            ) from exc
+        return _build_response(integration, db)
+    elif integration.provider == "firebase":
+        if not body.firebase_service_account_json:
+            raise HTTPException(
+                status_code=422,
+                detail="firebase_service_account_json is required for Firebase integrations.",
+            )
+        try:
+            integration = integration_service.reconnect_credentials_firebase(
+                integration_id=integration_id,
+                user_id=current_user.id,
+                new_service_account_json=body.firebase_service_account_json,
+                db=db,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Authentication failed: {exc}",
+            ) from exc
+        except ConnectorError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider validation error: {exc}",
+            ) from exc
+        except NetworkError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not reach Firebase: {exc}",
             ) from exc
         return _build_response(integration, db)
     else:
