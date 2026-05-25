@@ -204,7 +204,7 @@ export default function WorkspaceSettingsPage() {
             </form>
           )}
 
-          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
               onClick={() => router.push("/settings/workspace/members")}
               style={{
@@ -218,6 +218,20 @@ export default function WorkspaceSettingsPage() {
               }}
             >
               Manage members &amp; invites →
+            </button>
+            <button
+              onClick={() => router.push("/settings/workspace/billing")}
+              style={{
+                fontSize: 12,
+                color: "#8b90a0",
+                background: "none",
+                border: "1px solid #2a2d38",
+                borderRadius: 5,
+                padding: "6px 12px",
+                cursor: "pointer",
+              }}
+            >
+              Billing &amp; plan →
             </button>
             <button
               onClick={() => router.push("/settings/workspace/audit")}

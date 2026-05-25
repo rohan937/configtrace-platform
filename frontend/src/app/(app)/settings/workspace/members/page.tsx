@@ -85,16 +85,29 @@ export default function MembersPage() {
         inviteRole,
         token,
       );
-      // Build invite URL from the *frontend* origin so the link opens the
-      // human-readable accept page, not the backend JSON API endpoint.
-      const frontendInviteUrl =
-        `${typeof window !== "undefined" ? window.location.origin : ""}/invites/${resp.invite_token}`;
+      // Use the invite_url from the backend (built from FRONTEND_URL config).
+      // Fall back to window.location.origin if the backend returned an API URL.
+      const backendUrl = resp.invite_url || "";
+      const isApiUrl =
+        backendUrl.includes("/api.") ||
+        backendUrl.includes(":8000") ||
+        backendUrl.includes("localhost:800");
+      const frontendInviteUrl = isApiUrl
+        ? `${typeof window !== "undefined" ? window.location.origin : ""}/invites/${resp.invite_token}`
+        : backendUrl;
+
       setNewInviteToken(resp.invite_token);
       setNewInviteUrl(frontendInviteUrl);
       setInviteEmail("");
-      setSuccess(
-        `Invite created for ${resp.email}. If they do not receive an email, copy and share the link below.`,
-      );
+      if (resp.email_sent) {
+        setSuccess(
+          `Invite email sent to ${resp.email}. If they don't receive it, copy and share the link below.`,
+        );
+      } else {
+        setSuccess(
+          `Invite created for ${resp.email}. Email could not be sent — copy and share the link below.`,
+        );
+      }
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to invite.");

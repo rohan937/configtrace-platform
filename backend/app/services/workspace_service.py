@@ -625,6 +625,18 @@ def accept_invite(
             "You are already a member of this workspace."
         )
 
+    # M52: Enforce member limit at accept-time (plan may have changed since
+    # the invite was sent).  Raises HTTPException 402 if at the limit.
+    try:
+        from app.services.billing_service import assert_can_add_member
+        assert_can_add_member(invite.workspace_id, db)
+    except Exception as exc:
+        # Re-raise HTTPExceptions directly; wrap anything else as ValueError.
+        from fastapi import HTTPException as _HTTP
+        if isinstance(exc, _HTTP):
+            raise
+        raise ValueError(f"Workspace member limit reached: {exc}") from exc
+
     member = WorkspaceMember(
         workspace_id=invite.workspace_id,
         user_id=accepting_user_id,

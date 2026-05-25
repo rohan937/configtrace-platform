@@ -196,6 +196,11 @@ def create_integration(
         )
         resolved_workspace_id = default_ws.id
 
+    # M52: Enforce integration limit before attempting to create.
+    # assert_can_create_integration raises HTTP 402 if the plan limit is reached.
+    from app.services.billing_service import assert_can_create_integration
+    assert_can_create_integration(resolved_workspace_id, db)
+
     try:
         integration = integration_service.create_integration(
             user_id=current_user.id,

@@ -667,7 +667,8 @@ class TestAuditEventWiring:
         db.query.return_value = q
 
         with patch.object(workspace_service, "get_invite_by_token", return_value=invite), \
-             patch.object(workspace_service, "log_audit_event") as mock_log:
+             patch.object(workspace_service, "log_audit_event") as mock_log, \
+             patch("app.services.billing_service.assert_can_add_member"):
             workspace_service.accept_invite("rawtoken123", user_id, db)
 
         mock_log.assert_called_once()
@@ -1191,6 +1192,7 @@ class TestAuditEventIntegrationRouter:
              patch.object(integration_service, "create_integration", return_value=mock_integration), \
              patch.object(integration_service, "get_latest_sync_run_summary", return_value=(None, None)), \
              patch.object(integration_service, "get_connection_method", return_value="pat"), \
+             patch("app.services.billing_service.assert_can_create_integration"), \
              patch("app.services.workspace_service.log_audit_event") as mock_log:
             # Provide workspace_id so the membership check branch is taken
             mock_gw.return_value = MagicMock(id=ws_id)

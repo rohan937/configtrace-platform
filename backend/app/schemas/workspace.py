@@ -97,11 +97,15 @@ class InviteCreateRequest(BaseModel):
 
 
 class InviteCreateResponse(WorkspaceInviteResponse):
-    """Extends the standard response with the one-time raw token."""
+    """Extends the standard response with the one-time raw token and email status."""
 
     # Raw token returned only once at creation; never stored or re-exposed.
     invite_token: str
     invite_url: str
+    # True when an invite email was successfully sent via Resend.
+    # False when email is unconfigured or Resend returned an error.
+    # The copy-link fallback should always be shown regardless.
+    email_sent: bool = False
 
 
 class InviteListResponse(BaseModel):

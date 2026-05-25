@@ -17,6 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Resources",    href: "/resources" },
   { label: "Settings",     href: "/settings" },
   { label: "Workspace",    href: "/settings/workspace" },
+  { label: "Billing",      href: "/settings/workspace/billing" },
 ];
 
 export default function Sidebar() {

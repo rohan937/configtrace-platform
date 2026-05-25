@@ -846,7 +846,8 @@ class TestAcceptInvite:
         added = []
         db.add.side_effect = lambda obj: added.append(obj)
 
-        member = accept_invite(raw, user_id, db)
+        with patch("app.services.billing_service.assert_can_add_member"):
+            member = accept_invite(raw, user_id, db)
 
         assert any(isinstance(o, WorkspaceMember) for o in added)
         assert invite.accepted_at is not None
@@ -1249,7 +1250,8 @@ class TestAcceptInviteEmailMatch:
         added = []
         db.add.side_effect = lambda obj: added.append(obj)
 
-        member = accept_invite(raw_token, accepting_user_id, db)
+        with patch("app.services.billing_service.assert_can_add_member"):
+            member = accept_invite(raw_token, accepting_user_id, db)
         assert member.workspace_id == ws_id
         assert member.user_id == accepting_user_id
 

@@ -172,3 +172,84 @@ def _send_via_resend(
             f"Resend returned non-JSON response (status {resp.status_code}): "
             f"{resp.text[:200]!r}"
         ) from exc
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Invite emails (M52)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def send_invite_email(
+    *,
+    to: str,
+    workspace_name: str,
+    role: str,
+    invite_url: str,
+    inviter_display: str | None = None,
+) -> dict:
+    """Send a workspace invite email via Resend.
+
+    Uses EMAIL_FROM (not ALERTS_FROM_EMAIL) so invite and alert emails have
+    distinct sender identities.
+
+    Args:
+        to:                Recipient email address.
+        workspace_name:    Workspace the invitee is being added to.
+        role:              Role they'll receive ("admin" or "member").
+        invite_url:        Frontend accept URL (must use the public frontend
+                           origin, not the API origin).
+        inviter_display:   Display name or email of the person who sent the
+                           invite — included in the body when present.
+
+    Raises:
+        EmailNotConfigured: When RESEND_API_KEY or EMAIL_FROM is missing.
+        EmailSendError:     Any network, HTTP, or parsing failure.
+
+    Security:
+        * ``invite_url`` contains the raw invite token — never log it.
+        * ``inviter_display`` is safe to include (name/email, not a secret).
+    """
+    if not settings.is_invite_email_configured:
+        raise EmailNotConfigured(
+            "Invite email is not configured "
+            "(RESEND_API_KEY and/or EMAIL_FROM missing)."
+        )
+
+    api_key = settings.RESEND_API_KEY or ""
+    from_addr = settings.EMAIL_FROM or ""
+
+    inviter_line = (
+        f"\nInvited by: {inviter_display}\n" if inviter_display else ""
+    )
+
+    subject = f"You've been invited to join a ConfigTrace workspace"
+    body = (
+        f"Hi,\n\n"
+        f"You've been invited to join the workspace \"{workspace_name}\" "
+        f"on ConfigTrace as {role}."
+        f"{inviter_line}\n"
+        f"Accept your invite here:\n\n"
+        f"{invite_url}\n\n"
+        f"This invite expires in 7 days. "
+        f"If you were not expecting this invite, you can ignore this email.\n\n"
+        f"Best,\n"
+        f"ConfigTrace"
+    )
+
+    # SECURITY: invite_url contains the raw token — never log it.
+    # Log only the recipient domain for deliverability diagnostics.
+    recipient_domain = to.split("@")[-1] if "@" in to else "unknown"
+    logger.info(
+        "Sending invite email to *@%s for workspace %r (role=%s)",
+        recipient_domain,
+        workspace_name,
+        role,
+    )
+
+    return _send_via_resend(
+        api_key=api_key,
+        from_addr=from_addr,
+        to=to,
+        subject=subject,
+        body=body,
+    )

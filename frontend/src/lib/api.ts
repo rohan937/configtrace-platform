@@ -99,7 +99,22 @@ async function apiFetch<T>(
     let detail = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      if (body?.detail) detail = `HTTP ${res.status}: ${String(body.detail)}`;
+      if (body?.detail !== undefined) {
+        // FastAPI can return detail as a string *or* a structured object.
+        // When it's an object (e.g. our 402 billing limit errors), prefer the
+        // nested "message" field for a human-readable string; fall back to
+        // JSON.stringify so callers at least see something useful.
+        if (typeof body.detail === "string") {
+          detail = `HTTP ${res.status}: ${body.detail}`;
+        } else if (
+          typeof body.detail === "object" &&
+          typeof body.detail?.message === "string"
+        ) {
+          detail = `HTTP ${res.status}: ${body.detail.message}`;
+        } else {
+          detail = `HTTP ${res.status}: ${JSON.stringify(body.detail)}`;
+        }
+      }
     } catch {
       // ignore JSON parse errors — keep the "HTTP N" prefix
     }
@@ -603,6 +618,53 @@ export async function patchSettings(
   return apiFetch("/settings", {
     method: "PATCH",
     body: JSON.stringify(data),
+    token,
+  });
+}
+
+// ── Billing (M52) ────────────────────────────────────────────────────────────
+
+/**
+ * Fetch billing info, plan limits, and current usage for a workspace.
+ * Requires admin or owner role.
+ */
+export async function getWorkspaceBilling(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").WorkspaceBilling> {
+  return apiFetch(`/workspaces/${workspaceId}/billing`, { token });
+}
+
+/**
+ * Create a Stripe Checkout session to upgrade a workspace.
+ * Returns the Stripe-hosted checkout URL.
+ * The frontend redirects to this URL; no card details touch our servers.
+ *
+ * @param priceId - Stripe price ID (validated server-side against allowlist).
+ */
+export async function createCheckoutSession(
+  workspaceId: string,
+  priceId: string,
+  token?: string | null,
+): Promise<{ checkout_url: string }> {
+  return apiFetch(`/workspaces/${workspaceId}/billing/checkout`, {
+    method: "POST",
+    body: JSON.stringify({ price_id: priceId }),
+    token,
+  });
+}
+
+/**
+ * Create a Stripe Billing Portal session for managing an existing subscription.
+ * Returns the Stripe-hosted portal URL.
+ */
+export async function createPortalSession(
+  workspaceId: string,
+  token?: string | null,
+): Promise<{ portal_url: string }> {
+  return apiFetch(`/workspaces/${workspaceId}/billing/portal`, {
+    method: "POST",
+    body: JSON.stringify({}),
     token,
   });
 }

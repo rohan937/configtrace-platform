@@ -61,6 +61,35 @@ class Settings(BaseSettings):
     # The default is fine for production; override locally for dev/staging.
     APP_BASE_URL: str = "https://app.configtrace.org"
 
+    # "From" address for transactional emails (invites, etc.).
+    # Distinct from ALERTS_FROM_EMAIL — invites use a friendlier sender address.
+    # Must be on a verified Resend domain.
+    # Example: ConfigTrace <invites@configtrace.org>
+    # When unset, invite emails are skipped — the copy-link fallback is used.
+    EMAIL_FROM: Optional[str] = None
+
+    # ── Required for Milestone 52 (Billing + Usage Limits) ─────────────────
+    # Stripe secret key — used to create Checkout/Portal sessions via the API.
+    # Find it in the Stripe dashboard → Developers → API keys → Secret key.
+    # NEVER expose this to the frontend.  NEVER log it.
+    STRIPE_SECRET_KEY: Optional[str] = None
+
+    # Stripe webhook signing secret — used to verify webhook payloads.
+    # Find it in the Stripe dashboard → Developers → Webhooks → Signing secret.
+    # NEVER expose this to the frontend.
+    STRIPE_WEBHOOK_SECRET: Optional[str] = None
+
+    # Stripe Price IDs for each paid plan (monthly billing).
+    # Create products + prices in the Stripe dashboard, then paste the IDs here.
+    # Example: price_1ABC...
+    STRIPE_PRICE_PRO_MONTHLY: Optional[str] = None
+    STRIPE_PRICE_TEAM_MONTHLY: Optional[str] = None
+
+    # Public-facing frontend URL — used to build success/cancel URLs for Stripe
+    # Checkout.  Defaults to APP_BASE_URL when not set separately.
+    # Override in development: FRONTEND_URL=http://localhost:3000
+    FRONTEND_URL: Optional[str] = None
+
     # ── Required for Milestone 31 (GitHub App integration) ──────────────────
     # GitHub App numeric ID — shown on the App settings page.
     GITHUB_APP_ID: Optional[str] = None
@@ -113,6 +142,39 @@ class Settings(BaseSettings):
             return False
         placeholders = ("replace-with", "CHANGE_ME", "your-clerk")
         return not any(p in url for p in placeholders)
+
+    @property
+    def is_stripe_configured(self) -> bool:
+        """Return True when Stripe secret key and webhook secret are both set."""
+        if not self.STRIPE_SECRET_KEY or not self.STRIPE_WEBHOOK_SECRET:
+            return False
+        placeholders = ("replace-with", "CHANGE_ME", "sk_test_placeholder")
+        return not any(
+            p in (self.STRIPE_SECRET_KEY or "")
+            for p in placeholders
+        )
+
+    @property
+    def effective_frontend_url(self) -> str:
+        """Return FRONTEND_URL if set, else fall back to APP_BASE_URL."""
+        return (self.FRONTEND_URL or self.APP_BASE_URL).rstrip("/")
+
+    @property
+    def is_invite_email_configured(self) -> bool:
+        """Return True when Resend is set up and EMAIL_FROM is present.
+
+        Invite emails use EMAIL_FROM (e.g. invites@configtrace.org) rather
+        than ALERTS_FROM_EMAIL so invite and alert emails have distinct senders.
+        If only ALERTS_FROM_EMAIL is set (and not EMAIL_FROM), invite emails are
+        skipped — the copy-link fallback is shown instead.
+        """
+        if not self.RESEND_API_KEY or not self.EMAIL_FROM:
+            return False
+        placeholders = ("replace-with", "CHANGE_ME", "your-resend")
+        return not any(
+            p in (self.RESEND_API_KEY or "") or p in (self.EMAIL_FROM or "")
+            for p in placeholders
+        )
 
     @property
     def is_email_alerting_configured(self) -> bool:

@@ -20,7 +20,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import UUID4
 from sqlalchemy.orm import Session
@@ -66,10 +66,6 @@ def _member_response(member: WorkspaceMember, db: Session) -> WorkspaceMemberRes
         created_at=member.created_at,
         updated_at=member.updated_at,
     )
-
-
-def _base_url(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
 
 
 # ── Workspace CRUD ────────────────────────────────────────────────────────────
@@ -247,7 +243,6 @@ def list_invites(
 def create_invite(
     workspace_id: UUID4,
     body: InviteCreateRequest,
-    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> InviteCreateResponse:
@@ -256,7 +251,17 @@ def create_invite(
     The raw invite token is returned once in the response.  It is NOT stored
     and cannot be recovered after this call.  Share the ``invite_url`` with
     the invitee.
+
+    Sends an invite email via Resend when EMAIL_FROM + RESEND_API_KEY are
+    configured.  If email fails or is unconfigured, invite creation still
+    succeeds and ``email_sent`` is returned as ``false`` — the frontend
+    shows the copy-link fallback.
     """
+    # M52: Enforce member limit before creating the invite.
+    # We check here (not just at accept-time) so the admin gets early feedback.
+    from app.services.billing_service import assert_can_add_member
+    assert_can_add_member(workspace_id, db)  # type: ignore[arg-type]
+
     try:
         invite, raw_token = workspace_service.create_invite(
             workspace_id=workspace_id,
@@ -272,7 +277,49 @@ def create_invite(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    invite_url = f"{_base_url(request)}/invites/{raw_token}"
+    # Build the invite URL from the configured frontend origin so the link
+    # opens the human-readable accept page, not the backend JSON API endpoint.
+    # This is used both for the response (copy-link) and the invite email.
+    from app.config import settings as _settings
+    frontend_invite_url = (
+        f"{_settings.effective_frontend_url}/invites/{raw_token}"
+    )
+
+    # Send invite email via Resend (fire-and-forget — never rolls back the invite).
+    # SECURITY: raw_token is in invite_url — never log it.
+    email_sent = False
+    from app.services import email_service as _email_svc
+    try:
+        # Fetch workspace name for the email body.
+        from app.models.workspace import Workspace as _Workspace
+        workspace_obj = db.get(_Workspace, workspace_id)
+        workspace_name = workspace_obj.name if workspace_obj else "your workspace"
+        inviter_display = current_user.email or current_user.display_name
+
+        _email_svc.send_invite_email(
+            to=invite.email,
+            workspace_name=workspace_name,
+            role=invite.role,
+            invite_url=frontend_invite_url,  # SECURITY: contains raw token — not logged
+            inviter_display=inviter_display,
+        )
+        email_sent = True
+    except _email_svc.EmailNotConfigured:
+        # Email not configured — silently fall back to copy-link.
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "Invite email skipped (email not configured) for workspace %s",
+            workspace_id,
+        )
+    except Exception as _exc:
+        # Email send error — log safely (no token) and fall through.
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "Invite email failed for workspace %s: %s",
+            workspace_id,
+            type(_exc).__name__,  # Only type, not message — message might contain PII
+        )
+
     return InviteCreateResponse(
         id=invite.id,
         workspace_id=invite.workspace_id,
@@ -285,7 +332,8 @@ def create_invite(
         created_at=invite.created_at,
         is_active=invite.is_active,
         invite_token=raw_token,
-        invite_url=invite_url,
+        invite_url=frontend_invite_url,
+        email_sent=email_sent,
     )
 
 

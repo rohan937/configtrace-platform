@@ -413,6 +413,12 @@ export interface InviteCreateResponse extends WorkspaceInvite {
   /** Raw token — returned once; display or copy immediately. */
   invite_token: string;
   invite_url: string;
+  /**
+   * True when the backend successfully sent an invite email via Resend.
+   * False when email is unconfigured or Resend returned an error.
+   * The copy-link fallback is shown regardless of this value.
+   */
+  email_sent: boolean;
 }
 
 export interface InviteListResponse {
@@ -450,4 +456,40 @@ export interface WorkspaceAuditLog {
 export interface AuditLogListResponse {
   logs: WorkspaceAuditLog[];
   total: number;
+}
+
+// ── Billing (M52) ─────────────────────────────────────────────────────────────
+
+export type BillingPlan = "free" | "pro" | "team";
+export type BillingStatus =
+  | "active"
+  | "trialing"
+  | "past_due"
+  | "canceled"
+  | "unpaid";
+
+export interface PlanLimits {
+  max_integrations: number;
+  max_members: number;
+  min_sync_interval_minutes: number;
+  history_retention_days: number;
+}
+
+export interface BillingUsage {
+  integrations: number;
+  members: number;
+}
+
+export interface WorkspaceBilling {
+  workspace_id: string;
+  plan: BillingPlan;
+  status: BillingStatus;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  trial_end: string | null;
+  limits: PlanLimits;
+  usage: BillingUsage;
 }
