@@ -1,14 +1,86 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { createWorkspace, patchWorkspace } from "@/lib/api";
+import PageHeader from "@/components/common/PageHeader";
+
+// ── Hub card definitions ──────────────────────────────────────────────────────
+
+const HUB_CARDS = [
+  {
+    href: "/settings/workspace/members",
+    title: "Members & Invites",
+    description: "Manage team members, roles, and pending invitations.",
+    color: "#4f80f7",
+  },
+  {
+    href: "/settings/workspace/audit",
+    title: "Audit Log",
+    description: "Review workspace events: member changes, integrations, billing.",
+    color: "#3ccf7e",
+  },
+  {
+    href: "/settings/workspace/billing",
+    title: "Billing & Plan",
+    description: "View your current plan, usage limits, and upgrade options.",
+    color: "#f5a623",
+  },
+  {
+    href: "/settings/workspace/data-access",
+    title: "Data Access & Permissions",
+    description: "See exactly what ConfigTrace reads from each provider.",
+    color: "#b0b5c4",
+  },
+] as const;
+
+// ── Inline message banners ────────────────────────────────────────────────────
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        background: "#2a1a1a",
+        border: "1px solid #7a2a2a",
+        borderRadius: "6px",
+        padding: "10px 14px",
+        color: "#f87171",
+        fontSize: "13px",
+        marginBottom: "16px",
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
+function SuccessBanner({ message }: { message: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        background: "#1a2a1a",
+        border: "1px solid #2a5a2a",
+        borderRadius: "6px",
+        padding: "10px 14px",
+        color: "#4ade80",
+        fontSize: "13px",
+        marginBottom: "16px",
+      }}
+    >
+      {message}
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function WorkspaceSettingsPage() {
   const { getToken } = useAuth();
-  const router = useRouter();
   const {
     workspaces,
     selectedWorkspace,
@@ -16,13 +88,13 @@ export default function WorkspaceSettingsPage() {
     refreshWorkspaces,
   } = useWorkspace();
 
-  const [renaming, setRenaming] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming]     = useState(false);
+  const [newName, setNewName]       = useState("");
+  const [creating, setCreating]     = useState(false);
   const [createName, setCreateName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const [success, setSuccess]       = useState<string | null>(null);
+  const [busy, setBusy]             = useState(false);
 
   async function handleRename(e: React.FormEvent) {
     e.preventDefault();
@@ -63,342 +135,342 @@ export default function WorkspaceSettingsPage() {
   }
 
   return (
-    <main style={{ maxWidth: 640, margin: "0 auto", padding: "32px 24px" }}>
-      <h1
-        style={{
-          fontSize: "20px",
-          fontWeight: 600,
-          color: "#e2e5ef",
-          marginBottom: "24px",
-        }}
-      >
-        Workspaces
-      </h1>
+    <>
+      <PageHeader
+        title="Workspace"
+        description="Manage your team, audit log, billing, and data access settings."
+      />
 
-      {error && (
-        <div
-          style={{
-            background: "#2a1a1a",
-            border: "1px solid #7a2a2a",
-            borderRadius: 6,
-            padding: "10px 14px",
-            color: "#f87171",
-            fontSize: 13,
-            marginBottom: 16,
-          }}
-        >
-          {error}
-        </div>
-      )}
-      {success && (
-        <div
-          style={{
-            background: "#1a2a1a",
-            border: "1px solid #2a5a2a",
-            borderRadius: 6,
-            padding: "10px 14px",
-            color: "#4ade80",
-            fontSize: 13,
-            marginBottom: 16,
-          }}
-        >
-          {success}
-        </div>
-      )}
+      <div className="px-6 pb-8" style={{ maxWidth: "680px" }}>
+        {error   && <ErrorBanner   message={error}   />}
+        {success && <SuccessBanner message={success} />}
 
-      {/* Current workspace */}
-      {selectedWorkspace && (
+        {/* ── Current workspace ─────────────────────────────────────── */}
+        {selectedWorkspace && (
+          <section
+            aria-labelledby="section-current-ws"
+            style={{
+              background: "#13151a",
+              border: "1px solid #2a2d38",
+              borderRadius: "8px",
+              padding: "20px",
+              marginBottom: "20px",
+            }}
+          >
+            {/* Name row */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: renaming ? "12px" : "16px",
+              }}
+            >
+              <div>
+                <p
+                  id="section-current-ws"
+                  style={{ fontSize: "11px", color: "#565b6e", margin: "0 0 3px" }}
+                >
+                  Current workspace
+                </p>
+                <p
+                  style={{ fontSize: "17px", fontWeight: 600, color: "#e8eaf0", margin: 0 }}
+                >
+                  {selectedWorkspace.name}
+                </p>
+              </div>
+              {!renaming && (
+                <button
+                  onClick={() => {
+                    setRenaming(true);
+                    setNewName(selectedWorkspace.name);
+                    setSuccess(null);
+                  }}
+                  style={{
+                    fontSize: "12px",
+                    color: "#4f80f7",
+                    background: "none",
+                    border: "1px solid rgba(79,128,247,0.40)",
+                    borderRadius: "5px",
+                    padding: "4px 10px",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Rename
+                </button>
+              )}
+            </div>
+
+            {/* Rename form */}
+            {renaming && (
+              <form onSubmit={handleRename} style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  aria-label="New workspace name"
+                  style={{
+                    flex: 1,
+                    background: "#1a1d28",
+                    border: "1px solid #3a3d4a",
+                    borderRadius: "5px",
+                    padding: "6px 10px",
+                    fontSize: "13px",
+                    color: "#e2e5ef",
+                    fontFamily: "inherit",
+                    outline: "none",
+                  }}
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  disabled={busy || !newName.trim()}
+                  style={{
+                    background: "#4f80f7",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "5px",
+                    padding: "6px 14px",
+                    fontSize: "13px",
+                    cursor: busy || !newName.trim() ? "not-allowed" : "pointer",
+                    opacity: busy ? 0.7 : 1,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRenaming(false)}
+                  style={{
+                    background: "none",
+                    color: "#8b90a0",
+                    border: "1px solid #2a2d38",
+                    borderRadius: "5px",
+                    padding: "6px 10px",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Cancel
+                </button>
+              </form>
+            )}
+
+            {/* Hub cards */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "10px",
+              }}
+            >
+              {HUB_CARDS.map((card) => (
+                <Link
+                  key={card.href}
+                  href={card.href}
+                  style={{
+                    display: "block",
+                    background: "#1a1d28",
+                    border: "1px solid #2a2d38",
+                    borderRadius: "6px",
+                    padding: "12px 14px",
+                    textDecoration: "none",
+                    transition: "border-color 0.15s",
+                  }}
+                  className="hover:bg-surface3"
+                >
+                  <div
+                    style={{
+                      fontSize: "13px",
+                      fontWeight: 500,
+                      color: card.color,
+                      marginBottom: "4px",
+                    }}
+                  >
+                    {card.title} →
+                  </div>
+                  <div
+                    style={{
+                      fontSize: "12px",
+                      color: "#565b6e",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {card.description}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* ── All workspaces ────────────────────────────────────────── */}
         <section
+          aria-labelledby="section-all-ws"
           style={{
             background: "#13151a",
             border: "1px solid #2a2d38",
-            borderRadius: 8,
+            borderRadius: "8px",
             padding: "20px",
             marginBottom: "20px",
           }}
         >
-          <div
+          <h2
+            id="section-all-ws"
             style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: "12px",
+              fontSize: "13px",
+              fontWeight: 500,
+              color: "#c4c8d4",
+              margin: "0 0 12px",
             }}
           >
-            <div>
-              <div style={{ fontSize: 11, color: "#565b6e", marginBottom: 2 }}>
-                Current workspace
-              </div>
-              <div
-                style={{ fontSize: 16, fontWeight: 600, color: "#e2e5ef" }}
-              >
-                {selectedWorkspace.name}
-              </div>
-            </div>
+            All workspaces ({workspaces.length})
+          </h2>
+
+          {workspaces.length === 0 ? (
+            <p style={{ fontSize: "13px", color: "#565b6e", margin: 0 }}>
+              No workspaces found.
+            </p>
+          ) : (
+            <ul role="list" style={{ margin: 0, padding: 0, listStyle: "none" }}>
+              {workspaces.map((ws, i) => (
+                <li
+                  key={ws.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "8px 0",
+                    borderBottom: i < workspaces.length - 1 ? "1px solid #1e2130" : "none",
+                  }}
+                >
+                  <span style={{ fontSize: "13px", color: "#c4c8d4" }}>
+                    {ws.name}
+                  </span>
+                  {ws.id === selectedWorkspace?.id ? (
+                    <span style={{ fontSize: "11px", color: "#4f80f7", padding: "2px 6px" }}>
+                      ✓ Selected
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        selectWorkspace(ws.id);
+                        setSuccess(`Switched to "${ws.name}".`);
+                      }}
+                      style={{
+                        fontSize: "11px",
+                        color: "#4f80f7",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: "2px 6px",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      Switch
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* ── Create workspace ──────────────────────────────────────── */}
+        <section
+          aria-labelledby="section-create-ws"
+          style={{
+            background: "#13151a",
+            border: "1px solid #2a2d38",
+            borderRadius: "8px",
+            padding: "20px",
+          }}
+        >
+          <h2
+            id="section-create-ws"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: "#c4c8d4",
+              margin: "0 0 12px",
+            }}
+          >
+            Create a new workspace
+          </h2>
+          {!creating ? (
             <button
-              onClick={() => {
-                setRenaming(true);
-                setNewName(selectedWorkspace.name);
-                setSuccess(null);
-              }}
+              onClick={() => { setCreating(true); setSuccess(null); }}
               style={{
-                fontSize: 12,
-                color: "#4f80f7",
-                background: "none",
-                border: "1px solid #4f80f7",
-                borderRadius: 5,
-                padding: "4px 10px",
+                background: "#4f80f7",
+                color: "#fff",
+                border: "none",
+                borderRadius: "6px",
+                padding: "8px 18px",
+                fontSize: "13px",
                 cursor: "pointer",
+                fontFamily: "inherit",
               }}
             >
-              Rename
+              + New workspace
             </button>
-          </div>
-
-          {renaming && (
-            <form onSubmit={handleRename} style={{ display: "flex", gap: 8 }}>
+          ) : (
+            <form onSubmit={handleCreate} style={{ display: "flex", gap: "8px" }}>
               <input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Workspace name"
+                value={createName}
+                onChange={(e) => setCreateName(e.target.value)}
+                aria-label="New workspace name"
                 style={{
                   flex: 1,
                   background: "#1a1d28",
                   border: "1px solid #3a3d4a",
-                  borderRadius: 5,
+                  borderRadius: "5px",
                   padding: "6px 10px",
-                  fontSize: 13,
+                  fontSize: "13px",
                   color: "#e2e5ef",
+                  fontFamily: "inherit",
                 }}
                 autoFocus
               />
               <button
                 type="submit"
-                disabled={busy || !newName.trim()}
+                disabled={busy || !createName.trim()}
                 style={{
                   background: "#4f80f7",
                   color: "#fff",
                   border: "none",
-                  borderRadius: 5,
+                  borderRadius: "5px",
                   padding: "6px 14px",
-                  fontSize: 13,
-                  cursor: "pointer",
+                  fontSize: "13px",
+                  cursor: busy || !createName.trim() ? "not-allowed" : "pointer",
+                  opacity: busy ? 0.7 : 1,
+                  fontFamily: "inherit",
                 }}
               >
-                Save
+                Create
               </button>
               <button
                 type="button"
-                onClick={() => setRenaming(false)}
+                onClick={() => setCreating(false)}
                 style={{
                   background: "none",
                   color: "#8b90a0",
                   border: "1px solid #2a2d38",
-                  borderRadius: 5,
+                  borderRadius: "5px",
                   padding: "6px 10px",
-                  fontSize: 13,
+                  fontSize: "13px",
                   cursor: "pointer",
+                  fontFamily: "inherit",
                 }}
               >
                 Cancel
               </button>
             </form>
           )}
-
-          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              onClick={() => router.push("/settings/workspace/members")}
-              style={{
-                fontSize: 12,
-                color: "#8b90a0",
-                background: "none",
-                border: "1px solid #2a2d38",
-                borderRadius: 5,
-                padding: "6px 12px",
-                cursor: "pointer",
-              }}
-            >
-              Manage members &amp; invites →
-            </button>
-            <button
-              onClick={() => router.push("/settings/workspace/billing")}
-              style={{
-                fontSize: 12,
-                color: "#8b90a0",
-                background: "none",
-                border: "1px solid #2a2d38",
-                borderRadius: 5,
-                padding: "6px 12px",
-                cursor: "pointer",
-              }}
-            >
-              Billing &amp; plan →
-            </button>
-            <button
-              onClick={() => router.push("/settings/workspace/audit")}
-              style={{
-                fontSize: 12,
-                color: "#8b90a0",
-                background: "none",
-                border: "1px solid #2a2d38",
-                borderRadius: 5,
-                padding: "6px 12px",
-                cursor: "pointer",
-              }}
-            >
-              Audit log →
-            </button>
-          </div>
         </section>
-      )}
-
-      {/* All workspaces list */}
-      <section
-        style={{
-          background: "#13151a",
-          border: "1px solid #2a2d38",
-          borderRadius: 8,
-          padding: "20px",
-          marginBottom: "20px",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 500,
-            color: "#c4c8d4",
-            marginBottom: 12,
-          }}
-        >
-          All workspaces ({workspaces.length})
-        </div>
-        {workspaces.map((ws) => (
-          <div
-            key={ws.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "8px 0",
-              borderBottom: "1px solid #1e2130",
-            }}
-          >
-            <span style={{ fontSize: 13, color: "#c4c8d4" }}>{ws.name}</span>
-            {ws.id !== selectedWorkspace?.id && (
-              <button
-                onClick={() => {
-                  selectWorkspace(ws.id);
-                  setSuccess(`Switched to "${ws.name}".`);
-                }}
-                style={{
-                  fontSize: 11,
-                  color: "#4f80f7",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                }}
-              >
-                Switch
-              </button>
-            )}
-            {ws.id === selectedWorkspace?.id && (
-              <span
-                style={{ fontSize: 11, color: "#4f80f7", padding: "2px 6px" }}
-              >
-                ✓ Selected
-              </span>
-            )}
-          </div>
-        ))}
-      </section>
-
-      {/* Create workspace */}
-      <section
-        style={{
-          background: "#13151a",
-          border: "1px solid #2a2d38",
-          borderRadius: 8,
-          padding: "20px",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 13,
-            fontWeight: 500,
-            color: "#c4c8d4",
-            marginBottom: 12,
-          }}
-        >
-          Create a new workspace
-        </div>
-        {!creating ? (
-          <button
-            onClick={() => {
-              setCreating(true);
-              setSuccess(null);
-            }}
-            style={{
-              background: "#4f80f7",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              padding: "8px 18px",
-              fontSize: 13,
-              cursor: "pointer",
-            }}
-          >
-            + New workspace
-          </button>
-        ) : (
-          <form onSubmit={handleCreate} style={{ display: "flex", gap: 8 }}>
-            <input
-              placeholder="Workspace name"
-              value={createName}
-              onChange={(e) => setCreateName(e.target.value)}
-              style={{
-                flex: 1,
-                background: "#1a1d28",
-                border: "1px solid #3a3d4a",
-                borderRadius: 5,
-                padding: "6px 10px",
-                fontSize: 13,
-                color: "#e2e5ef",
-              }}
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={busy || !createName.trim()}
-              style={{
-                background: "#4f80f7",
-                color: "#fff",
-                border: "none",
-                borderRadius: 5,
-                padding: "6px 14px",
-                fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
-              Create
-            </button>
-            <button
-              type="button"
-              onClick={() => setCreating(false)}
-              style={{
-                background: "none",
-                color: "#8b90a0",
-                border: "1px solid #2a2d38",
-                borderRadius: 5,
-                padding: "6px 10px",
-                fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
-              Cancel
-            </button>
-          </form>
-        )}
-      </section>
-    </main>
+      </div>
+    </>
   );
 }

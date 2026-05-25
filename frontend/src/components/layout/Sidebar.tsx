@@ -8,6 +8,8 @@ import WorkspaceSwitcher from "./WorkspaceSwitcher";
 interface NavItem {
   label: string;
   href: string;
+  /** Render as a sub-item (indented, smaller) under a parent section. */
+  sub?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
@@ -17,7 +19,10 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Resources",    href: "/resources" },
   { label: "Settings",     href: "/settings" },
   { label: "Workspace",    href: "/settings/workspace" },
-  { label: "Billing",      href: "/settings/workspace/billing" },
+  { label: "Members",      href: "/settings/workspace/members",     sub: true },
+  { label: "Audit Log",    href: "/settings/workspace/audit",       sub: true },
+  { label: "Billing",      href: "/settings/workspace/billing",     sub: true },
+  { label: "Data Access",  href: "/settings/workspace/data-access", sub: true },
 ];
 
 export default function Sidebar() {
@@ -56,7 +61,40 @@ export default function Sidebar() {
           {NAV_ITEMS.map((item) => {
             const isActive =
               pathname === item.href ||
-              (item.href !== "/dashboard" && pathname.startsWith(item.href));
+              (item.href !== "/dashboard" &&
+                item.href !== "/settings" &&
+                pathname.startsWith(item.href));
+
+            if (item.sub) {
+              return (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      fontSize: "12px",
+                      borderLeft: isActive ? "2px solid #4f80f7" : "2px solid transparent",
+                      paddingLeft: "32px",
+                      paddingRight: "24px",
+                      paddingTop: "5px",
+                      paddingBottom: "5px",
+                      color: isActive ? "#c4c8d4" : "#565b6e",
+                      textDecoration: "none",
+                      background: isActive ? "rgba(255,255,255,0.03)" : "transparent",
+                    }}
+                    onMouseOver={(e) => {
+                      if (!isActive) (e.currentTarget as HTMLAnchorElement).style.color = "#8b90a0";
+                    }}
+                    onMouseOut={(e) => {
+                      if (!isActive) (e.currentTarget as HTMLAnchorElement).style.color = "#565b6e";
+                    }}
+                  >
+                    {item.label}
+                  </Link>
+                </li>
+              );
+            }
 
             return (
               <li key={item.href}>
