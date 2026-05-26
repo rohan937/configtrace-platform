@@ -475,6 +475,55 @@ export interface AuditLogListResponse {
   total: number;
 }
 
+// ── Notification Settings (M57.1) ─────────────────────────────────────────────
+
+export type NotifyRiskLevel =
+  | "critical_only"
+  | "high_and_critical"
+  | "medium_and_above";
+
+export interface WorkspaceNotificationSettings {
+  workspace_id: string;
+  /** Slack incoming-webhook channel enabled. */
+  slack_enabled: boolean;
+  /**
+   * Masked Slack webhook URL — first 12 chars + "****".
+   * Null when no URL is configured.
+   * SECURITY: full URL is never returned by the API.
+   */
+  slack_webhook_url_masked: string | null;
+  /** Generic HTTPS webhook channel enabled. */
+  webhook_enabled: boolean;
+  /**
+   * Masked generic webhook URL.
+   * Null when no URL is configured.
+   */
+  webhook_url_masked: string | null;
+  notify_on_risk_level: NotifyRiskLevel;
+}
+
+export interface NotificationSettingsUpdateRequest {
+  slack_enabled?: boolean;
+  /**
+   * New Slack webhook URL.  Pass "" to clear.
+   * Must start with https://hooks.slack.com/services/.
+   */
+  slack_webhook_url?: string;
+  webhook_enabled?: boolean;
+  /**
+   * New generic webhook URL.  Pass "" to clear.
+   * Must be https://.  Private IPs are rejected by the backend.
+   */
+  webhook_url?: string;
+  notify_on_risk_level?: NotifyRiskLevel;
+}
+
+export interface TestNotificationResponse {
+  slack_sent: boolean;
+  webhook_sent: boolean;
+  error: string | null;
+}
+
 // ── Billing (M52) ─────────────────────────────────────────────────────────────
 
 export type BillingPlan = "free" | "pro" | "team";

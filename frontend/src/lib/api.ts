@@ -259,6 +259,37 @@ export async function revokeInvite(
   }
 }
 
+// ── Workspace notification settings (M57.1) ───────────────────────────────────
+
+export async function getNotificationSettings(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").WorkspaceNotificationSettings> {
+  return apiFetch(`/workspaces/${workspaceId}/notification-settings`, { token });
+}
+
+export async function updateNotificationSettings(
+  workspaceId: string,
+  body: import("@/types").NotificationSettingsUpdateRequest,
+  token?: string | null,
+): Promise<import("@/types").WorkspaceNotificationSettings> {
+  return apiFetch(`/workspaces/${workspaceId}/notification-settings`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+
+export async function sendTestNotification(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").TestNotificationResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/notification-settings/test`, {
+    method: "POST",
+    token,
+  });
+}
+
 // ── Workspace audit log (M51) ─────────────────────────────────────────────────
 
 export async function getWorkspaceAuditLogs(

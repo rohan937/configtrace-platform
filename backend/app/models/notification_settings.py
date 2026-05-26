@@ -1,0 +1,122 @@
+"""WorkspaceNotificationSettings model — M57.1.
+
+One row per workspace.  Stores encrypted Slack incoming-webhook URL and
+encrypted generic-webhook URL alongside enabled flags and a risk-level filter.
+
+Security design
+---------------
+* Webhook URLs are AES-256-GCM encrypted at rest using the same
+  ``encrypt_credentials`` / ``decrypt_credentials`` pattern as Integration
+  credentials.  The raw URL is never stored in plaintext.
+* API responses return only a **masked** URL (first 12 chars + "****" + last 4)
+  — the full URL is never returned after the initial PUT.
+* Webhook URLs are never written to logs.  All log lines use the masked form.
+* No webhook URL ever appears in audit-log metadata_json.
+
+Lifecycle
+---------
+Rows are created lazily: the first GET or PUT for a workspace's notification
+settings calls ``get_or_create_notification_settings`` which inserts a row
+with both channels disabled and no URLs set.
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Optional
+
+from sqlalchemy import Boolean, ForeignKey, LargeBinary, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base, BaseMixin
+
+
+class WorkspaceNotificationSettings(BaseMixin, Base):
+    """Notification channels configuration for a workspace.
+
+    Columns
+    -------
+    workspace_id
+        FK → workspaces.id (CASCADE delete).  Unique: one row per workspace.
+
+    slack_enabled
+        When True, a Slack incoming-webhook POST is sent on each qualifying
+        change event.  Requires slack_webhook_url_encrypted to be set.
+
+    slack_webhook_url_encrypted / slack_webhook_iv
+        AES-256-GCM encrypted form of the Slack incoming-webhook URL.
+        The IV is stored alongside so decryption is self-contained.
+        Both are NULL until a URL is configured.
+
+    webhook_enabled
+        When True, a generic HTTPS POST is sent on each qualifying event.
+        Requires webhook_url_encrypted to be set.
+
+    webhook_url_encrypted / webhook_iv
+        AES-256-GCM encrypted generic webhook URL.  NULL until configured.
+
+    notify_on_risk_level
+        Mirror of ``UserSettings.alert_risk_threshold`` but at workspace
+        scope for these channels.  Valid values:
+          ``critical_only``      — only CRITICAL changes
+          ``high_and_critical``  — HIGH + CRITICAL (default)
+          ``medium_and_above``   — MEDIUM + HIGH + CRITICAL
+    """
+
+    __tablename__ = "workspace_notification_settings"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    # ── Slack incoming webhook ─────────────────────────────────────────────────
+    slack_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    # AES-GCM ciphertext of the Slack webhook URL (JSON: {"url": "https://..."})
+    slack_webhook_url_encrypted: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    # 12-byte nonce for AES-GCM decryption of the Slack URL.
+    slack_webhook_iv: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True
+    )
+
+    # ── Generic webhook ────────────────────────────────────────────────────────
+    webhook_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    # AES-GCM ciphertext of the generic webhook URL (JSON: {"url": "https://..."})
+    webhook_url_encrypted: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    # 12-byte nonce for AES-GCM decryption of the generic webhook URL.
+    webhook_iv: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True
+    )
+
+    # ── Risk-level filter ──────────────────────────────────────────────────────
+    # Same vocabulary as UserSettings.alert_risk_threshold.
+    notify_on_risk_level: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="high_and_critical",
+        server_default="high_and_critical",
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<WorkspaceNotificationSettings workspace={self.workspace_id} "
+            f"slack_enabled={self.slack_enabled} webhook_enabled={self.webhook_enabled}>"
+        )

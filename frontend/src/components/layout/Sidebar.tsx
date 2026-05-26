@@ -19,10 +19,11 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Resources",    href: "/resources" },
   { label: "Settings",     href: "/settings" },
   { label: "Workspace",    href: "/settings/workspace" },
-  { label: "Members",      href: "/settings/workspace/members",     sub: true },
-  { label: "Audit Log",    href: "/settings/workspace/audit",       sub: true },
-  { label: "Billing",      href: "/settings/workspace/billing",     sub: true },
-  { label: "Data Access",  href: "/settings/workspace/data-access", sub: true },
+  { label: "Members",        href: "/settings/workspace/members",       sub: true },
+  { label: "Audit Log",      href: "/settings/workspace/audit",         sub: true },
+  { label: "Billing",        href: "/settings/workspace/billing",       sub: true },
+  { label: "Notifications",  href: "/settings/workspace/notifications", sub: true },
+  { label: "Data Access",    href: "/settings/workspace/data-access",   sub: true },
 ];
 
 export default function Sidebar() {

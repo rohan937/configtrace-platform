@@ -1,18 +1,21 @@
-"""Workspace and member management routes — M50/M51.
+"""Workspace and member management routes — M50/M51/M57.1.
 
 Routes
 ------
-GET    /workspaces                                   — list user's workspaces
-POST   /workspaces                                   — create workspace
-GET    /workspaces/{workspace_id}                    — get workspace detail
-PATCH  /workspaces/{workspace_id}                    — rename workspace
-GET    /workspaces/{workspace_id}/members            — list members
-PATCH  /workspaces/{workspace_id}/members/{id}       — change member role
-DELETE /workspaces/{workspace_id}/members/{id}       — remove member
-GET    /workspaces/{workspace_id}/invites            — list invites
-POST   /workspaces/{workspace_id}/invites            — create invite
-DELETE /workspaces/{workspace_id}/invites/{id}       — revoke invite
-GET    /workspaces/{workspace_id}/audit-logs         — workspace audit history (M51)
+GET    /workspaces                                              — list user's workspaces
+POST   /workspaces                                             — create workspace
+GET    /workspaces/{workspace_id}                              — get workspace detail
+PATCH  /workspaces/{workspace_id}                              — rename workspace
+GET    /workspaces/{workspace_id}/members                      — list members
+PATCH  /workspaces/{workspace_id}/members/{id}                 — change member role
+DELETE /workspaces/{workspace_id}/members/{id}                 — remove member
+GET    /workspaces/{workspace_id}/invites                      — list invites
+POST   /workspaces/{workspace_id}/invites                      — create invite
+DELETE /workspaces/{workspace_id}/invites/{id}                 — revoke invite
+GET    /workspaces/{workspace_id}/audit-logs                   — workspace audit history (M51)
+GET    /workspaces/{workspace_id}/notification-settings        — get notification settings (M57.1)
+PUT    /workspaces/{workspace_id}/notification-settings        — update notification settings (M57.1)
+POST   /workspaces/{workspace_id}/notification-settings/test   — send test notification (M57.1)
 """
 
 from __future__ import annotations
@@ -45,7 +48,13 @@ from app.schemas.workspace import (
     WorkspaceResponse,
     WorkspaceUpdateRequest,
 )
+from app.schemas.notification_settings import (
+    NotificationSettingsResponse,
+    NotificationSettingsUpdateRequest,
+    TestNotificationResponse,
+)
 from app.services import workspace_service
+from app.services import notification_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -404,4 +413,145 @@ def list_audit_logs(
             for log in logs
         ],
         total=total,
+    )
+
+
+# ── Notification settings (M57.1) ─────────────────────────────────────────────
+
+
+@router.get(
+    "/{workspace_id}/notification-settings",
+    response_model=NotificationSettingsResponse,
+)
+def get_notification_settings(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NotificationSettingsResponse:
+    """Return notification settings for a workspace.
+
+    Any workspace member can read settings.  Creates a default row on first
+    access (both channels disabled, no URLs).
+
+    Security: webhook URLs are NEVER returned in full — only masked forms.
+    """
+    # Require membership (any role can read).
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "member", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    row = notification_service.get_or_create_notification_settings(
+        workspace_id, db
+    )
+    data = notification_service.build_settings_response(row)
+    return NotificationSettingsResponse(**data)
+
+
+@router.put(
+    "/{workspace_id}/notification-settings",
+    response_model=NotificationSettingsResponse,
+)
+def update_notification_settings(
+    workspace_id: UUID4,
+    body: NotificationSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NotificationSettingsResponse:
+    """Update notification settings for a workspace.
+
+    Requires owner or admin role.  Only fields present in the request body
+    are updated — omitted fields keep their current values.
+
+    To clear a webhook URL and disable the channel, pass ``""`` for the URL
+    field.
+
+    Security:
+    - URLs are validated (HTTPS, no private IPs, Slack prefix) before
+      encryption.  Invalid URLs return HTTP 422.
+    - Webhook URLs are NEVER logged in full.
+    - Audit event ``notification_settings_updated`` is recorded (without URLs).
+    """
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "admin", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.services.notification_service import WebhookURLError
+
+    try:
+        row = notification_service.update_notification_settings(
+            workspace_id=workspace_id,
+            actor_user_id=current_user.id,
+            slack_enabled=body.slack_enabled,
+            slack_webhook_url=body.slack_webhook_url,
+            webhook_enabled=body.webhook_enabled,
+            webhook_url=body.webhook_url,
+            notify_on_risk_level=body.notify_on_risk_level,
+            db=db,
+        )
+    except WebhookURLError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Audit log — safe metadata only (no URLs).
+    workspace_service.log_audit_event(
+        workspace_id=workspace_id,
+        actor_user_id=current_user.id,
+        event_type="notification_settings_updated",
+        db=db,
+        target_type="notification_settings",
+        target_id=str(row.id),
+        metadata={
+            "slack_enabled": row.slack_enabled,
+            "webhook_enabled": row.webhook_enabled,
+            "notify_on_risk_level": row.notify_on_risk_level,
+        },
+    )
+    db.commit()
+
+    data = notification_service.build_settings_response(row)
+    return NotificationSettingsResponse(**data)
+
+
+@router.post(
+    "/{workspace_id}/notification-settings/test",
+    response_model=TestNotificationResponse,
+)
+def test_notification(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TestNotificationResponse:
+    """Send a test notification to all enabled channels.
+
+    Requires owner or admin role.  Returns which channels received the test
+    message and any error details.
+
+    If no channels are configured/enabled, both ``slack_sent`` and
+    ``webhook_sent`` will be False — this is not an error.
+    """
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "admin", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    result = notification_service.send_test_notification(workspace_id, db)
+    return TestNotificationResponse(
+        slack_sent=result["slack_sent"],
+        webhook_sent=result["webhook_sent"],
+        error=result.get("error"),
     )

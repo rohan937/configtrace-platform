@@ -362,6 +362,43 @@ def sync_integration(
                         "sync_integration: rollback after alert failure also failed"
                     )
 
+        # ── Dispatch Slack / webhook notifications (M57.1) ──────────────────
+        # Runs after email alert dispatch so email-alerting failures never
+        # suppress Slack/webhook.  Like alert dispatch, notification_service
+        # is hardened to never raise — we still wrap in try/except as a
+        # final guard against future refactors.
+        if all_changes_this_sync:
+            try:
+                from app.services.notification_service import dispatch_notifications_for_sync
+                notif_result = dispatch_notifications_for_sync(
+                    changes=all_changes_this_sync,
+                    integration=integration,
+                    sync_run_id=_sync_run_uuid,
+                    db=db,
+                )
+                db.commit()
+                logger.info(
+                    "sync_integration: notification dispatch  sync_run_id=%s  "
+                    "slack_sent=%d webhook_sent=%d failed=%d",
+                    sync_run_id,
+                    notif_result["slack_sent"],
+                    notif_result["webhook_sent"],
+                    notif_result["failed"],
+                )
+            except Exception:
+                # Defence in depth: notification dispatch must never fail sync.
+                logger.exception(
+                    "sync_integration: notification dispatch raised unexpectedly  "
+                    "sync_run_id=%s",
+                    sync_run_id,
+                )
+                try:
+                    db.rollback()
+                except Exception:
+                    logger.exception(
+                        "sync_integration: rollback after notification failure also failed"
+                    )
+
         # ── Mark completed ───────────────────────────────────────────────────
         mark_sync_completed(
             _sync_run_uuid,

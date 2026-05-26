@@ -29,6 +29,12 @@ const HUB_CARDS = [
     color: "#f5a623",
   },
   {
+    href: "/settings/workspace/notifications",
+    title: "Notifications",
+    description: "Configure Slack and webhook alerts for configuration drift.",
+    color: "#8b5cf6",
+  },
+  {
     href: "/settings/workspace/data-access",
     title: "Data Access & Permissions",
     description: "See exactly what ConfigTrace reads from each provider.",
