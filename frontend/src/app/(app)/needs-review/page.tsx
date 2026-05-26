@@ -15,6 +15,7 @@ import { getProviderMeta } from "@/lib/providers";
 import { formatRelativeTime } from "@/lib/utils";
 import { getRemediationGuidance } from "@/lib/remediation";
 import { getFixPlanForChange } from "@/lib/fixPlans";
+import { getRemediationPreviewForChange } from "@/lib/remediationPreview";
 import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
@@ -378,6 +379,7 @@ function ReviewRow({ change, token, onReviewed }: ReviewRowProps) {
   const [showSnooze, setShowSnooze] = useState(false);
   const remediationResult = getRemediationGuidance(change);
   const fixPlanResult     = getFixPlanForChange(change);
+  const previewResult     = getRemediationPreviewForChange(change, remediationResult, fixPlanResult);
 
   const handleAck = async () => {
     setLoadingAction("ack");
@@ -452,7 +454,7 @@ function ReviewRow({ change, token, onReviewed }: ReviewRowProps) {
           />
         </div>
       </div>
-      {/* Compact remediation / fix plan hint */}
+      {/* Compact remediation / fix plan / preview hint */}
       {remediationResult.available && (
         <Link
           href={`/changes/${change.id}`}
@@ -461,22 +463,30 @@ function ReviewRow({ change, token, onReviewed }: ReviewRowProps) {
             alignItems: "center",
             gap: "6px",
             padding: "5px 16px 5px 26px",
-            background: fixPlanResult.available
-              ? "rgba(34,197,94,0.04)"
-              : "rgba(79,128,247,0.04)",
+            background: previewResult.available
+              ? "rgba(79,128,247,0.04)"
+              : fixPlanResult.available
+                ? "rgba(34,197,94,0.04)"
+                : "rgba(79,128,247,0.04)",
             borderBottom: "1px solid #2a2d38",
             fontSize: "11px",
-            color: fixPlanResult.available ? "#22c55e" : "#4f80f7",
+            color: previewResult.available
+              ? "#4f80f7"
+              : fixPlanResult.available
+                ? "#22c55e"
+                : "#4f80f7",
             textDecoration: "none",
           }}
         >
           <span aria-hidden="true" style={{ fontSize: "10px" }}>
-            {fixPlanResult.available ? "⬡" : "✦"}
+            {previewResult.available ? "◈" : fixPlanResult.available ? "⬡" : "✦"}
           </span>
           <span>
-            {fixPlanResult.available
-              ? "Fix plan available — view guidance"
-              : "Suggested remediation available — view guidance"}
+            {previewResult.available
+              ? "Remediation preview available — view guidance"
+              : fixPlanResult.available
+                ? "Fix plan available — view guidance"
+                : "Suggested remediation available — view guidance"}
           </span>
           <span aria-hidden="true" style={{ marginLeft: "auto", fontSize: "10px" }}>→</span>
         </Link>

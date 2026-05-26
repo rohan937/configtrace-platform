@@ -36,6 +36,11 @@ import {
   type FixPlan,
 } from "@/lib/remediation";
 import { getFixPlanForChange } from "@/lib/fixPlans";
+import {
+  getRemediationPreviewForChange,
+  type RemediationPreview,
+  type BeforeAfterItem,
+} from "@/lib/remediationPreview";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -5289,6 +5294,451 @@ function FixPlanSubsection({
   );
 }
 
+// ── Remediation preview subsection ───────────────────────────────────────────
+
+function ConfirmationInput({ phrase }: { phrase: string }) {
+  const [value, setValue] = useState("");
+  const confirmed = value.trim().toUpperCase() === phrase.toUpperCase();
+
+  return (
+    <div>
+      {/* Prompt */}
+      <p
+        style={{
+          fontSize: "11px",
+          color: "#565b6e",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          fontWeight: 500,
+          margin: "0 0 6px",
+        }}
+      >
+        Confirm preview (non-executing)
+      </p>
+      <p style={{ fontSize: "12px", color: "#8b90a0", lineHeight: 1.5, margin: "0 0 8px" }}>
+        Type{" "}
+        <code
+          style={{
+            background: "rgba(79,128,247,0.10)",
+            border: "1px solid rgba(79,128,247,0.25)",
+            borderRadius: "3px",
+            padding: "0 5px",
+            fontSize: "11px",
+            color: "#7ba4ff",
+            fontFamily: "ui-monospace, monospace",
+            letterSpacing: "0.05em",
+          }}
+        >
+          {phrase}
+        </code>{" "}
+        to acknowledge this preview. No changes will be applied.
+      </p>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder={`Type ${phrase} to confirm`}
+        aria-label={`Type ${phrase} to confirm preview`}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          background: confirmed ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.03)",
+          border: `1px solid ${confirmed ? "rgba(34,197,94,0.35)" : "#3a3d4a"}`,
+          borderRadius: "5px",
+          color: confirmed ? "#22c55e" : "#e8eaf0",
+          fontSize: "12px",
+          fontFamily: "ui-monospace, monospace",
+          letterSpacing: "0.04em",
+          padding: "7px 10px",
+          outline: "none",
+          transition: "border-color 0.15s, background 0.15s",
+        }}
+      />
+      {confirmed && (
+        <p
+          style={{
+            fontSize: "11px",
+            color: "#22c55e",
+            margin: "6px 0 0",
+            display: "flex",
+            alignItems: "center",
+            gap: "5px",
+          }}
+        >
+          <span aria-hidden="true">✓</span>
+          Preview confirmed. No changes were applied.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RemediationPreviewSubsection({
+  preview,
+  dividerColor,
+}: {
+  preview: RemediationPreview;
+  dividerColor: string;
+}) {
+  return (
+    <div
+      style={{
+        marginTop: "14px",
+        paddingTop: "14px",
+        borderTop: `1px solid ${dividerColor}`,
+      }}
+    >
+      {/* Section header + badges */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "8px",
+          marginBottom: "10px",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "11px",
+            color: "#565b6e",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            fontWeight: 500,
+            margin: 0,
+          }}
+        >
+          Remediation preview
+        </p>
+        <span
+          style={{
+            fontSize: "10px",
+            color: "#4f80f7",
+            border: "1px solid rgba(79,128,247,0.30)",
+            borderRadius: "4px",
+            padding: "1px 6px",
+            fontWeight: 600,
+            letterSpacing: "0.03em",
+          }}
+        >
+          Dry run only
+        </span>
+        <span
+          style={{
+            fontSize: "10px",
+            color: "#565b6e",
+            border: "1px solid #2a2d38",
+            borderRadius: "4px",
+            padding: "1px 6px",
+            fontWeight: 500,
+            letterSpacing: "0.03em",
+          }}
+        >
+          No changes applied
+        </span>
+        <span
+          style={{
+            fontSize: "10px",
+            color: preview.preview_kind === "exact" ? "#22c55e" : "#8b90a0",
+            border: `1px solid ${preview.preview_kind === "exact" ? "rgba(34,197,94,0.30)" : "#2a2d38"}`,
+            borderRadius: "4px",
+            padding: "1px 6px",
+            fontWeight: 500,
+            letterSpacing: "0.03em",
+          }}
+        >
+          {preview.preview_kind === "exact" ? "Exact preview" : "Conceptual preview"}
+        </span>
+      </div>
+
+      {/* Status banner */}
+      <div
+        style={{
+          background: "rgba(79,128,247,0.06)",
+          border: "1px solid rgba(79,128,247,0.20)",
+          borderRadius: "6px",
+          padding: "10px 12px",
+          marginBottom: "14px",
+        }}
+      >
+        <p style={{ fontSize: "12px", color: "#b0b5c4", lineHeight: 1.6, margin: 0 }}>
+          {preview.summary}
+        </p>
+      </div>
+
+      {/* Before / After grid */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "10px",
+          marginBottom: "14px",
+        }}
+      >
+        {/* Before column */}
+        <div
+          style={{
+            background: "rgba(232,64,64,0.05)",
+            border: "1px solid rgba(232,64,64,0.20)",
+            borderRadius: "6px",
+            padding: "10px 12px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "10px",
+              color: "#e84040",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              fontWeight: 600,
+              margin: "0 0 6px",
+            }}
+          >
+            Before
+          </p>
+          {preview.before.map((item: BeforeAfterItem, i: number) => (
+            <div key={i} style={{ marginBottom: i < preview.before.length - 1 ? "6px" : 0 }}>
+              <p style={{ fontSize: "10px", color: "#565b6e", margin: "0 0 1px", fontWeight: 500 }}>
+                {item.label}
+              </p>
+              <p style={{ fontSize: "12px", color: "#b0b5c4", margin: 0, lineHeight: 1.5 }}>
+                {item.value}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* After column */}
+        <div
+          style={{
+            background: "rgba(34,197,94,0.05)",
+            border: "1px solid rgba(34,197,94,0.20)",
+            borderRadius: "6px",
+            padding: "10px 12px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "10px",
+              color: "#22c55e",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              fontWeight: 600,
+              margin: "0 0 6px",
+            }}
+          >
+            After
+          </p>
+          {preview.after.map((item: BeforeAfterItem, i: number) => (
+            <div key={i} style={{ marginBottom: i < preview.after.length - 1 ? "6px" : 0 }}>
+              <p style={{ fontSize: "10px", color: "#565b6e", margin: "0 0 1px", fontWeight: 500 }}>
+                {item.label}
+              </p>
+              <p style={{ fontSize: "12px", color: "#b0b5c4", margin: 0, lineHeight: 1.5 }}>
+                {item.value}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Required permissions */}
+      {preview.required_permissions.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            Required permissions
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {preview.required_permissions.map((perm, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: "2px",
+                }}
+              >
+                <span aria-hidden="true" style={{ flexShrink: 0, color: "#4f80f7" }}>◆</span>
+                <code style={{ fontFamily: "ui-monospace, monospace", fontSize: "11px" }}>{perm}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Preconditions */}
+      {preview.preconditions.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            Before applying
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {preview.preconditions.map((pre, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: "2px",
+                }}
+              >
+                <span aria-hidden="true" style={{ flexShrink: 0, color: "#565b6e", marginTop: "1px" }}>□</span>
+                <span>{pre}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Warnings */}
+      {preview.warnings.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            Warnings
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {preview.warnings.map((w, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: "2px",
+                }}
+              >
+                <span aria-hidden="true" style={{ flexShrink: 0, color: "#f5a623", marginTop: "1px" }}>⚠</span>
+                <span>{w}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Confirmation phrase input */}
+      <div style={{ marginBottom: "12px" }}>
+        <ConfirmationInput phrase={preview.confirmation_phrase} />
+      </div>
+
+      {/* Audit note */}
+      <div
+        style={{
+          background: "rgba(86,91,110,0.08)",
+          border: "1px solid #2a2d38",
+          borderRadius: "5px",
+          padding: "8px 11px",
+          marginBottom: "12px",
+        }}
+      >
+        <p style={{ fontSize: "11px", color: "#565b6e", margin: 0, lineHeight: 1.6, fontStyle: "italic" }}>
+          Confirming this preview would create an audit event in ConfigTrace — but no changes are applied to your infrastructure. ConfigTrace is read-only.
+        </p>
+      </div>
+
+      {/* Validation steps */}
+      {preview.validation_steps.length > 0 && (
+        <div>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            How to verify after applying
+          </p>
+          <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {preview.validation_steps.map((step, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: i < preview.validation_steps.length - 1 ? "3px" : 0,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    flexShrink: 0,
+                    width: "16px",
+                    fontSize: "11px",
+                    color: "#565b6e",
+                    fontVariantNumeric: "tabular-nums",
+                    marginTop: "2px",
+                  }}
+                >
+                  {i + 1}.
+                </span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* Provider console link */}
+      {preview.provider_console_url && (
+        <div style={{ marginTop: "10px" }}>
+          <a
+            href={preview.provider_console_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              fontSize: "12px",
+              color: "#4f80f7",
+              textDecoration: "none",
+            }}
+          >
+            Open provider console ↗
+          </a>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Remediation section ───────────────────────────────────────────────────────
 
 const CONFIDENCE_COLORS: Record<RemediationGuidance["confidence"], { bg: string; border: string; text: string; label: string }> = {
@@ -5300,9 +5750,11 @@ const CONFIDENCE_COLORS: Record<RemediationGuidance["confidence"], { bg: string;
 function RemediationSection({
   guidance,
   fixPlan,
+  preview,
 }: {
   guidance: RemediationGuidance;
   fixPlan?: FixPlan;
+  preview?: RemediationPreview;
 }) {
   const conf = CONFIDENCE_COLORS[guidance.confidence];
 
@@ -5603,6 +6055,9 @@ function RemediationSection({
         {/* ── Fix plan preview subsection ───────────────────────────── */}
         {fixPlan && <FixPlanSubsection fixPlan={fixPlan} dividerColor={conf.border} />}
 
+        {/* ── Remediation preview subsection ────────────────────────── */}
+        {preview && <RemediationPreviewSubsection preview={preview} dividerColor={conf.border} />}
+
         {/* Footer: disclaimer + status badges */}
         <div
           style={{
@@ -5765,6 +6220,7 @@ export default function ChangeDetailPage() {
   const checks        = getSuggestedChecks(change);
   const remediation   = getRemediationGuidance(change);
   const fixPlan       = getFixPlanForChange(change);
+  const preview       = getRemediationPreviewForChange(change, remediation, fixPlan);
 
   // Non-Cloudflare providers show "Configuration added/removed" instead of "DNS record added/removed"
   const showConfigLabel = provider !== "cloudflare";
@@ -6034,6 +6490,7 @@ export default function ChangeDetailPage() {
           <RemediationSection
             guidance={remediation}
             fixPlan={fixPlan.available ? fixPlan : undefined}
+            preview={preview.available ? preview : undefined}
           />
         )}
 
