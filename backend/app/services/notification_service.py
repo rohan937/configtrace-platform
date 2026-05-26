@@ -476,11 +476,20 @@ def dispatch_notifications_for_sync(
     _slack_app_channel = getattr(settings_row, "slack_channel_id", None)
 
     if _slack_app_enabled and _slack_app_token and _slack_app_iv and _slack_app_channel:
-        # ── Slack App path (M58.5) ─────────────────────────────────────────
+        # ── Slack App path (M58.5/M58.6 interactive) ──────────────────────
         try:
-            from app.services.slack_service import _decrypt_token, send_message
+            from app.services.slack_service import _decrypt_token, dispatch_alert_message
+            from app.config import settings as _settings
             bot_token = _decrypt_token(_slack_app_token, _slack_app_iv)
-            send_message(bot_token, _slack_app_channel, slack_text)
+            dispatch_alert_message(
+                bot_token=bot_token,
+                channel_id=_slack_app_channel,
+                changes=list(qualifying),
+                integration_name=integration.display_name,
+                provider=integration.provider,
+                fallback_text=slack_text,
+                base_url=_settings.APP_BASE_URL.rstrip("/"),
+            )
             result["slack_sent"] = 1
             logger.info(
                 "notifications: Slack App sent  workspace=%s  sync_run=%s  "

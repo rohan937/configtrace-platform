@@ -1,6 +1,6 @@
-"""Slack App OAuth and delivery service — M58.5.
+"""Slack App OAuth, delivery, and interactive actions service — M58.5/M58.6.
 
-Provides:
+Provides (M58.5):
   - HMAC-SHA256 state tokens for CSRF protection (mirroring github_app.py)
   - OAuth exchange: code → bot token
   - Encrypted bot token storage
@@ -9,6 +9,13 @@ Provides:
   - Slack App message delivery (used by notification_service)
   - Disconnect (remove App installation from workspace)
 
+Provides (M58.6):
+  - Request signature verification (SLACK_SIGNING_SECRET / HMAC-SHA256)
+  - Block Kit interactive alert messages (buttons: Open Change, Acknowledge,
+    Snooze 24h, View Remediation Preview)
+  - Interactive action routing (POST /slack/actions)
+  - Acknowledge / Snooze from Slack (ConfigTrace review state only)
+
 Security constraints
 --------------------
 * Bot tokens are AES-256-GCM encrypted at rest.  The plaintext token is
@@ -16,8 +23,10 @@ Security constraints
 * State tokens are HMAC-signed and expire in 10 minutes.
 * State tokens bind to the requesting user_id and workspace_id; a mismatch
   is treated as a CSRF attack.
-* SLACK_CLIENT_SECRET is NEVER logged.
+* SLACK_CLIENT_SECRET and SLACK_SIGNING_SECRET are NEVER logged.
 * This module never applies configuration changes to any monitored provider.
+* Interactive actions only update ConfigTrace review state (acknowledge/snooze).
+  No provider resources are mutated.
 
 Slack OAuth scopes required
 ---------------------------
@@ -653,3 +662,680 @@ def _get_installed_row(
             "Complete the OAuth installation flow first."
         )
     return row
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# M58.6 — Slack interactive actions
+# ════════════════════════════════════════════════════════════════════════════════
+
+# ── Slack request signature verification ─────────────────────────────────────
+
+_REPLAY_WINDOW_SECONDS = 300  # 5 minutes — reject stale timestamps
+
+
+def verify_request_signature(
+    signing_secret: str,
+    timestamp: str,
+    body: bytes,
+    signature: str,
+) -> bool:
+    """Verify a Slack request using HMAC-SHA256.
+
+    Algorithm:
+    1. Reject if ``|now - timestamp| > REPLAY_WINDOW_SECONDS``.
+    2. Compute: ``base = f"v0:{timestamp}:{body_text}"``
+    3. ``expected = "v0=" + HMAC(signing_secret, base, SHA256).hexdigest()``
+    4. Constant-time compare: ``expected == signature``.
+
+    Security:
+    * Uses ``hmac.compare_digest`` to prevent timing attacks.
+    * Timestamps are checked against the current time to prevent replay.
+    * SLACK_SIGNING_SECRET is NEVER logged.
+
+    Args:
+        signing_secret: Slack App signing secret (from config).
+        timestamp:      Value of ``X-Slack-Request-Timestamp`` header.
+        body:           Raw request body bytes.
+        signature:      Value of ``X-Slack-Signature`` header.
+
+    Returns:
+        True if signature is valid and timestamp is fresh.
+    """
+    # ── Reject stale / missing timestamp ──────────────────────────────────────
+    try:
+        ts_int = int(timestamp)
+    except (ValueError, TypeError):
+        return False
+
+    age = abs(int(time.time()) - ts_int)
+    if age > _REPLAY_WINDOW_SECONDS:
+        return False
+
+    # ── Compute expected signature ────────────────────────────────────────────
+    try:
+        body_text = body.decode("utf-8", errors="replace")
+    except Exception:
+        return False
+
+    base_string = f"v0:{timestamp}:{body_text}"
+    computed_mac = hmac_lib.new(
+        signing_secret.encode("utf-8"),
+        base_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    expected_sig = f"v0={computed_mac}"
+
+    # ── Constant-time compare ─────────────────────────────────────────────────
+    return hmac_lib.compare_digest(expected_sig, signature)
+
+
+# ── Block Kit message composition ────────────────────────────────────────────
+
+# Action IDs for interactive buttons.
+ACTION_ACKNOWLEDGE = "configtrace_acknowledge_change"
+ACTION_SNOOZE_24H = "configtrace_snooze_change_24h"
+ACTION_OPEN_CHANGE = "configtrace_open_change"
+ACTION_VIEW_REMEDIATION = "configtrace_view_remediation"
+
+_RISK_EMOJI: dict[str, str] = {
+    "critical": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "⚪",
+}
+
+
+def compose_alert_blocks(
+    change: Any,
+    integration_name: str,
+    provider: str,
+    base_url: str,
+) -> list[dict]:
+    """Build Slack Block Kit blocks for a single high/critical change.
+
+    Includes:
+    - Risk badge + record identifier + field path
+    - Risk reason
+    - Compact remediation summary (M58.4, fail-open)
+    - Four buttons: Open Change, Acknowledge, Snooze 24h, View Remediation
+
+    Security:
+    - No raw prev_value / new_value forwarded.
+    - No secrets, tokens, or customer PII.
+    - No provider-mutation commands.
+
+    Args:
+        change:           Change ORM row or dict with standard fields.
+        integration_name: Display name of the integration.
+        provider:         Provider string (e.g. "aws").
+        base_url:         ConfigTrace frontend base URL (no trailing slash).
+
+    Returns:
+        List of Slack block dicts.
+    """
+    from app.services.remediation_summary_service import build_alert_remediation_summary
+
+    change_id = str(_get(change, "id") or "")
+    risk_level = _s(_get(change, "risk_level")) or "unknown"
+    risk_reason = _s(_get(change, "risk_reason")) or ""
+    record_id = _s(_get(change, "record_identifier")) or "unknown"
+    field_path = _s(_get(change, "field_path")) or ""
+    risk_upper = risk_level.upper()
+    emoji = _RISK_EMOJI.get(risk_level, "⚪")
+
+    change_url = f"{base_url}/changes/{change_id}"
+    remediation_url = f"{base_url}/changes/{change_id}#section-remediation"
+
+    # ── Action button value (just change_id — workspace validated via team_id) ─
+    action_value = json.dumps({"change_id": change_id})
+
+    # ── Header block ──────────────────────────────────────────────────────────
+    header_text = (
+        f"{emoji} *{risk_upper}: Configuration change detected*\n"
+        f"_{integration_name}_ · {provider}"
+    )
+
+    # ── Change detail block ───────────────────────────────────────────────────
+    detail_text = f"*{record_id}*"
+    if field_path:
+        detail_text += f" — `{field_path}`"
+    if risk_reason:
+        detail_text += f"\n{risk_reason}"
+
+    blocks: list[dict] = [
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": header_text},
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": detail_text},
+        },
+    ]
+
+    # ── Remediation summary block (M58.4, fail-open) ──────────────────────────
+    try:
+        rem = build_alert_remediation_summary(change)
+        if rem and rem.get("available"):
+            rem_lines = [f"*Suggested fix:* {rem['title']}"]
+            summary = rem.get("summary", "")
+            if summary:
+                rem_lines.append(summary)
+            if rem.get("remediation_preview_available"):
+                rem_lines.append("_Remediation preview available in ConfigTrace._")
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": "\n".join(rem_lines)},
+            })
+    except Exception:
+        pass  # fail-open: omit remediation block on error
+
+    # ── Divider ───────────────────────────────────────────────────────────────
+    blocks.append({"type": "divider"})
+
+    # ── Action buttons ────────────────────────────────────────────────────────
+    blocks.append({
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Open Change", "emoji": True},
+                "url": change_url,
+                "action_id": ACTION_OPEN_CHANGE,
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Acknowledge", "emoji": True},
+                "action_id": ACTION_ACKNOWLEDGE,
+                "value": action_value,
+                "style": "primary",
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Snooze 24h", "emoji": True},
+                "action_id": ACTION_SNOOZE_24H,
+                "value": action_value,
+            },
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "View Remediation", "emoji": True},
+                "url": remediation_url,
+                "action_id": ACTION_VIEW_REMEDIATION,
+            },
+        ],
+    })
+
+    return blocks
+
+
+def compose_multi_alert_blocks(
+    changes: list[Any],
+    integration_name: str,
+    provider: str,
+    base_url: str,
+) -> list[dict]:
+    """Build Slack blocks for 2–5 changes (no per-change action buttons).
+
+    Lists each change as a section.  A footer links to the full timeline.
+    For multi-change alerts, only a single "Open Timeline" link is provided.
+    Per-change action buttons are omitted to keep the message manageable.
+
+    Args:
+        changes:          List of Change rows (1–5 recommended; truncated at 5).
+        integration_name: Display name of the integration.
+        provider:         Provider string.
+        base_url:         ConfigTrace frontend base URL.
+
+    Returns:
+        List of Slack block dicts.
+    """
+    n = len(changes)
+    has_critical = any(_s(_get(c, "risk_level")) == "critical" for c in changes)
+    risk_word = "critical" if has_critical else "high-risk"
+
+    header_text = (
+        f"🔔 *{n} {risk_word} configuration changes detected*\n"
+        f"_{integration_name}_ · {provider}"
+    )
+
+    blocks: list[dict] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": header_text}},
+        {"type": "divider"},
+    ]
+
+    for c in changes[:5]:
+        risk_level = _s(_get(c, "risk_level")) or "unknown"
+        emoji = _RISK_EMOJI.get(risk_level, "⚪")
+        record_id = _s(_get(c, "record_identifier")) or "unknown"
+        field_path = _s(_get(c, "field_path")) or ""
+        risk_reason = _s(_get(c, "risk_reason")) or ""
+        change_id = str(_get(c, "id") or "")
+
+        line = f"{emoji} *{record_id}*"
+        if field_path:
+            line += f" — `{field_path}`"
+        if risk_reason:
+            line += f"\n  _{risk_reason}_"
+
+        url_text = f" <{base_url}/changes/{change_id}|View>"
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": line + url_text},
+        })
+
+    if n > 5:
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"_…and {n - 5} more change(s)._"},
+        })
+
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"<{base_url}|Open ConfigTrace> to review and triage all changes.",
+        },
+    })
+
+    return blocks
+
+
+def send_interactive_message(
+    bot_token: str,
+    channel_id: str,
+    blocks: list[dict],
+    fallback_text: str,
+) -> None:
+    """Send a Block Kit message to a Slack channel.
+
+    Args:
+        bot_token:     Plaintext Slack bot token.  NEVER log this value.
+        channel_id:    Slack channel ID.
+        blocks:        Block Kit blocks list.
+        fallback_text: Plain-text fallback (shown in notifications / old clients).
+
+    Raises:
+        RuntimeError: On Slack API error or network failure.
+    """
+    payload = {
+        "channel": channel_id,
+        "text": fallback_text,
+        "blocks": blocks,
+    }
+    try:
+        with httpx.Client(timeout=_REQUEST_TIMEOUT) as client:
+            resp = client.post(
+                f"{_SLACK_API_BASE}/chat.postMessage",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {bot_token}",
+                    "Content-Type": "application/json",
+                },
+            )
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"Network error sending Slack message: {exc}") from exc
+
+    if not resp.is_success:
+        raise RuntimeError(
+            f"Slack API error sending interactive message (HTTP {resp.status_code})."
+        )
+
+    body = resp.json()
+    if not body.get("ok"):
+        error_code = body.get("error", "unknown_error")
+        raise RuntimeError(f"Slack chat.postMessage error: {error_code}")
+
+
+def dispatch_alert_message(
+    *,
+    bot_token: str,
+    channel_id: str,
+    changes: list[Any],
+    integration_name: str,
+    provider: str,
+    fallback_text: str,
+    base_url: str,
+) -> None:
+    """Dispatch an interactive Slack alert for one or more changes.
+
+    Routing:
+    - 1 change:    Full interactive blocks with action buttons.
+    - 2–5 changes: Summary blocks (no per-change buttons).
+    - >5 changes:  Plain text fallback (send_message).
+
+    Args:
+        bot_token:        Plaintext Slack bot token.  NEVER log.
+        channel_id:       Slack channel ID.
+        changes:          List of qualifying Change rows.
+        integration_name: Display name of the integration.
+        provider:         Provider string.
+        fallback_text:    Plain-text fallback text.
+        base_url:         ConfigTrace frontend base URL.
+
+    Raises:
+        RuntimeError: On Slack API error.
+    """
+    n = len(changes)
+
+    if n == 1:
+        blocks = compose_alert_blocks(
+            change=changes[0],
+            integration_name=integration_name,
+            provider=provider,
+            base_url=base_url,
+        )
+        send_interactive_message(bot_token, channel_id, blocks, fallback_text)
+    elif n <= 5:
+        blocks = compose_multi_alert_blocks(
+            changes=changes,
+            integration_name=integration_name,
+            provider=provider,
+            base_url=base_url,
+        )
+        send_interactive_message(bot_token, channel_id, blocks, fallback_text)
+    else:
+        # >5 changes — fall back to plain text
+        send_message(bot_token, channel_id, fallback_text)
+
+
+# ── Workspace lookup by Slack team_id ────────────────────────────────────────
+
+def get_workspace_by_team_id(
+    team_id: str,
+    db: Session,
+) -> "uuid.UUID | None":
+    """Return the workspace_id that has this Slack team installed, or None.
+
+    Used by the actions endpoint to authenticate incoming action payloads.
+
+    Args:
+        team_id: Slack team/workspace ID from the action payload.
+        db:      Active SQLAlchemy session.
+
+    Returns:
+        Workspace UUID if found, else None.
+    """
+    row = (
+        db.query(WorkspaceNotificationSettings)
+        .filter(
+            WorkspaceNotificationSettings.slack_team_id == team_id,
+            WorkspaceNotificationSettings.slack_bot_token_encrypted.isnot(None),
+        )
+        .first()
+    )
+    if row is None:
+        return None
+    return row.workspace_id
+
+
+def get_change_for_workspace(
+    change_id_str: str,
+    workspace_id: "uuid.UUID",
+    db: Session,
+) -> "Any | None":
+    """Look up a Change and verify it belongs to the given workspace.
+
+    Returns the Change row if found and workspace-verified, else None.
+
+    Security: workspace scope is verified by joining Change → Integration.
+    """
+    from app.models.change import Change
+    from app.models.integration import Integration
+
+    try:
+        change_id = uuid.UUID(change_id_str)
+    except (ValueError, AttributeError):
+        return None
+
+    return (
+        db.query(Change)
+        .join(Integration, Change.integration_id == Integration.id)
+        .filter(
+            Change.id == change_id,
+            Integration.workspace_id == workspace_id,
+        )
+        .first()
+    )
+
+
+# ── Slack action handlers ─────────────────────────────────────────────────────
+
+def acknowledge_change_from_slack(
+    change_id_str: str,
+    workspace_id: "uuid.UUID",
+    slack_user_id: str,
+    db: Session,
+) -> str:
+    """Acknowledge a change from a Slack button action.
+
+    Uses the workspace installer's ConfigTrace user ID as the actor.  The
+    note records the Slack user ID so the action is attributable.
+
+    This only updates ConfigTrace review state — no provider changes are made.
+
+    Args:
+        change_id_str: String UUID of the change.
+        workspace_id:  Workspace UUID (derived from Slack team_id).
+        slack_user_id: Slack user ID of the person who clicked the button.
+        db:            Active SQLAlchemy session.
+
+    Returns:
+        Human-readable status string for the Slack response.
+
+    Raises:
+        RuntimeError: If the change is not found or the action fails.
+    """
+    from app.services.change_review_service import acknowledge_change
+
+    change = get_change_for_workspace(change_id_str, workspace_id, db)
+    if change is None:
+        raise RuntimeError("Change not found or does not belong to this workspace.")
+
+    actor_user_id = _get_actor_user_id(workspace_id, change, db)
+    note = f"Acknowledged from Slack by {slack_user_id}."
+
+    acknowledge_change(change, actor_user_id, db, note=note)
+    logger.info(
+        "slack_actions: acknowledged  change=%s  slack_user=%s",
+        change_id_str,
+        slack_user_id,
+    )
+    return "✓ Acknowledged in ConfigTrace."
+
+
+def snooze_change_from_slack(
+    change_id_str: str,
+    workspace_id: "uuid.UUID",
+    slack_user_id: str,
+    db: Session,
+    *,
+    hours: int = 24,
+) -> str:
+    """Snooze a change from a Slack button action.
+
+    This only updates ConfigTrace review state — no provider changes are made.
+
+    Args:
+        change_id_str: String UUID of the change.
+        workspace_id:  Workspace UUID (derived from Slack team_id).
+        slack_user_id: Slack user ID of the person who clicked the button.
+        db:            Active SQLAlchemy session.
+        hours:         Number of hours to snooze (default: 24).
+
+    Returns:
+        Human-readable status string for the Slack response.
+
+    Raises:
+        RuntimeError: If the change is not found or the action fails.
+    """
+    from datetime import timedelta
+    from app.services.change_review_service import snooze_change
+
+    change = get_change_for_workspace(change_id_str, workspace_id, db)
+    if change is None:
+        raise RuntimeError("Change not found or does not belong to this workspace.")
+
+    actor_user_id = _get_actor_user_id(workspace_id, change, db)
+    reason = f"Snoozed for {hours}h from Slack by {slack_user_id}."
+    until = datetime.now(timezone.utc) + timedelta(hours=hours)
+
+    snooze_change(change, actor_user_id, db, until=until, reason=reason)
+    logger.info(
+        "slack_actions: snoozed  change=%s  hours=%d  slack_user=%s",
+        change_id_str,
+        hours,
+        slack_user_id,
+    )
+    return f"⏸ Snoozed for {hours} hours in ConfigTrace."
+
+
+def _get_actor_user_id(
+    workspace_id: "uuid.UUID",
+    change: "Any",
+    db: Session,
+) -> "uuid.UUID":
+    """Derive a ConfigTrace user ID to use as the actor for Slack actions.
+
+    Preference order:
+    1. The user who installed the Slack App (stored in notification settings).
+    2. The Change's own user_id (change creator / owner).
+
+    This avoids creating fake/synthetic user IDs.  The review note always
+    records the Slack user ID for attribution.
+    """
+    from app.services.notification_service import get_or_create_notification_settings
+
+    try:
+        row = get_or_create_notification_settings(workspace_id, db)
+        installer_id = getattr(row, "slack_installed_by_user_id", None)
+        if installer_id is not None:
+            return installer_id
+    except Exception:
+        pass
+
+    # Fallback: change owner
+    return change.user_id
+
+
+# ── Interactive action router ─────────────────────────────────────────────────
+
+def handle_action(payload: dict, db: Session) -> dict:
+    """Route an incoming Slack interactive action to the appropriate handler.
+
+    Called by ``POST /slack/actions`` after signature verification.
+
+    Validates:
+    - team_id maps to an installed workspace
+    - change_id belongs to that workspace
+    - action_id is a known safe action
+
+    Returns a dict suitable for a Slack response body (200 OK):
+    ``{"response_type": "ephemeral", "text": "..."}``
+    or ``{"response_type": "in_channel", "replace_original": False, "text": "..."}``
+
+    Never raises — always returns a safe response.  Errors are surfaced as
+    user-facing ephemeral messages.
+    """
+    try:
+        team_id: str = (payload.get("team") or {}).get("id", "")
+        slack_user_id: str = (payload.get("user") or {}).get("id", "unknown")
+        actions: list = payload.get("actions") or []
+
+        if not actions:
+            return _ephemeral("No action found in payload.")
+
+        action = actions[0]
+        action_id: str = action.get("action_id", "")
+        raw_value: str = action.get("value", "")
+
+        # ── Skip URL-only buttons (no server-side action needed) ────────────
+        if action_id in (ACTION_OPEN_CHANGE, ACTION_VIEW_REMEDIATION):
+            # These are link buttons — Slack sends the event but no action needed.
+            return _ephemeral("Opening in ConfigTrace…")
+
+        # ── Validate team → workspace ────────────────────────────────────────
+        if not team_id:
+            return _ephemeral("Could not process action: missing team context.")
+
+        workspace_id = get_workspace_by_team_id(team_id, db)
+        if workspace_id is None:
+            logger.warning(
+                "slack_actions: unknown team_id=%s — no installation found",
+                team_id,
+            )
+            return _ephemeral(
+                "ConfigTrace could not complete this action. "
+                "The Slack App may no longer be installed in this workspace."
+            )
+
+        # ── Parse action value ───────────────────────────────────────────────
+        try:
+            value_obj = json.loads(raw_value)
+            change_id_str = str(value_obj.get("change_id", ""))
+        except (json.JSONDecodeError, AttributeError):
+            return _ephemeral("Could not complete this action. Please open ConfigTrace.")
+
+        if not change_id_str:
+            return _ephemeral("Could not complete this action. Please open ConfigTrace.")
+
+        # ── Route to handler ─────────────────────────────────────────────────
+        if action_id == ACTION_ACKNOWLEDGE:
+            msg = acknowledge_change_from_slack(
+                change_id_str, workspace_id, slack_user_id, db
+            )
+            return _ephemeral(msg)
+
+        elif action_id == ACTION_SNOOZE_24H:
+            msg = snooze_change_from_slack(
+                change_id_str, workspace_id, slack_user_id, db, hours=24
+            )
+            return _ephemeral(msg)
+
+        else:
+            logger.warning(
+                "slack_actions: unknown action_id=%r  team=%s",
+                action_id,
+                team_id,
+            )
+            return _ephemeral("Unknown action. Please open ConfigTrace.")
+
+    except RuntimeError as exc:
+        # Safe user-facing error (e.g. change not found, workspace mismatch).
+        logger.warning(
+            "slack_actions: action failed  error=%r",
+            str(exc)[:200],
+        )
+        return _ephemeral(
+            f"ConfigTrace could not complete this action: {exc} "
+            "Open the change in ConfigTrace to take action."
+        )
+    except Exception as exc:
+        # Unexpected error — log type only, not message (may contain PII).
+        logger.error(
+            "slack_actions: unexpected error  error_type=%r",
+            type(exc).__name__,
+        )
+        return _ephemeral(
+            "An unexpected error occurred. "
+            "Open the change in ConfigTrace to take action."
+        )
+
+
+def _ephemeral(text: str) -> dict:
+    """Return a Slack ephemeral response body."""
+    return {"response_type": "ephemeral", "text": text}
+
+
+# ── Private helper ─────────────────────────────────────────────────────────────
+
+def _get(obj: Any, key: str) -> Any:
+    """Return obj[key] for dicts, or getattr(obj, key, None) for objects."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _s(value: Any) -> str:
+    """Safely coerce to lowercase string; returns '' for non-strings."""
+    return value.lower() if isinstance(value, str) else ""

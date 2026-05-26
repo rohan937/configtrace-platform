@@ -128,6 +128,12 @@ class Settings(BaseSettings):
     # NEVER log or expose this value.
     SLACK_APP_STATE_SECRET: Optional[str] = None
 
+    # Slack App signing secret — used to verify incoming Slack interactive action
+    # payloads (POST /slack/actions).
+    # Find it in api.slack.com → Your App → Basic Information → Signing Secret.
+    # NEVER log or expose this value.
+    SLACK_SIGNING_SECRET: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         # Ignore extra env vars passed by Docker Compose (POSTGRES_*, etc.)
