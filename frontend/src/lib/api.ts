@@ -351,6 +351,24 @@ export async function getChange(
   return apiFetch(`/changes/${changeId}`, { token });
 }
 
+// ── M57.3: Needs Review queue ─────────────────────────────────────────────────
+
+export interface GetNeedsReviewParams {
+  page?: number;
+  page_size?: number;
+}
+
+/**
+ * Fetch the "Needs Review" queue — changes with no review row, status=needs_review,
+ * or an expired snooze.  Uses pre-DB filtering so page counts are accurate.
+ */
+export async function getNeedsReviewChanges(
+  params: GetNeedsReviewParams = {},
+  token?: string | null,
+): Promise<PaginatedResponse<ChangeListItem>> {
+  return apiFetch(`/changes/needs-review${buildQuery(params)}`, { token });
+}
+
 // ── M57.2: Change review actions ──────────────────────────────────────────────
 
 export async function acknowledgeChange(

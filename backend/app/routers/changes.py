@@ -1,8 +1,9 @@
-"""Changes router — Milestone 11 / M57.2.
+"""Changes router — Milestone 11 / M57.2 / M57.3.
 
 Routes
 ------
 GET  /changes                       — paginated, filtered change timeline
+GET  /changes/needs-review          — pre-DB-filtered "Needs Review" queue (M57.3)
 GET  /changes/{change_id}           — single change with full snapshot context
 
 M57.2 review actions (workspace-member RBAC):
@@ -106,6 +107,64 @@ def _get_change_and_workspace(change_id, current_user, db):
         raise HTTPException(status_code=404, detail="Change not found.")
 
     return change, workspace_id
+
+
+# ── GET needs-review (M57.3) ──────────────────────────────────────────────────
+
+
+@router.get("/needs-review", response_model=ChangeListResponse)
+def list_needs_review_changes(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChangeListResponse:
+    """Return a paginated list of changes that need review.
+
+    A change needs review when:
+    - It has no ChangeReview row (never reviewed), OR
+    - Its review_status is 'needs_review', OR
+    - Its review_status was 'snoozed' but the snooze has now expired.
+
+    Unlike the M57.2 post-pagination review_status filter on GET /changes,
+    this endpoint uses a pre-DB LEFT JOIN so the total count is accurate and
+    pagination is correct across all pages.
+
+    Results are ordered by ``created_at DESC`` (most-urgent first).
+    """
+    items, total = changes_service.get_needs_review_changes(
+        user_id=current_user.id,
+        db=db,
+        page=page,
+        page_size=page_size,
+    )
+
+    change_ids = [c.id for c in items]
+    reviews = change_review_service.get_reviews_for_changes(change_ids, db)
+
+    return ChangeListResponse(
+        items=[
+            ChangeListItem(
+                id=c.id,
+                integration_id=c.integration_id,
+                resource_id=c.resource_id,
+                change_type=c.change_type,
+                record_identifier=c.record_identifier,
+                field_path=c.field_path,
+                prev_value=c.prev_value,
+                new_value=c.new_value,
+                risk_level=c.risk_level,
+                risk_reason=c.risk_reason,
+                provider_metadata=c.provider_metadata,
+                created_at=c.created_at,
+                review=_review_info(reviews.get(c.id)),
+            )
+            for c in items
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 # ── GET list ──────────────────────────────────────────────────────────────────

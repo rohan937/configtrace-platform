@@ -391,6 +391,16 @@ export interface DashboardRecentFailedSync {
   last_failure_at: string | null;
 }
 
+/** M57.3: Review queue counts embedded in the dashboard summary. */
+export interface ReviewQueueCounts {
+  /** Total changes needing review (no row, or status=needs_review, or expired snooze). */
+  total: number;
+  /** Critical-risk changes needing review. */
+  critical: number;
+  /** High-risk changes needing review. */
+  high: number;
+}
+
 export interface DashboardSummary {
   integration_health: IntegrationHealthCounts;
   resource_counts: ResourceCounts;
@@ -400,6 +410,25 @@ export interface DashboardSummary {
   recent_high_critical_changes: DashboardRecentChange[];
   recent_failed_syncs: DashboardRecentFailedSync[];
   last_updated_at: string;
+  /** M57.3: review queue counts. */
+  review_queue: ReviewQueueCounts;
+}
+
+// ── M57.3: Snooze rules ───────────────────────────────────────────────────────
+
+export interface ChangeSnoozeRule {
+  id: string;
+  workspace_id: string;
+  integration_id: string;
+  record_identifier_pattern: string | null;
+  field_path: string | null;
+  risk_level: string | null;
+  snoozed_until: string;  // ISO 8601
+  reason: string | null;
+  created_by_user_id: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 // ── User settings (M34) ───────────────────────────────────────────────────────
