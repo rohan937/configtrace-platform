@@ -269,7 +269,7 @@ export default function ResourcesPage() {
         {loading && <LoadingState />}
         {!loading && error && <ErrorState message={error} />}
 
-        {/* ── No integrations empty state ───────────────────────────── */}
+        {/* ── No resources empty state ──────────────────────────────── */}
         {!loading && !error && total === 0 && (
           <div
             style={{
@@ -288,18 +288,28 @@ export default function ResourcesPage() {
                 color: "#e8eaf0",
               }}
             >
-              Connect your first provider
+              No resources yet
             </p>
             <p
               style={{
-                margin: "0 0 20px",
+                margin: "0 0 6px",
                 fontSize: "13px",
                 color: "#8b90a0",
                 lineHeight: 1.6,
               }}
             >
-              Start monitoring AWS, Firebase, Supabase, Stripe, GitHub,
-              Cloudflare, Vercel, or Shopify configuration.
+              Resources are populated from your first sync with a connected provider.
+            </p>
+            <p
+              style={{
+                margin: "0 0 20px",
+                fontSize: "12px",
+                color: "#565b6e",
+                lineHeight: 1.6,
+              }}
+            >
+              Connect a provider and run a sync to start monitoring AWS, Firebase,
+              Supabase, Stripe, GitHub, Cloudflare, Vercel, or Shopify configuration.
             </p>
             <Link
               href="/integrations"

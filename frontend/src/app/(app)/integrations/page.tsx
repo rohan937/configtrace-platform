@@ -685,6 +685,47 @@ export default function IntegrationsPage() {
           customer data, secret values, table rows, documents, or file contents.
         </p>
 
+        {/* ── First-connection guidance ──────────────────────────────────── */}
+        {!loading && !error && total === 0 && !showForm && (
+          <div
+            role="note"
+            style={{
+              background: "rgba(79,128,247,0.06)",
+              border: "1px solid rgba(79,128,247,0.20)",
+              borderRadius: "8px",
+              padding: "14px 18px",
+              marginBottom: "20px",
+            }}
+          >
+            <p
+              style={{
+                margin: "0 0 6px",
+                fontSize: "14px",
+                fontWeight: 600,
+                color: "#e8eaf0",
+              }}
+            >
+              Connect your first provider
+            </p>
+            <p
+              style={{
+                margin: "0 0 10px",
+                fontSize: "13px",
+                color: "#8b90a0",
+                lineHeight: 1.6,
+              }}
+            >
+              Choose a provider below. The first sync establishes a baseline snapshot —
+              no changes are flagged on that run. From the second sync onwards, ConfigTrace
+              shows exactly what changed and rates each change by risk level.
+            </p>
+            <p style={{ margin: 0, fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
+              <strong style={{ color: "#b0b5c4" }}>Good starting points:</strong>
+              {" "}GitHub (branch protection · secrets), Cloudflare (DNS drift), or Vercel (env vars · domains).
+            </p>
+          </div>
+        )}
+
         {/* ── Marketplace grid OR form panel ────────────────────────────── */}
         {!showForm ? (
           /* ── Provider marketplace ───────────────────────────────────── */

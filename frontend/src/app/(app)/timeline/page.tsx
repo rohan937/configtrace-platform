@@ -628,7 +628,7 @@ function TimelineContent() {
             emptyDescription={
               hasFilters
                 ? "Try clearing the filters or widening the time range. For unresolved high-risk items, check Needs Review."
-                : "Connect a provider and run a sync to start building your security change history. Changes appear from the second sync onwards when records differ from the baseline."
+                : "Changes appear after two syncs — the first creates a baseline, the second detects drift. Connect a provider in Integrations to get started."
             }
           />
         )}

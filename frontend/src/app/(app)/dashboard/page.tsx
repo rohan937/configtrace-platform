@@ -116,26 +116,42 @@ function providerLabel(provider: string | null | undefined): string {
   }
 }
 
-// ── Onboarding panel ──────────────────────────────────────────────────────────
+// ── Activation progress panel ─────────────────────────────────────────────────
+//
+// Shows in three pre-operational states:
+//   doneCount = 0 → no integrations connected
+//   doneCount = 1 → has integrations, waiting for first sync / no resources yet
+//   doneCount = 2 → baseline established, waiting for second sync to detect changes
 
-interface OnboardingStep {
-  num: number;
-  label: string;
-  body: string;
-  done?: boolean;
-}
+const ACTIVATION_STEPS: { label: string; body: string }[] = [
+  {
+    label: "Connect a provider",
+    body:  "Link AWS, GitHub, Cloudflare, Vercel, Stripe, Firebase, Supabase, or Shopify. ConfigTrace monitors configuration metadata — not source code, secret values, or customer data.",
+  },
+  {
+    label: "Run your first sync",
+    body:  "The first sync captures a baseline snapshot of your current configuration. Nothing is flagged as a change on this run — it establishes the comparison point.",
+  },
+  {
+    label: "See your first change",
+    body:  "From the second sync onwards, ConfigTrace compares snapshots and surfaces exactly what changed, when, and what the risk score is.",
+  },
+];
 
-function OnboardingPanel({
-  steps,
-  actionLabel,
-  actionHref,
-  note,
-}: {
-  steps: OnboardingStep[];
-  actionLabel: string;
-  actionHref: string;
-  note?: string;
-}) {
+const ACTIVATION_HEADING = [
+  "Start monitoring your first configuration surface.",
+  "Ready for your first sync.",
+  "Baseline captured — sync again to detect configuration drift.",
+] as const;
+
+const ACTIVATION_CTA: Array<{ label: string; href: string }> = [
+  { label: "Connect an integration →", href: "/integrations" },
+  { label: "Go to Integrations →",     href: "/integrations" },
+  { label: "Browse your resources →",  href: "/resources"    },
+];
+
+function ActivationPanel({ doneCount }: { doneCount: 0 | 1 | 2 }) {
+  const cta = ACTIVATION_CTA[doneCount];
   return (
     <div style={CARD}>
       <p
@@ -147,52 +163,66 @@ function OnboardingPanel({
           lineHeight: 1.4,
         }}
       >
-        Start monitoring your first configuration surface.
+        {ACTIVATION_HEADING[doneCount]}
       </p>
-      <div
-        style={{ display: "flex", flexDirection: "column", gap: "14px", marginBottom: "24px" }}
-      >
-        {steps.map((step) => (
-          <div key={step.num} style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
-            <div
-              style={{
-                flexShrink: 0,
-                width: "22px",
-                height: "22px",
-                borderRadius: "50%",
-                background: step.done ? "#4f80f7" : "#1e2030",
-                border: step.done ? "none" : "1px solid #3a3d4a",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "11px",
-                fontWeight: 700,
-                color: step.done ? "#ffffff" : "#565b6e",
-                marginTop: "1px",
-              }}
-            >
-              {step.done ? "✓" : step.num}
-            </div>
-            <div>
-              <p
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "14px", marginBottom: "24px" }}>
+        {ACTIVATION_STEPS.map((step, i) => {
+          const done    = i < doneCount;
+          const current = i === doneCount;
+          return (
+            <div key={step.label} style={{ display: "flex", gap: "14px", alignItems: "flex-start" }}>
+              {/* Step indicator */}
+              <div
                 style={{
-                  margin: "0 0 2px",
-                  fontSize: "13px",
-                  fontWeight: 500,
-                  color: step.done ? "#8b90a0" : "#e8eaf0",
+                  flexShrink: 0,
+                  width: "22px",
+                  height: "22px",
+                  borderRadius: "50%",
+                  background: done ? "#3ccf7e" : current ? "#4f80f7" : "#1e2030",
+                  border: (done || current) ? "none" : "1px solid #3a3d4a",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  color: (done || current) ? "#ffffff" : "#565b6e",
+                  marginTop: "1px",
                 }}
               >
-                {step.label}
-              </p>
-              <p style={{ margin: 0, fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-                {step.body}
-              </p>
+                {done ? "✓" : i + 1}
+              </div>
+
+              {/* Step content */}
+              <div>
+                <p
+                  style={{
+                    margin: "0 0 2px",
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    color: done ? "#565b6e" : current ? "#e8eaf0" : "#8b90a0",
+                  }}
+                >
+                  {step.label}
+                </p>
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: "12px",
+                    color: done ? "#3a3d4a" : "#565b6e",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {step.body}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
+
       <Link
-        href={actionHref}
+        href={cta.href}
         style={{
           display: "inline-block",
           background: "#4f80f7",
@@ -204,13 +234,19 @@ function OnboardingPanel({
           fontWeight: 500,
         }}
       >
-        {actionLabel}
+        {cta.label}
       </Link>
-      {note && (
-        <p style={{ margin: "16px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-          {note}
-        </p>
-      )}
+
+      <p style={{ margin: "14px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
+        High-risk and critical changes trigger email alerts automatically.
+        ConfigTrace reads configuration metadata only — never source code, secret values, or customer data.{" "}
+        <Link
+          href="/settings/workspace/data-access"
+          style={{ color: "#4f80f7", textDecoration: "none" }}
+        >
+          Data access policy →
+        </Link>
+      </p>
     </div>
   );
 }
@@ -681,13 +717,47 @@ function ChecklistCard({ summary }: { summary: DashboardSummary }) {
     <Card>
       <SectionLabel>What to check next</SectionLabel>
       {items.length === 0 ? (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span aria-hidden="true" style={{ color: "#3ccf7e", fontSize: "13px" }}>
-            ✓
-          </span>
-          <span style={{ fontSize: "13px", color: "#8b90a0" }}>
-            No immediate actions — all clear.
-          </span>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
+            <span aria-hidden="true" style={{ color: "#3ccf7e", fontSize: "13px" }}>
+              ✓
+            </span>
+            <span style={{ fontSize: "13px", color: "#8b90a0" }}>
+              No immediate actions — all clear.
+            </span>
+          </div>
+          <p
+            style={{
+              margin: "0 0 8px",
+              fontSize: "10px",
+              color: "#3a3d4a",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+            }}
+          >
+            Suggested
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
+            <Link
+              href="/settings/workspace/notifications"
+              style={{ fontSize: "12px", color: "#565b6e", textDecoration: "none" }}
+            >
+              → Configure Slack or webhook alerts
+            </Link>
+            <Link
+              href="/settings/workspace/data-access"
+              style={{ fontSize: "12px", color: "#565b6e", textDecoration: "none" }}
+            >
+              → Review data access policy
+            </Link>
+            <Link
+              href="/settings/workspace/members"
+              style={{ fontSize: "12px", color: "#565b6e", textDecoration: "none" }}
+            >
+              → Invite a teammate
+            </Link>
+          </div>
         </div>
       ) : (
         <div
@@ -1027,9 +1097,16 @@ export default function DashboardPage() {
   });
 
   // ── Derived state ─────────────────────────────────────────────────────────
-  const ih = summary?.integration_health;
-  const noIntegrations = !loading && !error && summary && ih?.total === 0;
-  const hasData = !loading && !error && summary && (ih?.total ?? 0) > 0;
+  const ih                = summary?.integration_health;
+  const totalIntegrations = ih?.total ?? 0;
+  const totalResources    = summary?.resource_counts.active ?? 0;
+  const totalChanges      = summary?.change_activity.total ?? 0;
+  // Pre-operational activation phases
+  const noIntegrations = !loading && !error && !!summary && totalIntegrations === 0;
+  const isSyncPending  = !loading && !error && !!summary && totalIntegrations > 0 && totalResources === 0;
+  const isBaselineOnly = !loading && !error && !!summary && totalResources > 0 && totalChanges === 0;
+  // Operational state — changes detected
+  const hasData        = !loading && !error && !!summary && totalChanges > 0;
 
   return (
     <>
@@ -1109,30 +1186,18 @@ export default function DashboardPage() {
         {loading && <LoadingState />}
         {!loading && error && <ErrorState message={error} />}
 
-        {/* ── Onboarding ───────────────────────────────────────────────── */}
-        {noIntegrations && (
-          <OnboardingPanel
-            steps={[
-              {
-                num: 1,
-                label: "Connect a provider",
-                body: "Add an integration — ConfigTrace supports Cloudflare, GitHub, Vercel, Stripe, AWS, Firebase, Supabase, and Shopify. It monitors configuration drift, not code.",
-              },
-              {
-                num: 2,
-                label: "Create a baseline",
-                body: "The first sync snapshots your current configuration. Nothing is flagged as changed on this run — it establishes the comparison point.",
-              },
-              {
-                num: 3,
-                label: "Track changes automatically",
-                body: "ConfigTrace syncs on your chosen schedule and surfaces exactly what changed and how risky each change is.",
-              },
-            ]}
-            actionLabel="Connect an integration →"
-            actionHref="/integrations"
-            note="High-risk and critical changes trigger email alerts automatically."
-          />
+        {/* ── Activation progress (pre-operational states) ─────────────── */}
+        {noIntegrations && <ActivationPanel doneCount={0} />}
+        {isSyncPending  && <ActivationPanel doneCount={1} />}
+        {isBaselineOnly && (
+          <>
+            <ActivationPanel doneCount={2} />
+            {summary && (
+              <div style={{ marginTop: "16px" }}>
+                <ConnectedProvidersCard distribution={summary.provider_distribution} />
+              </div>
+            )}
+          </>
         )}
 
         {/* ── Security command center ───────────────────────────────────── */}

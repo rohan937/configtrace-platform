@@ -717,30 +717,31 @@ export default function NeedsReviewPage() {
               />
               <div>
                 <p style={{ margin: "0 0 3px", fontSize: "13px", fontWeight: 600, color: "#3ccf7e" }}>
-                  Nothing needs review.
+                  All clear — nothing needs review.
                 </p>
                 <p style={{ margin: "0 0 14px", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-                  High and critical changes that need review will appear here. Low and medium
-                  changes are recorded in the Timeline but do not require review.
+                  High and critical configuration changes that need triage will appear here.
+                  Low and medium changes are recorded in the Timeline but do not require review.
+                  {" "}If you haven&apos;t connected a provider yet, start in Integrations.
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
                   <Link
-                    href="/timeline"
+                    href="/integrations"
                     style={{ fontSize: "12px", color: "#4f80f7", textDecoration: "none" }}
                   >
-                    View Timeline →
+                    Go to Integrations →
+                  </Link>
+                  <Link
+                    href="/timeline"
+                    style={{ fontSize: "12px", color: "#8b90a0", textDecoration: "none" }}
+                  >
+                    View Timeline
                   </Link>
                   <Link
                     href="/settings/workspace/notifications"
                     style={{ fontSize: "12px", color: "#8b90a0", textDecoration: "none" }}
                   >
-                    Check notification settings
-                  </Link>
-                  <Link
-                    href="/integrations"
-                    style={{ fontSize: "12px", color: "#8b90a0", textDecoration: "none" }}
-                  >
-                    Run a sync
+                    Notification settings
                   </Link>
                 </div>
               </div>
