@@ -30,6 +30,10 @@ import {
   getTimelineCategory,
 } from "@/lib/timeline";
 import { getProviderMeta } from "@/lib/providers";
+import {
+  getRemediationGuidance,
+  type RemediationGuidance,
+} from "@/lib/remediation";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -4866,6 +4870,360 @@ function ReviewPanel({ changeId, review, onReviewUpdated }: ReviewPanelProps) {
   );
 }
 
+// ── Remediation section ───────────────────────────────────────────────────────
+
+const CONFIDENCE_COLORS: Record<RemediationGuidance["confidence"], { bg: string; border: string; text: string; label: string }> = {
+  high:   { bg: "rgba(34,197,94,0.06)",  border: "rgba(34,197,94,0.22)",  text: "#22c55e", label: "High confidence" },
+  medium: { bg: "rgba(245,166,35,0.06)", border: "rgba(245,166,35,0.22)", text: "#f5a623", label: "Medium confidence" },
+  low:    { bg: "rgba(86,91,110,0.10)",  border: "#2a2d38",               text: "#8b90a0", label: "Low confidence"    },
+};
+
+function RemediationSection({ guidance }: { guidance: RemediationGuidance }) {
+  const conf = CONFIDENCE_COLORS[guidance.confidence];
+
+  return (
+    <section aria-labelledby="section-remediation">
+      <h2
+        id="section-remediation"
+        style={{
+          fontSize: "11px",
+          color: "#565b6e",
+          textTransform: "uppercase",
+          letterSpacing: "0.06em",
+          margin: "0 0 8px",
+          fontWeight: 500,
+        }}
+      >
+        Suggested remediation
+      </h2>
+
+      <Panel bg={conf.bg} border={conf.border}>
+        {/* Header row: title + confidence badge */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: "12px",
+            marginBottom: "10px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "14px",
+              fontWeight: 600,
+              color: "#e8eaf0",
+              margin: 0,
+              lineHeight: 1.4,
+            }}
+          >
+            {guidance.title}
+          </p>
+          <span
+            style={{
+              flexShrink: 0,
+              fontSize: "10px",
+              fontWeight: 600,
+              color: conf.text,
+              background: conf.bg,
+              border: `1px solid ${conf.border}`,
+              borderRadius: "4px",
+              padding: "2px 7px",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {conf.label}
+          </span>
+        </div>
+
+        {/* Summary */}
+        <p style={{ fontSize: "13px", color: "#b0b5c4", lineHeight: 1.6, margin: "0 0 14px" }}>
+          {guidance.summary}
+        </p>
+
+        {/* Why this helps */}
+        <div style={{ marginBottom: "14px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 5px",
+            }}
+          >
+            Why this helps
+          </p>
+          <p style={{ fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, margin: 0 }}>
+            {guidance.why_this_helps}
+          </p>
+        </div>
+
+        {/* Verify first */}
+        {guidance.verify_first.length > 0 && (
+          <div style={{ marginBottom: "14px" }}>
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                fontWeight: 500,
+                margin: "0 0 5px",
+              }}
+            >
+              Verify first
+            </p>
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }} role="list">
+              {guidance.verify_first.map((step, i) => (
+                <li
+                  key={i}
+                  style={{
+                    fontSize: "13px",
+                    color: "#8b90a0",
+                    lineHeight: 1.6,
+                    display: "flex",
+                    gap: "8px",
+                    marginBottom: i < guidance.verify_first.length - 1 ? "4px" : "0",
+                  }}
+                >
+                  <span aria-hidden="true" style={{ flexShrink: 0, color: "#565b6e", marginTop: "1px" }}>□</span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Manual steps */}
+        {guidance.manual_steps.length > 0 && (
+          <div style={{ marginBottom: "14px" }}>
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                fontWeight: 500,
+                margin: "0 0 5px",
+              }}
+            >
+              Steps to remediate
+            </p>
+            <ol style={{ margin: 0, padding: 0, listStyle: "none" }} role="list">
+              {guidance.manual_steps.map((step, i) => (
+                <li
+                  key={i}
+                  style={{
+                    fontSize: "13px",
+                    color: "#8b90a0",
+                    lineHeight: 1.6,
+                    display: "flex",
+                    gap: "8px",
+                    marginBottom: i < guidance.manual_steps.length - 1 ? "5px" : "0",
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      flexShrink: 0,
+                      width: "18px",
+                      fontSize: "11px",
+                      color: "#565b6e",
+                      fontVariantNumeric: "tabular-nums",
+                      marginTop: "2px",
+                    }}
+                  >
+                    {i + 1}.
+                  </span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
+
+        {/* Validation steps */}
+        {guidance.validation_steps.length > 0 && (
+          <div style={{ marginBottom: "14px" }}>
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                fontWeight: 500,
+                margin: "0 0 5px",
+              }}
+            >
+              How to confirm it worked
+            </p>
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }} role="list">
+              {guidance.validation_steps.map((step, i) => (
+                <li
+                  key={i}
+                  style={{
+                    fontSize: "13px",
+                    color: "#8b90a0",
+                    lineHeight: 1.6,
+                    display: "flex",
+                    gap: "8px",
+                    marginBottom: i < guidance.validation_steps.length - 1 ? "4px" : "0",
+                  }}
+                >
+                  <span aria-hidden="true" style={{ flexShrink: 0, color: "#22c55e", marginTop: "1px" }}>✓</span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Caveats */}
+        {guidance.caveats.length > 0 && (
+          <div style={{ marginBottom: "14px" }}>
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                fontWeight: 500,
+                margin: "0 0 5px",
+              }}
+            >
+              Caveats
+            </p>
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }} role="list">
+              {guidance.caveats.map((caveat, i) => (
+                <li
+                  key={i}
+                  style={{
+                    fontSize: "12px",
+                    color: "#8b90a0",
+                    lineHeight: 1.6,
+                    display: "flex",
+                    gap: "8px",
+                    marginBottom: i < guidance.caveats.length - 1 ? "4px" : "0",
+                  }}
+                >
+                  <span aria-hidden="true" style={{ flexShrink: 0, color: "#f5a623", marginTop: "1px" }}>⚠</span>
+                  <span>{caveat}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Provider console hint */}
+        {guidance.provider_console_hint && (
+          <div style={{ marginBottom: "14px" }}>
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                fontWeight: 500,
+                margin: "0 0 5px",
+              }}
+            >
+              Where to make this change
+            </p>
+            <p style={{ fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, margin: 0 }}>
+              {guidance.provider_console_hint}
+            </p>
+          </div>
+        )}
+
+        {/* Docs links */}
+        {guidance.docs_links.length > 0 && (
+          <div style={{ marginBottom: "14px" }}>
+            <p
+              style={{
+                fontSize: "11px",
+                color: "#565b6e",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+                fontWeight: 500,
+                margin: "0 0 5px",
+              }}
+            >
+              Reference docs
+            </p>
+            <ul style={{ margin: 0, padding: 0, listStyle: "none" }} role="list">
+              {guidance.docs_links.map((link, i) => (
+                <li key={i} style={{ marginBottom: "3px" }}>
+                  <a
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      fontSize: "12px",
+                      color: "#4f80f7",
+                      textDecoration: "none",
+                    }}
+                  >
+                    {link.label} ↗
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Footer: disclaimer + status badges */}
+        <div
+          style={{
+            marginTop: "14px",
+            paddingTop: "12px",
+            borderTop: `1px solid ${conf.border}`,
+          }}
+        >
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              lineHeight: 1.6,
+              margin: "0 0 8px",
+              fontStyle: "italic",
+            }}
+          >
+            This is read-only guidance — ConfigTrace does not modify your infrastructure. Always review the steps in the context of your environment before applying any change.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {(
+              [
+                { label: "Guidance only",                color: "#8b90a0", border: "#2a2d38" },
+                { label: "No write access required",     color: "#22c55e", border: "rgba(34,197,94,0.30)" },
+                { label: "One-click fix not enabled yet", color: "#565b6e", border: "#2a2d38" },
+              ] as const
+            ).map(({ label, color, border }) => (
+              <span
+                key={label}
+                style={{
+                  fontSize: "10px",
+                  color,
+                  border: `1px solid ${border}`,
+                  borderRadius: "4px",
+                  padding: "2px 7px",
+                  fontWeight: 500,
+                  letterSpacing: "0.03em",
+                }}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </Panel>
+    </section>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ChangeDetailPage() {
@@ -4977,6 +5335,7 @@ export default function ChangeDetailPage() {
   const summary       = getChangeSummary(change);
   const whyItMatters  = getWhyItMatters(change);
   const checks        = getSuggestedChecks(change);
+  const remediation   = getRemediationGuidance(change);
 
   // Non-Cloudflare providers show "Configuration added/removed" instead of "DNS record added/removed"
   const showConfigLabel = provider !== "cloudflare";
@@ -5239,6 +5598,11 @@ export default function ChangeDetailPage() {
               </ul>
             </Panel>
           </section>
+        )}
+
+        {/* ── Suggested remediation ───────────────────────────────────── */}
+        {remediation.available && (
+          <RemediationSection guidance={remediation} />
         )}
 
         {/* ── Raw configuration diff ──────────────────────────────────── */}

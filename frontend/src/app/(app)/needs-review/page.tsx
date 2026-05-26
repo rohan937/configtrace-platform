@@ -13,6 +13,7 @@ import {
 import { getTimelineProvider } from "@/lib/timeline";
 import { getProviderMeta } from "@/lib/providers";
 import { formatRelativeTime } from "@/lib/utils";
+import { getRemediationGuidance } from "@/lib/remediation";
 import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
@@ -374,6 +375,7 @@ interface ReviewRowProps {
 function ReviewRow({ change, token, onReviewed }: ReviewRowProps) {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [showSnooze, setShowSnooze] = useState(false);
+  const remediationResult = getRemediationGuidance(change);
 
   const handleAck = async () => {
     setLoadingAction("ack");
@@ -448,6 +450,27 @@ function ReviewRow({ change, token, onReviewed }: ReviewRowProps) {
           />
         </div>
       </div>
+      {/* Compact remediation hint — only shown when guidance is available */}
+      {remediationResult.available && (
+        <Link
+          href={`/changes/${change.id}`}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "5px 16px 5px 26px",
+            background: "rgba(79,128,247,0.04)",
+            borderBottom: "1px solid #2a2d38",
+            fontSize: "11px",
+            color: "#4f80f7",
+            textDecoration: "none",
+          }}
+        >
+          <span aria-hidden="true" style={{ fontSize: "10px" }}>✦</span>
+          <span>Suggested remediation available — view guidance</span>
+          <span aria-hidden="true" style={{ marginLeft: "auto", fontSize: "10px" }}>→</span>
+        </Link>
+      )}
     </>
   );
 }
