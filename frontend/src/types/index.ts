@@ -766,3 +766,27 @@ export interface WorkspaceBilling {
   limits: PlanLimits;
   usage: BillingUsage;
 }
+
+// ── M58.8: Change Notes ───────────────────────────────────────────────────────
+
+/** A single collaborative investigation note attached to a Change. */
+export interface ChangeNote {
+  id: string;
+  change_id: string;
+  workspace_id: string | null;
+  author_user_id: string | null;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Request body for POST /changes/{id}/notes. */
+export interface ChangeNoteCreate {
+  body: string;
+}
+
+/** Response from GET /changes/{id}/notes. */
+export interface ChangeNoteListResponse {
+  items: ChangeNote[];
+  total: number;
+}

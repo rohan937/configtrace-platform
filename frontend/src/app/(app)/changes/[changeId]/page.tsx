@@ -41,6 +41,9 @@ import {
   type RemediationPreview,
   type BeforeAfterItem,
 } from "@/lib/remediationPreview";
+import InvestigationTimeline from "@/components/investigation/InvestigationTimeline";
+import ChangeNotesPanel from "@/components/investigation/ChangeNotesPanel";
+import RelatedChangesPanel from "@/components/investigation/RelatedChangesPanel";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -6118,6 +6121,8 @@ export default function ChangeDetailPage() {
   const [error,   setError]   = useState<string | null>(null);
   // M57.2: review state (separate from change so it can be updated without reloading the full change)
   const [review, setReview] = useState<ChangeReviewResponse | null>(null);
+  // M58.8: token cached for investigation sub-components (notes, related changes)
+  const [cachedToken, setCachedToken] = useState<string | null>(null);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6130,6 +6135,7 @@ export default function ChangeDetailPage() {
     (async () => {
       try {
         const token = await getToken();
+        if (!cancelled) setCachedToken(token);
         const data = await getChange(changeId, token);
         if (!cancelled) {
           setChange(data);
@@ -6302,6 +6308,9 @@ export default function ChangeDetailPage() {
             <span style={{ color: "#8b90a0" }}>{changeTypeLabel(change.change_type)}</span>
           </div>
         </Panel>
+
+        {/* ── Investigation timeline (M58.8) ──────────────────────────── */}
+        <InvestigationTimeline change={change} review={review} />
 
         {/* ── Risk summary ────────────────────────────────────────────── */}
         <section aria-labelledby="section-risk">
@@ -6618,6 +6627,17 @@ export default function ChangeDetailPage() {
           changeId={change.id}
           review={review}
           onReviewUpdated={setReview}
+        />
+
+        {/* ── Team notes (M58.8) ───────────────────────────────────────── */}
+        <ChangeNotesPanel changeId={change.id} token={cachedToken} />
+
+        {/* ── Related changes (M58.8) ──────────────────────────────────── */}
+        <RelatedChangesPanel
+          currentChangeId={change.id}
+          integrationId={change.integration_id}
+          detectedAt={change.created_at}
+          token={cachedToken}
         />
 
         {/* ── Technical details (collapsed) ────────────────────────────── */}

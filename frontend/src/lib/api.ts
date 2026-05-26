@@ -979,3 +979,32 @@ export async function createPortalSession(
     token,
   });
 }
+
+// ── M58.8: Change Notes ───────────────────────────────────────────────────────
+
+/**
+ * List all investigation notes for a change (oldest first).
+ * Only workspace members may call this.
+ */
+export async function getChangeNotes(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").ChangeNoteListResponse> {
+  return apiFetch(`/changes/${changeId}/notes`, { token });
+}
+
+/**
+ * Add a team investigation note to a change.
+ * Body is plain text, max 2000 characters.
+ */
+export async function createChangeNote(
+  changeId: string,
+  body: string,
+  token?: string | null,
+): Promise<import("@/types").ChangeNote> {
+  return apiFetch(`/changes/${changeId}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+    token,
+  });
+}

@@ -51,8 +51,14 @@ from app.schemas.change_review import (
     ReopenRequest,
     SnoozeRequest,
 )
+from app.schemas.change_note import (
+    ChangeNoteCreate,
+    ChangeNoteListResponse,
+    ChangeNoteResponse,
+)
 from app.services import changes_service
 from app.services import change_review_service
+from app.services import change_note_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -413,3 +419,50 @@ def reopen_change(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return ChangeReviewResponse.model_validate(review)
+
+
+# ── Notes endpoints (M58.8) ───────────────────────────────────────────────────
+
+
+@router.get("/{change_id}/notes", response_model=ChangeNoteListResponse)
+def list_change_notes(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChangeNoteListResponse:
+    """Return all investigation notes for a change, oldest first.
+
+    Only workspace members may view notes (same RBAC as review actions).
+    """
+    _change, _ws = _get_change_and_workspace(change_id, current_user, db)
+    notes = change_note_service.list_notes(change_id=change_id, db=db)
+    return ChangeNoteListResponse(
+        items=[ChangeNoteResponse.model_validate(n) for n in notes],
+        total=len(notes),
+    )
+
+
+@router.post("/{change_id}/notes", response_model=ChangeNoteResponse, status_code=201)
+def create_change_note(
+    change_id: UUID4,
+    body: ChangeNoteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ChangeNoteResponse:
+    """Add a team investigation note to a change.
+
+    Only workspace members may add notes (same RBAC as review actions).
+    The note body is plain text, max 2000 characters.
+    """
+    _change, workspace_id = _get_change_and_workspace(change_id, current_user, db)
+    try:
+        note = change_note_service.create_note(
+            change_id=change_id,
+            workspace_id=workspace_id,
+            author_user_id=current_user.id,
+            body=body.body,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return ChangeNoteResponse.model_validate(note)
