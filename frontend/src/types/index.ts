@@ -1338,4 +1338,49 @@ export interface GitHubPrDraftResponse {
   next_step: string | null;
   /** Reason why the draft is unavailable (when available=false). */
   reason: string | null;
+  /** UUID of the IacRepository — populated in M58.21 for PR creation. */
+  iac_repository_id: string | null;
+}
+
+// ── M58.21: GitHub PR Creation ────────────────────────────────────────────────
+
+/** Request body for POST /changes/{id}/github-pr. */
+export interface GitHubPrCreateRequest {
+  /** Must be exactly "CREATE DRAFT PR" (case-sensitive). */
+  confirmation_phrase: string;
+  /** UUID of the target IacRepository. */
+  iac_repository_id: string;
+  /** Branch to base the PR off (e.g. "main"). */
+  target_base_branch: string;
+  /** Must be true when the fix has <PLACEHOLDER> values. */
+  acknowledge_placeholders: boolean;
+}
+
+/**
+ * Safety flags for the GitHub PR creation response.
+ * executes_terraform and mutates_provider_resource are permanently false.
+ */
+export interface GitHubPrCreateSafetyFlags {
+  /** Always false — Terraform is never executed. */
+  executes_terraform: false;
+  /** Always false — no cloud provider resources are mutated. */
+  mutates_provider_resource: false;
+  /** True when a draft PR was actually created. */
+  creates_draft_pr: boolean;
+}
+
+/** Full response for POST /changes/{id}/github-pr. */
+export interface GitHubPrCreateResponse {
+  success: boolean;
+  pr_url: string | null;
+  pr_number: number | null;
+  branch_name: string | null;
+  base_branch: string | null;
+  patch_file_path: string | null;
+  commit_sha: string | null;
+  safety: GitHubPrCreateSafetyFlags;
+  /** Human-readable error when success=false. */
+  error: string | null;
+  /** UUID of the audit record. */
+  suggestion_id: string | null;
 }

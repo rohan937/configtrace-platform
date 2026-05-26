@@ -1,4 +1,4 @@
-"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16 / M58.18 / M58.19 / M58.20.
+"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16 / M58.18 / M58.19 / M58.20 / M58.21.
 
 Routes
 ------
@@ -26,6 +26,9 @@ GET  /changes/{change_id}/terraform-fix-preview — advisory HCL diff preview (r
 
 M58.20 GitHub PR draft flow:
 GET  /changes/{change_id}/github-pr-draft — safe PR draft proposal (no repo mutations)
+
+M58.21 GitHub PR creation:
+POST /changes/{change_id}/github-pr — create an actual GitHub draft PR (admin+ only)
 
 Both GET routes now include an optional ``review`` field with the current
 review state.  When no review row exists ``review`` is None (treat as
@@ -79,6 +82,7 @@ from app.schemas.expected_change_window import ExpectedChangeMatchResponse
 from app.schemas.iac import IacContextResponse
 from app.schemas.terraform_fix import TerraformFixPreviewResponse
 from app.schemas.github_pr_draft import GitHubPrDraftResponse, GitHubPrDraftSafetyFlags
+from app.schemas.github_pr_create import GitHubPrCreateRequest, GitHubPrCreateResponse
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
@@ -89,6 +93,7 @@ from app.services import expected_change_service
 from app.services import iac_mapping_service
 from app.services import terraform_fix_suggestion_service
 from app.services import github_pr_draft_service
+from app.services import github_pr_creation_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -778,3 +783,68 @@ def get_github_pr_draft(
         workspace_id=workspace_id,
         db=db,
     )
+
+
+# ── GitHub PR creation (M58.21) ───────────────────────────────────────────────
+
+
+@router.post("/{change_id}/github-pr", response_model=GitHubPrCreateResponse, status_code=201)
+def create_github_pr(
+    change_id: UUID4,
+    body: GitHubPrCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitHubPrCreateResponse:
+    """Create an actual GitHub draft PR for a change.
+
+    This endpoint makes real GitHub repository mutations via the GitHub App:
+    1. Creates a new branch off ``target_base_branch``.
+    2. Creates a ``.configtrace/fix-{short_id}.md`` patch file on the branch.
+    3. Opens a GitHub draft pull request.
+    4. Persists an audit record.
+
+    PERMANENT SAFETY CONSTRAINTS:
+    - executes_terraform        is always False. Terraform is never executed.
+    - mutates_provider_resource is always False. No provider resources are mutated.
+
+    REQUIRED before this endpoint will succeed:
+    - ``confirmation_phrase`` must be exactly "CREATE DRAFT PR" (case-sensitive).
+    - Requester must be workspace admin or owner.
+    - Terraform fix preview (M58.19) must be available and not guided_only.
+    - IaC mapping confidence must be "medium" or "high".
+    - ``acknowledge_placeholders`` must be True if the fix has <PLACEHOLDER> values.
+    - The target IacRepository must have a GitHub App installation_id configured.
+    - ``GITHUB_APP_ID`` and ``GITHUB_APP_PRIVATE_KEY`` must be set.
+    - ``target_base_branch`` must not be empty.
+
+    Returns HTTP 201 with GitHubPrCreateResponse on success.
+    Returns GitHubPrCreateResponse(success=False, error=...) for GitHub API errors.
+    Returns HTTP 422 for validation failures.
+    Returns HTTP 403 for insufficient role.
+    Returns HTTP 404 if the change is not found or not accessible.
+    """
+    change, workspace_id = _get_change_and_workspace(change_id, current_user, db)
+
+    if workspace_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "GitHub PR creation requires a workspace-linked integration. "
+                "Register IaC repositories under Workspace → IaC Awareness settings."
+            ),
+        )
+
+    try:
+        return github_pr_creation_service.create_github_pr(
+            change_id=change_id,
+            workspace_id=workspace_id,
+            actor_user_id=current_user.id,
+            request=body,
+            db=db,
+        )
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Change not found.")
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))

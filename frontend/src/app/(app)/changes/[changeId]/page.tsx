@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, IacContextResponse, TerraformFixPreviewResponse, GitHubPrDraftResponse, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, IacContextResponse, TerraformFixPreviewResponse, GitHubPrDraftResponse, GitHubPrCreateResponse, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
 import {
   getChange,
   acknowledgeChange,
@@ -6575,10 +6575,12 @@ export default function ChangeDetailPage() {
           loading={terraformFixLoading}
         />
 
-        {/* ── GitHub PR Draft (M58.20) ──────────────────────────────────── */}
+        {/* ── GitHub PR Draft / PR Creation (M58.20 / M58.21) ─────────── */}
         <GitHubPrDraftPanel
           data={githubPrDraft}
           loading={githubPrDraftLoading}
+          changeId={changeId}
+          token={cachedToken}
         />
 
         {/* ── Policy Violations (M58.14) ───────────────────────────────── */}

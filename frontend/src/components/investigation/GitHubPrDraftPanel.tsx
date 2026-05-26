@@ -1,16 +1,16 @@
 "use client";
 
 /**
- * GitHubPrDraftPanel — M58.20.
+ * GitHubPrDraftPanel — M58.20 / M58.21.
  *
- * Displays a safe, read-only GitHub PR draft proposal derived from the
- * Terraform fix suggestion (M58.19).
+ * Displays a GitHub PR draft proposal derived from the Terraform fix suggestion
+ * (M58.19) and allows creating an actual GitHub draft PR (M58.21).
  *
  * PERMANENT CONSTRAINTS:
- * - Never shows an enabled "Open PR" or "Create Branch" button.
- * - Never makes GitHub write API calls.
  * - Always shows the safety disclaimer ("ConfigTrace has not changed...").
- * - "Open PR" CTA is permanently disabled in M58.20.
+ * - PR creation requires explicit "CREATE DRAFT PR" confirmation phrase.
+ * - executes_terraform is always False — Terraform is never executed.
+ * - mutates_provider_resource is always False — no provider resources are mutated.
  *
  * Supported copy actions:
  * - Copy PR body
@@ -20,7 +20,12 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { GitHubPrDraftResponse, GitHubPrDraftObject } from "@/types";
+import type {
+  GitHubPrDraftResponse,
+  GitHubPrDraftObject,
+  GitHubPrCreateResponse,
+} from "@/types";
+import { createChangeGitHubPr } from "@/lib/api";
 
 // ── Copy button ───────────────────────────────────────────────────────────────
 
@@ -157,10 +162,296 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ── PR creation form ──────────────────────────────────────────────────────────
+
+const _CONFIRM_PHRASE = "CREATE DRAFT PR";
+
+interface CreatePrFormProps {
+  changeId: string;
+  iacRepositoryId: string;
+  defaultBaseBranch: string;
+  hasPlaceholders: boolean;
+  token?: string | null;
+  onCreated: (result: GitHubPrCreateResponse) => void;
+}
+
+function CreatePrForm({
+  changeId,
+  iacRepositoryId,
+  defaultBaseBranch,
+  hasPlaceholders,
+  token,
+  onCreated,
+}: CreatePrFormProps) {
+  const [phrase, setPhrase] = useState("");
+  const [baseBranch, setBaseBranch] = useState(defaultBaseBranch);
+  const [ackPlaceholders, setAckPlaceholders] = useState(!hasPlaceholders);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSubmit =
+    phrase === _CONFIRM_PHRASE &&
+    baseBranch.trim() !== "" &&
+    (!hasPlaceholders || ackPlaceholders) &&
+    !loading;
+
+  async function handleCreate() {
+    if (!canSubmit) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await createChangeGitHubPr(
+        changeId,
+        {
+          confirmation_phrase: phrase,
+          iac_repository_id: iacRepositoryId,
+          target_base_branch: baseBranch.trim(),
+          acknowledge_placeholders: ackPlaceholders,
+        },
+        token,
+      );
+      if (result.success) {
+        onCreated(result);
+      } else {
+        setError(result.error ?? "PR creation failed. Please try again.");
+      }
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "An unexpected error occurred.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        marginTop: "14px",
+        padding: "14px 16px",
+        background: "#0e1120",
+        border: "1px solid #252a42",
+        borderRadius: "5px",
+      }}
+    >
+      <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#8b90a0", fontWeight: 600 }}>
+        Open Draft PR in GitHub
+      </p>
+
+      {/* Base branch */}
+      <div style={{ marginBottom: "10px" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "10px",
+            color: "#565b6e",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            marginBottom: "4px",
+            fontWeight: 600,
+          }}
+        >
+          Base branch
+        </label>
+        <input
+          type="text"
+          value={baseBranch}
+          onChange={(e) => setBaseBranch(e.target.value)}
+          placeholder="main"
+          style={{
+            width: "100%",
+            background: "#13151a",
+            border: "1px solid #2a2d38",
+            borderRadius: "4px",
+            padding: "5px 8px",
+            fontSize: "12px",
+            color: "#c4c8d4",
+            fontFamily: "monospace",
+            boxSizing: "border-box",
+          }}
+        />
+      </div>
+
+      {/* Placeholder acknowledgement (shown only when fix has placeholders) */}
+      {hasPlaceholders && (
+        <div
+          style={{
+            marginBottom: "10px",
+            padding: "8px 10px",
+            background: "#1c1508",
+            border: "1px solid #3d2e06",
+            borderRadius: "4px",
+          }}
+        >
+          <label
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "8px",
+              cursor: "pointer",
+              fontSize: "11px",
+              color: "#f5a623",
+              lineHeight: 1.5,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={ackPlaceholders}
+              onChange={(e) => setAckPlaceholders(e.target.checked)}
+              style={{ marginTop: "2px", flexShrink: 0 }}
+            />
+            I understand this fix contains &lt;PLACEHOLDER&gt; values that must be
+            replaced with real values before the PR can be merged.
+          </label>
+        </div>
+      )}
+
+      {/* Confirmation phrase */}
+      <div style={{ marginBottom: "12px" }}>
+        <label
+          style={{
+            display: "block",
+            fontSize: "10px",
+            color: "#565b6e",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            marginBottom: "4px",
+            fontWeight: 600,
+          }}
+        >
+          Type <code style={{ color: "#4f80f7" }}>CREATE DRAFT PR</code> to confirm
+        </label>
+        <input
+          type="text"
+          value={phrase}
+          onChange={(e) => setPhrase(e.target.value)}
+          placeholder="CREATE DRAFT PR"
+          style={{
+            width: "100%",
+            background: "#13151a",
+            border: `1px solid ${phrase === _CONFIRM_PHRASE ? "rgba(60,207,126,0.4)" : "#2a2d38"}`,
+            borderRadius: "4px",
+            padding: "5px 8px",
+            fontSize: "12px",
+            color: phrase === _CONFIRM_PHRASE ? "#3ccf7e" : "#c4c8d4",
+            fontFamily: "monospace",
+            boxSizing: "border-box",
+          }}
+        />
+      </div>
+
+      {/* Error message */}
+      {error && (
+        <div
+          style={{
+            marginBottom: "10px",
+            padding: "7px 10px",
+            background: "rgba(245,99,42,0.08)",
+            border: "1px solid rgba(245,99,42,0.3)",
+            borderRadius: "4px",
+            fontSize: "11px",
+            color: "#f5632a",
+            lineHeight: 1.5,
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {/* Submit button */}
+      <button
+        onClick={handleCreate}
+        disabled={!canSubmit}
+        style={{
+          background: canSubmit ? "#1a2d4a" : "#1a1d28",
+          color: canSubmit ? "#4f80f7" : "#3a3d4a",
+          border: `1px solid ${canSubmit ? "rgba(79,128,247,0.4)" : "#252a42"}`,
+          borderRadius: "5px",
+          padding: "7px 16px",
+          fontSize: "12px",
+          cursor: canSubmit ? "pointer" : "not-allowed",
+          fontFamily: "inherit",
+          fontWeight: 500,
+          transition: "background 0.15s, color 0.15s",
+        }}
+      >
+        {loading ? "Creating draft PR…" : "Open Draft PR in GitHub"}
+      </button>
+
+      <p style={{ margin: "8px 0 0", fontSize: "10px", color: "#3a3d4a", lineHeight: 1.5 }}>
+        This will create a branch and a draft PR in your GitHub repository.
+        ConfigTrace will not execute Terraform or modify any cloud resources.
+      </p>
+    </div>
+  );
+}
+
+// ── PR created success state ──────────────────────────────────────────────────
+
+function PrCreatedBanner({ result }: { result: GitHubPrCreateResponse }) {
+  return (
+    <div
+      style={{
+        marginTop: "14px",
+        padding: "14px 16px",
+        background: "#0d1f12",
+        border: "1px solid #1a4028",
+        borderRadius: "5px",
+      }}
+    >
+      <p style={{ margin: "0 0 8px", fontSize: "12px", color: "#3ccf7e", fontWeight: 600 }}>
+        ✓ Draft PR created
+      </p>
+      {result.pr_url && (
+        <a
+          href={result.pr_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: "inline-block",
+            fontSize: "12px",
+            color: "#4f80f7",
+            textDecoration: "none",
+            marginBottom: "8px",
+          }}
+        >
+          #{result.pr_number} — View on GitHub →
+        </a>
+      )}
+      <p style={{ margin: 0, fontSize: "11px", color: "#565b6e", lineHeight: 1.5 }}>
+        Branch: <code style={{ color: "#c4c8d4", fontFamily: "monospace" }}>{result.branch_name}</code>
+        {" · "}
+        Patch file: <code style={{ color: "#c4c8d4", fontFamily: "monospace" }}>{result.patch_file_path}</code>
+      </p>
+      <p style={{ margin: "6px 0 0", fontSize: "10px", color: "#3a3d4a" }}>
+        ConfigTrace has not run Terraform or modified any cloud resources.
+        Review and merge the PR through your normal approval process.
+      </p>
+    </div>
+  );
+}
+
 // ── Draft content ─────────────────────────────────────────────────────────────
 
-function DraftContent({ draft, mode }: { draft: GitHubPrDraftObject; mode: string }) {
+interface DraftContentProps {
+  draft: GitHubPrDraftObject;
+  mode: string;
+  changeId: string;
+  iacRepositoryId: string | null;
+  defaultBaseBranch: string;
+  token?: string | null;
+}
+
+function DraftContent({
+  draft,
+  mode,
+  changeId,
+  iacRepositoryId,
+  defaultBaseBranch,
+  token,
+}: DraftContentProps) {
   const isOutline = mode === "outline_only";
+  const [prResult, setPrResult] = useState<GitHubPrCreateResponse | null>(null);
 
   return (
     <div>
@@ -293,37 +584,34 @@ function DraftContent({ draft, mode }: { draft: GitHubPrDraftObject; mode: strin
         </div>
       )}
 
-      {/* Disabled "Open PR" CTA */}
-      <div
-        style={{
-          marginTop: "14px",
-          padding: "12px 14px",
-          background: "#0e1120",
-          border: "1px solid #252a42",
-          borderRadius: "5px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <button
-            disabled
-            style={{
-              background: "#1a1d28",
-              color: "#3a3d4a",
-              border: "1px solid #252a42",
-              borderRadius: "5px",
-              padding: "7px 14px",
-              fontSize: "12px",
-              cursor: "not-allowed",
-              fontFamily: "inherit",
-            }}
-          >
-            Open PR — coming in M58.21
-          </button>
+      {/* PR creation — show form or success banner */}
+      {prResult ? (
+        <PrCreatedBanner result={prResult} />
+      ) : iacRepositoryId ? (
+        <CreatePrForm
+          changeId={changeId}
+          iacRepositoryId={iacRepositoryId}
+          defaultBaseBranch={defaultBaseBranch}
+          hasPlaceholders={Boolean(draft.patch_preview)}
+          token={token}
+          onCreated={setPrResult}
+        />
+      ) : (
+        <div
+          style={{
+            marginTop: "14px",
+            padding: "10px 12px",
+            background: "#0e1120",
+            border: "1px solid #252a42",
+            borderRadius: "5px",
+          }}
+        >
           <p style={{ margin: 0, fontSize: "11px", color: "#565b6e" }}>
-            Actual PR creation is disabled in this milestone.
+            PR creation requires a configured GitHub App installation.
+            Set up the GitHub App on your IaC repository to enable this feature.
           </p>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -333,11 +621,15 @@ function DraftContent({ draft, mode }: { draft: GitHubPrDraftObject; mode: strin
 interface GitHubPrDraftPanelProps {
   data: GitHubPrDraftResponse | null;
   loading?: boolean;
+  changeId: string;
+  token?: string | null;
 }
 
 export default function GitHubPrDraftPanel({
   data,
   loading = false,
+  changeId,
+  token,
 }: GitHubPrDraftPanelProps) {
   return (
     <section aria-labelledby="section-github-pr-draft" id="github-pr-draft">
@@ -444,7 +736,14 @@ export default function GitHubPrDraftPanel({
             </div>
 
             {/* Draft content */}
-            <DraftContent draft={data.draft} mode={data.mode} />
+            <DraftContent
+              draft={data.draft}
+              mode={data.mode}
+              changeId={changeId}
+              iacRepositoryId={data.iac_repository_id ?? null}
+              defaultBaseBranch={data.repo?.default_branch ?? "main"}
+              token={token}
+            />
 
             {/* Next step */}
             {data.next_step && (

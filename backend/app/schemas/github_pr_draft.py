@@ -120,3 +120,5 @@ class GitHubPrDraftResponse(BaseModel):
     requirements: List[str] = []
     next_step: Optional[str] = None
     reason: Optional[str] = None           # Populated when available=False
+    # UUID of the IacRepository — populated in M58.21 for PR creation.
+    iac_repository_id: Optional[str] = None

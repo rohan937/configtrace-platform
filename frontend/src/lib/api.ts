@@ -1328,3 +1328,17 @@ export async function getChangeGitHubPrDraft(
   return apiFetch(`/changes/${changeId}/github-pr-draft`, { token });
 }
 
+// ── M58.21: GitHub PR Creation ────────────────────────────────────────────────
+
+export async function createChangeGitHubPr(
+  changeId: string,
+  body: import("@/types").GitHubPrCreateRequest,
+  token?: string | null,
+): Promise<import("@/types").GitHubPrCreateResponse> {
+  return apiFetch(`/changes/${changeId}/github-pr`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+

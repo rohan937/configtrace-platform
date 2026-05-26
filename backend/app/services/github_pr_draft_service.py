@@ -553,14 +553,32 @@ def get_github_pr_draft(
 
     mode_label = "outline_only" if is_outline_only else "draft_preview_only"
 
+    # Populate iac_repository_id for M58.21 PR creation.
+    iac_repository_id_str: Optional[str] = None
+    if fix_preview.mapping and fix_preview.mapping.repo_full_name:
+        try:
+            from app.models.iac_repository import IacRepository
+            iac_row = (
+                db.query(IacRepository)
+                .filter(
+                    IacRepository.workspace_id == workspace_id,
+                    IacRepository.repo_full_name == fix_preview.mapping.repo_full_name,
+                )
+                .first()
+            )
+            if iac_row:
+                iac_repository_id_str = str(iac_row.id)
+        except Exception:  # noqa: BLE001
+            pass
+
     return GitHubPrDraftResponse(
         available=True,
         mode=mode_label,
         title="GitHub PR draft suggestion",
         summary=(
             "ConfigTrace can prepare a PR proposal to apply the Terraform fix through "
-            "your normal code-review workflow. Review the draft below — "
-            "actual PR creation is disabled in this milestone."
+            "your normal code-review workflow. Review the draft below and use the "
+            '"Open Draft PR" button to create the PR in GitHub.'
         ),
         repo=repo_info,
         draft=draft_obj,
@@ -568,7 +586,7 @@ def get_github_pr_draft(
         requirements=_FUTURE_REQUIREMENTS,
         next_step=(
             "Review the PR title, body, and patch preview. "
-            "Copy the content to open a real PR in GitHub. "
-            "Actual automated PR creation will be available in a future milestone."
+            'Use the "Open Draft PR" button to create the draft PR in your repository.'
         ),
+        iac_repository_id=iac_repository_id_str,
     )
