@@ -240,6 +240,33 @@ _STRIPE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# ── Cloudflare-specific tracked fields (M57.7) ────────────────────────────────
+
+#: Per-record-type tracked field tuples for Cloudflare records other than bare
+#: DNS records.  Bare DNS record types (A, AAAA, CNAME, …) still fall through
+#: to the legacy ``_TRACKED_FIELDS`` tuple at the bottom of this module.
+#:
+#: SECURITY: rule expressions are NEVER stored, so they cannot appear here.
+_CLOUDFLARE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    # cloudflare_ruleset — one per WAF ruleset visible to the zone token.
+    # Tracks structural changes (rule count deltas, default-action shifts)
+    # that signal meaningful WAF posture changes.
+    # ``last_updated`` is intentionally excluded — it updates even when only
+    # metadata (e.g. description) changes, causing false-positive diff events.
+    "cloudflare_ruleset": (
+        "kind",
+        "phase",
+        "version",
+        "rule_count",
+        "enabled_rule_count",
+        "block_count",
+        "log_count",
+        "skip_count",
+        "challenge_count",
+        "managed_challenge_count",
+        "execute_count",
+    ),
+}
 
 # ── AWS-specific tracked fields ───────────────────────────────────────────────
 
@@ -1864,6 +1891,11 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _SUPABASE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("shopify_"):
         return _SHOPIFY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("cloudflare_"):
+        # Explicit cloudflare_* prefix → look up in the Cloudflare table.
+        # Falls back to _TRACKED_FIELDS if the type is not in the table
+        # (preserves backward-compat for any future cloudflare_ types).
+        return _CLOUDFLARE_TRACKED_FIELDS_BY_TYPE.get(rt, _TRACKED_FIELDS)
     return _TRACKED_FIELDS
 
 

@@ -1,7 +1,15 @@
-"""Cloudflare DNS connector.
+"""Cloudflare DNS + WAF connector — M57.7 (rulesets).
 
-Fetches all DNS records for a given zone, handles pagination and rate-limit
-backoff, and returns a list of normalised ``CloudflareDNSRecord`` dicts.
+Fetches DNS records and WAF ruleset metadata for a given zone, handles
+pagination and rate-limit backoff, and returns a combined list of normalised
+records.
+
+Surfaces
+--------
+* **DNS records** (existing) — one ``CloudflareDNSRecord`` per DNS entry.
+* **WAF rulesets** (M57.7) — one ``CloudflareRuleset`` per ruleset returned by
+  ``GET /zones/{zone_id}/rulesets``.  Only aggregate metadata is stored; raw
+  rule expressions are NEVER fetched or stored (data-minimisation constraint).
 
 Usage
 -----
@@ -9,16 +17,24 @@ Usage
 
     connector = CloudflareConnector()
     records = connector.fetch({"api_token": "...", "zone_id": "..."})
-    # records → [{"record_id": "abc123", "record_type": "A", ...}, ...]
+    # records → [{"record_id": "abc123", "record_type": "A", ...},
+    #            {"record_id": "...", "record_type": "cloudflare_ruleset", ...}]
 
 Credentials dict
 ----------------
     api_token : str
-        A Cloudflare API token with **Zone.DNS:Read** permission scoped to the
-        target zone (or to all zones).  Never use a Global API Key here.
+        A Cloudflare API token with **Zone:Read** (or **Zone.DNS:Read** +
+        **Zone.Firewall:Read**) permission scoped to the target zone.
+        Never use a Global API Key here.
     zone_id : str
         The 32-character hexadecimal Zone ID found on the Cloudflare dashboard
         overview page for the domain.
+
+SECURITY (M57.7)
+----------------
+- Rule expressions (``rule.expression`` field) are NEVER fetched or stored.
+  They may contain sensitive path/hostname patterns.
+- Only action counts and rule counts are stored — no raw statement content.
 """
 
 from __future__ import annotations
@@ -29,7 +45,11 @@ import time
 import httpx
 
 from app.connectors.base import BaseConnector
-from app.connectors.cloudflare_schema import CloudflareDNSRecord
+from app.connectors.cloudflare_schema import (
+    CLOUDFLARE_RULESET,
+    CloudflareDNSRecord,
+    CloudflareRuleset,
+)
 from app.connectors.exceptions import (
     AuthenticationError,
     ConnectorError,
@@ -74,6 +94,63 @@ def _normalize(raw: dict) -> CloudflareDNSRecord:
         "priority":    raw.get("priority"),    # int for MX/SRV; None otherwise
         "comment":     raw.get("comment"),     # str or None
         "modified_on": raw.get("modified_on", ""),
+    }
+
+
+# ── Ruleset normalisation helper ─────────────────────────────────────────────
+
+def _normalize_ruleset(raw: dict) -> CloudflareRuleset:
+    """Map a raw Cloudflare rulesets API entry to a ``CloudflareRuleset``.
+
+    SECURITY: ``rule.expression`` fields are explicitly skipped — they may
+    contain sensitive path/hostname patterns.  Only aggregate counts and
+    action-type summaries are stored.
+    """
+    # Count rules and their actions.  The ``rules`` list may be absent for
+    # rulesets that have no rules configured yet.
+    rules: list[dict] = raw.get("rules") or []
+    rule_count = len(rules)
+    enabled_rule_count = 0
+    block_count = 0
+    log_count = 0
+    skip_count = 0
+    challenge_count = 0
+    managed_challenge_count = 0
+    execute_count = 0
+
+    for rule in rules:
+        if rule.get("enabled", True):  # rules default to enabled
+            enabled_rule_count += 1
+        action = (rule.get("action") or "").lower()
+        if action == "block":
+            block_count += 1
+        elif action == "log":
+            log_count += 1
+        elif action == "skip":
+            skip_count += 1
+        elif action in ("challenge", "js_challenge"):
+            challenge_count += 1
+        elif action == "managed_challenge":
+            managed_challenge_count += 1
+        elif action == "execute":
+            execute_count += 1
+
+    return {
+        "record_type":            CLOUDFLARE_RULESET,
+        "record_id":              raw.get("id") or "",
+        "name":                   raw.get("name") or "",
+        "kind":                   raw.get("kind") or "unknown",
+        "phase":                  raw.get("phase") or "unknown",
+        "version":                str(raw.get("version") or ""),
+        "rule_count":             rule_count,
+        "enabled_rule_count":     enabled_rule_count,
+        "block_count":            block_count,
+        "log_count":              log_count,
+        "skip_count":             skip_count,
+        "challenge_count":        challenge_count,
+        "managed_challenge_count": managed_challenge_count,
+        "execute_count":          execute_count,
+        "last_updated":           raw.get("last_updated"),
     }
 
 
@@ -160,6 +237,109 @@ class CloudflareConnector(BaseConnector):
                     break
                 page += 1
 
+            # M57.7: fetch WAF ruleset metadata (fail-soft).
+            # If the token lacks Firewall:Read scope or the endpoint is not
+            # available for the plan tier, we log a warning and continue — the
+            # DNS records are still returned.
+            ruleset_records = self._fetch_rulesets(client, zone_id, headers)
+            records.extend(ruleset_records)
+
+        return records
+
+    # ── M57.7: WAF ruleset helpers ───────────────────────────────────────────
+
+    def _fetch_rulesets(
+        self,
+        client: httpx.Client,
+        zone_id: str,
+        headers: dict[str, str],
+    ) -> list[dict]:
+        """Fetch WAF ruleset metadata for the zone.
+
+        Calls ``GET /zones/{zone_id}/rulesets`` once (the response is not
+        paginated by Cloudflare — all rulesets are returned in a single reply).
+
+        Returns one ``cloudflare_ruleset`` record per ruleset.
+
+        Fail-soft: if the token lacks Firewall:Read permission (HTTP 403) or
+        the account plan does not support the Rulesets API (HTTP 404/422), a
+        warning is logged and an empty list is returned.  DNS records are not
+        affected.
+
+        SECURITY:
+        - Rule expressions (``rule.expression``) are NEVER read or stored.
+          They may contain sensitive host/path pattern strings.
+        - Only action counts and summary flags are kept.
+        """
+        url = f"{_BASE_URL}/zones/{zone_id}/rulesets"
+        try:
+            response = client.get(url, headers=headers)
+        except httpx.TimeoutException as exc:
+            logger.warning(
+                "cloudflare: ruleset fetch timed out  zone=%s  error=%s",
+                zone_id, exc,
+            )
+            return []
+        except httpx.RequestError as exc:
+            logger.warning(
+                "cloudflare: ruleset fetch network error  zone=%s  error=%s",
+                zone_id, exc,
+            )
+            return []
+
+        if response.status_code in (401, 403):
+            logger.warning(
+                "cloudflare: token lacks Firewall:Read — "
+                "skipping ruleset monitoring for this sync  zone=%s  http=%d",
+                zone_id, response.status_code,
+            )
+            return []
+
+        if response.status_code in (404, 422):
+            logger.warning(
+                "cloudflare: rulesets endpoint not available  "
+                "zone=%s  http=%d  (plan may not include WAF API)",
+                zone_id, response.status_code,
+            )
+            return []
+
+        if not response.is_success:
+            logger.warning(
+                "cloudflare: ruleset fetch failed  zone=%s  http=%d",
+                zone_id, response.status_code,
+            )
+            return []
+
+        try:
+            body = response.json()
+        except Exception:
+            logger.warning(
+                "cloudflare: ruleset response is not valid JSON  zone=%s",
+                zone_id,
+            )
+            return []
+
+        if not body.get("success"):
+            errors = body.get("errors", [])
+            logger.warning(
+                "cloudflare: rulesets API returned success=false  "
+                "zone=%s  errors=%s",
+                zone_id, errors,
+            )
+            return []
+
+        records: list[dict] = []
+        for raw in body.get("result") or []:
+            ruleset_id: str = raw.get("id") or ""
+            if not ruleset_id:
+                continue
+            rec = _normalize_ruleset(raw)
+            records.append(rec)
+
+        logger.debug(
+            "cloudflare_connector zone=%s rulesets fetched=%d",
+            zone_id, len(records),
+        )
         return records
 
     def validate_credentials(self, credentials: dict) -> bool:

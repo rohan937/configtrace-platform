@@ -84,6 +84,9 @@ export function getResourceCategory(resourceType: string): string | null {
   if (t.startsWith("aws_sqs"))         return "Messaging";
   if (t.startsWith("aws_api_gateway")) return "API";
   if (t.startsWith("aws_cloudwatch"))  return "Monitoring";
+  if (t.startsWith("aws_cloudfront")) return "CDN";
+  if (t.startsWith("aws_wafv2"))      return "Security";
+  if (t.startsWith("aws_elb") || t.startsWith("aws_elbv2")) return "Network";
 
   // ── Firebase — more specific checks first ─────────────────────────────────
   if (t.includes("firestore"))         return "Database";
@@ -106,6 +109,7 @@ export function getResourceCategory(resourceType: string): string | null {
   if (t.includes("webhook"))           return "Webhooks";
 
   // ── Cloudflare ────────────────────────────────────────────────────────────
+  if (t === "cloudflare_ruleset")      return "Security";
   if (t.includes("firewall"))          return "Security";
   if (t.includes("dns"))               return "DNS";
   if (t.includes("page_rule"))         return "Rules";
@@ -142,6 +146,7 @@ const TYPE_LABELS: Record<string, string> = {
   cloudflare_page_rule:          "Page rule",
   cloudflare_ssl_setting:        "SSL setting",
   cloudflare_zone_setting:       "Zone setting",
+  cloudflare_ruleset:            "WAF ruleset",
 
   // ── GitHub ────────────────────────────────────────────────────────────
   github_repo:                   "Repository",
@@ -178,6 +183,9 @@ const TYPE_LABELS: Record<string, string> = {
   aws_rds_cluster:               "RDS cluster",
   aws_cloudtrail:                "CloudTrail",
   aws_cloudtrail_trail:          "CloudTrail trail",
+  aws_cloudfront_distribution:   "CloudFront distribution",
+  aws_wafv2_web_acl:             "WAFv2 Web ACL",
+  aws_wafv2_web_acl_association: "WAFv2 ACL association",
   aws_guardduty_detector:        "GuardDuty detector",
   aws_kms_key:                   "KMS key",
   aws_secrets_manager_secret:    "Secrets Manager secret",

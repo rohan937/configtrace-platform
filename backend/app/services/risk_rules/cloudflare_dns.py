@@ -690,3 +690,152 @@ def classify_dns_change(change: Any) -> tuple[str, str]:
         "No specific risk pattern matched. This change may be routine configuration "
         "maintenance.",
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M57.7 — Cloudflare WAF ruleset risk rules
+# ─────────────────────────────────────────────────────────────────────────────
+
+def classify_cloudflare_ruleset_change(change: object) -> tuple[str, str]:
+    """Classify risk for ``cloudflare_ruleset`` record changes (M57.7).
+
+    Rule order (highest-priority first):
+
+    1. Ruleset removed   → critical  (WAF protection gap created)
+    2. Ruleset added     → high      (new WAF policy — review for unintended bypass)
+    3. skip_count ↑      → high      (more rules bypassing WAF checks)
+    4. block_count ↓     → high      (fewer rules actively blocking attacks)
+    5. enabled_rule_count ↓ → high   (more rules disabled — reduced protection)
+    6. rule_count ↓      → medium    (rules removed — may be intentional cleanup)
+    7. rule_count ↑      → medium    (rules added — scope expansion)
+    8. skip_count ↓      → low       (hardening: fewer bypass rules)
+    9. block_count ↑     → low       (hardening: more blocking rules)
+    10. enabled_rule_count ↑ → low   (hardening: more rules enabled)
+    11. version / phase / kind changes → low (administrative / metadata change)
+    """
+    pm: dict = _get(change, "provider_metadata") or {}
+    change_type: str = (_get(change, "change_type") or "").lower()
+    field_path: str = (_get(change, "field_path") or "").lower()
+    old_value = _get(change, "old_value")
+    new_value = _get(change, "new_value")
+
+    # 1. Ruleset removed — WAF protection gap
+    if change_type == "removed":
+        phase: str = (pm.get("phase") or "unknown")
+        return (
+            "critical",
+            f"WAF ruleset removed (phase: {phase}). "
+            "This eliminates all rules in the ruleset and may expose the zone to attacks.",
+        )
+
+    # 2. Ruleset added — new WAF policy deployed
+    if change_type == "added":
+        phase = (pm.get("phase") or "unknown")
+        return (
+            "high",
+            f"New WAF ruleset deployed (phase: {phase}). "
+            "Review the ruleset to ensure it enforces the intended security posture.",
+        )
+
+    # ── Modified field rules ──────────────────────────────────────────────────
+
+    def _int(v: object) -> int:
+        try:
+            return int(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+
+    # 3. skip_count increased — more bypass rules
+    if field_path == "skip_count":
+        old_n, new_n = _int(old_value), _int(new_value)
+        if new_n > old_n:
+            return (
+                "high",
+                f"WAF ruleset skip_count increased from {old_n} to {new_n}. "
+                "Additional rules now bypass WAF checks, potentially widening attack surface.",
+            )
+        if new_n < old_n:
+            return (
+                "low",
+                f"WAF ruleset skip_count decreased from {old_n} to {new_n}. "
+                "Fewer WAF bypass rules — security posture improved.",
+            )
+
+    # 4. block_count decreased — fewer blocking rules
+    if field_path == "block_count":
+        old_n, new_n = _int(old_value), _int(new_value)
+        if new_n < old_n:
+            return (
+                "high",
+                f"WAF ruleset block_count decreased from {old_n} to {new_n}. "
+                "Fewer rules are actively blocking attacks.",
+            )
+        if new_n > old_n:
+            return (
+                "low",
+                f"WAF ruleset block_count increased from {old_n} to {new_n}. "
+                "More rules are actively blocking attacks — security posture improved.",
+            )
+
+    # 5. enabled_rule_count decreased — more rules disabled
+    if field_path == "enabled_rule_count":
+        old_n, new_n = _int(old_value), _int(new_value)
+        if new_n < old_n:
+            return (
+                "high",
+                f"WAF enabled rule count decreased from {old_n} to {new_n}. "
+                "Disabled rules provide no protection.",
+            )
+        if new_n > old_n:
+            return (
+                "low",
+                f"WAF enabled rule count increased from {old_n} to {new_n}. "
+                "More rules are now active — protection expanded.",
+            )
+
+    # 6–7. rule_count changed
+    if field_path == "rule_count":
+        old_n, new_n = _int(old_value), _int(new_value)
+        if new_n < old_n:
+            return (
+                "medium",
+                f"WAF ruleset rule_count decreased from {old_n} to {new_n}. "
+                "Rules were removed — verify this was intentional.",
+            )
+        if new_n > old_n:
+            return (
+                "medium",
+                f"WAF ruleset rule_count increased from {old_n} to {new_n}. "
+                "New rules were added to the ruleset.",
+            )
+
+    # 8. challenge_count / managed_challenge_count changed
+    if field_path in ("challenge_count", "managed_challenge_count"):
+        old_n, new_n = _int(old_value), _int(new_value)
+        direction = "increased" if new_n > old_n else "decreased"
+        return (
+            "medium",
+            f"WAF {field_path.replace('_count', '')} rule count {direction} "
+            f"from {old_n} to {new_n}.",
+        )
+
+    # 9. version changed — administrative update
+    if field_path == "version":
+        return (
+            "low",
+            f"WAF ruleset version updated from {old_value!r} to {new_value!r}. "
+            "This is recorded on every ruleset modification.",
+        )
+
+    # 10. phase or kind changed — structural change
+    if field_path in ("phase", "kind"):
+        return (
+            "medium",
+            f"WAF ruleset {field_path} changed from {old_value!r} to {new_value!r}. "
+            "Review to confirm this reflects an intentional restructuring.",
+        )
+
+    return (
+        "low",
+        "WAF ruleset metadata updated — no high-risk field changes detected.",
+    )

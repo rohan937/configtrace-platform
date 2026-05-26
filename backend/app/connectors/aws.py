@@ -8088,7 +8088,14 @@ class AWSConnector(BaseConnector):
         credentials: dict,
         account_id: str,
     ) -> list[dict]:
-        """Fetch WAFv2 REGIONAL Web ACL metadata across all selected regions.
+        """Fetch WAFv2 REGIONAL and CLOUDFRONT Web ACL metadata.
+
+        Two scopes are fetched (M57.7 security-edge extension):
+
+        * REGIONAL — one pass per selected region (existing M44 behaviour).
+        * CLOUDFRONT — a single global pass against us-east-1, covering WAFs
+          attached to CloudFront distributions.  This scope requires the
+          wafv2 client to target us-east-1 regardless of the selected regions.
 
         SECURITY:
         - GetSampledRequests is NEVER called.
@@ -8117,6 +8124,25 @@ class AWSConnector(BaseConnector):
                     "aws: wafv2 fetch failed  region=%s  (unexpected error)",
                     region, exc_info=True,
                 )
+
+        # M57.7: CLOUDFRONT-scope WAFs — global, requires us-east-1 client.
+        # Fail-soft: if the API is not permitted (e.g. no wafv2:ListWebACLs for
+        # CLOUDFRONT scope), we log a warning and continue.
+        try:
+            cf_waf_client = self._make_client("wafv2", credentials, region="us-east-1")
+            cf_records = self._fetch_wafv2_in_region(
+                cf_waf_client, account_id, "us-east-1", scope="CLOUDFRONT"
+            )
+            all_records.extend(cf_records)
+            logger.debug(
+                "aws: wafv2 cloudfront-scope fetched  count=%d",
+                len(cf_records),
+            )
+        except Exception:
+            logger.warning(
+                "aws: wafv2 cloudfront-scope fetch failed  (unexpected error)",
+                exc_info=True,
+            )
 
         return all_records
 
