@@ -299,7 +299,7 @@ export default function ResourcesPage() {
               }}
             >
               Start monitoring AWS, Firebase, Supabase, Stripe, GitHub,
-              Cloudflare, or Vercel configuration.
+              Cloudflare, Vercel, or Shopify configuration.
             </p>
             <Link
               href="/integrations"

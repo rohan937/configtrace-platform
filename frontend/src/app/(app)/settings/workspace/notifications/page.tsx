@@ -300,7 +300,7 @@ export default function NotificationsSettingsPage() {
       <>
         <PageHeader
           title="Notifications"
-          description="Configure Slack and webhook alerts for configuration drift."
+          description="Email alerts are sent automatically for high and critical changes. Configure Slack and webhook channels here as additional delivery options."
         />
         <div className="px-6">
           <p style={{ fontSize: "13px", color: "#565b6e" }}>
@@ -316,7 +316,7 @@ export default function NotificationsSettingsPage() {
       <>
         <PageHeader
           title="Notifications"
-          description="Configure Slack and webhook alerts for configuration drift."
+          description="Email alerts are sent automatically for high and critical changes. Configure Slack and webhook channels here as additional delivery options."
         />
         <div className="px-6">
           <p style={{ fontSize: "13px", color: "#565b6e" }}>Loading…</p>
@@ -329,7 +329,7 @@ export default function NotificationsSettingsPage() {
     <>
       <PageHeader
         title="Notifications"
-        description="Get alerted in Slack or via webhook when risky configuration changes are detected."
+        description="Email alerts are sent automatically for high and critical changes. Configure Slack and webhook channels here as additional delivery options."
       />
 
       <form onSubmit={handleSave}>
@@ -704,9 +704,10 @@ export default function NotificationsSettingsPage() {
               lineHeight: 1.5,
             }}
           >
-            Notifications are sent in addition to email alerts. They use the same
-            risk-level filter you set above. ConfigTrace monitors configuration
-            metadata only — no customer data is included in notifications.
+            Email alerts are always sent to workspace members for high and critical changes —
+            regardless of Slack or webhook settings. Slack and webhook channels
+            use the risk-level filter you set above. ConfigTrace monitors
+            configuration metadata only — no customer data is included in any notification.
           </p>
         </div>
       </form>

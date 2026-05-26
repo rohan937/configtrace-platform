@@ -280,7 +280,7 @@ function AddedRemovedPanel({
 
 // ── Provider-aware helpers ────────────────────────────────────────────────────
 
-/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" | "Stripe account configuration" | "AWS account configuration" | "Firebase project configuration" | "Supabase project configuration" */
+/** "Cloudflare DNS" | "GitHub repo configuration" | "Vercel project configuration" | "Stripe account configuration" | "AWS account configuration" | "Firebase project configuration" | "Supabase project configuration" | "Shopify store configuration" */
 function getProviderLabel(change: ChangeDetail): string {
   const rt = (
     (change.provider_metadata?.record_type as string | undefined) ?? ""
@@ -291,6 +291,7 @@ function getProviderLabel(change: ChangeDetail): string {
   if (rt.startsWith("aws_"))      return "AWS account configuration";
   if (rt.startsWith("firebase_")) return "Firebase project configuration";
   if (rt.startsWith("supabase_")) return "Supabase project configuration";
+  if (rt.startsWith("shopify_"))  return "Shopify store configuration";
   if (change.provider_metadata?.record_type) return "Cloudflare DNS";
   return "Cloudflare DNS";
 }
@@ -338,6 +339,12 @@ function getChangeSummary(change: ChangeDetail): string {
     }
     return "A deploy key was modified.";
   }
+  if (rt === "github_environment_protection") {
+    const envName = rn || change.record_identifier;
+    if (change.change_type === "added")   return `Environment protection rule was added for ${envName}.`;
+    if (change.change_type === "removed") return `Environment protection rule was removed from ${envName}.`;
+    return `Environment protection rule changed for ${envName}${fp ? ` (${fp})` : ""}.`;
+  }
   if (rt.startsWith("github_")) {
     return `A GitHub configuration record changed (${rt}).`;
   }
@@ -370,6 +377,12 @@ function getChangeSummary(change: ChangeDetail): string {
     if (change.change_type === "removed") return `The domain ${rn || change.record_identifier} was removed from this Vercel project.`;
     if (change.change_type === "added")   return `The domain ${rn || change.record_identifier} was added to this Vercel project.`;
     return `Domain configuration changed for ${rn || change.record_identifier}.`;
+  }
+  if (rt === "vercel_deploy_hook_metadata") {
+    const hookName = rn || change.record_identifier;
+    if (change.change_type === "added")   return `Deploy hook ${hookName} was added to this Vercel project.`;
+    if (change.change_type === "removed") return `Deploy hook ${hookName} was removed from this Vercel project.`;
+    return `Deploy hook ${hookName} configuration changed${fp ? ` (${fp})` : ""}.`;
   }
   if (rt.startsWith("vercel_")) {
     return `A Vercel configuration record changed (${rt}).`;
@@ -415,6 +428,12 @@ function getChangeSummary(change: ChangeDetail): string {
     if (fp === "google_pay_enabled") return "Google Pay was enabled for a Stripe payment method domain.";
     if (fp === "enabled" && nv === false) return "A Stripe payment method domain was disabled.";
     return "A Stripe payment method domain setting changed.";
+  }
+  if (rt === "stripe_billing_portal_config") {
+    if (change.change_type === "added")   return "A Stripe billing portal configuration was added.";
+    if (change.change_type === "removed") return "A Stripe billing portal configuration was removed.";
+    if (fp === "is_default") return "The default Stripe billing portal configuration changed.";
+    return `Stripe billing portal configuration changed${fp ? ` (${fp})` : ""}.`;
   }
   if (rt.startsWith("stripe_")) {
     return `A Stripe configuration record changed (${rt}).`;
@@ -1366,6 +1385,41 @@ function getChangeSummary(change: ChangeDetail): string {
     return `A Supabase configuration record changed (${rt}).`;
   }
 
+  // Shopify
+  if (rt === "shopify_shop_metadata") {
+    if (fp === "password_protected" && nv === true)  return "Shopify storefront password protection was enabled.";
+    if (fp === "password_protected" && nv === false) return "Shopify storefront password protection was disabled — the store is now publicly accessible.";
+    if (fp === "plan_name")   return `Shopify store plan changed to ${String(nv)}.`;
+    if (fp === "currency")    return `Shopify store default currency changed to ${String(nv)}.`;
+    if (fp === "timezone")    return `Shopify store timezone changed to ${String(nv)}.`;
+    return `Shopify store settings changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "shopify_webhook_subscription") {
+    const hookTopic = rn || change.record_identifier;
+    if (change.change_type === "added")   return `Shopify webhook subscription for ${hookTopic} was added.`;
+    if (change.change_type === "removed") return `Shopify webhook subscription for ${hookTopic} was removed.`;
+    if (fp === "address") return `Shopify webhook delivery URL changed for ${hookTopic}.`;
+    if (fp === "format")  return `Shopify webhook format changed for ${hookTopic}.`;
+    return `Shopify webhook subscription changed for ${hookTopic}${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "shopify_store_policy") {
+    const policyName = rn || change.record_identifier;
+    if (change.change_type === "added")   return `Shopify store policy ${policyName} was added.`;
+    if (change.change_type === "removed") return `Shopify store policy ${policyName} was removed.`;
+    if (fp === "content_hash") return `Shopify store policy content changed for ${policyName}.`;
+    return `Shopify store policy ${policyName} changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt === "shopify_app_scope_summary") {
+    if (change.change_type === "added")   return "Shopify app permission scopes were recorded.";
+    if (change.change_type === "removed") return "Shopify app permission scopes record was removed.";
+    if (fp === "scope_count") return `Shopify app permission scope count changed to ${String(nv)}.`;
+    if (fp === "scopes")      return "Shopify app permission scopes changed.";
+    return `Shopify app permission scope configuration changed${fp ? ` (${fp})` : ""}.`;
+  }
+  if (rt.startsWith("shopify_")) {
+    return `A Shopify configuration record changed (${rt}).`;
+  }
+
   // Cloudflare DNS
   const recordLabel = rn
     ? `${(change.provider_metadata?.record_type as string | undefined) ?? ""} ${rn}`.trim()
@@ -1518,6 +1572,9 @@ function getWhyItMatters(change: ChangeDetail): string | null {
   if (rt === "github_deploy_key") {
     return "Deploy keys grant repository read (or write) access. Write-enabled keys can push code directly to the repository. Unexpected key additions should be investigated immediately.";
   }
+  if (rt === "github_environment_protection") {
+    return "Environment protection rules control which branches can deploy to an environment and may require designated reviewers. Removing or weakening rules can allow deployments without approval gates.";
+  }
   if (rt === "github_repo_settings") {
     if (fp === "visibility") {
       return "Repository visibility changes affect who can view the source code and its history. Making a private repository public could expose proprietary code, credentials, or sensitive commit history.";
@@ -1531,6 +1588,9 @@ function getWhyItMatters(change: ChangeDetail): string | null {
   // ── Vercel ────────────────────────────────────────────────────────────
   if (rt === "vercel_domain") {
     return "Domain changes affect production routing. Removing or modifying domains can break live deployments and make your app unreachable at its expected URL.";
+  }
+  if (rt === "vercel_deploy_hook_metadata") {
+    return "Deploy hooks allow external services to trigger Vercel deployments. Adding or removing hooks affects which systems can initiate production deployments, and unexpected hook additions may indicate an unauthorized pipeline modification.";
   }
   if (rt === "vercel_env_var") {
     return "Environment variable metadata changes can indicate deployment configuration drift. ConfigTrace monitors key names and metadata only — variable values are never read or stored.";
@@ -1554,6 +1614,9 @@ function getWhyItMatters(change: ChangeDetail): string | null {
       return "Enabling or disabling charges or payouts affects whether your Stripe account can process payments or transfer funds. These changes can have immediate business impact.";
     }
     return "Stripe account setting changes can affect payment processing, payout schedules, and how customers interact with your checkout flows.";
+  }
+  if (rt === "stripe_billing_portal_config") {
+    return "Billing portal configuration determines what subscription and payment management options are available to customers. Changes may affect customers' ability to update payment methods or cancel subscriptions.";
   }
   if (rt.startsWith("stripe_payment_")) {
     return "Payment method configuration changes affect which payment options are available to customers at checkout. Removing methods may reduce checkout completion rates.";
@@ -1579,6 +1642,25 @@ function getWhyItMatters(change: ChangeDetail): string | null {
     return "Cloudflare configuration changes affect how traffic is routed, secured, and delivered for your domain.";
   }
 
+  // ── Shopify ───────────────────────────────────────────────────────────
+  if (rt === "shopify_shop_metadata") {
+    if (fp === "password_protected") {
+      return nv === false
+        ? "Disabling storefront password protection makes your store publicly accessible to all visitors without restriction."
+        : "Storefront password protection limits who can browse the store — useful for pre-launch or private stores.";
+    }
+    return "Shopify store settings affect storefront accessibility, regional configuration, and how customers interact with your store.";
+  }
+  if (rt === "shopify_webhook_subscription") {
+    return "Webhook endpoint changes can affect order fulfillment integrations, inventory sync, and third-party automations. An unexpected URL change may indicate an unauthorized modification to event delivery.";
+  }
+  if (rt === "shopify_app_scope_summary") {
+    return "App permission scopes define what data a Shopify app can access. Scope changes should correspond to an authorized app update or installation.";
+  }
+  if (rt.startsWith("shopify_")) {
+    return "Shopify configuration changes can affect storefront accessibility, order integrations, and store policies.";
+  }
+
   return null;
 }
 
@@ -1599,6 +1681,7 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
     if (rt.startsWith("stripe_"))     return ["Confirm this Stripe change was intentional.", "Verify payment and checkout flows are working.", "Review the Stripe Dashboard for related settings."];
     if (rt.startsWith("firebase_"))   return ["Confirm this Firebase change was intentional.", "Review the affected setting in the Firebase Console.", "Verify app functionality is not affected."];
     if (rt.startsWith("supabase_"))   return ["Confirm this Supabase change was intentional.", "Review the Supabase Dashboard for the affected setting.", "Verify database connectivity and auth are functioning."];
+    if (rt.startsWith("shopify_"))    return ["Confirm this Shopify change was intentional.", "Review the Shopify Admin → Settings for affected configuration.", "Verify storefront and webhook integrations are functioning correctly."];
     return ["Confirm this change was intentional.", "Test DNS resolution for the affected hostname.", "Check Cloudflare audit logs for who made the change."];
   }
 
@@ -1634,6 +1717,15 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Review whether sensitive data or proprietary code may be exposed.",
       "Check GitHub audit logs for who made the change.",
       "Change visibility back to private if this was accidental.",
+    ];
+  }
+  if (rt === "github_environment_protection") {
+    return [
+      "Confirm the environment protection rule change was intentional.",
+      "Review GitHub → Repository settings → Environments for current rules.",
+      "Verify required reviewers and branch restrictions are still appropriate.",
+      "Check GitHub audit logs for who changed the protection rule.",
+      "Re-enable protection rules if this was accidental.",
     ];
   }
   if (rt.startsWith("github_")) {
@@ -1704,6 +1796,22 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Re-add the domain and update DNS if it was accidentally removed.",
     ];
   }
+  if (rt === "vercel_deploy_hook_metadata") {
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the deploy hook deletion was intentional.",
+        "Verify no automated pipeline relied on this hook to trigger deployments.",
+        "Check the Vercel project → Settings → Git for current deploy hooks.",
+        "Re-add the hook if this was accidental.",
+      ];
+    }
+    return [
+      "Confirm the deploy hook change was intentional.",
+      "Verify the hook is not publicly exposed in source code or documentation.",
+      "Check the Vercel project → Settings → Git for current deploy hooks.",
+      "Regenerate the hook URL if it may have been exposed.",
+    ];
+  }
   if (rt.startsWith("vercel_")) {
     return [
       "Confirm the Vercel configuration change was intentional.",
@@ -1761,6 +1869,14 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Verify Apple Pay and Google Pay still work on your checkout pages.",
       "Check the Stripe Dashboard → Settings → Payment methods → Domains.",
       "Re-add the domain if it was accidentally removed.",
+    ];
+  }
+  if (rt === "stripe_billing_portal_config") {
+    return [
+      "Confirm the billing portal configuration change was intentional.",
+      "Verify the customer-facing billing portal still works as expected.",
+      "Check the Stripe Dashboard → Settings → Billing → Customer portal.",
+      "Restore the previous configuration if this was accidental.",
     ];
   }
   if (rt.startsWith("stripe_")) {
@@ -3939,6 +4055,63 @@ function getSuggestedChecks(change: ChangeDetail): string[] {
       "Confirm this Supabase configuration change was intentional.",
       "Review the affected setting in the Supabase Dashboard.",
       "Verify database connectivity and auth are functioning.",
+    ];
+  }
+
+  // Shopify
+  if (rt === "shopify_shop_metadata") {
+    const fpShop = change.field_path ?? "";
+    if (fpShop === "password_protected" && change.new_value === false) {
+      return [
+        "Confirm that removing storefront password protection was intentional.",
+        "Verify your store is ready for public access.",
+        "Check the Shopify Admin → Online Store → Preferences for current protection status.",
+        "Re-enable password protection in the Shopify Admin if this was accidental.",
+      ];
+    }
+    return [
+      "Confirm the Shopify store settings change was intentional.",
+      "Review the Shopify Admin → Settings for affected configuration.",
+      "Verify storefront behavior is as expected after the change.",
+    ];
+  }
+  if (rt === "shopify_webhook_subscription") {
+    const fpWebhook = change.field_path ?? "";
+    if (fpWebhook === "address") {
+      return [
+        "Confirm the webhook delivery URL change was intentional.",
+        "Verify the new endpoint URL is under your control.",
+        "Check the Shopify Admin → Settings → Notifications for webhook configuration.",
+        "Test that events are being delivered to the new endpoint.",
+        "Restore the previous URL immediately if this was unauthorized.",
+      ];
+    }
+    if (change.change_type === "removed") {
+      return [
+        "Confirm the webhook deletion was intentional.",
+        "Verify that no integrations relied on events from this subscription.",
+        "Re-add the webhook in the Shopify Admin if this was accidental.",
+      ];
+    }
+    return [
+      "Confirm the webhook change was intentional.",
+      "Verify the delivery URL and subscribed topics are correct.",
+      "Test that events are being received by the correct endpoint.",
+    ];
+  }
+  if (rt === "shopify_app_scope_summary") {
+    return [
+      "Review the Shopify app's permission scopes in the Partners dashboard or Shopify Admin → Apps.",
+      "Confirm the scope changes correspond to an authorized app update or install.",
+      "Verify no unexpected scopes were added that could allow broader data access.",
+      "Revoke and reinstall the app if unauthorized scope changes are suspected.",
+    ];
+  }
+  if (rt.startsWith("shopify_")) {
+    return [
+      "Confirm this Shopify configuration change was intentional.",
+      "Review the Shopify Admin for affected settings.",
+      "Verify store integrations and webhooks are functioning correctly.",
     ];
   }
 

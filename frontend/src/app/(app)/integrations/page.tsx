@@ -39,8 +39,8 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 // Providers where a trust / data-minimisation note is shown on the card.
-// AWS, Firebase, and Supabase handle especially sensitive configuration surfaces.
-const SHOW_TRUST_NOTE = new Set<ProviderId>(["aws", "firebase", "supabase"]);
+// All providers show a trust note so users know what ConfigTrace does and doesn't access.
+const SHOW_TRUST_NOTE = new Set<ProviderId>(PROVIDER_IDS);
 
 // ── SetupSteps ────────────────────────────────────────────────────────────────
 
@@ -256,7 +256,8 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
               {" "}<code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Metadata: Read</code>,
               {" "}<code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Administration: Read</code>,
               {" "}<code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Secrets: Read</code>,
-              {" "}<code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Variables: Read</code>.
+              {" "}<code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Variables: Read</code>,
+              {" "}<code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Environments: Read</code>.
               Leave all other permissions at &ldquo;No access&rdquo;.</>,
           },
           {
@@ -313,7 +314,8 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
               Grant read-only access to: <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Account</code>,{" "}
               <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Webhook endpoints</code>,{" "}
               <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Payment method configurations</code>,{" "}
-              and <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Payment method domains</code>.</>,
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Payment method domains</code>,{" "}
+              and <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Billing portal configurations</code>.</>,
           },
           {
             heading: "Copy the key.",

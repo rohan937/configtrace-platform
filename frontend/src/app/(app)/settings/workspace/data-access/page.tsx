@@ -54,6 +54,13 @@ const DOES_NOT_READ: Record<string, string[]> = {
     "Function source code or build artifacts",
     "Application data",
   ],
+  shopify: [
+    "Customer orders, payment info, or transaction history",
+    "Customer PII (names, addresses, emails)",
+    "Inventory quantities or product contents",
+    "Theme files or storefront code",
+    "Shopify admin API secret keys",
+  ],
 };
 
 // ── Section component ─────────────────────────────────────────────────────────

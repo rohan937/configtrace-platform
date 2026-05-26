@@ -73,6 +73,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     monitoredSurfaces: [
       "Repository settings (visibility, default branch)",
       "Branch protection rules",
+      "Environment protection rules (required reviewers, branch policies)",
       "Webhooks",
       "Actions secrets (names only — never values)",
       "Deploy keys",
@@ -96,6 +97,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "Environment variable keys (never values)",
       "Custom domains",
       "Git branch configuration",
+      "Deploy hooks (endpoint domain — URL path never stored)",
     ],
     trustNote:
       "ConfigTrace reads project configuration only. Environment variable values, deployment logs, function source code, and build artefacts are never accessed.",
@@ -116,6 +118,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "Webhook endpoints (URL, enabled events)",
       "Payment method configurations",
       "Payment method domains",
+      "Billing portal configurations",
     ],
     trustNote:
       "ConfigTrace reads account configuration only. Customer data, payment card details, transaction records, and Stripe secret keys are never accessed.",
@@ -204,6 +207,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "Storefront access settings (password protection)",
       "Webhook subscriptions (endpoint domain, topic, HTTPS status)",
       "Store policies (presence and content hash — raw text never stored)",
+      "App permission scopes (scope names — not store data)",
     ],
     trustNote:
       "ConfigTrace reads store configuration metadata only. Orders, customers, payment data, transaction records, and storefront theme files are never accessed or stored.",
