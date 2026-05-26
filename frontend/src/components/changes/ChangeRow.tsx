@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ChangeListItem, ReviewStatus } from "@/types";
 import { formatRelativeTime, formatAbsoluteTime, changeTypeLabel } from "@/lib/utils";
 import { getTimelineEventData } from "@/lib/timeline";
+import { getProviderMeta } from "@/lib/providers";
 
 interface ChangeRowProps {
   change: ChangeListItem;
@@ -33,7 +34,7 @@ const RISK_LEFT_SHADOW: Partial<Record<string, string>> = {
 
 // ── Inline risk badge ─────────────────────────────────────────────────────────
 
-function InlineRiskBadge({ level }: { level: string }) {
+export function InlineRiskBadge({ level }: { level: string }) {
   const key = (level ?? "unknown").toLowerCase();
   const s = RISK_BADGE_STYLE[key] ?? RISK_BADGE_STYLE.unknown;
   return (
@@ -60,6 +61,33 @@ function InlineRiskBadge({ level }: { level: string }) {
   );
 }
 
+// ── Provider badge ────────────────────────────────────────────────────────────
+
+export function ProviderBadge({ provider }: { provider: string }) {
+  const meta = getProviderMeta(provider);
+  return (
+    <span
+      aria-label={`Provider: ${meta.shortLabel}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        background: meta.bgColor,
+        color: meta.color,
+        border: `1px solid ${meta.borderColor}`,
+        borderRadius: "4px",
+        padding: "1px 5px",
+        fontSize: "10px",
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        letterSpacing: "0.02em",
+      }}
+    >
+      {meta.shortLabel}
+    </span>
+  );
+}
+
 // ── Change-type chip ──────────────────────────────────────────────────────────
 
 function ChangeTypeChip({ changeType }: { changeType: string }) {
@@ -77,14 +105,14 @@ function ChangeTypeChip({ changeType }: { changeType: string }) {
 
 // ── Review status badge (M57.2) ───────────────────────────────────────────────
 
-const REVIEW_BADGE: Record<ReviewStatus, { label: string; color: string }> = {
+export const REVIEW_BADGE: Record<ReviewStatus, { label: string; color: string }> = {
   needs_review:  { label: "Needs Review", color: "#f5a623" },
   acknowledged:  { label: "Acknowledged", color: "#3ccf7e" },
   expected:      { label: "Expected",     color: "#4f80f7" },
   snoozed:       { label: "Snoozed",      color: "#8b5cf6" },
 };
 
-function ReviewStatusBadge({ status }: { status: ReviewStatus }) {
+export function ReviewStatusBadge({ status }: { status: ReviewStatus }) {
   const { label, color } = REVIEW_BADGE[status] ?? REVIEW_BADGE.needs_review;
   if (status === "needs_review") return null; // don't clutter unreviewed rows
   return (
@@ -120,7 +148,7 @@ function ReviewStatusBadge({ status }: { status: ReviewStatus }) {
  * Critical/High rows show a 3px coloured left edge for rapid scanning.
  */
 export default function ChangeRow({ change }: ChangeRowProps) {
-  const { title, description, providerLabel, category } = getTimelineEventData(change);
+  const { title, description, provider, category } = getTimelineEventData(change);
   const riskKey = (change.risk_level ?? "unknown").toLowerCase();
   const dotColor = RISK_DOT_COLOR[riskKey] ?? RISK_DOT_COLOR.unknown;
   const leftShadow = RISK_LEFT_SHADOW[riskKey] ?? "none";
@@ -218,7 +246,7 @@ export default function ChangeRow({ change }: ChangeRowProps) {
             {formatRelativeTime(change.created_at)}
           </span>
           <span aria-hidden="true">·</span>
-          <span>{providerLabel}</span>
+          <ProviderBadge provider={provider} />
           {category && (
             <>
               <span aria-hidden="true">·</span>

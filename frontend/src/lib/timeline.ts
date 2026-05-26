@@ -59,6 +59,7 @@ export function getTimelineProvider(change: ChangeListItem): string {
   if (rt.startsWith("stripe_"))   return "stripe";
   if (rt.startsWith("firebase_")) return "firebase";
   if (rt.startsWith("supabase_")) return "supabase";
+  if (rt.startsWith("shopify_"))  return "shopify";
   return "cloudflare";
 }
 
@@ -105,14 +106,17 @@ export function getTimelineCategory(change: ChangeListItem): string | null {
   // GitHub
   if (rt === "github_actions_secret" || rt === "github_deploy_key") return "CI/CD";
   if (rt === "github_branch_protection")                            return "Branch Policy";
+  if (rt === "github_environment_protection")                       return "Deployment Security";
   if (rt === "github_repo_settings")                                return "Repo Settings";
   if (rt === "github_webhook")                                      return "Webhooks";
 
   // Vercel
   if (rt === "vercel_env_var")                                      return "Config";
   if (rt === "vercel_domain")                                       return "Domains";
+  if (rt === "vercel_deploy_hook_metadata")                         return "Deployment";
 
   // Stripe
+  if (rt === "stripe_billing_portal_config")                        return "Billing";
   if (rt.startsWith("stripe_payment"))                              return "Payments";
   if (rt === "stripe_webhook_endpoint")                             return "Webhooks";
 
@@ -130,6 +134,12 @@ export function getTimelineCategory(change: ChangeListItem): string | null {
   if (rt.startsWith("supabase_storage"))                            return "Storage";
   if (rt === "supabase_edge_function")                              return "Functions";
   if (rt === "supabase_network_restriction")                        return "Network";
+
+  // Shopify
+  if (rt === "shopify_shop_metadata")                               return "Settings";
+  if (rt === "shopify_webhook_subscription")                        return "Webhooks";
+  if (rt === "shopify_store_policy")                                return "Policies";
+  if (rt === "shopify_app_scope_summary")                           return "Commerce Security";
 
   // Cloudflare DNS record types ("A", "CNAME", "MX", …)
   if (rt && !rt.includes("_"))                                      return "DNS";
@@ -205,21 +215,24 @@ export function getTimelineEventTitle(change: ChangeListItem): string {
   if (rt.startsWith("aws_route53_"))      return "AWS Route 53 configuration changed";
 
   // ── GitHub ────────────────────────────────────────────────────────────
-  if (rt === "github_repo_settings")      return "GitHub repository settings changed";
-  if (rt === "github_branch_protection")  return ct === "added" ? "GitHub branch protection added" : ct === "removed" ? "GitHub branch protection removed" : "GitHub branch protection changed";
-  if (rt === "github_actions_secret")     return ct === "added" ? "GitHub Actions secret added" : ct === "removed" ? "GitHub Actions secret removed" : "GitHub Actions secret rotated";
-  if (rt === "github_webhook")            return ct === "added" ? "GitHub webhook added" : ct === "removed" ? "GitHub webhook removed" : "GitHub webhook changed";
-  if (rt === "github_deploy_key")         return ct === "added" ? "GitHub deploy key added" : ct === "removed" ? "GitHub deploy key removed" : "GitHub deploy key changed";
+  if (rt === "github_repo_settings")           return "GitHub repository settings changed";
+  if (rt === "github_branch_protection")       return ct === "added" ? "GitHub branch protection added" : ct === "removed" ? "GitHub branch protection removed" : "GitHub branch protection changed";
+  if (rt === "github_actions_secret")          return ct === "added" ? "GitHub Actions secret added" : ct === "removed" ? "GitHub Actions secret removed" : "GitHub Actions secret rotated";
+  if (rt === "github_webhook")                 return ct === "added" ? "GitHub webhook added" : ct === "removed" ? "GitHub webhook removed" : "GitHub webhook changed";
+  if (rt === "github_deploy_key")              return ct === "added" ? "GitHub deploy key added" : ct === "removed" ? "GitHub deploy key removed" : "GitHub deploy key changed";
+  if (rt === "github_environment_protection")  return ct === "added" ? "GitHub environment protection added" : ct === "removed" ? "GitHub environment protection removed" : "GitHub environment protection changed";
 
   // ── Vercel ────────────────────────────────────────────────────────────
-  if (rt === "vercel_project")            return "Vercel project settings changed";
-  if (rt === "vercel_env_var")            return ct === "added" ? "Vercel environment variable added" : ct === "removed" ? "Vercel environment variable removed" : "Vercel environment variable changed";
-  if (rt === "vercel_domain")             return ct === "added" ? "Vercel domain added" : ct === "removed" ? "Vercel domain removed" : "Vercel domain changed";
+  if (rt === "vercel_project")             return "Vercel project settings changed";
+  if (rt === "vercel_env_var")             return ct === "added" ? "Vercel environment variable added" : ct === "removed" ? "Vercel environment variable removed" : "Vercel environment variable changed";
+  if (rt === "vercel_domain")              return ct === "added" ? "Vercel domain added" : ct === "removed" ? "Vercel domain removed" : "Vercel domain changed";
+  if (rt === "vercel_deploy_hook_metadata") return ct === "added" ? "Vercel deploy hook added" : ct === "removed" ? "Vercel deploy hook removed" : "Vercel deploy hook changed";
 
   // ── Stripe ────────────────────────────────────────────────────────────
-  if (rt === "stripe_account_settings")   return "Stripe account settings changed";
-  if (rt === "stripe_webhook_endpoint")   return ct === "added" ? "Stripe webhook endpoint added" : ct === "removed" ? "Stripe webhook endpoint removed" : "Stripe webhook endpoint changed";
-  if (rt.startsWith("stripe_payment_"))   return "Stripe payment configuration changed";
+  if (rt === "stripe_account_settings")    return "Stripe account settings changed";
+  if (rt === "stripe_webhook_endpoint")    return ct === "added" ? "Stripe webhook endpoint added" : ct === "removed" ? "Stripe webhook endpoint removed" : "Stripe webhook endpoint changed";
+  if (rt === "stripe_billing_portal_config") return "Stripe billing portal configuration changed";
+  if (rt.startsWith("stripe_payment_"))    return "Stripe payment configuration changed";
 
   // ── Firebase ──────────────────────────────────────────────────────────
   if (rt === "firebase_project")          return ct === "added" ? "Firebase project connected" : "Firebase project settings changed";
@@ -244,6 +257,12 @@ export function getTimelineEventTitle(change: ChangeListItem): string {
   if (rt === "supabase_storage_config")   return "Supabase Storage config changed";
   if (rt === "supabase_api_config")       return "Supabase API config changed";
   if (rt === "supabase_custom_domain")    return ct === "added" ? "Supabase custom domain configured" : ct === "removed" ? "Supabase custom domain removed" : "Supabase custom domain changed";
+
+  // ── Shopify ───────────────────────────────────────────────────────────────────
+  if (rt === "shopify_shop_metadata")        return "Shopify store settings changed";
+  if (rt === "shopify_webhook_subscription") return ct === "added" ? "Shopify webhook subscription added" : ct === "removed" ? "Shopify webhook subscription removed" : "Shopify webhook subscription changed";
+  if (rt === "shopify_store_policy")         return ct === "added" ? "Shopify store policy added" : ct === "removed" ? "Shopify store policy removed" : "Shopify store policy changed";
+  if (rt === "shopify_app_scope_summary")    return "Shopify app permissions changed";
 
   // ── Cloudflare DNS ────────────────────────────────────────────────────
   // record_type for Cloudflare DNS is e.g. "A", "CNAME", "MX" — no underscore

@@ -268,17 +268,19 @@ function RefreshBar({
  * most urgent signal with a direct link to act.
  */
 function AttentionCard({ summary }: { summary: DashboardSummary }) {
-  const rd = summary.risk_distribution;
   const ih = summary.integration_health;
+  const rq = summary.review_queue;
   const failedSyncs = summary.recent_failed_syncs.length;
-  const highCritical7d = summary.change_activity.high_critical_last_7d;
 
-  const hasCritical = rd.critical > 0;
-  const hasHighRisk = rd.high > 0 || highCritical7d > 0;
+  // "Attention needed" when there are UNREVIEWED critical/high changes or integration issues.
+  // "All clear" means the review queue is empty and monitoring is healthy.
+  const hasCritical = rq.critical > 0;
+  const hasHighRisk = rq.high > 0;
   const hasIssues   = ih.needs_attention > 0 || failedSyncs > 0;
 
   // ── All clear ────────────────────────────────────────────────────────────
   if (!hasCritical && !hasHighRisk && !hasIssues) {
+    const allSyncsHealthy = ih.total > 0 && ih.needs_attention === 0 && failedSyncs === 0;
     return (
       <div
         style={{
@@ -308,7 +310,9 @@ function AttentionCard({ summary }: { summary: DashboardSummary }) {
             All clear
           </p>
           <p style={{ margin: 0, fontSize: "12px", color: "#565b6e" }}>
-            No high-risk or critical changes detected. Monitoring is healthy.
+            {allSyncsHealthy
+              ? "Review queue is empty. Monitoring is healthy."
+              : "No unreviewed high-risk or critical changes. Review queue is empty."}
           </p>
         </div>
       </div>
@@ -317,10 +321,10 @@ function AttentionCard({ summary }: { summary: DashboardSummary }) {
 
   // ── Attention needed ──────────────────────────────────────────────────────
   const msgs: string[] = [];
-  if (rd.critical > 0)
-    msgs.push(`${rd.critical} critical change${rd.critical !== 1 ? "s" : ""}`);
-  if (rd.high > 0)
-    msgs.push(`${rd.high} high-risk change${rd.high !== 1 ? "s" : ""}`);
+  if (rq.critical > 0)
+    msgs.push(`${rq.critical} critical change${rq.critical !== 1 ? "s" : ""} need review`);
+  if (rq.high > 0)
+    msgs.push(`${rq.high} high-risk change${rq.high !== 1 ? "s" : ""} need review`);
   if (ih.needs_attention > 0)
     msgs.push(`${ih.needs_attention} integration${ih.needs_attention !== 1 ? "s" : ""} need attention`);
   if (failedSyncs > 0)
@@ -330,11 +334,7 @@ function AttentionCard({ summary }: { summary: DashboardSummary }) {
   const bgColor     = hasCritical ? "rgba(232,64,64,0.06)" : "rgba(245,99,42,0.06)";
   const titleColor  = hasCritical ? "#e84040" : "#f5632a";
   const title       = hasCritical ? "Critical attention required" : "Attention needed";
-  const reviewHref  = hasCritical
-    ? "/timeline?risk_level=critical"
-    : rd.high > 0
-    ? "/timeline?risk_level=high"
-    : "/integrations";
+  const reviewHref  = (hasCritical || hasHighRisk) ? "/needs-review" : "/integrations";
 
   return (
     <div
@@ -367,7 +367,7 @@ function AttentionCard({ summary }: { summary: DashboardSummary }) {
         </p>
         <p style={{ margin: 0, fontSize: "12px", color: "#8b90a0", lineHeight: 1.6 }}>
           {msgs.join(" · ")}
-          {(hasCritical || rd.high > 0) && (
+          {(hasCritical || hasHighRisk) && (
             <>
               {" "}
               <Link
@@ -380,6 +380,65 @@ function AttentionCard({ summary }: { summary: DashboardSummary }) {
           )}
         </p>
       </div>
+    </div>
+  );
+}
+
+// ── Review queue card — unreviewed critical/high counts ──────────────────────
+
+function ReviewQueueCard({ rq }: { rq: ReviewQueueCounts }) {
+  if (rq.total === 0) return null;
+  const other = Math.max(0, rq.total - rq.critical - rq.high);
+
+  return (
+    <div
+      style={{
+        ...CARD,
+        marginBottom: "20px",
+        display: "flex",
+        alignItems: "center",
+        gap: "16px",
+        padding: "12px 20px",
+      }}
+    >
+      <span
+        style={{
+          fontSize: "11px",
+          color: "#565b6e",
+          textTransform: "uppercase" as const,
+          letterSpacing: "0.06em",
+          fontWeight: 500,
+          flexShrink: 0,
+        }}
+      >
+        Review queue
+      </span>
+      <div style={{ flex: 1, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px" }}>
+        {rq.critical > 0 && (
+          <span style={{ fontSize: "12px", color: "#e84040", fontWeight: 600 }}>
+            ● {rq.critical} critical
+          </span>
+        )}
+        {rq.high > 0 && (
+          <span style={{ fontSize: "12px", color: "#f5632a", fontWeight: 600 }}>
+            ● {rq.high} high
+          </span>
+        )}
+        {other > 0 && (
+          <span style={{ fontSize: "12px", color: "#8b90a0" }}>
+            {other} other
+          </span>
+        )}
+        <span style={{ fontSize: "12px", color: "#565b6e" }}>
+          unreviewed
+        </span>
+      </div>
+      <Link
+        href="/needs-review"
+        style={{ fontSize: "12px", color: "#4f80f7", textDecoration: "none", flexShrink: 0, fontWeight: 500 }}
+      >
+        Open review queue →
+      </Link>
     </div>
   );
 }
@@ -1084,10 +1143,13 @@ export default function DashboardPage() {
             {/* 1. Security posture — all-clear or attention-needed */}
             <AttentionCard summary={summary} />
 
-            {/* 2. Risk metrics — Critical / High / Medium / Low (all-time) */}
+            {/* 2. Review queue — unreviewed critical / high counts */}
+            <ReviewQueueCard rq={summary.review_queue} />
+
+            {/* 3. Risk metrics — Critical / High / Medium / Low (all-time) */}
             <RiskMetricsRow data={summary.risk_distribution} />
 
-            {/* 3. Recent changes (left) + sidebar: checklist + providers (right) */}
+            {/* 4. Recent changes (left) + sidebar: checklist + providers (right) */}
             <div
               style={{
                 display: "grid",
@@ -1109,7 +1171,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* 4. Sync failures (if any) — monitoring health detail */}
+            {/* 5. Sync failures (if any) — monitoring health detail */}
             {summary.recent_failed_syncs.length > 0 && (
               <div style={{ marginBottom: "20px" }}>
                 <RecentFailedSyncs syncs={summary.recent_failed_syncs} />

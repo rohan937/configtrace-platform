@@ -21,7 +21,7 @@ const PAGE_SIZE = 20;
 // ── Filter state type ─────────────────────────────────────────────────────────
 
 interface Filters {
-  provider: string;        // "all" | "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase" | "supabase"
+  provider: string;        // "all" | "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase" | "supabase" | "shopify"
   integrationId: string;   // "all" | <uuid>
   riskLevel: string;       // "all" | "critical" | "high" | "medium" | "low"
   changeType: string;      // "all" | "added" | "removed" | "modified"
@@ -403,7 +403,7 @@ function TimelineContent() {
     <>
       <PageHeader
         title="Timeline"
-        description="Configuration changes across all integrations, newest first."
+        description="Historical configuration changes across every connected provider. Use Needs Review to triage unresolved high-risk changes."
       />
 
       <div className="px-6 pb-8">
@@ -423,6 +423,7 @@ function TimelineContent() {
             <FilterPill label="AWS"        active={filters.provider === "aws"}        onClick={() => setFilter("provider", "aws")} />
             <FilterPill label="Firebase"   active={filters.provider === "firebase"}   onClick={() => setFilter("provider", "firebase")} />
             <FilterPill label="Supabase"   active={filters.provider === "supabase"}   onClick={() => setFilter("provider", "supabase")} />
+            <FilterPill label="Shopify"    active={filters.provider === "shopify"}    onClick={() => setFilter("provider", "shopify")} />
           </FilterRow>
 
           {/* Integration */}
@@ -621,13 +622,13 @@ function TimelineContent() {
             changes={changes}
             emptyTitle={
               hasFilters
-                ? "No changes match these filters."
+                ? "Nothing matches these filters."
                 : "No configuration changes yet."
             }
             emptyDescription={
               hasFilters
-                ? "Try clearing filters or widening the time range."
-                : "Run a sync or connect another provider to start building your security timeline. Changes appear from the second sync onwards when records differ from the baseline."
+                ? "Try clearing the filters or widening the time range. For unresolved high-risk items, check Needs Review."
+                : "Connect a provider and run a sync to start building your security change history. Changes appear from the second sync onwards when records differ from the baseline."
             }
           />
         )}
