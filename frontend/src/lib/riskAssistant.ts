@@ -89,6 +89,11 @@ export interface AssistantContext {
   clusterSummary?: string | null;
   /** Summary from the blast radius analysis, if any (from M58.11). */
   blastRadiusSummary?: string | null;
+  /**
+   * The highest-severity policy violation for this change, if any (M58.14).
+   * Only the name and severity are used — never raw value content.
+   */
+  topPolicyViolation?: { name: string; severity: string } | null;
   // Derived / normalised fields (set once, used everywhere)
   provider: string;
   recordType: string;        // lowercase provider_metadata.record_type
@@ -127,6 +132,7 @@ export function buildRiskAssistantContext(
   relatedChangesCount = 0,
   clusterSummary?: string | null,
   blastRadiusSummary?: string | null,
+  topPolicyViolation?: { name: string; severity: string } | null,
 ): AssistantContext {
   const pm = change.provider_metadata ?? {};
   const rt = ((pm["record_type"] as string) ?? "").toLowerCase();
@@ -138,6 +144,7 @@ export function buildRiskAssistantContext(
     relatedChangesCount,
     clusterSummary: clusterSummary ?? null,
     blastRadiusSummary: blastRadiusSummary ?? null,
+    topPolicyViolation: topPolicyViolation ?? null,
     provider:         _deriveProvider(rt),
     recordType:       rt,
     riskLevel:        (change.risk_level   ?? "unknown").toLowerCase(),
@@ -619,6 +626,12 @@ function _answerWhyRisky(ctx: AssistantContext): AssistantResponse {
   const limitations: string[] = rem?.caveats?.slice(0, 2) ??
     _genericLimitations(ctx.provider, ctx.recordType);
 
+  if (ctx.topPolicyViolation) {
+    limitations.push(
+      `Policy violation detected: "${ctx.topPolicyViolation.name}" (${ctx.topPolicyViolation.severity}) — see the Policy Violations panel for details.`,
+    );
+  }
+
   if (ctx.clusterSummary) {
     limitations.push(
       `A nearby change cluster was detected ("${ctx.clusterSummary}") — review whether this was part of a planned deployment.`,
@@ -882,12 +895,17 @@ function _answerTeamSummary(ctx: AssistantContext): AssistantResponse {
       ? ` Note: ${ctx.relatedChangesCount} nearby change${ctx.relatedChangesCount === 1 ? " was" : "s were"} also detected on this integration around the same time.`
       : "";
 
+  const policySentence = ctx.topPolicyViolation
+    ? ` This change also triggered a policy violation: "${ctx.topPolicyViolation.name}" (${ctx.topPolicyViolation.severity}).`
+    : "";
+
   const answer =
     `ConfigTrace detected a ${riskLabel.toLowerCase()}-risk configuration change in ${provLabel}. ` +
     `A ${ctLabel} was detected on ${change.record_identifier || "a " + recordType + " resource"}.` +
     (change.risk_reason ? ` Reason: ${change.risk_reason}.` : "") +
     remedSentence +
-    relatedSentence;
+    relatedSentence +
+    policySentence;
 
   const bullets: string[] = [
     `Provider: ${provLabel}`,
@@ -942,6 +960,11 @@ function _answerNextSteps(ctx: AssistantContext): AssistantResponse {
   if (ctx.blastRadiusSummary) {
     bullets.push(
       `Blast radius analysis available — review the Blast Radius panel to understand potentially affected surfaces.`,
+    );
+  }
+  if (ctx.topPolicyViolation) {
+    bullets.push(
+      `Policy violation: "${ctx.topPolicyViolation.name}" (${ctx.topPolicyViolation.severity}) — review the Policy Violations panel and follow the recommended action.`,
     );
   }
   bullets.push("After remediation: run a ConfigTrace sync to confirm the finding is resolved.");

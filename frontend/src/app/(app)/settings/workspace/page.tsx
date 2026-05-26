@@ -40,6 +40,12 @@ const HUB_CARDS = [
     description: "Review provider permissions, read boundaries, and export a security packet.",
     color: "#b0b5c4",
   },
+  {
+    href: "/settings/workspace/policies",
+    title: "Policies",
+    description: "Enable or disable built-in policy checks for configuration drift violations.",
+    color: "#e84040",
+  },
 ] as const;
 
 // ── Inline message banners ────────────────────────────────────────────────────

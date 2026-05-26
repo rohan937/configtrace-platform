@@ -1039,3 +1039,45 @@ export async function getChangeCorrelation(
   return apiFetch(`/changes/${changeId}/correlation`, { token });
 }
 
+// ── M58.14: Policy Engine ─────────────────────────────────────────────────────
+
+/**
+ * Evaluate all enabled workspace policies against a change.
+ *
+ * Returns { violations: [] } when no policies fire for this change.
+ * Always resolves (never rejects on 200 responses).
+ */
+export async function getChangePolicyViolations(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").PolicyViolationsResponse> {
+  return apiFetch(`/changes/${changeId}/policy-violations`, { token });
+}
+
+/**
+ * Fetch the full built-in policy catalog with per-workspace enabled states.
+ */
+export async function getWorkspacePolicies(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").PolicyListResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/policies`, { token });
+}
+
+/**
+ * Enable or disable a built-in policy for a workspace.
+ * Only admins may call this.
+ */
+export async function updateWorkspacePolicy(
+  workspaceId: string,
+  policyKey: string,
+  enabled: boolean,
+  token?: string | null,
+): Promise<import("@/types").WorkspacePolicy> {
+  return apiFetch(`/workspaces/${workspaceId}/policies/${policyKey}`, {
+    token,
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+}
+

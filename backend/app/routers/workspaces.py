@@ -1,4 +1,4 @@
-"""Workspace and member management routes — M50/M51/M57.1/M58.5/M58.7.
+"""Workspace and member management routes — M50/M51/M57.1/M58.5/M58.7/M58.14.
 
 Routes
 ------
@@ -26,6 +26,8 @@ POST   /workspaces/{workspace_id}/notifications/push/subscriptions — register 
 GET    /workspaces/{workspace_id}/notifications/push/subscriptions — list push subs (M58.7)
 DELETE /workspaces/{workspace_id}/notifications/push/subscriptions/{sub_id} — remove sub (M58.7)
 POST   /workspaces/{workspace_id}/notifications/push/test          — test push delivery (M58.7)
+GET    /workspaces/{workspace_id}/policies                         — list policy catalog with enabled state (M58.14)
+PUT    /workspaces/{workspace_id}/policies/{policy_key}            — enable/disable a policy (M58.14)
 """
 
 from __future__ import annotations
@@ -73,8 +75,14 @@ from app.schemas.notification_settings import (
     PushSubscriptionResponse,
     PushTestResponse,
 )
+from app.schemas.policy import (
+    PolicyListResponse,
+    PolicyUpdateRequest,
+    WorkspacePolicyResponse,
+)
 from app.services import workspace_service
 from app.services import notification_service
+from app.services import policy_engine_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -988,3 +996,64 @@ def test_push_notification(
         total_subscriptions=result["total_subscriptions"],
         error=result.get("error"),
     )
+
+
+# ── Policy engine endpoints (M58.14) ─────────────────────────────────────────
+
+
+@router.get("/{workspace_id}/policies", response_model=PolicyListResponse)
+def list_workspace_policies(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PolicyListResponse:
+    """Return the full built-in policy catalog with each policy's enabled state.
+
+    Any workspace member may read policies.  Policies not explicitly overridden
+    in the database are returned with ``enabled=True`` (default).
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return policy_engine_service.get_workspace_policies(workspace_id, db)
+
+
+@router.put(
+    "/{workspace_id}/policies/{policy_key}",
+    response_model=WorkspacePolicyResponse,
+)
+def update_workspace_policy(
+    workspace_id: UUID4,
+    policy_key: str,
+    body: PolicyUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkspacePolicyResponse:
+    """Enable or disable a built-in policy for this workspace.
+
+    Only workspace admins (role ``admin``) may change policy settings.
+    Returns the updated policy with its full catalog metadata merged in.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        result = policy_engine_service.set_policy_enabled(
+            workspace_id=workspace_id,
+            policy_key=policy_key,
+            enabled=body.enabled,
+            db=db,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    db.commit()
+    return result

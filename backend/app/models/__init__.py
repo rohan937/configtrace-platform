@@ -18,6 +18,7 @@ from app.models.billing import WorkspaceBilling  # noqa: F401
 from app.models.notification_settings import WorkspaceNotificationSettings  # noqa: F401
 from app.models.change_review import ChangeReview  # noqa: F401  (after Change + Workspace)
 from app.models.change_snooze_rule import ChangeSnoozeRule  # noqa: F401  (M57.3)
+from app.models.workspace_policy import WorkspacePolicy  # noqa: F401  (M58.14)
 
 __all__ = [
     "Base",
@@ -37,4 +38,5 @@ __all__ = [
     "WorkspaceNotificationSettings",
     "ChangeReview",
     "ChangeSnoozeRule",
+    "WorkspacePolicy",
 ]

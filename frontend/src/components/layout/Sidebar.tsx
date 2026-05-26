@@ -25,6 +25,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Billing",        href: "/settings/workspace/billing",       sub: true },
   { label: "Notifications",  href: "/settings/workspace/notifications", sub: true },
   { label: "Trust Center",   href: "/settings/workspace/data-access",   sub: true },
+  { label: "Policies",       href: "/settings/workspace/policies",       sub: true },
 ];
 
 export default function Sidebar() {

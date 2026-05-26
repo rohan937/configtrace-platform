@@ -861,3 +861,38 @@ export interface ChangeNoteListResponse {
   items: ChangeNote[];
   total: number;
 }
+
+// ── M58.14: Policy Engine ─────────────────────────────────────────────────────
+
+/** A single policy violation detected for a change. */
+export interface PolicyViolation {
+  policy_key: string;
+  name: string;
+  severity: "critical" | "high" | "medium";
+  description: string;
+  evidence: string[];
+  recommended_action: string;
+}
+
+/** Response from GET /changes/{id}/policy-violations. */
+export interface PolicyViolationsResponse {
+  violations: PolicyViolation[];
+}
+
+/** A workspace policy entry from the catalog with its current enabled state. */
+export interface WorkspacePolicy {
+  policy_key: string;
+  name: string;
+  description: string;
+  provider: string | null;
+  severity: "critical" | "high" | "medium";
+  category: string;
+  enabled: boolean;
+  built_in: boolean;
+}
+
+/** Response from GET /workspaces/{id}/policies. */
+export interface PolicyListResponse {
+  policies: WorkspacePolicy[];
+  total: number;
+}

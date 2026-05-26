@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, ReviewStatus } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, ReviewStatus, PolicyViolationsResponse } from "@/types";
 import {
   getChange,
   acknowledgeChange,
@@ -13,6 +13,7 @@ import {
   reopenChange,
   getChangeCorrelation,
   getChangeBlastRadius,
+  getChangePolicyViolations,
 } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
@@ -49,6 +50,7 @@ import RelatedChangesPanel from "@/components/investigation/RelatedChangesPanel"
 import AskConfigTrace from "@/components/investigation/AskConfigTrace";
 import CorrelationPanel from "@/components/investigation/CorrelationPanel";
 import BlastRadiusPanel from "@/components/investigation/BlastRadiusPanel";
+import PolicyViolationsPanel from "@/components/investigation/PolicyViolationsPanel";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -6136,6 +6138,9 @@ export default function ChangeDetailPage() {
   // M58.11: blast radius data
   const [blastRadius, setBlastRadius] = useState<BlastRadiusResponse | null>(null);
   const [blastRadiusLoading, setBlastRadiusLoading] = useState(false);
+  // M58.14: policy violations
+  const [policyViolations, setPolicyViolations] = useState<PolicyViolationsResponse | null>(null);
+  const [policyViolationsLoading, setPolicyViolationsLoading] = useState(false);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6198,6 +6203,19 @@ export default function ChangeDetailPage() {
     getChangeBlastRadius(changeId, cachedToken)
       .then((data) => { if (!cancelled) { setBlastRadius(data); setBlastRadiusLoading(false); } })
       .catch(() => { if (!cancelled) setBlastRadiusLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [changeId, cachedToken, change]);
+
+  // M58.14: fetch policy violations after the change is loaded
+  useEffect(() => {
+    if (!changeId || !cachedToken || !change) return;
+    let cancelled = false;
+
+    setPolicyViolationsLoading(true);
+    getChangePolicyViolations(changeId, cachedToken)
+      .then((data) => { if (!cancelled) { setPolicyViolations(data); setPolicyViolationsLoading(false); } })
+      .catch(() => { if (!cancelled) setPolicyViolationsLoading(false); });
 
     return () => { cancelled = true; };
   }, [changeId, cachedToken, change]);
@@ -6363,6 +6381,12 @@ export default function ChangeDetailPage() {
           loading={blastRadiusLoading}
         />
 
+        {/* ── Policy Violations (M58.14) ───────────────────────────────── */}
+        <PolicyViolationsPanel
+          data={policyViolations}
+          loading={policyViolationsLoading}
+        />
+
         {/* ── Ask ConfigTrace (M58.9) ─────────────────────────────────── */}
         <AskConfigTrace
           change={change}
@@ -6372,6 +6396,14 @@ export default function ChangeDetailPage() {
           relatedChangesCount={relatedChangesCount}
           clusterSummary={correlation?.primary_cluster?.title ?? null}
           blastRadiusSummary={blastRadius?.available ? blastRadius.summary : null}
+          topPolicyViolation={
+            policyViolations && policyViolations.violations.length > 0
+              ? {
+                  name: policyViolations.violations[0].name,
+                  severity: policyViolations.violations[0].severity,
+                }
+              : null
+          }
         />
 
         {/* ── Risk summary ────────────────────────────────────────────── */}

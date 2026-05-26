@@ -332,6 +332,8 @@ interface AskConfigTraceProps {
   clusterSummary?: string | null;
   /** Summary from the M58.11 blast radius analysis, if any. */
   blastRadiusSummary?: string | null;
+  /** Top policy violation name + severity from M58.14, if any. */
+  topPolicyViolation?: { name: string; severity: string } | null;
 }
 
 export default function AskConfigTrace({
@@ -342,6 +344,7 @@ export default function AskConfigTrace({
   relatedChangesCount = 0,
   clusterSummary,
   blastRadiusSummary,
+  topPolicyViolation,
 }: AskConfigTraceProps) {
   const [activeQuestionId, setActiveQuestionId] = useState<AssistantQuestionId | null>(null);
   const [copied, setCopied] = useState(false);
@@ -354,6 +357,7 @@ export default function AskConfigTrace({
     relatedChangesCount,
     clusterSummary,
     blastRadiusSummary,
+    topPolicyViolation,
   );
 
   const questions = getAssistantQuestionsForChange(ctx);

@@ -1,4 +1,4 @@
-"""Changes router — Milestone 11 / M57.2 / M57.3.
+"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14.
 
 Routes
 ------
@@ -11,6 +11,9 @@ POST /changes/{change_id}/acknowledge    — mark as acknowledged
 POST /changes/{change_id}/mark-expected  — mark as expected drift
 POST /changes/{change_id}/snooze         — snooze until a datetime
 POST /changes/{change_id}/reopen         — reset to needs_review
+
+M58.14 policy engine:
+GET  /changes/{change_id}/policy-violations — evaluate built-in policies against a change
 
 Both GET routes now include an optional ``review`` field with the current
 review state.  When no review row exists ``review`` is None (treat as
@@ -27,6 +30,7 @@ Security
 --------
 GET endpoints are still scoped by user_id (existing behaviour preserved).
 Review POST endpoints use workspace membership scoping.
+Policy endpoint follows the same 404-not-403 membership check.
 """
 
 from __future__ import annotations
@@ -58,11 +62,13 @@ from app.schemas.change_note import (
 )
 from app.schemas.change_correlation import CorrelationResponse
 from app.schemas.blast_radius import BlastRadiusResponse
+from app.schemas.policy import PolicyViolationsResponse
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
 from app.services import change_correlation_service
 from app.services import blast_radius_service
+from app.services import policy_engine_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -527,6 +533,39 @@ def get_change_blast_radius(
     _get_change_and_workspace(change_id, current_user, db)
 
     return blast_radius_service.compute_blast_radius(
+        change_id=change_id,
+        user_id=current_user.id,
+        db=db,
+    )
+
+
+# ── Policy violations endpoint (M58.14) ──────────────────────────────────────
+
+
+@router.get("/{change_id}/policy-violations", response_model=PolicyViolationsResponse)
+def get_change_policy_violations(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PolicyViolationsResponse:
+    """Evaluate all enabled workspace policies against a change.
+
+    Deterministically computed — no external API calls, no LLM, no persisted
+    violation state.  Workspace-level policy enable/disable overrides are
+    respected; policies not explicitly overridden default to enabled.
+
+    Returns ``{"violations": []}`` when:
+    - No built-in policies apply to this change's provider/record type.
+    - All applicable policies have been disabled for this workspace.
+    - The change passes all enabled policy checks.
+
+    The endpoint always returns 200; an empty ``violations`` list means no
+    violations were detected.
+    """
+    # Auth: 404-not-403 pattern — never reveal existence to non-members.
+    _get_change_and_workspace(change_id, current_user, db)
+
+    return policy_engine_service.compute_violations(
         change_id=change_id,
         user_id=current_user.id,
         db=db,
