@@ -1790,44 +1790,77 @@ function _cfRulesetPlaybooks(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Playbook 3 — Firebase
+// Playbook 3 — Firebase (dispatcher)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function _firebasePlaybooks(
   rt: string, fp: string, ct: string,
   rl: string, rr: string, nv: unknown,
 ): RemediationGuidance | null {
+  return (
+    _fbRulesetPlaybooks(rt, fp, ct, rl, rr, nv)      ??
+    _fbAuthPlaybooks(rt, fp, ct, rl, rr, nv)         ??
+    _fbAppCheckPlaybooks(rt, fp, ct, rl, rr, nv)     ??
+    _fbRemoteConfigPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _fbFunctionPlaybooks(rt, fp, ct, rl, rr, nv)     ??
+    _fbStorageBucketPlaybooks(rt, fp, ct, rl, rr, nv)??
+    null
+  );
+}
 
-  // 3a. Firestore or Storage ruleset: public write enabled
-  if (
-    (rt === "firebase_firestore_ruleset" || rt === "firebase_storage_ruleset") &&
-    fp === "public_write_detected" && nv === true
-  ) {
-    const surface = rt.includes("storage") ? "Storage" : "Firestore";
+// ── 3a. Firestore + Storage security rules ────────────────────────────────────
+
+function _fbRulesetPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  const isRuleset =
+    rt === "firebase_firestore_ruleset" ||
+    rt === "firebase_storage_ruleset";
+  if (!isRuleset) return null;
+
+  const surface = rt.includes("storage") ? "Storage" : "Firestore";
+
+  // Public write detected
+  if (fp === "public_write_detected" && nv === true) {
     return _guidance({
       confidence: "high",
-      title:   `Remove public write access from Firebase ${surface} rules`,
-      summary: `Restrict Firestore or Cloud Storage security rules so that unauthenticated (public) write access is not permitted on any path.`,
+      title:   `Restrict public ${surface} writes`,
+      summary:
+        `Update ${surface} security rules so writes require authentication ` +
+        `and the intended authorization checks.`,
       why_this_helps:
-        `Firebase security rules are the sole data-access control layer for Firestore and Cloud Storage when accessed from client SDKs. A rule that permits \`allow write: if true;\` or \`allow write: if request.auth == null;\` on any path exposes your database or storage bucket to unauthenticated writes from the internet. This can result in data injection, spam, storage exhaustion, or overwriting production documents.`,
+        `Firebase security rules are the sole data-access control layer for ${surface} when ` +
+        `accessed from client SDKs. A rule that permits \`allow write: if true;\` or ` +
+        `\`allow write: if request.auth == null;\` on any path exposes your ` +
+        `${surface === "Storage" ? "storage bucket to unauthenticated uploads, overwrites, and deletions" : "database to unauthenticated create, update, and delete operations"} ` +
+        `from the public internet. ` +
+        `${surface === "Storage" ? "This can result in storage abuse, malware hosting, or data destruction." : "This can result in data injection, spam, or overwriting production documents."}`,
       verify_first: [
-        `Identify which Firestore collection paths or Storage bucket paths have the public write rule.`,
-        `Confirm whether any app feature legitimately requires unauthenticated writes (e.g. a public feedback form) — if so, scope the rule to a specific path and rate-limit via App Check.`,
-        `Confirm you are reviewing the correct Firebase project (production vs staging).`,
-        `Test the rollback in a staging environment before applying to production if possible.`,
+        `Confirm this is the production Firebase project, not a staging or development environment.`,
+        `Identify which ${surface === "Storage" ? "bucket paths" : "Firestore collection paths"} currently allow public writes.`,
+        `Confirm whether any app feature legitimately requires unauthenticated writes — if so, scope the rule to a specific path only.`,
+        `Confirm whether server-side services rely on the Admin SDK — Admin SDK traffic bypasses security rules entirely.`,
+        `Test rule changes in a staging project or the Firebase Rules Playground before publishing to production.`,
       ],
       manual_steps: [
         `Open the Firebase Console → select the affected project.`,
-        `Navigate to ${surface} (Firestore Database or Storage) → Rules tab.`,
-        `Find the rule that permits public writes (e.g. \`allow write: if true;\` or an unauthenticated condition).`,
-        `Replace with an authenticated condition: \`allow write: if request.auth != null;\` or a more specific claim check.`,
-        `Use the Rules Playground to test the updated rules against expected client requests.`,
-        `Publish the updated rules.`,
+        `Navigate to ${surface === "Storage" ? "Storage" : "Firestore Database"} → Rules tab.`,
+        `Locate rules that allow writes without an auth check (e.g. \`allow write: if true;\`).`,
+        `Replace with an authenticated condition, for example: \`allow write: if request.auth != null;\``,
+        `For user-specific paths, add ownership checks: \`if request.auth.uid == resource.data.owner_id;\``,
+        `Use the Firebase Rules Playground to test the updated rules against expected read/write patterns.`,
+        `Publish the rules only after confirming legitimate client flows still work.`,
       ],
-      validation_steps: STANDARD_VALIDATION,
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        `Test expected authenticated write flows in the app to confirm they still succeed.`,
+        `Test unauthenticated write attempts to confirm they are rejected.`,
+      ],
       caveats: [
         `Tightening rules without reviewing all app code paths can break legitimate client writes.`,
         `Rules changes take effect immediately — have a rollback plan ready.`,
+        `Admin SDK traffic (server-side) bypasses security rules regardless of the published rules — verify client vs server access paths separately.`,
         `If App Check is not yet enforced, authenticated rules alone provide weaker protection than authenticated + App Check together.`,
       ],
       docs_links: [
@@ -1835,178 +1868,1531 @@ function _firebasePlaybooks(
         { label: "Firebase Rules Playground",           url: "https://firebase.google.com/docs/rules/simulator" },
       ],
       provider_console_hint:
-        `Firebase Console → [project] → ${surface} → Rules.`,
+        `Firebase Console → [project] → ${surface === "Storage" ? "Storage" : "Firestore Database"} → Rules.`,
     });
   }
 
-  // 3b. App Check: enforcement weakened
-  if (rt === "firebase_app_check_config" && (rl === "critical" || rl === "high")) {
-    const isWeakened =
-      fp === "unenforced_count"      ||
-      fp === "enabled_count"         ||
-      fp === "enforcement_mode"      ||
-      fp.includes("enforc");
-    if (isWeakened || rl === "high" || rl === "critical") {
-      return _guidance({
-        confidence: "medium",
-        title:   "Re-enable Firebase App Check enforcement",
-        summary: "Restore App Check enforcement for Firebase services to prevent unauthorized or abusive client access.",
-        why_this_helps:
-          "Firebase App Check verifies that requests to Firebase services originate from your legitimate app — not scripts, emulators, or other clients. When enforcement is unenforced or disabled for a service (Firestore, Storage, Functions, etc.), any client can access it without attestation, bypassing the App Check layer entirely. This is especially important when security rules cannot otherwise distinguish legitimate app clients from automated abuse.",
-        verify_first: [
-          "Confirm which Firebase services (Firestore, Storage, Functions, etc.) had enforcement changed.",
-          "Check the App Check rollout status — enforcement mode is typically ramped up gradually after registering providers.",
-          "Ensure all app versions currently in production have App Check providers (Play Integrity, App Attest, reCAPTCHA) registered.",
-          "Confirm this is the production project, not a development or emulator environment.",
-        ],
-        manual_steps: [
-          "Open the Firebase Console → [project] → App Check.",
-          "Review the enforcement status for each listed service.",
-          "For services showing 'Unenforced', click Enforce to re-enable.",
-          "Monitor App Check metrics for any legitimate app traffic that fails attestation before enforcing broadly.",
-        ],
-        validation_steps: STANDARD_VALIDATION,
-        caveats: [
-          "Enabling enforcement will block app versions without a registered App Check provider — ensure all production app versions are updated first.",
-          "Debug tokens must be registered for development environments to continue working after enforcement is enabled.",
-        ],
-        docs_links: [
-          { label: "Firebase App Check",              url: "https://firebase.google.com/docs/app-check" },
-          { label: "App Check enforcement guidance",  url: "https://firebase.google.com/docs/app-check/manage-enforcement" },
-        ],
-        provider_console_hint:
-          "Firebase Console → [project] → App Check → [service] → Enforce.",
-      });
-    }
+  // Public read detected
+  if (fp === "public_read_detected" && nv === true) {
+    return _guidance({
+      confidence: rl === "critical" ? "high" : "medium",
+      title:   `Review public ${surface} read access`,
+      summary:
+        `Confirm public read access is intentional and restrict any sensitive ` +
+        `${surface === "Storage" ? "file paths" : "collection paths"} to authenticated or authorized users.`,
+      why_this_helps:
+        `Public read rules allow any internet client to read ` +
+        `${surface === "Storage" ? "files from your storage bucket" : "documents from your Firestore collections"} ` +
+        `without signing in. Some public reads are intentional — for example, serving public content or ` +
+        `assets — but public reads on paths containing user data, internal content, or tenant-specific ` +
+        `records may expose data unintentionally.`,
+      verify_first: [
+        `Identify which ${surface === "Storage" ? "bucket paths" : "Firestore collection paths"} currently allow public reads.`,
+        `Confirm whether the affected paths contain any user data, internal records, or sensitive content.`,
+        `Confirm whether anonymous/unauthenticated clients are expected to read from these paths.`,
+        `Confirm whether the rules differ between your staging and production projects.`,
+      ],
+      manual_steps: [
+        `Open the Firebase Console → select the affected project.`,
+        `Navigate to ${surface === "Storage" ? "Storage" : "Firestore Database"} → Rules tab.`,
+        `Identify paths with \`allow read: if true;\` or similar unauthenticated conditions.`,
+        `Keep public reads only on paths serving intentionally public content.`,
+        `Add \`request.auth != null\` or role-based conditions for paths containing non-public data.`,
+        `Test anonymous and authenticated access in the Firebase Rules Playground.`,
+        `Publish the updated rules.`,
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        `Test anonymous read access is blocked on sensitive paths after the rule update.`,
+        `Test authenticated read access still works for expected user flows.`,
+      ],
+      caveats: [
+        `Removing public reads can break unauthenticated pages or app flows that rely on publicly readable data.`,
+        `If the ${surface === "Storage" ? "bucket" : "collection"} intentionally serves public content, a narrow path-specific rule is safer than a broad allow-all.`,
+      ],
+      docs_links: [
+        { label: `Firebase ${surface} security rules`, url: `https://firebase.google.com/docs/rules` },
+        { label: "Firebase Rules Playground",          url: "https://firebase.google.com/docs/rules/simulator" },
+      ],
+      provider_console_hint:
+        `Firebase Console → [project] → ${surface === "Storage" ? "Storage" : "Firestore Database"} → Rules.`,
+    });
+  }
+
+  // Rules deployment changed (hash changed) — medium
+  if (fp === "rules_hash" || fp === "ruleset_name_hash") {
+    return _guidance({
+      confidence: "medium",
+      title:   `Review ${surface} security rules deployment`,
+      summary:
+        `Confirm the updated ${surface} security rules deployment is intentional ` +
+        `and that access control for sensitive paths is unchanged or improved.`,
+      why_this_helps:
+        `A change to the active ${surface} ruleset hash means a new rules deployment was published. ` +
+        `Even if the change was intentional, rules deployments can inadvertently loosen access control ` +
+        `or introduce logic errors that affect read/write permissions across your app.`,
+      verify_first: [
+        `Confirm who published the updated rules and when — check Firebase Console history or audit logs.`,
+        `Review the diff between the previous and current rules deployments.`,
+        `Confirm the updated rules correctly restrict sensitive paths.`,
+      ],
+      manual_steps: [
+        `Open the Firebase Console → select the affected project.`,
+        `Navigate to ${surface === "Storage" ? "Storage" : "Firestore Database"} → Rules tab.`,
+        `Review the current published rules for any unintended public access conditions.`,
+        `Use the Rules Playground to test expected read/write patterns.`,
+        `Roll back to the previous ruleset if the change was accidental.`,
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        `ConfigTrace stores a hash of the ruleset, not the raw source — use the Firebase Console to inspect the actual rules.`,
+      ],
+      docs_links: [
+        { label: `Firebase ${surface} security rules`, url: `https://firebase.google.com/docs/rules` },
+      ],
+      provider_console_hint:
+        `Firebase Console → [project] → ${surface === "Storage" ? "Storage" : "Firestore Database"} → Rules.`,
+    });
+  }
+
+  return null;
+}
+
+// ── 3b. Firebase Auth ─────────────────────────────────────────────────────────
+
+function _fbAuthPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+
+  // Anonymous auth enabled
+  if (
+    rt === "firebase_auth_config" &&
+    fp === "anonymous_enabled" && (nv === true || nv === "true")
+  ) {
+    return _guidance({
+      confidence: "high",
+      title:   "Review anonymous authentication",
+      summary:
+        "Confirm anonymous sign-in is intentional and verify that Firestore/Storage rules " +
+        "restrict what anonymous users can access.",
+      why_this_helps:
+        "Anonymous auth lets any internet user sign in without credentials, obtaining a valid Firebase " +
+        "auth token. This is safe when intentionally scoped — for example, for a guest onboarding flow — " +
+        "but it increases the importance of tight Firestore and Storage rules: anonymous users with a " +
+        "valid token can pass \`request.auth != null\` checks, which may expose more data than intended.",
+      verify_first: [
+        "Confirm whether the product intentionally supports anonymous or guest users.",
+        "Review Firestore and Storage rules to confirm anonymous users cannot access sensitive paths.",
+        "Confirm anonymous accounts are upgraded or linked to permanent accounts when needed.",
+        "Confirm this is the production project, not a development environment where anonymous auth is used for testing.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Authentication → Sign-in method.",
+        "Review the Anonymous provider status.",
+        "If anonymous sign-in is not required: disable it by toggling the provider off.",
+        "If anonymous sign-in is required: review Firestore/Storage rules to confirm anonymous users are appropriately restricted.",
+        "Consider enabling Firebase App Check to limit anonymous auth to legitimate app clients only.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "If disabled: test that guest/anonymous sign-in flows fail as expected.",
+        "If kept enabled: verify that anonymous users cannot read or write sensitive data paths.",
+      ],
+      caveats: [
+        "Disabling anonymous auth can break guest-session or onboarding flows that rely on it.",
+        "Anonymous auth does not bypass security rules — but rules that only check request.auth != null will allow anonymous users.",
+      ],
+      docs_links: [
+        { label: "Firebase Anonymous Authentication", url: "https://firebase.google.com/docs/auth/web/anonymous-auth" },
+        { label: "Firebase Auth sign-in methods",     url: "https://firebase.google.com/docs/auth" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Authentication → Sign-in method → Anonymous.",
+    });
+  }
+
+  // MFA disabled
+  if (
+    rt === "firebase_auth_config" &&
+    (fp === "mfa_enabled" || fp === "mfa_state") &&
+    (nv === false || nv === "false" || String(nv).toUpperCase() === "DISABLED")
+  ) {
+    return _guidance({
+      confidence: "high",
+      title:   "Verify Firebase MFA was intentionally disabled",
+      summary:
+        "Confirm multi-factor authentication was intentionally disabled and that alternative " +
+        "account security controls are in place for sensitive user accounts.",
+      why_this_helps:
+        "Multi-factor authentication is a primary defence against account takeover via stolen or " +
+        "phished credentials. Disabling MFA at the project level removes the ability for users to " +
+        "enroll in TOTP or SMS second factors, reducing the barrier for credential-based attacks on " +
+        "your Firebase user accounts.",
+      verify_first: [
+        "Confirm who disabled MFA and the reason — check the Firebase Console change history.",
+        "Confirm whether any users currently have MFA enrolled and whether disabling it affects them.",
+        "Confirm whether MFA is required for admin or high-privilege user accounts.",
+        "Confirm this is the production project, not a development environment.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Authentication → Sign-in method.",
+        "Scroll to Multi-factor Authentication.",
+        "Re-enable MFA if the change was unintentional.",
+        "If keeping MFA disabled: confirm alternative account security controls are in place (strong password policies, rate limiting).",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling MFA does not automatically enroll existing users — it only allows them to enroll.",
+        "MFA availability depends on the Firebase pricing plan — confirm the project is on Blaze if TOTP MFA is required.",
+      ],
+      docs_links: [
+        { label: "Firebase Multi-factor Authentication", url: "https://firebase.google.com/docs/auth/web/multi-factor-auth" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Authentication → Sign-in method → Multi-factor Authentication.",
+    });
+  }
+
+  // Authorized domain added (non-default, non-localhost — high risk)
+  if (
+    rt === "firebase_authorized_domain" &&
+    ct === "added" && _isHighOrCritical(rl)
+  ) {
+    return _guidance({
+      confidence: "high",
+      title:   "Review Firebase Auth authorized domains",
+      summary:
+        "Confirm the newly added authorized domain belongs to your application and " +
+        "was not added unintentionally.",
+      why_this_helps:
+        "Firebase Authentication uses the authorized domain list to control which origins are " +
+        "permitted to initiate OAuth redirect flows. An unexpected domain on this list could allow " +
+        "a third-party origin to complete OAuth sign-in redirects on behalf of your app — a form " +
+        "of open-redirect or OAuth flow hijacking risk.",
+      verify_first: [
+        "Confirm the new domain belongs to your application (production, staging, or a known preview environment).",
+        "Confirm who added the domain and when — check the Firebase Console change history.",
+        "Verify the domain is not a temporary, external, or suspicious origin.",
+        "Confirm that OAuth redirect flows (Sign in with Google, etc.) are only used from expected origins.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Authentication → Settings → Authorized domains.",
+        "Review the full domain list.",
+        "Remove any domain that is not an expected application host.",
+        "If the domain was added for a new environment: confirm it is correctly scoped.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Confirm sign-in OAuth redirect flows work from expected domains after any removals.",
+      ],
+      caveats: [
+        "Removing a domain that is actively used for sign-in will break OAuth redirect flows for that environment.",
+        "Default Firebase domains (*.firebaseapp.com, *.web.app) and localhost are normal and expected.",
+      ],
+      docs_links: [
+        { label: "Firebase Auth authorized domains", url: "https://firebase.google.com/docs/auth/web/google-signin#before_you_begin" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Authentication → Settings → Authorized domains.",
+    });
+  }
+
+  // Authorized domain removed — medium
+  if (rt === "firebase_authorized_domain" && ct === "removed" && rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title:   "Verify Firebase Auth authorized domain removal",
+      summary:
+        "Confirm the removed authorized domain was intentional and that sign-in flows " +
+        "for legitimate environments are not affected.",
+      why_this_helps:
+        "Removing a domain from the Firebase Auth authorized list blocks OAuth redirect flows " +
+        "from that origin — any sign-in attempts (Google, GitHub, etc.) from the removed domain " +
+        "will fail with an unauthorized domain error.",
+      verify_first: [
+        "Confirm the removed domain is no longer an active environment.",
+        "Check whether any users or deployments still use this domain for authentication.",
+        "Confirm the removal was part of a planned decommission or domain change.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Authentication → Settings → Authorized domains.",
+        "If the removal was unintentional: re-add the domain.",
+        "Test sign-in flows from all active environments.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Restoring the domain takes effect immediately — test sign-in flows after re-adding.",
+      ],
+      docs_links: [
+        { label: "Firebase Auth authorized domains", url: "https://firebase.google.com/docs/auth/web/google-signin#before_you_begin" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Authentication → Settings → Authorized domains.",
+    });
+  }
+
+  return null;
+}
+
+// ── 3c. Firebase App Check ────────────────────────────────────────────────────
+
+function _fbAppCheckPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "firebase_app_check_config") return null;
+
+  // Record removed entirely
+  if (ct === "removed") {
+    return _guidance({
+      confidence: "high",
+      title:   "Verify Firebase App Check configuration removal",
+      summary:
+        "Confirm the App Check configuration record was not unexpectedly removed and " +
+        "that enforcement is still active for protected services.",
+      why_this_helps:
+        "Loss of the App Check configuration record may indicate that App Check is no longer " +
+        "enabled or that the connector lost access to the App Check API. If enforcement was " +
+        "previously active, services may now accept requests from unattested clients.",
+      verify_first: [
+        "Open the Firebase Console → App Check and confirm whether enforcement is still visible.",
+        "Confirm whether a recent project change affected App Check API access.",
+        "Verify this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → App Check.",
+        "Confirm enforcement is still active for the expected services.",
+        "Run a ConfigTrace sync to re-baseline App Check state.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "App Check enforcement can only be managed through the Firebase Console — ConfigTrace is read-only.",
+      ],
+      docs_links: [
+        { label: "Firebase App Check", url: "https://firebase.google.com/docs/app-check" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → App Check.",
+    });
+  }
+
+  // enforced_service_count decreased — fewer services protected
+  if (fp === "enforced_service_count" && _isHighOrCritical(rl)) {
+    return _guidance({
+      confidence: "high",
+      title:   "Restore Firebase App Check enforcement",
+      summary:
+        "Re-enable App Check enforcement for the services that were unenforced to prevent " +
+        "unauthorized or unattested clients from calling those Firebase APIs.",
+      why_this_helps:
+        "Firebase App Check enforcement requires clients to pass a device-attestation check " +
+        "(Play Integrity, App Attest, reCAPTCHA) before accessing Firebase services. When enforcement " +
+        "is removed from a service, any client — including scripts, bots, or unauthorized apps — can " +
+        "call that service's APIs without attestation, bypassing this abuse-prevention layer.",
+      verify_first: [
+        "Identify which specific services lost enforcement (Firestore, Storage, Functions, etc.).",
+        "Confirm whether the change was part of a planned rollout pause or rollback.",
+        "Verify all active app versions have App Check providers correctly registered before re-enforcing.",
+        "Confirm debug tokens are registered for development/CI environments to avoid breaking those flows.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → App Check.",
+        "Review the enforcement status for each service — identify services showing 'Unenforced'.",
+        "Click 'Enforce' on each service that should be protected.",
+        "Monitor App Check metrics for client errors after enforcement is re-enabled.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Confirm the enforced_service_count returns to the expected value after a sync.",
+        "Test supported app versions to confirm they pass App Check attestation.",
+      ],
+      caveats: [
+        "Enabling enforcement too early can block legitimate clients that do not yet have App Check providers registered.",
+        "Debug tokens must be registered for development and CI environments to continue working after enforcement is enabled.",
+        "Older app versions without App Check support will be blocked once enforcement is active.",
+      ],
+      docs_links: [
+        { label: "Firebase App Check",              url: "https://firebase.google.com/docs/app-check" },
+        { label: "App Check enforcement guidance",  url: "https://firebase.google.com/docs/app-check/manage-enforcement" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → App Check → [service] → Enforce.",
+    });
+  }
+
+  // unenforced_service_count increased — more services now unprotected
+  if (fp === "unenforced_service_count" && _isHighOrCritical(rl)) {
+    return _guidance({
+      confidence: "high",
+      title:   "Restore Firebase App Check enforcement",
+      summary:
+        "Re-enable App Check enforcement for the services that moved to unenforced status " +
+        "to prevent unauthorized clients from accessing those Firebase APIs.",
+      why_this_helps:
+        "An increase in unenforced services means additional Firebase APIs can now be called " +
+        "without device attestation. This expands the attack surface for automated abuse, " +
+        "credential stuffing, and unauthorized API access beyond what was previously allowed.",
+      verify_first: [
+        "Identify which services moved from enforced to unenforced.",
+        "Confirm whether the change was intentional (rollout pause, debugging, or migration).",
+        "Verify all active app versions have App Check providers registered before re-enforcing.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → App Check.",
+        "Identify services with 'Unenforced' status that should be protected.",
+        "Click 'Enforce' to re-enable enforcement on those services.",
+        "Monitor App Check metrics for any unexpected client failures.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Confirm unenforced_service_count returns to the expected lower value after a sync.",
+      ],
+      caveats: [
+        "Enabling enforcement blocks clients without valid App Check tokens — ensure all production app versions are updated first.",
+        "Debug tokens must be registered for non-production environments.",
+      ],
+      docs_links: [
+        { label: "Firebase App Check",              url: "https://firebase.google.com/docs/app-check" },
+        { label: "App Check enforcement guidance",  url: "https://firebase.google.com/docs/app-check/manage-enforcement" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → App Check.",
+    });
+  }
+
+  // service_count changed — services added or removed from monitoring
+  if (fp === "service_count") {
+    return _guidance({
+      confidence: "medium",
+      title:   "Review Firebase App Check service count change",
+      summary:
+        "Confirm the change in App Check–monitored services was intentional and " +
+        "that no service was removed from App Check coverage unintentionally.",
+      why_this_helps:
+        "The App Check service count tracks how many Firebase services are configured under " +
+        "App Check monitoring. A decrease may indicate a service was removed from App Check, " +
+        "which could mean it is now unmonitored and potentially accessible without attestation.",
+      verify_first: [
+        "Identify which service was added or removed from App Check coverage.",
+        "Confirm whether the service is now enforced, unenforced, or removed entirely.",
+        "Verify the change was part of a planned App Check rollout or service decommission.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → App Check.",
+        "Review the full list of services and their enforcement status.",
+        "Re-add and enforce any service that was removed unintentionally.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "App Check service monitoring is separate from enforcement — a service can be monitored but unenforced.",
+      ],
+      docs_links: [
+        { label: "Firebase App Check", url: "https://firebase.google.com/docs/app-check" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → App Check.",
+    });
+  }
+
+  return null;
+}
+
+// ── 3d. Firebase Remote Config ────────────────────────────────────────────────
+
+function _fbRemoteConfigPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "firebase_remote_config_template") return null;
+
+  // Template removed entirely
+  if (ct === "removed") {
+    return _guidance({
+      confidence: "high",
+      title:   "Verify Firebase Remote Config template removal",
+      summary:
+        "Confirm the Remote Config template record was not unexpectedly removed and that " +
+        "app clients are still receiving the expected configuration.",
+      why_this_helps:
+        "Remote Config controls feature flags, rollout targeting, and app behavior parameters " +
+        "served to clients. Loss of the template record may indicate the template was deleted or " +
+        "the connector lost access, which could cause clients to fall back to hardcoded defaults " +
+        "or behave unexpectedly.",
+      verify_first: [
+        "Open the Firebase Console → Remote Config and verify the template still exists.",
+        "Confirm whether a recent project change affected Remote Config API access.",
+        "Check whether app clients are receiving configuration correctly.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Remote Config.",
+        "Verify the template is present and published.",
+        "Run a ConfigTrace sync to re-baseline Remote Config state.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "ConfigTrace stores Remote Config metadata (counts and hashes), not raw parameter values — use the Firebase Console to inspect the actual template.",
+      ],
+      docs_links: [
+        { label: "Firebase Remote Config", url: "https://firebase.google.com/docs/remote-config" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Remote Config.",
+    });
+  }
+
+  // Parameter count decreased — parameters may have been removed
+  if (fp === "parameter_count") {
+    return _guidance({
+      confidence: "medium",
+      title:   "Review Remote Config parameter count change",
+      summary:
+        "Confirm parameter additions or removals were intentional and that app clients " +
+        "handle missing parameters gracefully.",
+      why_this_helps:
+        "Remote Config can alter application behavior without a code deploy. Parameters that " +
+        "are removed from the template will cause clients to fall back to their in-app default " +
+        "values. If the in-app default was not set or differs from the expected server value, " +
+        "this can silently change feature flag behavior across all clients.",
+      verify_first: [
+        "Confirm who made the template update — check the Firebase Console version history.",
+        "Identify which parameters were added or removed.",
+        "Confirm app clients have appropriate in-app defaults for any removed parameters.",
+        "Confirm the change was part of a planned release or cleanup.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Remote Config.",
+        "Review the current template and compare with the version history.",
+        "Roll back to the previous version if the parameter removal was accidental.",
+        "If intentional: confirm all app versions handle the missing parameter via in-app defaults.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Test affected client behavior to confirm feature flags behave as expected.",
+      ],
+      caveats: [
+        "ConfigTrace stores parameter counts and key hashes, not raw values — use the Firebase Console to inspect exact parameter values.",
+        "Rollbacks via the Firebase Console take effect immediately for all clients that fetch config.",
+      ],
+      docs_links: [
+        { label: "Firebase Remote Config",             url: "https://firebase.google.com/docs/remote-config" },
+        { label: "Remote Config template versioning",  url: "https://firebase.google.com/docs/remote-config/templates" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Remote Config → Version history.",
+    });
+  }
+
+  // Condition count decreased
+  if (fp === "condition_count") {
+    return _guidance({
+      confidence: "medium",
+      title:   "Review Remote Config condition count change",
+      summary:
+        "Confirm condition changes were intentional and that any affected targeting or " +
+        "rollout logic behaves as expected.",
+      why_this_helps:
+        "Remote Config conditions define the targeting logic for parameter values — for example, " +
+        "routing specific parameter values to specific app versions, user segments, or platforms. " +
+        "Removing a condition may cause all clients to receive a single default value instead of " +
+        "the previously targeted value, silently changing rollout behavior.",
+      verify_first: [
+        "Identify which conditions were added or removed.",
+        "Confirm whether affected parameters now use only default values for all clients.",
+        "Confirm the change was part of a planned rollout cleanup or A/B test conclusion.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Remote Config.",
+        "Review the conditions list and compare with the version history.",
+        "Roll back to the previous version if the condition removal was accidental.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "ConfigTrace stores condition counts and name hashes, not the condition expressions — use the Firebase Console to inspect the actual targeting logic.",
+      ],
+      docs_links: [
+        { label: "Firebase Remote Config",            url: "https://firebase.google.com/docs/remote-config" },
+        { label: "Remote Config template versioning", url: "https://firebase.google.com/docs/remote-config/templates" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Remote Config → Conditions.",
+    });
+  }
+
+  // Structural key/name hash changed
+  if (fp === "parameter_keys_hash" || fp === "condition_names_hash") {
+    const subject = fp === "parameter_keys_hash" ? "parameter keys" : "condition names";
+    return _guidance({
+      confidence: "medium",
+      title:   "Review Remote Config rollout changes",
+      summary:
+        `Confirm ${subject} changes were intentional before they affect production clients.`,
+      why_this_helps:
+        `The set of Remote Config ${subject} changed, which means parameters or conditions were ` +
+        `added, renamed, or removed. Remote Config can alter application behavior without a code ` +
+        `deploy — unexpected changes may affect feature flags, rollout targeting, or client-side ` +
+        `configuration across all users.`,
+      verify_first: [
+        "Confirm who made the template update and the reason for the change.",
+        "Review the full template in the Firebase Console to identify what changed.",
+        "Confirm the change was part of a planned release, experiment, or cleanup.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Remote Config.",
+        "Review the current template and compare with the version history.",
+        "Roll back to the previous version if the change was accidental.",
+        "Test affected client behavior after confirming the template is correct.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "ConfigTrace stores hashes of parameter key names and condition names, not their values or expressions — use the Firebase Console to inspect exact content.",
+      ],
+      docs_links: [
+        { label: "Firebase Remote Config",            url: "https://firebase.google.com/docs/remote-config" },
+        { label: "Remote Config template versioning", url: "https://firebase.google.com/docs/remote-config/templates" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Remote Config → Version history.",
+    });
+  }
+
+  // Forced update or rollback
+  if (fp === "update_type") {
+    const rrl = rr.toLowerCase();
+    const isForced = rrl.includes("forced") || rrl.includes("rollback");
+    return _guidance({
+      confidence: isForced ? "medium" : "low" as "medium" | "low",
+      title:   "Review Remote Config rollout changes",
+      summary:
+        "Confirm the Remote Config update type was intentional and that clients are " +
+        "receiving the expected configuration.",
+      why_this_helps:
+        "FORCED_UPDATE and ROLLBACK update types affect all clients that fetch Remote Config " +
+        "immediately. A forced update can override client-side caching, while a rollback reverts " +
+        "to a previous template version. Either can change app behavior across all users at once.",
+      verify_first: [
+        "Confirm the update type was intentional — check the Firebase Console version history.",
+        "If a rollback: confirm the target version is correct and that it does not re-introduce previous issues.",
+      ],
+      manual_steps: [
+        "Open the Firebase Console → [project] → Remote Config.",
+        "Review the current template version and update history.",
+        "If the update was accidental: roll back to the intended version.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Forced updates bypass client-side fetch throttling — all clients will see the new config on their next fetch cycle.",
+      ],
+      docs_links: [
+        { label: "Firebase Remote Config", url: "https://firebase.google.com/docs/remote-config" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Remote Config → Version history.",
+    });
+  }
+
+  return null;
+}
+
+// ── 3e. Firebase Cloud Functions ──────────────────────────────────────────────
+
+function _fbFunctionPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "firebase_function_metadata") return null;
+  if (rl !== "medium" && !_isHighOrCritical(rl)) return null;
+
+  if (fp === "runtime" || fp === "trigger_type" || fp === "env_var_key_count" || fp === "status") {
+    const subject =
+      fp === "runtime"          ? "runtime"
+      : fp === "trigger_type"   ? "trigger type"
+      : fp === "env_var_key_count" ? "environment variable key count"
+      :                           "status";
+
+    return _guidance({
+      confidence: "medium",
+      title:   "Review Firebase Function configuration drift",
+      summary:
+        `Confirm the Cloud Function ${subject} change was intentional and consistent with ` +
+        `your deployment history.`,
+      why_this_helps:
+        "Cloud Function configuration drift can change execution behavior, trigger exposure, " +
+        "or dependency on environment variables without a visible code change. An unexpected runtime " +
+        "change may indicate an unplanned upgrade. An unexpected trigger type change may affect " +
+        "how the function is invoked. Unexpected environment variable key count changes may " +
+        "indicate secrets were added or removed outside of the normal deployment process.",
+      verify_first: [
+        "Confirm the function name and the deployment environment (production vs staging).",
+        "Check recent deployment activity in your CI/CD pipeline or Google Cloud Console.",
+        fp === "env_var_key_count"
+          ? "Confirm environment variable key additions or removals were part of a planned deployment. (ConfigTrace does not read env var values — only the key count.)"
+          : `Confirm the new ${subject} is expected for the current function version.`,
+        "Confirm the change was not applied outside of your normal deployment pipeline.",
+      ],
+      manual_steps: [
+        "Open the Google Cloud Console → Cloud Functions → [affected function].",
+        "Review the function configuration and deployment history.",
+        "Compare with your deployment pipeline configuration (e.g. firebase.json, Cloud Build config).",
+        "Restore the intended configuration through your deployment pipeline if needed.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "ConfigTrace does not read environment variable values — only the count of configured keys.",
+        "Configuration changes applied outside the deployment pipeline may not be reflected in version control.",
+      ],
+      docs_links: [
+        { label: "Firebase Cloud Functions", url: "https://firebase.google.com/docs/functions" },
+      ],
+      provider_console_hint:
+        "Firebase Console → [project] → Functions / Google Cloud Console → Cloud Functions.",
+    });
+  }
+
+  return null;
+}
+
+// ── 3f. Firebase Storage buckets ──────────────────────────────────────────────
+
+function _fbStorageBucketPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "firebase_storage_bucket") return null;
+  if (!_isHighOrCritical(rl)) return null;
+
+  // Uniform bucket-level access disabled — object ACLs now active
+  if (fp === "uniform_bucket_level_access" && (nv === false || nv === "false")) {
+    return _guidance({
+      confidence: "high",
+      title:   "Re-enable uniform bucket-level access",
+      summary:
+        "Re-enable uniform bucket-level access to prevent object-level ACLs from creating " +
+        "unintended public access to individual storage objects.",
+      why_this_helps:
+        "Uniform bucket-level access ensures that all access to the bucket is controlled through " +
+        "IAM policies only. When disabled, object-level ACLs become active — individual objects " +
+        "can be made publicly accessible via ACLs, which may bypass Firebase Storage rules and " +
+        "create unintended public exposure for files that were not intended to be public.",
+      verify_first: [
+        "Confirm who changed the uniform bucket-level access setting and why.",
+        "Check whether any object-level ACLs were set while uniform access was disabled.",
+        "Confirm whether any integration requires object-level ACLs (e.g. a legacy Google Cloud Storage workflow).",
+        "Verify this is the production bucket, not a development or test bucket.",
+      ],
+      manual_steps: [
+        "Open the Google Cloud Console → Cloud Storage → [affected bucket] → Permissions.",
+        "Click 'Enable uniform bucket-level access'.",
+        "Confirm no objects have public ACLs that should not be public.",
+        "Save the configuration.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Confirm uniform bucket-level access shows as 'Enabled' in the Cloud Console.",
+        "Test that Firebase Storage rules still work correctly after re-enabling.",
+      ],
+      caveats: [
+        "Re-enabling uniform bucket-level access may remove existing object-level ACLs — review ACLs before making the change.",
+        "Firebase Storage security rules are not affected by this setting — they operate independently.",
+      ],
+      docs_links: [
+        { label: "Cloud Storage uniform bucket-level access", url: "https://cloud.google.com/storage/docs/uniform-bucket-level-access" },
+      ],
+      provider_console_hint:
+        "Google Cloud Console → Cloud Storage → [bucket] → Permissions → Uniform access.",
+    });
+  }
+
+  // Public access prevention changed away from enforced
+  if (fp === "public_access_prevention") {
+    return _guidance({
+      confidence: "high",
+      title:   "Verify Cloud Storage public access prevention change",
+      summary:
+        "Confirm that changing the public access prevention setting was intentional and " +
+        "that the bucket does not now allow unintended public object access.",
+      why_this_helps:
+        "When public access prevention is set to 'enforced', it blocks all public access to the " +
+        "bucket regardless of IAM policies or ACLs. Changing this to 'inherited' or 'unspecified' " +
+        "re-enables the possibility of public access through IAM or ACL grants, which may expose " +
+        "files that should not be publicly accessible.",
+      verify_first: [
+        "Confirm the public access prevention change was intentional.",
+        "Review current IAM bindings and object ACLs to check for any allUsers or allAuthenticatedUsers grants.",
+        "Confirm whether this bucket stores sensitive data or user uploads.",
+      ],
+      manual_steps: [
+        "Open the Google Cloud Console → Cloud Storage → [affected bucket] → Permissions.",
+        "Review public access prevention status.",
+        "If the change was unintentional: restore 'Enforced' public access prevention.",
+        "Review IAM bindings for allUsers grants and remove any that are not intentional.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Setting public access prevention to enforced will block intentional public access via allUsers — confirm no public serving use case exists first.",
+      ],
+      docs_links: [
+        { label: "Cloud Storage public access prevention", url: "https://cloud.google.com/storage/docs/public-access-prevention" },
+      ],
+      provider_console_hint:
+        "Google Cloud Console → Cloud Storage → [bucket] → Permissions → Public access prevention.",
+    });
   }
 
   return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Playbook 4 — Supabase
+// Playbook 4 — Supabase (dispatcher)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function _supabasePlaybooks(
   rt: string, fp: string, ct: string,
   rl: string, rr: string, nv: unknown,
 ): RemediationGuidance | null {
+  return (
+    _sbRlsPlaybooks(rt, fp, ct, rl, rr, nv)        ??
+    _sbAuthPlaybooks(rt, fp, ct, rl, rr, nv)       ??
+    _sbStoragePlaybooks(rt, fp, ct, rl, rr, nv)    ??
+    _sbEdgeFnPlaybooks(rt, fp, ct, rl, rr, nv)     ??
+    _sbNetworkPlaybooks(rt, fp, ct, rl, rr, nv)    ??
+    _sbApiConfigPlaybooks(rt, fp, ct, rl, rr, nv)  ??
+    null
+  );
+}
 
-  // 4a. RLS disabled on a table
-  if (
-    rt === "supabase_database_table" &&
-    fp === "rls_enabled" && nv === false
-  ) {
+// ── 4a. Supabase RLS ──────────────────────────────────────────────────────────
+
+function _sbRlsPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "supabase_rls_status") return null;
+
+  // RLS disabled on a previously-enabled table — critical
+  if (fp === "rls_enabled" && (nv === false || nv === "false")) {
     return _guidance({
       confidence: "high",
-      title:   "Re-enable Row Level Security on this table",
-      summary: "Turn Row Level Security back on for the affected table and verify that appropriate policies exist for the anon and authenticated roles.",
+      title:   "Re-enable Supabase Row Level Security carefully",
+      summary:
+        "Re-enable RLS for the affected table after confirming correct policies exist " +
+        "for all expected roles — do not re-enable without policies in place.",
       why_this_helps:
-        "Row Level Security (RLS) is Supabase's primary data isolation mechanism. When RLS is disabled on a table accessible via the public PostgREST API, any authenticated — or even anonymous — client can read and write all rows regardless of their identity. This effectively makes the table fully public to anyone with the project's anon key, which is embedded in every client application.",
+        "Row Level Security (RLS) is Supabase's primary data isolation mechanism. When RLS is " +
+        "disabled on a table accessible via the public PostgREST API, any client with the anon key " +
+        "(embedded in every client app) can read and write all rows regardless of their identity. " +
+        "The anon key is not a secret — it is designed to be public, meaning a disabled RLS table " +
+        "is effectively readable and writable by anyone who has your Supabase project URL.",
       verify_first: [
-        "Identify who disabled RLS and why — check the Supabase audit log.",
-        "Confirm that at least one policy exists for the table that covers the access patterns your app uses (anon SELECT, authenticated INSERT/UPDATE, etc.). Enabling RLS without policies blocks all access.",
-        "Confirm whether the table is accessed directly from client code via the Supabase JS/Python client (and therefore subject to anon key exposure) or only from trusted server-side code.",
+        "Confirm who disabled RLS and why — check the Supabase dashboard or audit log.",
+        "Confirm whether the table is accessed from client code (subject to anon key exposure) or only from server-side code using the service role key.",
+        "Confirm that at least one RLS policy exists per operation type (SELECT, INSERT, UPDATE, DELETE) for the roles that should access the table — re-enabling RLS without any policies blocks all client access.",
         "Confirm this is the production project, not a development or staging environment.",
       ],
       manual_steps: [
-        "Open the Supabase dashboard → [project] → Table Editor or Authentication → Policies.",
-        "Select the affected table.",
-        "Enable Row Level Security via the RLS toggle.",
-        "Review and update policies to cover SELECT, INSERT, UPDATE, and DELETE as appropriate for the anon and authenticated roles.",
-        "Test that legitimate app queries still succeed.",
+        "Open the Supabase dashboard → [project] → Authentication → Policies.",
+        "Select the affected table and review existing policies.",
+        "If policies are missing: create policies for each operation (SELECT, INSERT, UPDATE, DELETE) appropriate to the anon and authenticated roles.",
+        "Once policies are confirmed correct: enable RLS by toggling the RLS switch on the table.",
+        "Test that expected anon and authenticated queries still succeed.",
+        "Test that cross-user queries are correctly rejected.",
       ],
-      validation_steps: STANDARD_VALIDATION,
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Test that anon/authenticated client queries behave as expected after RLS is re-enabled.",
+        "Confirm unauthenticated clients cannot read rows they should not access.",
+      ],
       caveats: [
-        "Re-enabling RLS without any policies will block all client access to the table — ensure policies are in place first.",
-        "Service role keys bypass RLS by design — ensure server-side code uses the service role key only where intentional.",
+        "Re-enabling RLS without any policies will block all PostgREST client access to the table — ensure at least one correct policy exists first.",
+        "Service role keys bypass RLS by design — server-side code using the service role key is unaffected.",
+        "Policies with incorrect USING expressions may inadvertently block legitimate access or expose more data than intended.",
       ],
       docs_links: [
-        { label: "Supabase Row Level Security",         url: "https://supabase.com/docs/guides/database/postgres/row-level-security" },
-        { label: "Supabase Auth and policies",          url: "https://supabase.com/docs/guides/auth" },
+        { label: "Supabase Row Level Security",  url: "https://supabase.com/docs/guides/database/postgres/row-level-security" },
+        { label: "Supabase Auth and policies",   url: "https://supabase.com/docs/guides/auth" },
       ],
       provider_console_hint:
         "Supabase Dashboard → [project] → Authentication → Policies → [table] → Enable RLS.",
     });
   }
 
-  // 4b. Database policy removed
-  if (rt === "supabase_database_policy" && ct === "removed" && (rl === "critical" || rl === "high")) {
+  // RLS forced flag removed — table owner can now bypass RLS
+  if (fp === "rls_forced" && (nv === false || nv === "false") && _isHighOrCritical(rl)) {
     return _guidance({
       confidence: "medium",
-      title:   "Restore the removed database access policy",
-      summary: "Re-create the RLS policy that was removed to restore the intended access control for the affected table.",
+      title:   "Review removal of Supabase RLS forced flag",
+      summary:
+        "Confirm the RLS 'forced' flag removal was intentional — table owners can now " +
+        "bypass Row Level Security on this table.",
       why_this_helps:
-        "Supabase Row Level Security policies are the fine-grained access control layer for individual tables. Removing a policy expands access for the affected role — for example, removing a SELECT policy for the anon role can silently allow all anonymous reads on the table if RLS is still enabled but no restrictive policy remains.",
+        "The RLS forced flag (FORCE ROW LEVEL SECURITY) extends RLS enforcement to table " +
+        "owners. Without it, the table owner role can bypass all RLS policies. If service-role " +
+        "connections share ownership of this table, removing forced RLS may allow broader " +
+        "access than intended for certain query patterns.",
       verify_first: [
-        "Identify which table and role the removed policy covered.",
-        "Confirm whether other policies on the same table still cover the same access pattern.",
-        "Review the Supabase audit log to confirm who removed the policy and when.",
-        "Confirm the removal was not part of a schema migration that added a replacement policy.",
+        "Confirm who removed the forced RLS flag and the reason.",
+        "Identify which database roles own this table and whether they should be subject to RLS.",
+        "Confirm whether the service role or admin connections need unrestricted access to this table.",
       ],
       manual_steps: [
-        "Open the Supabase dashboard → [project] → Authentication → Policies.",
-        "Select the affected table.",
-        "Click 'New Policy' to re-create the removed policy.",
-        "Define the appropriate USING expression for the role (anon, authenticated, or service_role).",
-        "Save and test that the policy produces the expected access behaviour.",
+        "Open the Supabase SQL editor.",
+        "To re-enable: run ALTER TABLE [schema].[table] FORCE ROW LEVEL SECURITY;",
+        "Test that table owner queries are correctly subject to RLS policies.",
       ],
       validation_steps: STANDARD_VALIDATION,
       caveats: [
-        "If the policy was removed as part of a migration, check for a replacement before re-creating the original.",
-        "An incorrect USING expression may inadvertently block legitimate access.",
+        "Forcing RLS on a table owner can break admin/maintenance queries that rely on owner-level unrestricted access.",
+        "Test all query patterns (application and admin) after re-enabling forced RLS.",
       ],
       docs_links: [
-        { label: "Supabase RLS policy guide",   url: "https://supabase.com/docs/guides/database/postgres/row-level-security" },
+        { label: "Supabase Row Level Security",  url: "https://supabase.com/docs/guides/database/postgres/row-level-security" },
       ],
       provider_console_hint:
-        "Supabase Dashboard → [project] → Authentication → Policies → [table] → New Policy.",
+        "Supabase Dashboard → [project] → SQL editor → ALTER TABLE … FORCE ROW LEVEL SECURITY.",
     });
   }
 
-  // 4c. Auth security settings weakened
-  if (rt === "supabase_auth_config" && (rl === "critical" || rl === "high")) {
-    const authWeakeningFields = new Set([
-      "leaked_password_protection_enabled",
-      "captcha_enabled",
-      "refresh_token_rotation_enabled",
-      "jwt_expiry",
-      "redirect_uris_count",
-    ]);
-    if (authWeakeningFields.has(fp) || rl === "critical") {
-      return _guidance({
-        confidence: "medium",
-        title:   "Restore auth security configuration",
-        summary: "Re-enable weakened auth security settings such as leaked password protection, CAPTCHA, token rotation, or restrictive redirect URI policies.",
-        why_this_helps:
-          "Supabase auth security settings are layered defences against credential attacks and account takeover. Disabling leaked password protection allows users to set passwords that appear in known breach databases. Disabling CAPTCHA removes bot protection from sign-in and sign-up flows. Disabling token rotation allows refresh tokens to be reused indefinitely by an attacker who obtains one. Increasing redirect URIs broadens the attack surface for OAuth redirect hijacking.",
-        verify_first: [
-          "Confirm which auth setting was changed and whether the change was intentional.",
-          "If JWT expiry was increased, confirm it was not to compensate for a session management bug.",
-          "If redirect URIs were added, verify each added URI is an expected application domain.",
-          "Confirm the change does not correspond to a planned auth migration or onboarding flow change.",
-        ],
-        manual_steps: [
-          "Open the Supabase dashboard → [project] → Authentication → Providers / Settings.",
-          "Review the auth configuration and restore the intended security settings.",
-          "For leaked password protection: re-enable under Security settings.",
-          "For token rotation: enable Refresh Token Rotation under Session settings.",
-          "For redirect URIs: review the list and remove unexpected or overly broad entries.",
-        ],
-        validation_steps: STANDARD_VALIDATION,
-        caveats: [
-          "Re-enabling CAPTCHA requires the app to handle CAPTCHA tokens on sign-in/sign-up forms.",
-          "Enabling refresh token rotation invalidates existing long-lived refresh tokens — users may need to re-authenticate.",
-          "Removing redirect URIs may break OAuth flows for legitimate apps that depend on those URLs.",
-        ],
-        docs_links: [
-          { label: "Supabase Auth configuration",    url: "https://supabase.com/docs/guides/auth" },
-          { label: "Supabase security checklist",    url: "https://supabase.com/docs/guides/platform/going-into-prod" },
-        ],
-        provider_console_hint:
-          "Supabase Dashboard → [project] → Authentication → Providers / Settings.",
-      });
-    }
+  // New table added without RLS — medium
+  if (ct === "added" && fp === "rls_enabled" && (nv === false || nv === "false")) {
+    return _guidance({
+      confidence: "medium",
+      title:   "Review new table without Row Level Security",
+      summary:
+        "Confirm the new table does not require RLS protection or enable RLS and add " +
+        "appropriate policies before exposing the table to client queries.",
+      why_this_helps:
+        "A newly created table without RLS is accessible to any client with the anon key if " +
+        "the table is in the PostgREST-exposed schema. Until RLS is enabled and policies are " +
+        "defined, any authenticated client can read and modify all rows in the table.",
+      verify_first: [
+        "Confirm whether the table will be accessed from client-side code.",
+        "Confirm the table's intended access model (who can read, write, update, delete).",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Policies.",
+        "Select the new table and define policies for the required operation types.",
+        "Enable RLS once policies are in place.",
+        "Test expected client access patterns.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Enable RLS after policies are in place — enabling without policies blocks all client access.",
+        "Tables only used by server-side code via service role may not require RLS, but confirm this is intentional.",
+      ],
+      docs_links: [
+        { label: "Supabase Row Level Security",  url: "https://supabase.com/docs/guides/database/postgres/row-level-security" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Policies → [table].",
+    });
+  }
+
+  return null;
+}
+
+// ── 4b. Supabase Auth config ──────────────────────────────────────────────────
+
+function _sbAuthPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "supabase_auth_config") return null;
+
+  // Anonymous auth enabled — critical
+  if (fp === "anonymous_enabled" && (nv === true || nv === "true")) {
+    return _guidance({
+      confidence: "high",
+      title:   "Review Supabase anonymous authentication",
+      summary:
+        "Confirm anonymous sign-in is required and that RLS policies correctly restrict " +
+        "what anonymous users can access.",
+      why_this_helps:
+        "Enabling anonymous authentication allows any internet user to obtain a valid Supabase " +
+        "auth token without credentials. Anonymous users pass request.auth checks in RLS policies, " +
+        "which may expose more data than intended if policies do not explicitly restrict the anon " +
+        "role. Supabase anonymous users also consume MAU quota.",
+      verify_first: [
+        "Confirm the product intentionally supports anonymous or guest users.",
+        "Review RLS policies on sensitive tables to confirm anonymous users are correctly restricted.",
+        "Confirm anonymous accounts are upgraded or linked to permanent accounts when needed.",
+        "Confirm this is the production project, not a development environment.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Providers.",
+        "Review Anonymous sign-ins status.",
+        "If not required: disable anonymous sign-ins.",
+        "If required: review RLS policies for all client-accessible tables to confirm anonymous users have only intended access.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Test anonymous sign-in behavior after any changes.",
+        "Confirm anonymous users cannot access data they should not.",
+      ],
+      caveats: [
+        "Disabling anonymous auth can break guest-session or onboarding flows that rely on it.",
+        "Anonymous users with a valid token pass request.auth != null checks — policies must explicitly restrict the anon role if needed.",
+      ],
+      docs_links: [
+        { label: "Supabase Anonymous Sign-ins", url: "https://supabase.com/docs/guides/auth/auth-anonymous" },
+        { label: "Supabase Row Level Security",  url: "https://supabase.com/docs/guides/database/postgres/row-level-security" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Providers → Anonymous.",
+    });
+  }
+
+  // MFA disabled — high
+  if (fp === "mfa_totp_enabled" && (nv === false || nv === "false") && _isHighOrCritical(rl)) {
+    return _guidance({
+      confidence: "high",
+      title:   "Verify Supabase MFA was intentionally disabled",
+      summary:
+        "Confirm TOTP multi-factor authentication was intentionally disabled and that " +
+        "alternative account security controls are in place.",
+      why_this_helps:
+        "TOTP MFA is a primary defence against account takeover via stolen or phished credentials. " +
+        "Disabling MFA at the project level prevents users from enrolling in TOTP second factors, " +
+        "reducing security for all user accounts — particularly admin and privileged users.",
+      verify_first: [
+        "Confirm who disabled MFA and the reason.",
+        "Confirm whether any users currently have MFA enrolled and how this affects them.",
+        "Confirm whether MFA is required for admin or high-privilege accounts.",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Sign In / MFA.",
+        "Re-enable TOTP MFA if the change was unintentional.",
+        "If disabling was intentional: confirm alternative account security controls are in place.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling MFA does not automatically enroll existing users — it only allows new enrollments.",
+      ],
+      docs_links: [
+        { label: "Supabase MFA", url: "https://supabase.com/docs/guides/auth/auth-mfa" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Sign In → MFA.",
+    });
+  }
+
+  // Leaked password protection disabled — high
+  if (fp === "leaked_password_protection_enabled" && (nv === false || nv === "false")) {
+    return _guidance({
+      confidence: "high",
+      title:   "Restore Supabase leaked password protection",
+      summary:
+        "Re-enable leaked password protection so users cannot set passwords that appear " +
+        "in known data breach databases.",
+      why_this_helps:
+        "Supabase's leaked password protection checks new passwords against the Have I Been Pwned " +
+        "database. When disabled, users may set passwords that are already present in breach " +
+        "datasets and are actively used in credential-stuffing attacks, increasing the risk of " +
+        "account compromise.",
+      verify_first: [
+        "Confirm the setting was intentionally disabled or changed accidentally.",
+        "Confirm whether the change affects sign-up, password reset, or both flows.",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Security.",
+        "Re-enable 'Prevent use of leaked passwords'.",
+        "Save the setting.",
+        "Test sign-up and password reset flows to confirm they still work correctly.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "This protection only applies to new password sets — existing accounts with weak passwords are not affected retroactively.",
+      ],
+      docs_links: [
+        { label: "Supabase Auth security",        url: "https://supabase.com/docs/guides/auth/password-security" },
+        { label: "Supabase going-to-prod guide",  url: "https://supabase.com/docs/guides/platform/going-into-prod" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Security → Leaked password protection.",
+    });
+  }
+
+  // Refresh token rotation disabled — medium
+  if (fp === "refresh_token_rotation_enabled" && (nv === false || nv === "false")) {
+    return _guidance({
+      confidence: "high",
+      title:   "Restore Supabase refresh token rotation",
+      summary:
+        "Re-enable refresh token rotation so stolen refresh tokens cannot be silently " +
+        "reused without detection.",
+      why_this_helps:
+        "Refresh token rotation issues a new token pair on each use and invalidates the previous " +
+        "refresh token. Without rotation, a stolen refresh token remains valid indefinitely — an " +
+        "attacker who obtains a refresh token can maintain a persistent session even after the " +
+        "legitimate user changes their password or signs out.",
+      verify_first: [
+        "Confirm the rotation was intentionally disabled or changed accidentally.",
+        "Confirm whether any app code or integration relies on reusing the same refresh token across sessions.",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Sessions.",
+        "Enable 'Refresh Token Rotation'.",
+        "Save the setting.",
+        "Test sign-in and session refresh flows to confirm they work correctly.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Test that session refresh works correctly after rotation is re-enabled.",
+      ],
+      caveats: [
+        "Enabling token rotation invalidates existing long-lived refresh tokens — users with active sessions may need to re-authenticate.",
+        "Confirm app clients handle 401/refresh-token-invalid errors gracefully.",
+      ],
+      docs_links: [
+        { label: "Supabase Auth sessions",  url: "https://supabase.com/docs/guides/auth/sessions" },
+        { label: "Supabase going-to-prod",  url: "https://supabase.com/docs/guides/platform/going-into-prod" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Sessions → Refresh token rotation.",
+    });
+  }
+
+  // CAPTCHA disabled — medium
+  if (fp === "captcha_enabled" && (nv === false || nv === "false")) {
+    return _guidance({
+      confidence: "medium",
+      title:   "Restore Supabase Auth CAPTCHA protection",
+      summary:
+        "Re-enable CAPTCHA on Auth endpoints to restore bot protection for sign-in " +
+        "and sign-up flows.",
+      why_this_helps:
+        "CAPTCHA protection blocks automated scripts from submitting sign-in and sign-up requests " +
+        "at scale. Without it, Auth endpoints may become more susceptible to credential stuffing, " +
+        "brute-force attacks, and automated account creation.",
+      verify_first: [
+        "Confirm the setting was intentionally disabled or changed accidentally.",
+        "Confirm whether the app's sign-in/sign-up UI is configured to send CAPTCHA tokens — re-enabling without client-side integration will block legitimate users.",
+        "Confirm the CAPTCHA provider (hCaptcha or Turnstile) is correctly configured.",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Security.",
+        "Re-enable CAPTCHA and select the provider (hCaptcha or Cloudflare Turnstile).",
+        "Ensure the app's sign-in/sign-up forms send the CAPTCHA token in the request.",
+        "Test sign-in and sign-up flows end-to-end.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling CAPTCHA without updating client-side forms to submit CAPTCHA tokens will block all sign-in/sign-up attempts.",
+        "CAPTCHA can affect UX and conversion — confirm the user experience is acceptable.",
+      ],
+      docs_links: [
+        { label: "Supabase Auth CAPTCHA",  url: "https://supabase.com/docs/guides/auth/auth-captcha" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Security → Enable CAPTCHA.",
+    });
+  }
+
+  // Reauthentication for password update disabled — medium
+  if (fp === "require_reauthentication_for_password_update" && (nv === false || nv === "false")) {
+    return _guidance({
+      confidence: "medium",
+      title:   "Restore Supabase Auth reauthentication requirement",
+      summary:
+        "Re-enable the reauthentication requirement before users can change their password.",
+      why_this_helps:
+        "Requiring reauthentication before a password update means an attacker who hijacks " +
+        "an active session cannot silently change the user's password to lock them out. Without " +
+        "this requirement, an XSS or session hijack that obtains a live session token is " +
+        "sufficient to take full control of the account.",
+      verify_first: [
+        "Confirm whether the change was intentional or accidental.",
+        "Confirm whether app flows prompt users to reauthenticate before password changes.",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Security.",
+        "Re-enable 'Require reauthentication before password update'.",
+        "Test the password change flow to confirm users are prompted to reauthenticate.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Enabling this may require app changes if the UI does not currently prompt for reauthentication.",
+      ],
+      docs_links: [
+        { label: "Supabase Auth security",  url: "https://supabase.com/docs/guides/auth/password-security" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Security.",
+    });
+  }
+
+  // JWT expiry increased — medium
+  if (fp === "jwt_exp" && _isHighOrCritical(rl)) {
+    return _guidance({
+      confidence: "medium",
+      title:   "Review longer Supabase JWT lifetime",
+      summary:
+        "Confirm the longer JWT access token lifetime is intentional and consistent " +
+        "with your session security policy.",
+      why_this_helps:
+        "A longer JWT expiry means access tokens remain valid for a longer window after issuance. " +
+        "If a JWT is obtained by an attacker — through XSS, a compromised client, or a network " +
+        "intercept — a longer expiry gives the attacker more time to use the token before it expires. " +
+        "Shorter access token lifetimes reduce this window, particularly when combined with refresh " +
+        "token rotation.",
+      verify_first: [
+        "Confirm the new JWT expiry value and the previous value.",
+        "Confirm the change was part of a planned auth configuration update.",
+        "Confirm refresh token rotation is still enabled to reduce the risk of long-lived access.",
+        "Confirm user experience requirements — a very short expiry may increase session-refresh churn.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → Sessions.",
+        "Review the JWT Expiry setting.",
+        "Restore the intended expiry if the change was accidental.",
+        "Test sign-in and session refresh behavior after any changes.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Reducing JWT expiry too aggressively can cause frequent session refreshes and 401 errors in client apps.",
+        "JWT expiry affects access tokens only — refresh token lifetime is controlled separately.",
+      ],
+      docs_links: [
+        { label: "Supabase Auth sessions",  url: "https://supabase.com/docs/guides/auth/sessions" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → Sessions → JWT Expiry.",
+    });
+  }
+
+  // Additional redirect URLs count increased — medium
+  if (fp === "additional_redirect_urls_count" && _isHighOrCritical(rl)) {
+    return _guidance({
+      confidence: "medium",
+      title:   "Review Supabase Auth redirect URLs",
+      summary:
+        "Confirm newly added redirect URLs belong to expected application domains and " +
+        "remove any unexpected or untrusted redirect targets.",
+      why_this_helps:
+        "Supabase Auth redirect URLs control where users can be redirected after sign-in, " +
+        "sign-out, email confirmation, and OAuth callbacks. An unexpected URL in this list " +
+        "could enable open-redirect behavior — where an attacker crafts a sign-in link that " +
+        "redirects users to a malicious domain after authenticating.",
+      verify_first: [
+        "Confirm which URLs were added and whether they belong to your application.",
+        "Confirm the new URLs are expected app environments (production, staging, preview deploy).",
+        "Confirm no temporary, test, or suspicious domains were added.",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Authentication → URL Configuration.",
+        "Review the Site URL and Additional Redirect URLs.",
+        "Remove any URL that is not an expected application host.",
+        "Restore any legitimate URLs that were accidentally removed.",
+        "Test login, logout, and OAuth callback flows after changes.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Test sign-in and OAuth callback flows to confirm redirects work correctly.",
+      ],
+      caveats: [
+        "Removing a URL that is actively used for auth redirects will break sign-in for that environment.",
+        "ConfigTrace stores the count of redirect URLs, not the raw URLs — use the Supabase dashboard to inspect them.",
+      ],
+      docs_links: [
+        { label: "Supabase Auth URL Configuration",  url: "https://supabase.com/docs/guides/auth/redirect-urls" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Authentication → URL Configuration.",
+    });
+  }
+
+  return null;
+}
+
+// ── 4c. Supabase Storage ──────────────────────────────────────────────────────
+
+function _sbStoragePlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "supabase_storage_config") return null;
+
+  // File size limit removed or significantly increased
+  if (fp === "file_size_limit" && (nv === null || nv === undefined || _isHighOrCritical(rl))) {
+    return _guidance({
+      confidence: nv === null || nv === undefined ? "high" : "medium",
+      title:   "Review Supabase Storage file size limit",
+      summary:
+        nv === null || nv === undefined
+          ? "Restore the storage file size limit to prevent users from uploading arbitrarily large files."
+          : "Confirm the increased storage file size limit is intentional.",
+      why_this_helps:
+        "The global storage file size limit is the last-resort defence against excessive upload sizes " +
+        "when bucket-level policies do not enforce size restrictions. Removing it or increasing it " +
+        "significantly allows users to upload very large files, which can exhaust storage quota, " +
+        "increase costs, and may be used for storage-abuse attacks.",
+      verify_first: [
+        "Confirm whether the change was intentional (e.g. supporting large media uploads for a new feature).",
+        "Confirm whether bucket-level policies enforce size limits for specific buckets.",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Storage → Settings.",
+        "Review the global file size limit.",
+        "Restore an appropriate limit if the change was accidental or overly permissive.",
+        "Consider setting bucket-level size limits via Storage policies for fine-grained control.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "The global limit applies across all buckets — more specific per-bucket limits should be set via Storage policies.",
+        "Reducing the limit does not affect files already uploaded.",
+      ],
+      docs_links: [
+        { label: "Supabase Storage",  url: "https://supabase.com/docs/guides/storage" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Storage → Settings → File size limit.",
+    });
+  }
+
+  // Allowed MIME types restriction removed
+  if (fp === "allowed_mime_types" && (nv === null || nv === undefined || (Array.isArray(nv) && nv.length === 0))) {
+    return _guidance({
+      confidence: "medium",
+      title:   "Review Supabase Storage MIME type restriction removal",
+      summary:
+        "Restore the MIME type allow-list to prevent users from uploading file types " +
+        "that are not expected by the application.",
+      why_this_helps:
+        "The global MIME type allow-list restricts which file types can be uploaded to Supabase " +
+        "Storage. Removing it allows any file type to be uploaded, including executables, scripts, " +
+        "or archive formats that may be used in file-upload abuse or stored-content attacks.",
+      verify_first: [
+        "Confirm whether the MIME type restriction removal was intentional.",
+        "Confirm which file types the application legitimately needs to accept.",
+        "Confirm bucket-level policies still enforce file type restrictions if needed.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Storage → Settings.",
+        "Review allowed MIME types and restore an appropriate list.",
+        "Consider setting bucket-level MIME restrictions via Storage policies for per-bucket control.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Application-level file type validation should complement, not replace, storage-level MIME restrictions.",
+      ],
+      docs_links: [
+        { label: "Supabase Storage",  url: "https://supabase.com/docs/guides/storage" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Storage → Settings → Allowed MIME types.",
+    });
+  }
+
+  return null;
+}
+
+// ── 4d. Supabase Edge Functions ───────────────────────────────────────────────
+
+function _sbEdgeFnPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "supabase_edge_function") return null;
+
+  // JWT verification disabled — high
+  if (fp === "verify_jwt" && (nv === false || nv === "false") && _isHighOrCritical(rl)) {
+    return _guidance({
+      confidence: "high",
+      title:   "Restore Supabase Edge Function JWT verification",
+      summary:
+        "Re-enable JWT verification for this Edge Function to require callers to present " +
+        "a valid Supabase JWT before the function executes.",
+      why_this_helps:
+        "JWT verification is the primary access control mechanism for Supabase Edge Functions. " +
+        "When disabled, the function can be called by any HTTP client without authentication — " +
+        "including unauthenticated requests from the public internet. This may be intentional for " +
+        "public webhook endpoints, but for functions that process user data or perform sensitive " +
+        "operations, disabling JWT verification removes the authentication requirement entirely.",
+      verify_first: [
+        "Confirm whether this function is intended to be publicly callable (e.g. a webhook receiver).",
+        "Confirm whether the function performs any privileged operations or accesses user data.",
+        "Confirm this is the production environment, not a development or testing function.",
+        "Confirm whether the function implements its own auth logic instead of relying on JWT verification.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Edge Functions → [function name].",
+        "Review the function settings and re-enable JWT verification if the function should require auth.",
+        "If the function is a public webhook: confirm it implements request signature verification instead.",
+        "Test the function with and without a valid JWT to confirm access control behaves as expected.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Test that unauthenticated requests are rejected when JWT verification is re-enabled.",
+        "Test that authenticated requests with a valid Supabase JWT succeed.",
+      ],
+      caveats: [
+        "Re-enabling JWT verification will block any service currently calling this function without a JWT.",
+        "Public webhook endpoints (Stripe, GitHub, etc.) typically cannot send Supabase JWTs — for these, disable JWT verification and add request-signature verification instead.",
+      ],
+      docs_links: [
+        { label: "Supabase Edge Functions",  url: "https://supabase.com/docs/guides/functions" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Edge Functions → [function] → Settings.",
+    });
+  }
+
+  return null;
+}
+
+// ── 4e. Supabase network restrictions ────────────────────────────────────────
+
+function _sbNetworkPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "supabase_network_restriction") return null;
+  if (!_isHighOrCritical(rl) && ct !== "removed") return null;
+
+  // Unrestricted access enabled or wildcard CIDR added
+  const isUnrestricted =
+    (fp === "is_unrestricted" && (nv === true || nv === "true")) ||
+    (ct === "added" && (nv === true || nv === "true"));
+
+  if (isUnrestricted) {
+    return _guidance({
+      confidence: "high",
+      title:   "Restore Supabase database network restrictions",
+      summary:
+        "Re-enable network restrictions to limit direct database access to known IP " +
+        "addresses or CIDR ranges.",
+      why_this_helps:
+        "Supabase network restrictions control which IP addresses can establish direct PostgreSQL " +
+        "connections to the database (port 5432). When restrictions are removed, the database " +
+        "connection port may be reachable from any IP address on the internet. While the database " +
+        "still requires credentials, direct exposure increases the attack surface for credential " +
+        "brute-force, connection exhaustion, and PostgreSQL protocol-level attacks.",
+      verify_first: [
+        "Confirm who removed the network restrictions and why.",
+        "Identify which CIDR ranges or IP addresses should be allowed for direct DB access.",
+        "Confirm whether any current services rely on direct database access from dynamic IPs (e.g. serverless functions).",
+        "Confirm this is the production project.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Settings → Database → Network Restrictions.",
+        "Add back the intended CIDR allow-list entries (static IPs, NAT gateway ranges, office CIDRs).",
+        "Remove the wildcard/unrestricted entry if one was added.",
+        "Save the network restrictions.",
+        "Test that expected services can still connect to the database.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Confirm direct database connection attempts from unallowed IPs are rejected.",
+        "Confirm services with whitelisted IPs can still connect.",
+      ],
+      caveats: [
+        "Network restrictions apply to direct PostgreSQL connections only — connections via the Supabase API (PostgREST) and Edge Functions are unaffected.",
+        "Dynamic-IP services (serverless, CI/CD) may need to use the connection pooler or a static IP egress solution.",
+      ],
+      docs_links: [
+        { label: "Supabase network restrictions",  url: "https://supabase.com/docs/guides/platform/network-restrictions" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Settings → Database → Network Restrictions.",
+    });
+  }
+
+  // Network restriction CIDR removed
+  if (ct === "removed" && _isHighOrCritical(rl)) {
+    return _guidance({
+      confidence: "medium",
+      title:   "Verify Supabase network restriction removal",
+      summary:
+        "Confirm the removed CIDR allow-list entry was intentional and that the database " +
+        "is not now reachable from unexpected IP ranges.",
+      why_this_helps:
+        "Removing a CIDR from the network restrictions allow-list may mean a previously allowed " +
+        "IP range can no longer connect, or — if all entries are removed — the database becomes " +
+        "unrestricted. Verify that the removal was intentional and that no active services lost " +
+        "direct database access.",
+      verify_first: [
+        "Identify which CIDR was removed from the allow-list.",
+        "Confirm whether any service currently connects from IPs in that range.",
+        "Confirm this was a planned decommission or IP range change.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Settings → Database → Network Restrictions.",
+        "Review the current allow-list.",
+        "Re-add the removed CIDR if it is still needed.",
+        "Test that affected services can connect.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Removing all CIDRs may leave the database unrestricted — confirm at least one entry covers expected connection sources.",
+      ],
+      docs_links: [
+        { label: "Supabase network restrictions",  url: "https://supabase.com/docs/guides/platform/network-restrictions" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Settings → Database → Network Restrictions.",
+    });
+  }
+
+  return null;
+}
+
+// ── 4f. Supabase PostgREST / API config ───────────────────────────────────────
+
+function _sbApiConfigPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "supabase_api_config") return null;
+  if (!_isHighOrCritical(rl)) return null;
+
+  // Exposed schema changed — high risk
+  if (fp === "db_schema") {
+    return _guidance({
+      confidence: "high",
+      title:   "Verify Supabase PostgREST exposed schema change",
+      summary:
+        "Confirm the PostgREST exposed schema change was intentional and does not expose " +
+        "unintended tables or data to the public API.",
+      why_this_helps:
+        "The PostgREST db_schema setting controls which database schemas are exposed through the " +
+        "Supabase REST API. Changing this can add previously unexposed tables to the public API " +
+        "surface, or remove tables from the API unexpectedly. Any table in the exposed schema that " +
+        "lacks RLS protection may be accessible to anon or authenticated clients.",
+      verify_first: [
+        "Confirm the new schema value is expected and was changed intentionally.",
+        "Identify all tables in the new schema and confirm their RLS status.",
+        "Confirm no sensitive or internal tables are now newly exposed to the API.",
+        "Confirm existing API consumers are not broken by the change.",
+      ],
+      manual_steps: [
+        "Open the Supabase dashboard → [project] → Settings → API.",
+        "Review the Exposed Schema setting.",
+        "Restore the previous schema if the change was unintentional.",
+        "If intentional: review all tables in the newly exposed schema and confirm RLS is enabled where required.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Test API access for tables in the affected schema.",
+        "Confirm RLS enforcement on newly exposed tables.",
+      ],
+      caveats: [
+        "Tables in the exposed schema without RLS are accessible to any client with the anon key.",
+        "Schema changes take effect after a Supabase configuration reload.",
+      ],
+      docs_links: [
+        { label: "Supabase API settings",         url: "https://supabase.com/docs/guides/api" },
+        { label: "Supabase Row Level Security",   url: "https://supabase.com/docs/guides/database/postgres/row-level-security" },
+      ],
+      provider_console_hint:
+        "Supabase Dashboard → [project] → Settings → API → Exposed Schema.",
+    });
   }
 
   return null;
