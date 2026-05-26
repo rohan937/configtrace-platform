@@ -4,13 +4,14 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, DnsRecord, ReviewStatus } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, CorrelationResponse, DnsRecord, ReviewStatus } from "@/types";
 import {
   getChange,
   acknowledgeChange,
   markChangeExpected,
   snoozeChange,
   reopenChange,
+  getChangeCorrelation,
 } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
@@ -45,6 +46,7 @@ import InvestigationTimeline from "@/components/investigation/InvestigationTimel
 import ChangeNotesPanel from "@/components/investigation/ChangeNotesPanel";
 import RelatedChangesPanel from "@/components/investigation/RelatedChangesPanel";
 import AskConfigTrace from "@/components/investigation/AskConfigTrace";
+import CorrelationPanel from "@/components/investigation/CorrelationPanel";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -6126,6 +6128,9 @@ export default function ChangeDetailPage() {
   const [cachedToken, setCachedToken] = useState<string | null>(null);
   // M58.9: related changes count fed into the assistant panel
   const [relatedChangesCount, setRelatedChangesCount] = useState(0);
+  // M58.10: correlation/cluster data
+  const [correlation, setCorrelation] = useState<CorrelationResponse | null>(null);
+  const [correlationLoading, setCorrelationLoading] = useState(false);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6165,6 +6170,19 @@ export default function ChangeDetailPage() {
 
     return () => { cancelled = true; };
   }, [changeId, isLoaded, getToken]);
+
+  // M58.10: fetch correlation after the change is loaded
+  useEffect(() => {
+    if (!changeId || !cachedToken || !change) return;
+    let cancelled = false;
+
+    setCorrelationLoading(true);
+    getChangeCorrelation(changeId, cachedToken)
+      .then((data) => { if (!cancelled) { setCorrelation(data); setCorrelationLoading(false); } })
+      .catch(() => { if (!cancelled) setCorrelationLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [changeId, cachedToken, change]);
 
   // ── Loading ────────────────────────────────────────────────────────────
 
@@ -6315,6 +6333,12 @@ export default function ChangeDetailPage() {
         {/* ── Investigation timeline (M58.8) ──────────────────────────── */}
         <InvestigationTimeline change={change} review={review} />
 
+        {/* ── Change cluster (M58.10) ─────────────────────────────────── */}
+        <CorrelationPanel
+          correlation={correlation}
+          loading={correlationLoading}
+        />
+
         {/* ── Ask ConfigTrace (M58.9) ─────────────────────────────────── */}
         <AskConfigTrace
           change={change}
@@ -6322,6 +6346,7 @@ export default function ChangeDetailPage() {
           fixPlan={fixPlan}
           preview={preview}
           relatedChangesCount={relatedChangesCount}
+          clusterSummary={correlation?.primary_cluster?.title ?? null}
         />
 
         {/* ── Risk summary ────────────────────────────────────────────── */}

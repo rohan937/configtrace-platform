@@ -328,6 +328,8 @@ interface AskConfigTraceProps {
   fixPlan: FixPlanResult;
   preview: RemediationPreviewResult;
   relatedChangesCount?: number;
+  /** Title of the detected change cluster from M58.10 correlation, if any. */
+  clusterSummary?: string | null;
 }
 
 export default function AskConfigTrace({
@@ -336,6 +338,7 @@ export default function AskConfigTrace({
   fixPlan,
   preview,
   relatedChangesCount = 0,
+  clusterSummary,
 }: AskConfigTraceProps) {
   const [activeQuestionId, setActiveQuestionId] = useState<AssistantQuestionId | null>(null);
   const [copied, setCopied] = useState(false);
@@ -346,6 +349,7 @@ export default function AskConfigTrace({
     fixPlan,
     preview,
     relatedChangesCount,
+    clusterSummary,
   );
 
   const questions = getAssistantQuestionsForChange(ctx);

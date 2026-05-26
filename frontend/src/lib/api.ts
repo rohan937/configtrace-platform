@@ -1008,3 +1008,19 @@ export async function createChangeNote(
     token,
   });
 }
+
+// ── M58.10: Change Correlation / Risk Clusters ────────────────────────────────
+
+/**
+ * Fetch the correlation / risk-cluster analysis for a change.
+ *
+ * Returns { available: false } when no meaningful cluster is detected.
+ * Always resolves (never rejects on 200 responses).
+ */
+export async function getChangeCorrelation(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").CorrelationResponse> {
+  return apiFetch(`/changes/${changeId}/correlation`, { token });
+}
+

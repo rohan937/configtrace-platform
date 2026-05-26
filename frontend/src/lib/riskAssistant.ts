@@ -85,6 +85,8 @@ export interface AssistantContext {
   fixPlan: FixPlanResult;
   preview: RemediationPreviewResult;
   relatedChangesCount: number;
+  /** Title of the detected change cluster, if any (from M58.10 correlation). */
+  clusterSummary?: string | null;
   // Derived / normalised fields (set once, used everywhere)
   provider: string;
   recordType: string;        // lowercase provider_metadata.record_type
@@ -121,6 +123,7 @@ export function buildRiskAssistantContext(
   fixPlan: FixPlanResult,
   preview: RemediationPreviewResult,
   relatedChangesCount = 0,
+  clusterSummary?: string | null,
 ): AssistantContext {
   const pm = change.provider_metadata ?? {};
   const rt = ((pm["record_type"] as string) ?? "").toLowerCase();
@@ -130,6 +133,7 @@ export function buildRiskAssistantContext(
     fixPlan,
     preview,
     relatedChangesCount,
+    clusterSummary: clusterSummary ?? null,
     provider:         _deriveProvider(rt),
     recordType:       rt,
     riskLevel:        (change.risk_level   ?? "unknown").toLowerCase(),
@@ -611,7 +615,11 @@ function _answerWhyRisky(ctx: AssistantContext): AssistantResponse {
   const limitations: string[] = rem?.caveats?.slice(0, 2) ??
     _genericLimitations(ctx.provider, ctx.recordType);
 
-  if (ctx.relatedChangesCount > 0) {
+  if (ctx.clusterSummary) {
+    limitations.push(
+      `A nearby change cluster was detected ("${ctx.clusterSummary}") — review whether this was part of a planned deployment.`,
+    );
+  } else if (ctx.relatedChangesCount > 0) {
     limitations.push(
       `There ${ctx.relatedChangesCount === 1 ? "is" : "are"} ${ctx.relatedChangesCount} other nearby change${ctx.relatedChangesCount === 1 ? "" : "s"} on this integration — review whether this was part of a coordinated deployment.`,
     );
@@ -860,9 +868,11 @@ function _answerTeamSummary(ctx: AssistantContext): AssistantResponse {
     ? ` Suggested remediation: ${rem.summary}`
     : " Review this change to confirm it was intentional and assess whether remediation is needed.";
 
-  const relatedSentence = ctx.relatedChangesCount > 0
-    ? ` Note: ${ctx.relatedChangesCount} nearby change${ctx.relatedChangesCount === 1 ? " was" : "s were"} also detected on this integration around the same time.`
-    : "";
+  const relatedSentence = ctx.clusterSummary
+    ? ` Note: A nearby change cluster was detected ("${ctx.clusterSummary}") — this change may be part of a coordinated deployment.`
+    : ctx.relatedChangesCount > 0
+      ? ` Note: ${ctx.relatedChangesCount} nearby change${ctx.relatedChangesCount === 1 ? " was" : "s were"} also detected on this integration around the same time.`
+      : "";
 
   const answer =
     `ConfigTrace detected a ${riskLabel.toLowerCase()}-risk configuration change in ${provLabel}. ` +

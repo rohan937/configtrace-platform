@@ -56,9 +56,11 @@ from app.schemas.change_note import (
     ChangeNoteListResponse,
     ChangeNoteResponse,
 )
+from app.schemas.change_correlation import CorrelationResponse
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
+from app.services import change_correlation_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -466,3 +468,31 @@ def create_change_note(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return ChangeNoteResponse.model_validate(note)
+
+
+# ── Correlation endpoint (M58.10) ─────────────────────────────────────────────
+
+
+@router.get("/{change_id}/correlation", response_model=CorrelationResponse)
+def get_change_correlation(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CorrelationResponse:
+    """Return correlation / risk-cluster analysis for a change.
+
+    Deterministically computed from nearby changes in the same workspace.
+    No external API calls, no LLM, no persisted cluster state.
+
+    Returns ``{"available": false}`` when no meaningful cluster is found.
+    The endpoint always returns 200; ``available`` communicates whether a
+    cluster was detected.
+    """
+    # Authorise: requester must be a workspace member (same as review actions).
+    _get_change_and_workspace(change_id, current_user, db)
+
+    return change_correlation_service.correlate_change(
+        change_id=change_id,
+        user_id=current_user.id,
+        db=db,
+    )

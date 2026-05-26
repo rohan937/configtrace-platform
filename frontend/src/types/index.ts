@@ -455,6 +455,41 @@ export interface ChangeSnoozeRule {
   updated_at: string;
 }
 
+// ── M58.10: Change Correlation / Risk Clusters ───────────────────────────────
+
+/** A single related change shown inside a correlation cluster. */
+export interface CorrelationChangeItem {
+  id: string;
+  provider: string;
+  risk_level: string;
+  record_type: string | null;
+  title: string;
+  detected_at: string;
+  /** Relative URL: "/changes/{id}" */
+  url: string;
+}
+
+/** The primary (highest-scoring) cluster for a change. */
+export interface CorrelationCluster {
+  cluster_id: string;
+  title: string;
+  summary: string;
+  confidence: "high" | "medium" | "low";
+  /** "deployment_routing" | "payments_commerce" | "edge_security" |
+   *  "auth_access" | "data_protection" | "provider_local" | "unknown" */
+  cluster_type: string;
+  time_window_minutes: number;
+  signals: string[];
+  recommended_review: string[];
+  related_changes: CorrelationChangeItem[];
+}
+
+/** Response from GET /changes/{id}/correlation */
+export interface CorrelationResponse {
+  available: boolean;
+  primary_cluster: CorrelationCluster | null;
+}
+
 // ── User settings (M34) ───────────────────────────────────────────────────────
 
 export type AlertRiskThreshold = "critical_only" | "high_and_critical" | "medium_and_above";
