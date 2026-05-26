@@ -437,6 +437,34 @@ def _compose_digest(
                 lines.append(f"  • {check}")
             lines.append("")
 
+        # ── M58.4: compact remediation summary block ──────────────────────
+        # Includes: title, short summary, and a deep-link CTA back to
+        # ConfigTrace.  Full commands and manual steps are intentionally
+        # omitted from email alerts — they live in the in-app preview.
+        try:
+            from app.services.remediation_summary_service import (
+                build_alert_remediation_summary,
+            )
+            rem = build_alert_remediation_summary(change)
+        except Exception:
+            rem = None
+
+        if rem and rem.get("available"):
+            lines.append("Suggested remediation:")
+            lines.append(f"  {rem['title']}")
+            lines.append(f"  {rem['summary']}")
+            lines.append("")
+            action_label = rem.get("action_label") or "Open remediation preview"
+            lines.append(f"{action_label}:")
+            lines.append(f"  {base_url}/changes/{change.id}")
+            lines.append("")
+            lines.append(
+                "Important: ConfigTrace does not apply this fix automatically. "
+                "Review remediation guidance before making any provider changes."
+            )
+            lines.append("")
+        # ─────────────────────────────────────────────────────────────────
+
         lines.append(f"Detected:         {_format_timestamp(change.created_at)}")
         lines.append(f"View full change: {base_url}/changes/{change.id}")
 
@@ -452,6 +480,11 @@ def _compose_digest(
     lines.append("ConfigTrace integration above. Low- and medium-risk changes are")
     lines.append("not emailed — review them in the timeline at:")
     lines.append(f"  {base_url}")
+    lines.append("")
+    lines.append(
+        "ConfigTrace does not apply fixes automatically. "
+        "Review all remediation guidance before making provider changes."
+    )
 
     return subject, "\n".join(lines)
 

@@ -35,7 +35,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 from urllib.parse import urlparse
 
 import httpx
@@ -609,6 +609,12 @@ def _compose_slack_text(
     lines.append(f"Provider: {integration.provider}")
     lines.append("")
 
+    # M58.4: load remediation summary helper once (fail-open if unavailable)
+    try:
+        from app.services.remediation_summary_service import build_alert_remediation_summary as _rem_summary
+    except Exception:
+        _rem_summary = None  # type: ignore[assignment]
+
     for idx, c in enumerate(changes[:5], start=1):  # cap at 5 in Slack message
         risk_upper = (c.risk_level or "unknown").upper()
         lines.append(
@@ -617,6 +623,20 @@ def _compose_slack_text(
         )
         if c.risk_reason:
             lines.append(f"  {c.risk_reason}")
+
+        # ── M58.4: compact suggested-fix line (1–2 lines max) ─────────────
+        # No full commands, no manual steps, no sensitive data.
+        if _rem_summary is not None:
+            try:
+                rem = _rem_summary(c)
+                if rem and rem.get("available"):
+                    lines.append(f"  Suggested fix: {rem['title']}")
+                    if rem.get("remediation_preview_available"):
+                        lines.append("  Remediation preview available in ConfigTrace")
+            except Exception:
+                pass
+        # ─────────────────────────────────────────────────────────────────
+
         lines.append(f"  View: {base_url}/changes/{c.id}")
 
     if n > 5:
@@ -627,13 +647,43 @@ def _compose_slack_text(
     return "\n".join(lines)
 
 
+def _build_webhook_remediation(change: Any, change_url: str) -> dict:
+    """Build the remediation sub-object for a single change in the webhook payload.
+
+    M58.4: Always includes execution_enabled: false.
+    No full commands, no manual steps, no sensitive data.
+    """
+    try:
+        from app.services.remediation_summary_service import build_alert_remediation_summary
+        rem = build_alert_remediation_summary(change)
+        if rem and rem.get("available"):
+            return {
+                "available": True,
+                "title": rem["title"],
+                "summary": rem["summary"],
+                "confidence": rem.get("confidence", "low"),
+                "fix_plan_available": bool(rem.get("fix_plan_available")),
+                "remediation_preview_available": bool(rem.get("remediation_preview_available")),
+                "execution_enabled": False,  # hard constant — never True
+                "url": change_url,
+            }
+    except Exception:
+        pass
+    return {"available": False}
+
+
 def _compose_webhook_payload(
     *,
     integration: Integration,
     changes: Sequence[Change],
     sync_run_id: uuid.UUID,
 ) -> dict:
-    """Compose the generic webhook JSON payload."""
+    """Compose the generic webhook JSON payload.
+
+    M58.4: Each change in the ``changes`` array now includes a ``remediation``
+    sub-object.  Existing top-level fields are unchanged (backwards-compatible).
+    The ``remediation.execution_enabled`` field is always False.
+    """
     from app.config import settings as _settings
 
     has_critical = any(c.risk_level == "critical" for c in changes)
@@ -641,6 +691,8 @@ def _compose_webhook_payload(
     if not any(c.risk_level in ("critical", "high") for c in changes):
         # All medium
         highest_risk = "medium"
+
+    base_url = _settings.APP_BASE_URL.rstrip("/")
 
     return {
         "event": "config_drift_alert",
@@ -659,10 +711,14 @@ def _compose_webhook_payload(
                 "record_identifier": c.record_identifier,
                 "field_path": c.field_path,
                 "risk_reason": c.risk_reason,
+                # M58.4: compact remediation summary — no commands, no secrets.
+                "remediation": _build_webhook_remediation(
+                    c, f"{base_url}/changes/{c.id}"
+                ),
             }
             for c in changes
         ],
-        "app_url": _settings.APP_BASE_URL.rstrip("/"),
+        "app_url": base_url,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
