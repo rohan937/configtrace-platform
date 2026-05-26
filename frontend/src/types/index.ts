@@ -615,6 +615,8 @@ export interface WorkspaceNotificationSettings {
   slack_app_last_test_at: string | null;
   /** Last delivery error message, or null when healthy. */
   slack_app_last_error: string | null;
+  /** M58.7: VAPID public key for browser push (URL-safe base64). Null when not configured. */
+  vapid_public_key: string | null;
 }
 
 /** A single Slack channel returned by the channels list API. */
@@ -653,6 +655,79 @@ export interface NotificationSettingsUpdateRequest {
 export interface TestNotificationResponse {
   slack_sent: boolean;
   webhook_sent: boolean;
+  error: string | null;
+}
+
+// ── Push Notifications (M58.7) ────────────────────────────────────────────────
+
+/** Per-device minimum risk level for push delivery. */
+export type PushMinRiskLevel = "high" | "critical_only";
+
+/** Keys extracted from a browser PushSubscription object. */
+export interface PushSubscriptionKeys {
+  /** Base64url-encoded P-256 DH public key. */
+  p256dh: string;
+  /** Base64url-encoded authentication secret. */
+  auth: string;
+}
+
+/** Full PushSubscription data sent to the backend. */
+export interface PushSubscriptionData {
+  endpoint: string;
+  keys: PushSubscriptionKeys;
+}
+
+/**
+ * Request body for POST /notifications/push/subscriptions.
+ * Matches the backend PushSubscribeRequest schema (nested subscription object).
+ */
+export interface PushSubscribeRequest {
+  /** Nested subscription object — endpoint + keys from browser PushSubscription. */
+  subscription: PushSubscriptionData;
+  device_label?: string;
+  /** Defaults to "high" on the backend (high + critical). */
+  min_risk_level?: PushMinRiskLevel;
+}
+
+/**
+ * One device subscription returned by the backend.
+ * SECURITY: endpoint, p256dh, auth are NEVER included.
+ */
+export interface PushSubscriptionResponse {
+  id: string;
+  workspace_id: string;
+  device_label: string | null;
+  browser_name: string | null;
+  user_agent: string | null;
+  enabled: boolean;
+  min_risk_level: PushMinRiskLevel;
+  last_used_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response from GET /notifications/push/subscriptions. */
+export interface PushSubscriptionListResponse {
+  subscriptions: PushSubscriptionResponse[];
+  total: number;
+}
+
+/** Response from GET /notifications/push/public-key. */
+export interface PushPublicKeyResponse {
+  /** VAPID public key (URL-safe base64). Null when VAPID is not configured. */
+  vapid_public_key: string | null;
+  /** True when the server has a valid VAPID key pair configured. */
+  configured: boolean;
+}
+
+/** Response from POST /notifications/push/test. */
+export interface PushTestResponse {
+  /** Number of push messages successfully sent. */
+  sent: number;
+  /** Total enabled subscriptions attempted. */
+  total_subscriptions: number;
+  /** Non-null if VAPID is unconfigured or all sends failed. */
   error: string | null;
 }
 

@@ -1,4 +1,4 @@
-"""Workspace and member management routes — M50/M51/M57.1/M58.5.
+"""Workspace and member management routes — M50/M51/M57.1/M58.5/M58.7.
 
 Routes
 ------
@@ -21,6 +21,11 @@ GET    /workspaces/{workspace_id}/notifications/slack/channels     — list Slac
 PUT    /workspaces/{workspace_id}/notifications/slack/channel      — select Slack channel (M58.5)
 POST   /workspaces/{workspace_id}/notifications/slack/test         — test Slack App delivery (M58.5)
 DELETE /workspaces/{workspace_id}/notifications/slack              — disconnect Slack App (M58.5)
+GET    /workspaces/{workspace_id}/notifications/push/public-key    — VAPID public key (M58.7)
+POST   /workspaces/{workspace_id}/notifications/push/subscriptions — register push sub (M58.7)
+GET    /workspaces/{workspace_id}/notifications/push/subscriptions — list push subs (M58.7)
+DELETE /workspaces/{workspace_id}/notifications/push/subscriptions/{sub_id} — remove sub (M58.7)
+POST   /workspaces/{workspace_id}/notifications/push/test          — test push delivery (M58.7)
 """
 
 from __future__ import annotations
@@ -61,6 +66,12 @@ from app.schemas.notification_settings import (
     SlackChannelResponse,
     SlackInstallUrlResponse,
     TestNotificationResponse,
+    # M58.7 — Web Push
+    PushPublicKeyResponse,
+    PushSubscribeRequest,
+    PushSubscriptionListResponse,
+    PushSubscriptionResponse,
+    PushTestResponse,
 )
 from app.services import workspace_service
 from app.services import notification_service
@@ -807,3 +818,173 @@ def disconnect_slack_app(
     )
     db.commit()
     return Response(status_code=204)
+
+
+# ── M58.7 — Web Push / PWA notifications ─────────────────────────────────────
+
+
+@router.get(
+    "/{workspace_id}/notifications/push/public-key",
+    response_model=PushPublicKeyResponse,
+    summary="Get VAPID public key for Web Push subscriptions",
+)
+def get_push_public_key(
+    workspace_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PushPublicKeyResponse:
+    """Return the VAPID public key needed to subscribe to push notifications.
+
+    This is the ONLY VAPID value ever returned in API responses.
+    The VAPID private key is never exposed.
+    Any authenticated workspace member can call this.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.services.push_notification_service import get_vapid_public_key
+    pub_key = get_vapid_public_key()
+    return PushPublicKeyResponse(
+        vapid_public_key=pub_key,
+        configured=bool(pub_key),
+    )
+
+
+@router.post(
+    "/{workspace_id}/notifications/push/subscriptions",
+    response_model=PushSubscriptionResponse,
+    status_code=201,
+    summary="Register a browser push subscription",
+)
+def create_push_subscription(
+    workspace_id: uuid.UUID,
+    body: PushSubscribeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PushSubscriptionResponse:
+    """Store a Web Push API subscription for this browser/device.
+
+    The subscription endpoint and keys are encrypted before storage.
+    They are NEVER returned in any API response.
+
+    Requires workspace member role.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    # Detect browser from user agent (best-effort, not required).
+    from app.services.push_notification_service import subscribe as push_subscribe
+
+    sub = push_subscribe(
+        workspace_id=workspace_id,
+        user_id=current_user.id,
+        endpoint=body.subscription.endpoint,
+        p256dh=body.subscription.keys.p256dh,
+        auth=body.subscription.keys.auth,
+        device_label=body.device_label,
+        min_risk_level=body.min_risk_level,
+        user_agent=None,
+        browser_name=None,
+        db=db,
+    )
+    db.commit()
+    db.refresh(sub)
+    return PushSubscriptionResponse.model_validate(sub)
+
+
+@router.get(
+    "/{workspace_id}/notifications/push/subscriptions",
+    response_model=PushSubscriptionListResponse,
+    summary="List push subscriptions for this workspace",
+)
+def list_push_subscriptions(
+    workspace_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PushSubscriptionListResponse:
+    """List all push subscriptions (safe metadata only — no secrets).
+
+    Requires workspace member role.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.services.push_notification_service import list_subscriptions
+    subs = list_subscriptions(workspace_id, db)
+    return PushSubscriptionListResponse(
+        subscriptions=[PushSubscriptionResponse.model_validate(s) for s in subs]
+    )
+
+
+@router.delete(
+    "/{workspace_id}/notifications/push/subscriptions/{subscription_id}",
+    status_code=204,
+    summary="Disable a push subscription",
+)
+def delete_push_subscription(
+    workspace_id: uuid.UUID,
+    subscription_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Disable a browser push subscription.
+
+    The subscription row is kept for audit purposes (enabled=False).
+    Requires workspace member role.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.services.push_notification_service import delete_subscription
+    found = delete_subscription(subscription_id, workspace_id, db)
+    if not found:
+        raise HTTPException(status_code=404, detail="Push subscription not found.")
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post(
+    "/{workspace_id}/notifications/push/test",
+    response_model=PushTestResponse,
+    summary="Send test push notification to all enabled subscriptions",
+)
+def test_push_notification(
+    workspace_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PushTestResponse:
+    """Send a test Web Push notification to all enabled subscriptions.
+
+    Requires workspace admin or owner role (same as other test endpoints).
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.services.push_notification_service import send_test_push
+    result = send_test_push(workspace_id, db)
+    db.commit()
+    return PushTestResponse(
+        sent=result["sent"],
+        total_subscriptions=result["total_subscriptions"],
+        error=result.get("error"),
+    )

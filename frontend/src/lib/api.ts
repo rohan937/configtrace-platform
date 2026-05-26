@@ -832,6 +832,107 @@ export async function patchSettings(
   });
 }
 
+// ── Push notifications (M58.7) ────────────────────────────────────────────────
+
+/**
+ * Fetch the VAPID public key for browser push subscription.
+ *
+ * Returns `configured: false` when VAPID is not set up server-side.
+ * Safe to call without admin role — any workspace member can read the public key.
+ */
+export async function getPushPublicKey(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").PushPublicKeyResponse> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/notifications/push/public-key`,
+    { token },
+  );
+}
+
+/**
+ * Register a browser PushSubscription with the backend.
+ *
+ * Call this after `pushManager.subscribe()` succeeds and the user has
+ * granted notification permission.  The backend encrypts endpoint + keys
+ * before storage — they are never returned in any API response.
+ *
+ * Returns the new subscription metadata (no secrets).
+ */
+export async function subscribePush(
+  workspaceId: string,
+  body: import("@/types").PushSubscribeRequest,
+  token?: string | null,
+): Promise<import("@/types").PushSubscriptionResponse> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/notifications/push/subscriptions`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+      token,
+    },
+  );
+}
+
+/**
+ * List all push subscriptions for a workspace.
+ *
+ * Returned records do NOT include endpoint URL or encryption keys.
+ */
+export async function listPushSubscriptions(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").PushSubscriptionListResponse> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/notifications/push/subscriptions`,
+    { token },
+  );
+}
+
+/**
+ * Remove a push subscription from the backend.
+ *
+ * Should also be called with `pushManager.unsubscribe()` on the browser side.
+ * Returns nothing on 204.
+ */
+export async function deletePushSubscription(
+  workspaceId: string,
+  subscriptionId: string,
+  token?: string | null,
+): Promise<void> {
+  const url = `${BASE_URL}/workspaces/${workspaceId}/notifications/push/subscriptions/${subscriptionId}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: buildHeaders(token),
+  });
+  if (!res.ok && res.status !== 204) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+}
+
+/**
+ * Send a test push notification to all enabled subscriptions for a workspace.
+ *
+ * Requires admin role.  Returns the count sent and total subscriptions attempted.
+ */
+export async function testPushNotifications(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").PushTestResponse> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/notifications/push/test`,
+    {
+      method: "POST",
+      token,
+    },
+  );
+}
+
 // ── Billing (M52) ────────────────────────────────────────────────────────────
 
 /**

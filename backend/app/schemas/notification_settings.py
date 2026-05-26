@@ -53,6 +53,10 @@ class NotificationSettingsResponse(BaseModel):
     # Last delivery error (None when no error).
     slack_app_last_error: Optional[str] = None
 
+    # ── Web Push (M58.7) ──────────────────────────────────────────────────────
+    # VAPID public key — safe to return; needed by frontend to subscribe.
+    vapid_public_key: Optional[str] = None
+
 
 class NotificationSettingsUpdateRequest(BaseModel):
     """Body for PUT /workspaces/{id}/notification-settings.
@@ -144,3 +148,74 @@ class SlackChannelUpdateRequest(BaseModel):
 
     channel_id: str = Field(..., description="Slack channel ID (e.g. C01234567).")
     channel_name: str = Field(..., description="Display name of the channel.")
+
+
+# ── Web Push schemas (M58.7) ──────────────────────────────────────────────────
+
+_VALID_PUSH_RISK_LEVELS = frozenset({"high", "critical_only"})
+
+
+class PushSubscriptionKeys(BaseModel):
+    """Web Push API subscription keys from the browser."""
+    p256dh: str = Field(..., description="Browser's EC Diffie-Hellman public key (base64url).")
+    auth: str = Field(..., description="Auth secret from the browser subscription (base64url).")
+
+
+class PushSubscriptionData(BaseModel):
+    """Full Web Push API PushSubscription object from the browser."""
+    endpoint: str = Field(..., description="Push service endpoint URL.", max_length=2048)
+    keys: PushSubscriptionKeys
+
+
+class PushSubscribeRequest(BaseModel):
+    """Body for POST /workspaces/{id}/notifications/push/subscriptions."""
+    subscription: PushSubscriptionData
+    device_label: Optional[str] = Field(
+        default=None, max_length=100,
+        description="Human-readable label, e.g. 'Chrome on Mac'.",
+    )
+    min_risk_level: str = Field(
+        default="high",
+        description="Minimum risk level for push: 'high' (high+critical) or 'critical_only'.",
+    )
+
+    @field_validator("min_risk_level")
+    @classmethod
+    def validate_min_risk_level(cls, v: str) -> str:
+        if v not in _VALID_PUSH_RISK_LEVELS:
+            raise ValueError(
+                f"min_risk_level must be one of: {sorted(_VALID_PUSH_RISK_LEVELS)}"
+            )
+        return v
+
+
+class PushSubscriptionResponse(BaseModel):
+    """Safe subscription metadata — no endpoint, p256dh, or auth returned."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    enabled: bool
+    device_label: Optional[str] = None
+    browser_name: Optional[str] = None
+    min_risk_level: str
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+
+
+class PushSubscriptionListResponse(BaseModel):
+    """Returned by GET /workspaces/{id}/notifications/push/subscriptions."""
+    subscriptions: List[PushSubscriptionResponse]
+
+
+class PushPublicKeyResponse(BaseModel):
+    """Returned by GET /workspaces/{id}/notifications/push/public-key."""
+    vapid_public_key: Optional[str] = None
+    configured: bool = False
+
+
+class PushTestResponse(BaseModel):
+    """Returned by POST /workspaces/{id}/notifications/push/test."""
+    sent: int
+    total_subscriptions: int
+    error: Optional[str] = None

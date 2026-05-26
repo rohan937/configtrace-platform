@@ -159,6 +159,13 @@ def _make_mock_settings_row(
     row.slack_webhook_iv = slack_iv
     row.webhook_url_encrypted = webhook_url_encrypted
     row.webhook_iv = webhook_iv
+    # M58.5: explicitly set Slack App columns to defaults so truthy MagicMock
+    # attributes don't accidentally trigger the Slack App dispatch path.
+    row.slack_app_enabled = False
+    row.slack_bot_token_encrypted = None
+    row.slack_bot_iv = None
+    row.slack_channel_id = None
+    row.slack_app_last_error = None
     return row
 
 

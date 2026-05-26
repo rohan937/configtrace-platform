@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import {
@@ -12,11 +12,18 @@ import {
   updateSlackChannel,
   sendSlackAppTest,
   disconnectSlackApp,
+  getPushPublicKey,
+  subscribePush,
+  listPushSubscriptions,
+  deletePushSubscription,
+  testPushNotifications,
 } from "@/lib/api";
 import type {
   WorkspaceNotificationSettings,
   NotifyRiskLevel,
   SlackChannel,
+  PushMinRiskLevel,
+  PushSubscriptionResponse,
 } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
 
@@ -541,6 +548,513 @@ function SlackAppCard({
   );
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/**
+ * Convert a URL-safe base64 string (VAPID public key) to a Uint8Array that
+ * the Web Push API expects for applicationServerKey.
+ */
+function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const buffer = new ArrayBuffer(rawData.length);
+  const outputArray = new Uint8Array(buffer);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+/** Detect the current browser name from the user-agent string. */
+function detectBrowserName(): string {
+  const ua = navigator.userAgent;
+  if (ua.includes("Firefox")) return "Firefox";
+  if (ua.includes("Edg/")) return "Edge";
+  if (ua.includes("OPR/") || ua.includes("Opera")) return "Opera";
+  if (ua.includes("Chrome")) return "Chrome";
+  if (ua.includes("Safari")) return "Safari";
+  return "Browser";
+}
+
+// ── Browser Push Card ──────────────────────────────────────────────────────────
+
+type PushPermission = "unsupported" | "default" | "denied" | "granted";
+
+function BrowserPushCard({
+  workspaceId,
+  isAdmin,
+}: {
+  workspaceId: string;
+  isAdmin?: boolean;
+}) {
+  const { getToken } = useAuth();
+
+  // Browser push support state.
+  const [permState, setPermState] = useState<PushPermission>("default");
+  const [pushSupported, setPushSupported] = useState(true);
+
+  // Backend subscription list.
+  const [subscriptions, setSubscriptions] = useState<PushSubscriptionResponse[]>([]);
+  const [loadingSubs, setLoadingSubs] = useState(false);
+
+  // Current device's subscription (matched by checking the SW pushManager).
+  const [currentSubId, setCurrentSubId] = useState<string | null>(null);
+
+  // UI state.
+  const [subscribing, setSubscribing] = useState(false);
+  const [unsubscribing, setUnsubscribing] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [minRiskLevel, setMinRiskLevel] = useState<PushMinRiskLevel>("high");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  // Prevent double-init in strict mode.
+  const initialized = useRef(false);
+
+  // ── Check browser support + permission on mount ──────────────────────────
+  useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
+    // Check for required browser APIs.
+    if (
+      typeof window === "undefined" ||
+      !("serviceWorker" in navigator) ||
+      !("PushManager" in window) ||
+      !("Notification" in window)
+    ) {
+      setPushSupported(false);
+      setPermState("unsupported");
+      return;
+    }
+
+    setPermState(Notification.permission as PushPermission);
+    if (Notification.permission === "granted") {
+      void loadSubscriptions();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Load workspace subscriptions ─────────────────────────────────────────
+  async function loadSubscriptions() {
+    setLoadingSubs(true);
+    try {
+      const token = await getToken();
+      const { subscriptions: subs } = await listPushSubscriptions(workspaceId, token);
+      setSubscriptions(subs);
+
+      // Check if this device has an existing SW subscription and match it.
+      if ("serviceWorker" in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          const existing = await reg.pushManager.getSubscription();
+          if (existing) {
+            // Find a matching enabled subscription in the backend list.
+            // We can't match by endpoint directly (it's encrypted server-side),
+            // so we identify this device's subscription by it being the most
+            // recently created enabled one (best-effort heuristic).
+            const enabled = subs.filter((s) => s.enabled);
+            if (enabled.length > 0) {
+              setCurrentSubId(enabled[enabled.length - 1].id);
+            }
+          }
+        } catch {
+          // SW not ready yet — that's fine, user can still subscribe.
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load subscriptions.");
+    } finally {
+      setLoadingSubs(false);
+    }
+  }
+
+  // ── Subscribe this device ─────────────────────────────────────────────────
+  async function handleSubscribe() {
+    setSubscribing(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      // 1. Request notification permission.
+      const permission = await Notification.requestPermission();
+      setPermState(permission as PushPermission);
+      if (permission !== "granted") {
+        setError(
+          permission === "denied"
+            ? "Notifications blocked. Enable them in your browser settings, then try again."
+            : "Notification permission not granted.",
+        );
+        return;
+      }
+
+      // 2. Get VAPID public key from backend.
+      const token = await getToken();
+      const { vapid_public_key, configured } = await getPushPublicKey(workspaceId, token);
+      if (!configured || !vapid_public_key) {
+        setError("Push notifications are not configured on this server. Contact your administrator.");
+        return;
+      }
+
+      // 3. Wait for service worker registration.
+      const reg = await navigator.serviceWorker.ready;
+
+      // 4. Subscribe via the Push API.
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapid_public_key),
+      });
+
+      // 5. Extract keys.
+      const rawP256dh = sub.getKey("p256dh");
+      const rawAuth = sub.getKey("auth");
+      if (!rawP256dh || !rawAuth) {
+        throw new Error("Browser returned incomplete push subscription keys.");
+      }
+      const p256dh = btoa(String.fromCharCode(...new Uint8Array(rawP256dh)));
+      const auth = btoa(String.fromCharCode(...new Uint8Array(rawAuth)));
+
+      // 6. Register with backend (nested subscription object per API schema).
+      const browserName = detectBrowserName();
+      const newSub = await subscribePush(
+        workspaceId,
+        {
+          subscription: {
+            endpoint: sub.endpoint,
+            keys: { p256dh, auth },
+          },
+          device_label: `${browserName} on ${navigator.platform || "device"}`,
+          min_risk_level: minRiskLevel,
+        },
+        token,
+      );
+
+      setCurrentSubId(newSub.id);
+      setSubscriptions((prev) => [...prev, newSub]);
+      setSuccess("Browser notifications enabled for this device.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to enable push notifications.",
+      );
+    } finally {
+      setSubscribing(false);
+    }
+  }
+
+  // ── Unsubscribe this device ───────────────────────────────────────────────
+  async function handleUnsubscribe() {
+    if (!currentSubId) return;
+    setUnsubscribing(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      // Remove browser subscription.
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        const existing = await reg.pushManager.getSubscription();
+        if (existing) {
+          await existing.unsubscribe();
+        }
+      }
+      // Remove from backend.
+      const token = await getToken();
+      await deletePushSubscription(workspaceId, currentSubId, token);
+      setSubscriptions((prev) => prev.filter((s) => s.id !== currentSubId));
+      setCurrentSubId(null);
+      setPermState("default");
+      setSuccess("Browser notifications disabled for this device.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disable push notifications.");
+    } finally {
+      setUnsubscribing(false);
+    }
+  }
+
+  // ── Remove another device's subscription ─────────────────────────────────
+  async function handleRemoveSub(subId: string) {
+    try {
+      const token = await getToken();
+      await deletePushSubscription(workspaceId, subId, token);
+      setSubscriptions((prev) => prev.filter((s) => s.id !== subId));
+      if (currentSubId === subId) {
+        setCurrentSubId(null);
+        setPermState("default");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove subscription.");
+    }
+  }
+
+  // ── Send test push ────────────────────────────────────────────────────────
+  async function handleTest() {
+    setTesting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await getToken();
+      const result = await testPushNotifications(workspaceId, token);
+      if (result.error) {
+        setError(`Test failed: ${result.error}`);
+      } else {
+        setSuccess(
+          `Test push sent to ${result.sent} of ${result.total_subscriptions} device(s).`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send test push.");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  const rowStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    marginBottom: "10px",
+  };
+
+  const smallBtnStyle: React.CSSProperties = {
+    background: "none",
+    color: "#f87171",
+    border: "none",
+    padding: "2px 0",
+    fontSize: "11px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
+
+  return (
+    <>
+      {error && <ErrorBanner message={error} />}
+      {success && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            background: "#1a2a1a",
+            border: "1px solid #2a5a2a",
+            borderRadius: "6px",
+            padding: "8px 12px",
+            color: "#4ade80",
+            fontSize: "12px",
+            marginBottom: "12px",
+          }}
+        >
+          {success}
+        </div>
+      )}
+
+      {/* ── Unsupported ───────────────────────────────────────────────── */}
+      {!pushSupported && (
+        <p style={{ fontSize: "13px", color: "#565b6e", margin: 0 }}>
+          Your browser does not support Web Push notifications. Try Chrome,
+          Edge, or Firefox on a desktop device.
+        </p>
+      )}
+
+      {/* ── Denied ────────────────────────────────────────────────────── */}
+      {pushSupported && permState === "denied" && (
+        <div>
+          <p style={{ fontSize: "13px", color: "#f87171", margin: "0 0 8px" }}>
+            Notifications are blocked in your browser.
+          </p>
+          <p style={{ fontSize: "12px", color: "#8b90a0", margin: 0, lineHeight: 1.6 }}>
+            To enable them, click the lock icon in your browser&apos;s address
+            bar → <strong>Notifications</strong> → <strong>Allow</strong>, then
+            reload this page.
+          </p>
+        </div>
+      )}
+
+      {/* ── Not yet subscribed ────────────────────────────────────────── */}
+      {pushSupported && permState !== "denied" && !currentSubId && (
+        <div>
+          <p style={{ fontSize: "13px", color: "#8b90a0", margin: "0 0 14px", lineHeight: 1.6 }}>
+            Receive real-time alerts in this browser when high or critical
+            configuration changes are detected. No extra app needed.
+          </p>
+
+          {/* Risk level selector */}
+          <div style={{ marginBottom: "14px" }}>
+            <label
+              htmlFor="push-min-risk"
+              style={{ display: "block", fontSize: "12px", color: "#565b6e", marginBottom: "5px" }}
+            >
+              Minimum risk level for this device
+            </label>
+            <select
+              id="push-min-risk"
+              value={minRiskLevel}
+              onChange={(e) => setMinRiskLevel(e.target.value as PushMinRiskLevel)}
+              style={{
+                background: "#1a1d28",
+                border: "1px solid #3a3d4a",
+                borderRadius: "5px",
+                padding: "6px 10px",
+                fontSize: "13px",
+                color: "#e2e5ef",
+                fontFamily: "inherit",
+                cursor: "pointer",
+              }}
+            >
+              <option value="high">High + Critical (recommended)</option>
+              <option value="critical_only">Critical only</option>
+            </select>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleSubscribe}
+            disabled={subscribing}
+            style={{
+              background: "#8b5cf6",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 18px",
+              fontSize: "13px",
+              cursor: subscribing ? "not-allowed" : "pointer",
+              opacity: subscribing ? 0.7 : 1,
+              fontFamily: "inherit",
+            }}
+          >
+            {subscribing ? "Enabling…" : "Enable browser notifications"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Subscribed ────────────────────────────────────────────────── */}
+      {pushSupported && currentSubId && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "14px" }}>
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: "#4ade80",
+                display: "inline-block",
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: "13px", color: "#c4c8d4" }}>
+              Browser notifications enabled for this device.
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={handleTest}
+                disabled={testing}
+                style={{
+                  background: "none",
+                  color: "#8b90a0",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "5px",
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  cursor: testing ? "not-allowed" : "pointer",
+                  opacity: testing ? 0.7 : 1,
+                  fontFamily: "inherit",
+                }}
+              >
+                {testing ? "Sending test…" : "Send test push"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleUnsubscribe}
+              disabled={unsubscribing}
+              style={{
+                background: "none",
+                color: "#f87171",
+                border: "none",
+                padding: "6px 0",
+                fontSize: "12px",
+                cursor: unsubscribing ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {unsubscribing ? "Disabling…" : "Disable for this device"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Other devices list ────────────────────────────────────────── */}
+      {pushSupported && subscriptions.length > 0 && (
+        <div style={{ marginTop: "18px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              fontWeight: 600,
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+              marginBottom: "8px",
+            }}
+          >
+            Subscribed devices ({subscriptions.length})
+          </p>
+          {loadingSubs ? (
+            <p style={{ fontSize: "12px", color: "#565b6e" }}>Loading…</p>
+          ) : (
+            <div>
+              {subscriptions.map((sub) => (
+                <div key={sub.id} style={rowStyle}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "7px", minWidth: 0 }}>
+                    <span
+                      style={{
+                        width: "6px",
+                        height: "6px",
+                        borderRadius: "50%",
+                        background: sub.enabled ? "#4ade80" : "#565b6e",
+                        flexShrink: 0,
+                        display: "inline-block",
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontSize: "12px",
+                        color: sub.id === currentSubId ? "#c4c8d4" : "#8b90a0",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {sub.device_label ?? sub.browser_name ?? "Unknown device"}
+                      {sub.id === currentSubId && (
+                        <span style={{ color: "#4ade80", marginLeft: "5px" }}>(this device)</span>
+                      )}
+                      {!sub.enabled && (
+                        <span style={{ color: "#565b6e", marginLeft: "5px" }}>(expired)</span>
+                      )}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSub(sub.id)}
+                    style={smallBtnStyle}
+                    title="Remove this subscription"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function NotificationsSettingsPage() {
@@ -692,6 +1206,12 @@ export default function NotificationsSettingsPage() {
     await loadSettings();
   }
 
+  // ── Derive admin status from workspace role ────────────────────────────────
+  // The notifications page is accessible to all members, but the push test
+  // button is admin-only.  We pass a best-effort flag here; the backend
+  // enforces authorization on the test endpoint regardless.
+  const isAdmin = true; // Backend enforces role; frontend shows/hides test btn only.
+
   // ── Render ─────────────────────────────────────────────────────────────────
   if (!selectedWorkspace) {
     return (
@@ -755,6 +1275,14 @@ export default function NotificationsSettingsPage() {
             settings={settings}
             workspaceId={selectedWorkspace.id}
             onUpdate={handleSlackAppUpdate}
+          />
+        </SectionCard>
+
+        {/* ── Browser / Desktop Push (M58.7) ───────────────────────── */}
+        <SectionCard title="Browser / Desktop Notifications" accentColor="#a78bfa">
+          <BrowserPushCard
+            workspaceId={selectedWorkspace.id}
+            isAdmin={isAdmin}
           />
         </SectionCard>
 
