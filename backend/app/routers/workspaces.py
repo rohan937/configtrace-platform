@@ -1,4 +1,4 @@
-"""Workspace and member management routes — M50/M51/M57.1/M58.5/M58.7/M58.14/M58.16.
+"""Workspace and member management routes — M50/M51/M57.1/M58.5/M58.7/M58.14/M58.16/M58.17/M58.18.
 
 Routes
 ------
@@ -38,6 +38,10 @@ POST   /workspaces/{workspace_id}/expected-changes/{window_id}/approve — appro
 POST   /workspaces/{workspace_id}/expected-changes/{window_id}/reject  — reject window (M58.16)
 POST   /workspaces/{workspace_id}/expected-changes/{window_id}/cancel  — cancel window (M58.16)
 GET    /workspaces/{workspace_id}/drift-score                      — Drift Control Score (M58.17)
+GET    /workspaces/{workspace_id}/iac/repositories                 — list IaC repositories (M58.18)
+POST   /workspaces/{workspace_id}/iac/repositories                 — register IaC repository (M58.18)
+POST   /workspaces/{workspace_id}/iac/repositories/{repo_id}/scan  — scan IaC repository (M58.18)
+GET    /workspaces/{workspace_id}/iac/mappings                     — list IaC resource mappings (M58.18)
 """
 
 from __future__ import annotations
@@ -105,12 +109,21 @@ from app.schemas.expected_change_window import (
     RejectWindowRequest,
 )
 from app.schemas.drift_score import DriftScoreResponse
+from app.schemas.iac import (
+    IacMappingListResponse,
+    IacRepositoryCreate,
+    IacRepositoryListResponse,
+    IacRepositoryResponse,
+    IacResourceMappingItem,
+    IacScanResult,
+)
 from app.services import workspace_service
 from app.services import notification_service
 from app.services import policy_engine_service
 from app.services import weekly_digest_service
 from app.services import expected_change_service
 from app.services import drift_score_service
+from app.services import iac_mapping_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -1415,3 +1428,164 @@ def get_drift_score(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     return drift_score_service.compute_drift_score(workspace_id, db)
+
+
+# ---------------------------------------------------------------------------
+# M58.18 — IaC Awareness: Repository and Mapping endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{workspace_id}/iac/repositories",
+    response_model=IacRepositoryListResponse,
+)
+def list_iac_repositories(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IacRepositoryListResponse:
+    """List all IaC repositories registered for this workspace.
+
+    Returns scan status, last scan time, and any scan errors.
+    Requires workspace member role or above.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    repos = iac_mapping_service.list_repositories(workspace_id, db)
+    return IacRepositoryListResponse(
+        repositories=[IacRepositoryResponse.model_validate(r) for r in repos],
+        total=len(repos),
+    )
+
+
+@router.post(
+    "/{workspace_id}/iac/repositories",
+    response_model=IacRepositoryResponse,
+    status_code=201,
+)
+def register_iac_repository(
+    workspace_id: UUID4,
+    body: IacRepositoryCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IacRepositoryResponse:
+    """Register a GitHub repository for IaC scanning.
+
+    Records which repository may contain Terraform files.
+    A scan must be triggered separately via POST .../scan.
+
+    No file contents are read at registration time.
+    Requires workspace admin role.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        repo = iac_mapping_service.register_repository(workspace_id, body, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return IacRepositoryResponse.model_validate(repo)
+
+
+@router.post(
+    "/{workspace_id}/iac/repositories/{repo_id}/scan",
+    response_model=IacScanResult,
+)
+def scan_iac_repository(
+    workspace_id: UUID4,
+    repo_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IacScanResult:
+    """Trigger a safe metadata scan of an IaC repository.
+
+    Reads Terraform (.tf) file metadata via the linked GitHub integration.
+    Creates or refreshes IacResourceMapping rows based on detected resource blocks.
+
+    Safety guarantees:
+    - Full file contents are NEVER stored.
+    - tfstate, tfvars, and .terraform/ files are NEVER read.
+    - Secret-looking values are NEVER stored.
+
+    Requires workspace admin role.
+    Returns status 'no_access' if GitHub contents permission is not granted.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return iac_mapping_service.scan_repository(repo_id, workspace_id, db)
+
+
+@router.get(
+    "/{workspace_id}/iac/mappings",
+    response_model=IacMappingListResponse,
+)
+def list_iac_mappings(
+    workspace_id: UUID4,
+    provider: Optional[str] = None,
+    cloud_resource_identifier: Optional[str] = None,
+    resource_type: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IacMappingListResponse:
+    """List IaC resource mappings for this workspace.
+
+    Optional query parameters:
+    - ``provider``:                   Filter by provider (e.g. 'aws', 'cloudflare').
+    - ``cloud_resource_identifier``:  Filter by exact cloud resource identifier.
+    - ``resource_type``:              Filter by Terraform resource type.
+
+    Requires workspace member role or above.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    rows = iac_mapping_service.list_mappings(
+        workspace_id=workspace_id,
+        provider=provider,
+        cloud_resource_identifier=cloud_resource_identifier,
+        resource_type=resource_type,
+        db=db,
+    )
+    items = [
+        IacResourceMappingItem(
+            id=mapping.id,
+            workspace_id=mapping.workspace_id,
+            iac_repository_id=mapping.iac_repository_id,
+            repo_full_name=repo_full_name,
+            provider=mapping.provider,
+            resource_type=mapping.resource_type,
+            terraform_resource_type=mapping.terraform_resource_type,
+            terraform_resource_name=mapping.terraform_resource_name,
+            file_path=mapping.file_path,
+            line_start=mapping.line_start,
+            line_end=mapping.line_end,
+            cloud_resource_identifier=mapping.cloud_resource_identifier,
+            cloud_resource_name=mapping.cloud_resource_name,
+            match_confidence=mapping.match_confidence,
+            match_reason=mapping.match_reason,
+            mapping_source=mapping.mapping_source,
+            created_at=mapping.created_at,
+            updated_at=mapping.updated_at,
+        )
+        for mapping, repo_full_name in rows
+    ]
+    return IacMappingListResponse(mappings=items, total=len(items))

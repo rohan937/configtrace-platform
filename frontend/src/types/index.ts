@@ -1112,3 +1112,100 @@ export interface DriftScoreResponse {
   recommended_actions: string[];
   metrics: DriftScoreMetrics;
 }
+
+// ── M58.18: IaC Awareness ─────────────────────────────────────────────────────
+
+export interface IacRepository {
+  id: string;
+  workspace_id: string;
+  integration_id: string | null;
+  provider: string;
+  repo_full_name: string;
+  default_branch: string | null;
+  scanning_enabled: boolean;
+  /** "success" | "no_integration" | "no_access" | "no_tf_files" | "error" | null */
+  last_scan_status: string | null;
+  last_scan_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IacRepositoryListResponse {
+  repositories: IacRepository[];
+  total: number;
+}
+
+export interface IacRepositoryCreate {
+  repo_full_name: string;
+  integration_id?: string | null;
+  default_branch?: string;
+  scanning_enabled?: boolean;
+}
+
+export interface IacScanResult {
+  /** "success" | "no_integration" | "no_access" | "no_tf_files" | "not_found" | "error" */
+  status: string;
+  message: string;
+  resources_found: number;
+  files_scanned: number;
+}
+
+export interface IacResourceMappingItem {
+  id: string;
+  workspace_id: string;
+  iac_repository_id: string;
+  repo_full_name: string;
+  provider: string;
+  resource_type: string;
+  terraform_resource_type: string | null;
+  terraform_resource_name: string | null;
+  file_path: string;
+  line_start: number | null;
+  line_end: number | null;
+  cloud_resource_identifier: string | null;
+  cloud_resource_name: string | null;
+  /** "high" | "medium" | "low" */
+  match_confidence: string;
+  match_reason: string;
+  mapping_source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IacMappingListResponse {
+  mappings: IacResourceMappingItem[];
+  total: number;
+}
+
+/** One possible Terraform resource that may correspond to a changed cloud resource. */
+export interface IacChangeMappingCandidate {
+  mapping_id: string;
+  iac_repository_id: string;
+  repo_full_name: string | null;
+  terraform_resource_type: string | null;
+  terraform_resource_name: string | null;
+  file_path: string;
+  line_start: number | null;
+  line_end: number | null;
+  cloud_resource_identifier: string | null;
+  cloud_resource_name: string | null;
+  /** "high" | "medium" | "low" */
+  match_confidence: string;
+  match_reason: string;
+  mapping_source: string;
+}
+
+/**
+ * Advisory IaC context for a change — GET /changes/{id}/iac-context.
+ * Does NOT confirm Terraform ownership. Advisory only.
+ */
+export interface IacContextResponse {
+  available: boolean;
+  summary: string;
+  mappings: IacChangeMappingCandidate[];
+  recommended_workflow: string | null;
+  /** Always false in M58.18; Terraform patch suggestions come in M58.19. */
+  future_fix_available: boolean;
+  future_fix_note: string | null;
+}

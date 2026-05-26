@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, IacContextResponse, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
 import {
   getChange,
   acknowledgeChange,
@@ -15,6 +15,7 @@ import {
   getChangeBlastRadius,
   getChangePolicyViolations,
   getExpectedChangeMatch,
+  getChangeIacContext,
 } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
@@ -52,6 +53,7 @@ import AskConfigTrace from "@/components/investigation/AskConfigTrace";
 import CorrelationPanel from "@/components/investigation/CorrelationPanel";
 import BlastRadiusPanel from "@/components/investigation/BlastRadiusPanel";
 import PolicyViolationsPanel from "@/components/investigation/PolicyViolationsPanel";
+import IacContextPanel from "@/components/investigation/IacContextPanel";
 
 // ── Expected Change Panel (M58.16) ────────────────────────────────────────────
 
@@ -6256,6 +6258,9 @@ export default function ChangeDetailPage() {
   // M58.16: expected change window match
   const [expectedMatch, setExpectedMatch] = useState<ExpectedChangeMatchResponse | null>(null);
   const [expectedMatchLoading, setExpectedMatchLoading] = useState(false);
+  // M58.18: IaC context
+  const [iacContext, setIacContext] = useState<IacContextResponse | null>(null);
+  const [iacContextLoading, setIacContextLoading] = useState(false);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6344,6 +6349,19 @@ export default function ChangeDetailPage() {
     getExpectedChangeMatch(changeId, cachedToken)
       .then((data) => { if (!cancelled) { setExpectedMatch(data); setExpectedMatchLoading(false); } })
       .catch(() => { if (!cancelled) setExpectedMatchLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [changeId, cachedToken, change]);
+
+  // M58.18: fetch IaC context after the change is loaded
+  useEffect(() => {
+    if (!changeId || !cachedToken || !change) return;
+    let cancelled = false;
+
+    setIacContextLoading(true);
+    getChangeIacContext(changeId, cachedToken)
+      .then((data) => { if (!cancelled) { setIacContext(data); setIacContextLoading(false); } })
+      .catch(() => { if (!cancelled) setIacContextLoading(false); });
 
     return () => { cancelled = true; };
   }, [changeId, cachedToken, change]);
@@ -6507,6 +6525,12 @@ export default function ChangeDetailPage() {
         <BlastRadiusPanel
           blastRadius={blastRadius}
           loading={blastRadiusLoading}
+        />
+
+        {/* ── IaC Context (M58.18) ─────────────────────────────────────── */}
+        <IacContextPanel
+          data={iacContext}
+          loading={iacContextLoading}
         />
 
         {/* ── Policy Violations (M58.14) ───────────────────────────────── */}

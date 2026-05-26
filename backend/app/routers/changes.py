@@ -1,4 +1,4 @@
-"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16.
+"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16 / M58.18.
 
 Routes
 ------
@@ -17,6 +17,9 @@ GET  /changes/{change_id}/policy-violations — evaluate built-in policies again
 
 M58.16 expected change windows:
 GET  /changes/{change_id}/expected-change-match — check if change falls within an approved window
+
+M58.18 IaC awareness:
+GET  /changes/{change_id}/iac-context — advisory IaC mapping context for a change
 
 Both GET routes now include an optional ``review`` field with the current
 review state.  When no review row exists ``review`` is None (treat as
@@ -67,6 +70,7 @@ from app.schemas.change_correlation import CorrelationResponse
 from app.schemas.blast_radius import BlastRadiusResponse
 from app.schemas.policy import PolicyViolationsResponse
 from app.schemas.expected_change_window import ExpectedChangeMatchResponse
+from app.schemas.iac import IacContextResponse
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
@@ -74,6 +78,7 @@ from app.services import change_correlation_service
 from app.services import blast_radius_service
 from app.services import policy_engine_service
 from app.services import expected_change_service
+from app.services import iac_mapping_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -609,5 +614,53 @@ def get_expected_change_match(
 
     return expected_change_service.match_change(
         change_id=change_id,
+        db=db,
+    )
+
+
+# ── IaC context endpoint (M58.18) ─────────────────────────────────────────────
+
+
+@router.get("/{change_id}/iac-context", response_model=IacContextResponse)
+def get_change_iac_context(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IacContextResponse:
+    """Return advisory IaC context for a change.
+
+    Indicates whether any registered Terraform resources may correspond to the
+    changed cloud resource.  Results are advisory only — they do NOT confirm
+    that the resource is managed by Terraform.
+
+    Language contract:
+    - Uses "may be managed by Terraform", "possible IaC mapping".
+    - Only high-confidence language when match_confidence == "high".
+    - No provider writes, no GitHub PR creation, no Terraform execution.
+
+    Returns ``{"available": false}`` when:
+    - No IaC repositories are registered for the workspace.
+    - No Terraform files have been scanned yet.
+    - No matching resource types were found in scanned repositories.
+
+    The endpoint always returns 200; ``available`` communicates the result.
+    Only workspace members may call this endpoint.
+    """
+    change, workspace_id = _get_change_and_workspace(change_id, current_user, db)
+
+    if workspace_id is None:
+        # No workspace — IaC context requires workspace scoping.
+        return IacContextResponse(
+            available=False,
+            summary="IaC context requires a workspace-linked integration.",
+            mappings=[],
+            recommended_workflow=None,
+            future_fix_available=False,
+            future_fix_note="Terraform patch suggestions are coming in M58.19.",
+        )
+
+    return iac_mapping_service.get_iac_context(
+        change_id=change_id,
+        workspace_id=workspace_id,
         db=db,
     )

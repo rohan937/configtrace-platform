@@ -1238,3 +1238,75 @@ export async function getWorkspaceDriftScore(
   return apiFetch(`/workspaces/${workspaceId}/drift-score`, { token });
 }
 
+// ── M58.18: IaC Awareness ─────────────────────────────────────────────────────
+
+/**
+ * List IaC repositories registered for a workspace.
+ * GET /workspaces/{workspaceId}/iac/repositories
+ */
+export async function listIacRepositories(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").IacRepositoryListResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/iac/repositories`, { token });
+}
+
+/**
+ * Register a GitHub repository for IaC scanning.
+ * POST /workspaces/{workspaceId}/iac/repositories
+ */
+export async function registerIacRepository(
+  workspaceId: string,
+  body: import("@/types").IacRepositoryCreate,
+  token?: string | null,
+): Promise<import("@/types").IacRepository> {
+  return apiFetch(`/workspaces/${workspaceId}/iac/repositories`, {
+    token,
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Trigger a safe metadata scan of an IaC repository.
+ * POST /workspaces/{workspaceId}/iac/repositories/{repoId}/scan
+ *
+ * Reads .tf file metadata via the linked GitHub integration.
+ * Never reads tfstate/tfvars; never stores file content.
+ */
+export async function scanIacRepository(
+  workspaceId: string,
+  repoId: string,
+  token?: string | null,
+): Promise<import("@/types").IacScanResult> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/iac/repositories/${repoId}/scan`,
+    { token, method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/**
+ * List IaC resource mappings for a workspace.
+ * GET /workspaces/{workspaceId}/iac/mappings
+ */
+export async function listIacMappings(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").IacMappingListResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/iac/mappings`, { token });
+}
+
+/**
+ * Fetch advisory IaC context for a change.
+ * GET /changes/{changeId}/iac-context
+ *
+ * Returns possible Terraform resource mappings for the changed cloud resource.
+ * Advisory only — does NOT confirm Terraform ownership.
+ */
+export async function getChangeIacContext(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").IacContextResponse> {
+  return apiFetch(`/changes/${changeId}/iac-context`, { token });
+}
+

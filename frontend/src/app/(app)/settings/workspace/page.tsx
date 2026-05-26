@@ -58,6 +58,12 @@ const HUB_CARDS = [
     description: "See your workspace's 0–100 drift control score — review hygiene and alert coverage at a glance.",
     color: "#4f80f7",
   },
+  {
+    href: "/settings/workspace/iac",
+    title: "IaC Awareness",
+    description: "Map monitored resources to Terraform files so risky drift can be fixed in code.",
+    color: "#8b5cf6",
+  },
 ] as const;
 
 // ── Inline message banners ────────────────────────────────────────────────────
