@@ -4,8 +4,14 @@ import { useParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, DnsRecord } from "@/types";
-import { getChange } from "@/lib/api";
+import type { ChangeDetail, ChangeReviewResponse, DnsRecord, ReviewStatus } from "@/types";
+import {
+  getChange,
+  acknowledgeChange,
+  markChangeExpected,
+  snoozeChange,
+  reopenChange,
+} from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
 import LoadingState from "@/components/common/LoadingState";
@@ -4278,6 +4284,415 @@ function RawSection({ change }: { change: ChangeDetail }) {
   );
 }
 
+// ── M57.2: Review Panel ───────────────────────────────────────────────────────
+
+const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
+  needs_review:  "Needs Review",
+  acknowledged:  "Acknowledged",
+  expected:      "Expected",
+  snoozed:       "Snoozed",
+};
+
+const REVIEW_STATUS_COLORS: Record<ReviewStatus, string> = {
+  needs_review:  "#f5a623",
+  acknowledged:  "#3ccf7e",
+  expected:      "#4f80f7",
+  snoozed:       "#8b5cf6",
+};
+
+function addDays(date: Date, days: number): string {
+  const d = new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+  return d.toISOString();
+}
+
+interface ReviewPanelProps {
+  changeId: string;
+  review: ChangeReviewResponse | null;
+  onReviewUpdated: (r: ChangeReviewResponse) => void;
+}
+
+function ReviewPanel({ changeId, review, onReviewUpdated }: ReviewPanelProps) {
+  const { getToken } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Snooze modal state
+  const [showSnoozeModal, setShowSnoozeModal] = useState(false);
+  const [snoozeUntil, setSnoozeUntil] = useState("");
+  const [snoozeReason, setSnoozeReason] = useState("");
+
+  // Note input (for ack/expected/reopen)
+  const [showNoteInput, setShowNoteInput] = useState<null | "acknowledge" | "expected" | "reopen">(null);
+  const [noteValue, setNoteValue] = useState("");
+
+  const currentStatus: ReviewStatus = review?.review_status ?? "needs_review";
+
+  async function doAcknowledge(note?: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = await getToken();
+      const r = await acknowledgeChange(changeId, { note }, token);
+      onReviewUpdated(r);
+      setShowNoteInput(null);
+      setNoteValue("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to acknowledge.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doMarkExpected(note?: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = await getToken();
+      const r = await markChangeExpected(changeId, { note }, token);
+      onReviewUpdated(r);
+      setShowNoteInput(null);
+      setNoteValue("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to mark as expected.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSnooze() {
+    if (!snoozeUntil) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = await getToken();
+      const r = await snoozeChange(changeId, { until: snoozeUntil, reason: snoozeReason || undefined }, token);
+      onReviewUpdated(r);
+      setShowSnoozeModal(false);
+      setSnoozeUntil("");
+      setSnoozeReason("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to snooze.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doReopen(note?: string) {
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = await getToken();
+      const r = await reopenChange(changeId, { note }, token);
+      onReviewUpdated(r);
+      setShowNoteInput(null);
+      setNoteValue("");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to reopen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const statusColor = REVIEW_STATUS_COLORS[currentStatus];
+  const statusLabel = REVIEW_STATUS_LABELS[currentStatus];
+
+  const isReviewed = currentStatus !== "needs_review";
+
+  const btnBase: React.CSSProperties = {
+    background: "none",
+    border: "1px solid #2a2d38",
+    borderRadius: "5px",
+    padding: "5px 12px",
+    fontSize: "12px",
+    cursor: busy ? "not-allowed" : "pointer",
+    fontFamily: "inherit",
+    color: "#c4c8d4",
+    opacity: busy ? 0.6 : 1,
+  };
+
+  const btnPrimary: React.CSSProperties = {
+    ...btnBase,
+    background: "#1a2a1a",
+    border: "1px solid rgba(60,207,126,0.3)",
+    color: "#3ccf7e",
+  };
+
+  return (
+    <section aria-labelledby="section-review">
+      <h2
+        id="section-review"
+        style={{ fontSize: "13px", fontWeight: 500, color: "#c4c8d4", margin: "0 0 10px" }}
+      >
+        Review
+      </h2>
+
+      <div
+        style={{
+          background: "#13151a",
+          border: "1px solid #2a2d38",
+          borderRadius: "6px",
+          padding: "16px",
+        }}
+      >
+        {/* Status row */}
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "5px",
+              background: `${statusColor}18`,
+              border: `1px solid ${statusColor}40`,
+              borderRadius: "5px",
+              padding: "3px 10px",
+              fontSize: "11px",
+              fontWeight: 600,
+              color: statusColor,
+              textTransform: "uppercase",
+              letterSpacing: "0.07em",
+            }}
+          >
+            {statusLabel}
+          </span>
+
+          {review?.reviewed_at && (
+            <span style={{ fontSize: "11px", color: "#565b6e" }}>
+              {currentStatus === "snoozed" ? "Snoozed" : "Reviewed"}{" "}
+              {new Date(review.reviewed_at).toLocaleDateString(undefined, {
+                month: "short", day: "numeric", year: "numeric",
+              })}
+            </span>
+          )}
+        </div>
+
+        {/* Snooze expiry */}
+        {currentStatus === "snoozed" && review?.snoozed_until && (
+          <p style={{ fontSize: "12px", color: "#8b5cf6", margin: "0 0 8px" }}>
+            Snoozed until{" "}
+            <strong>
+              {new Date(review.snoozed_until).toLocaleDateString(undefined, {
+                month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit",
+              })}
+            </strong>
+            {review.snooze_reason ? ` · "${review.snooze_reason}"` : ""}
+          </p>
+        )}
+
+        {/* Review note */}
+        {review?.review_note && (
+          <p
+            style={{
+              fontSize: "12px",
+              color: "#8b90a0",
+              fontStyle: "italic",
+              margin: "0 0 12px",
+              background: "#1a1d28",
+              borderRadius: "4px",
+              padding: "6px 10px",
+              border: "1px solid #2a2d38",
+            }}
+          >
+            &ldquo;{review.review_note}&rdquo;
+          </p>
+        )}
+
+        {/* Context copy */}
+        {!isReviewed && (
+          <p style={{ fontSize: "12px", color: "#565b6e", margin: "0 0 12px" }}>
+            Record that this change was reviewed by your team.
+            Snoozed changes are hidden from review counts until the snooze expires.
+          </p>
+        )}
+
+        {/* Error */}
+        {err && (
+          <p style={{ fontSize: "12px", color: "#f87171", margin: "0 0 10px" }}>{err}</p>
+        )}
+
+        {/* Inline note input */}
+        {showNoteInput && (
+          <div style={{ marginBottom: "10px", display: "flex", flexDirection: "column", gap: "6px" }}>
+            <textarea
+              value={noteValue}
+              onChange={(e) => setNoteValue(e.target.value)}
+              placeholder="Optional note (max 1000 chars)…"
+              maxLength={1000}
+              rows={2}
+              style={{
+                width: "100%",
+                background: "#1a1d28",
+                border: "1px solid #3a3d4a",
+                borderRadius: "5px",
+                padding: "6px 10px",
+                fontSize: "12px",
+                color: "#e2e5ef",
+                fontFamily: "inherit",
+                resize: "vertical",
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                style={{ ...btnPrimary }}
+                disabled={busy}
+                onClick={() => {
+                  if (showNoteInput === "acknowledge") doAcknowledge(noteValue || undefined);
+                  else if (showNoteInput === "expected") doMarkExpected(noteValue || undefined);
+                  else if (showNoteInput === "reopen") doReopen(noteValue || undefined);
+                }}
+              >
+                Confirm
+              </button>
+              <button
+                style={{ ...btnBase }}
+                onClick={() => { setShowNoteInput(null); setNoteValue(""); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Snooze modal */}
+        {showSnoozeModal && (
+          <div
+            style={{
+              background: "#1a1d28",
+              border: "1px solid #3a3d4a",
+              borderRadius: "6px",
+              padding: "12px",
+              marginBottom: "10px",
+            }}
+          >
+            <p style={{ fontSize: "12px", color: "#8b90a0", margin: "0 0 8px" }}>
+              Snoozing hides this change from review counts until the selected time.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "8px" }}>
+              {([
+                ["1 day",   1],
+                ["7 days",  7],
+                ["30 days", 30],
+              ] as const).map(([label, days]) => (
+                <button
+                  key={days}
+                  style={{
+                    ...btnBase,
+                    background: snoozeUntil === addDays(new Date(), days).slice(0, 16) + ":00.000Z"
+                      ? "rgba(139,92,246,0.15)" : "none",
+                    borderColor: "rgba(139,92,246,0.35)",
+                    color: "#8b5cf6",
+                  }}
+                  onClick={() => setSnoozeUntil(addDays(new Date(), days))}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <input
+              type="datetime-local"
+              value={snoozeUntil ? snoozeUntil.slice(0, 16) : ""}
+              onChange={(e) =>
+                setSnoozeUntil(e.target.value ? new Date(e.target.value).toISOString() : "")
+              }
+              style={{
+                background: "#1c1e26",
+                border: "1px solid #3a3d4a",
+                borderRadius: "5px",
+                padding: "5px 8px",
+                fontSize: "12px",
+                color: "#e2e5ef",
+                fontFamily: "inherit",
+                marginBottom: "8px",
+                display: "block",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            />
+            <input
+              type="text"
+              placeholder="Reason (optional)…"
+              value={snoozeReason}
+              onChange={(e) => setSnoozeReason(e.target.value)}
+              maxLength={1000}
+              style={{
+                background: "#1c1e26",
+                border: "1px solid #3a3d4a",
+                borderRadius: "5px",
+                padding: "5px 8px",
+                fontSize: "12px",
+                color: "#e2e5ef",
+                fontFamily: "inherit",
+                marginBottom: "8px",
+                display: "block",
+                width: "100%",
+                boxSizing: "border-box",
+              }}
+            />
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                style={{ ...btnBase, borderColor: "rgba(139,92,246,0.35)", color: "#8b5cf6" }}
+                disabled={busy || !snoozeUntil}
+                onClick={doSnooze}
+              >
+                Snooze
+              </button>
+              <button
+                style={{ ...btnBase }}
+                onClick={() => { setShowSnoozeModal(false); setSnoozeUntil(""); setSnoozeReason(""); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        {!showNoteInput && !showSnoozeModal && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+            {currentStatus !== "acknowledged" && (
+              <button
+                style={{ ...btnBase, borderColor: "rgba(60,207,126,0.3)", color: "#3ccf7e" }}
+                disabled={busy}
+                onClick={() => { setShowNoteInput("acknowledge"); setNoteValue(""); setErr(null); }}
+              >
+                ✓ Acknowledge
+              </button>
+            )}
+            {currentStatus !== "expected" && (
+              <button
+                style={{ ...btnBase, borderColor: "rgba(79,128,247,0.3)", color: "#4f80f7" }}
+                disabled={busy}
+                onClick={() => { setShowNoteInput("expected"); setNoteValue(""); setErr(null); }}
+              >
+                ◎ Mark Expected
+              </button>
+            )}
+            {currentStatus !== "snoozed" && (
+              <button
+                style={{ ...btnBase, borderColor: "rgba(139,92,246,0.3)", color: "#8b5cf6" }}
+                disabled={busy}
+                onClick={() => { setShowSnoozeModal(true); setErr(null); }}
+              >
+                ⏸ Snooze
+              </button>
+            )}
+            {isReviewed && (
+              <button
+                style={{ ...btnBase, color: "#8b90a0" }}
+                disabled={busy}
+                onClick={() => { setShowNoteInput("reopen"); setNoteValue(""); setErr(null); }}
+              >
+                ↩ Reopen
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function ChangeDetailPage() {
@@ -4287,6 +4702,8 @@ export default function ChangeDetailPage() {
   const [change,  setChange]  = useState<ChangeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
+  // M57.2: review state (separate from change so it can be updated without reloading the full change)
+  const [review, setReview] = useState<ChangeReviewResponse | null>(null);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -4300,7 +4717,21 @@ export default function ChangeDetailPage() {
       try {
         const token = await getToken();
         const data = await getChange(changeId, token);
-        if (!cancelled) setChange(data);
+        if (!cancelled) {
+          setChange(data);
+          // Seed review state from the embedded review field (M57.2)
+          if (data.review) {
+            setReview({
+              change_id: data.id,
+              review_status: data.review.review_status,
+              reviewed_by_user_id: data.review.reviewed_by_user_id,
+              reviewed_at: data.review.reviewed_at,
+              review_note: data.review.review_note,
+              snoozed_until: data.review.snoozed_until,
+              snooze_reason: data.review.snooze_reason,
+            });
+          }
+        }
       } catch (err) {
         if (!cancelled)
           setError(err instanceof Error ? err.message : "Failed to load change.");
@@ -4755,6 +5186,13 @@ export default function ChangeDetailPage() {
             <ProviderMetaRows metadata={change.provider_metadata} />
           </Panel>
         </section>
+
+        {/* ── Review panel (M57.2) ─────────────────────────────────────── */}
+        <ReviewPanel
+          changeId={change.id}
+          review={review}
+          onReviewUpdated={setReview}
+        />
 
         {/* ── Technical details (collapsed) ────────────────────────────── */}
         <div>

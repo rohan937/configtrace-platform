@@ -26,6 +26,7 @@ interface Filters {
   riskLevel: string;       // "all" | "critical" | "high" | "medium" | "low"
   changeType: string;      // "all" | "added" | "removed" | "modified"
   timeRange: string;       // "all" | "24h" | "7d" | "30d"
+  reviewStatus: string;    // "all" | "needs_review" | "acknowledged" | "expected" | "snoozed"
 }
 
 const DEFAULT_FILTERS: Filters = {
@@ -34,6 +35,7 @@ const DEFAULT_FILTERS: Filters = {
   riskLevel: "all",
   changeType: "all",
   timeRange: "all",
+  reviewStatus: "all",
 };
 
 // ── Risk pill colors ──────────────────────────────────────────────────────────
@@ -210,6 +212,7 @@ function filtersFromParams(params: URLSearchParams): Filters {
     riskLevel: params.get("risk_level") ?? "all",
     changeType: params.get("change_type") ?? "all",
     timeRange: params.get("time_range") ?? "all",
+    reviewStatus: params.get("review_status") ?? "all",
   };
 }
 
@@ -220,6 +223,7 @@ function buildQuery(params: URLSearchParams, filters: Filters): URLSearchParams 
   if (filters.riskLevel !== "all") next.set("risk_level", filters.riskLevel);
   if (filters.changeType !== "all") next.set("change_type", filters.changeType);
   if (filters.timeRange !== "all") next.set("time_range", filters.timeRange);
+  if (filters.reviewStatus !== "all") next.set("review_status", filters.reviewStatus);
   void params; // keep param for possible future use
   return next;
 }
@@ -289,6 +293,7 @@ function TimelineContent() {
     if (f.integrationId !== "all") params.integration_id = f.integrationId;
     if (f.riskLevel !== "all") params.risk_level = f.riskLevel;
     if (f.changeType !== "all") params.change_type = f.changeType;
+    if (f.reviewStatus !== "all") params.review_status = f.reviewStatus;
     const since = timeRangeToSince(f.timeRange);
     if (since) params.since = since;
     return params;
@@ -385,7 +390,8 @@ function TimelineContent() {
     filters.integrationId !== "all" ||
     filters.riskLevel !== "all" ||
     filters.changeType !== "all" ||
-    filters.timeRange !== "all";
+    filters.timeRange !== "all" ||
+    filters.reviewStatus !== "all";
 
   // Filtered integrations for the integration dropdown (by selected provider)
   const filteredIntegrations =
@@ -489,6 +495,26 @@ function TimelineContent() {
                 label={lbl}
                 active={filters.timeRange === val}
                 onClick={() => setFilter("timeRange", val)}
+              />
+            ))}
+          </FilterRow>
+
+          {/* Review status — M57.2 */}
+          <FilterRow label="Review">
+            {(
+              [
+                ["all",          "All"],
+                ["needs_review", "Needs Review"],
+                ["acknowledged", "Acknowledged"],
+                ["expected",     "Expected"],
+                ["snoozed",      "Snoozed"],
+              ] as const
+            ).map(([val, lbl]) => (
+              <FilterPill
+                key={val}
+                label={lbl}
+                active={filters.reviewStatus === val}
+                onClick={() => setFilter("reviewStatus", val)}
               />
             ))}
           </FilterRow>

@@ -22,6 +22,7 @@
 import type {
   ChangeDetail,
   ChangeListItem,
+  ChangeReviewResponse,
   DashboardSummary,
   GitHubAppCompleteRequest,
   GitHubAppInstallUrlResponse,
@@ -331,6 +332,7 @@ export interface GetChangesParams {
   provider?: string;
   since?: string;
   until?: string;
+  review_status?: string;  // M57.2: filter by review status
   page?: number;
   page_size?: number;
 }
@@ -347,6 +349,56 @@ export async function getChange(
   token?: string | null,
 ): Promise<ChangeDetail> {
   return apiFetch(`/changes/${changeId}`, { token });
+}
+
+// ── M57.2: Change review actions ──────────────────────────────────────────────
+
+export async function acknowledgeChange(
+  changeId: string,
+  body: { note?: string },
+  token?: string | null,
+): Promise<ChangeReviewResponse> {
+  return apiFetch(`/changes/${changeId}/acknowledge`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+
+export async function markChangeExpected(
+  changeId: string,
+  body: { note?: string },
+  token?: string | null,
+): Promise<ChangeReviewResponse> {
+  return apiFetch(`/changes/${changeId}/mark-expected`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+
+export async function snoozeChange(
+  changeId: string,
+  body: { until: string; reason?: string },
+  token?: string | null,
+): Promise<ChangeReviewResponse> {
+  return apiFetch(`/changes/${changeId}/snooze`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+
+export async function reopenChange(
+  changeId: string,
+  body: { note?: string },
+  token?: string | null,
+): Promise<ChangeReviewResponse> {
+  return apiFetch(`/changes/${changeId}/reopen`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
 }
 
 // ── Resources ─────────────────────────────────────────────────────────────────

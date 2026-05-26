@@ -34,6 +34,50 @@ export interface DnsRecord {
 export type ChangeType = "added" | "removed" | "modified";
 export type RiskLevel = "critical" | "high" | "medium" | "low" | "unknown";
 
+// ── M57.2: Review workflow ──────────────────────────────────────────────────
+
+export type ReviewStatus = "needs_review" | "acknowledged" | "expected" | "snoozed";
+
+/** Review state embedded in a Change response. null means no review row exists → treat as needs_review. */
+export interface ChangeReviewInfo {
+  review_status: ReviewStatus;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  snoozed_until: string | null;
+  snooze_reason: string | null;
+}
+
+/** Returned from review action endpoints (POST /changes/{id}/acknowledge etc.) */
+export interface ChangeReviewResponse {
+  change_id: string;
+  review_status: ReviewStatus;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  snoozed_until: string | null;
+  snooze_reason: string | null;
+}
+
+export interface AcknowledgeRequest {
+  note?: string;
+}
+
+export interface MarkExpectedRequest {
+  note?: string;
+}
+
+export interface SnoozeRequest {
+  until: string;  // ISO 8601 UTC datetime
+  reason?: string;
+}
+
+export interface ReopenRequest {
+  note?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export interface ChangeListItem {
   id: string;
   integration_id: string;
@@ -47,6 +91,8 @@ export interface ChangeListItem {
   risk_reason: string | null;
   provider_metadata: Record<string, unknown> | null;
   created_at: string;
+  /** M57.2: review state. null = no review row (treat as needs_review). */
+  review: ChangeReviewInfo | null;
 }
 
 export interface ChangeDetail extends ChangeListItem {

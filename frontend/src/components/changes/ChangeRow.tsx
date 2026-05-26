@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ChangeListItem } from "@/types";
+import type { ChangeListItem, ReviewStatus } from "@/types";
 import { formatRelativeTime, formatAbsoluteTime, changeTypeLabel } from "@/lib/utils";
 import { getTimelineEventData } from "@/lib/timeline";
 
@@ -70,6 +70,38 @@ function ChangeTypeChip({ changeType }: { changeType: string }) {
     "#8b90a0";
   return (
     <span style={{ color, fontSize: "11px" }}>
+      {label}
+    </span>
+  );
+}
+
+// ── Review status badge (M57.2) ───────────────────────────────────────────────
+
+const REVIEW_BADGE: Record<ReviewStatus, { label: string; color: string }> = {
+  needs_review:  { label: "Needs Review", color: "#f5a623" },
+  acknowledged:  { label: "Acknowledged", color: "#3ccf7e" },
+  expected:      { label: "Expected",     color: "#4f80f7" },
+  snoozed:       { label: "Snoozed",      color: "#8b5cf6" },
+};
+
+function ReviewStatusBadge({ status }: { status: ReviewStatus }) {
+  const { label, color } = REVIEW_BADGE[status] ?? REVIEW_BADGE.needs_review;
+  if (status === "needs_review") return null; // don't clutter unreviewed rows
+  return (
+    <span
+      aria-label={`Review status: ${label}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        color,
+        fontSize: "10px",
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+        gap: "3px",
+      }}
+    >
+      <span style={{ fontSize: "9px" }}>●</span>
       {label}
     </span>
   );
@@ -195,6 +227,13 @@ export default function ChangeRow({ change }: ChangeRowProps) {
           )}
           <span aria-hidden="true">·</span>
           <ChangeTypeChip changeType={change.change_type} />
+          {/* M57.2: review status (only non-needs_review statuses) */}
+          {change.review && change.review.review_status !== "needs_review" && (
+            <>
+              <span aria-hidden="true">·</span>
+              <ReviewStatusBadge status={change.review.review_status} />
+            </>
+          )}
         </div>
       </div>
     </Link>

@@ -16,6 +16,7 @@ from app.models.user_settings import UserSettings  # noqa: F401
 from app.models.workspace import Workspace, WorkspaceMember, WorkspaceInvite, WorkspaceAuditLog  # noqa: F401
 from app.models.billing import WorkspaceBilling  # noqa: F401
 from app.models.notification_settings import WorkspaceNotificationSettings  # noqa: F401
+from app.models.change_review import ChangeReview  # noqa: F401  (after Change + Workspace)
 
 __all__ = [
     "Base",
@@ -33,4 +34,5 @@ __all__ = [
     "WorkspaceAuditLog",
     "WorkspaceBilling",
     "WorkspaceNotificationSettings",
+    "ChangeReview",
 ]
