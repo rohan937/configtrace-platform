@@ -1055,3 +1055,60 @@ export interface ExpectedChangeMatchResponse {
   window: ExpectedChangeWindow | null;
   annotation: string | null;
 }
+
+// ── M58.17: Drift Control Score ───────────────────────────────────────────────
+
+/** One factor (penalty or note) contributing to the Drift Control Score. */
+export interface DriftScoreFactor {
+  /** Machine-readable factor identifier. */
+  key: string;
+  /** Human-readable short name shown in the UI. */
+  label: string;
+  /** Score impact; negative = penalty (e.g. -12). */
+  impact: number;
+  /** 'good' | 'needs_attention' | 'critical' */
+  status: "good" | "needs_attention" | "critical";
+  /** Plain-English explanation shown in the UI. */
+  detail: string;
+  /** Short label for the CTA button, if any. */
+  action_label?: string | null;
+  /** Relative URL for the CTA, if any. */
+  action_href?: string | null;
+}
+
+/** Raw metrics used to compute the Drift Control Score. */
+export interface DriftScoreMetrics {
+  providers_connected: number;
+  total_changes_7d: number;
+  high_critical_changes_7d: number;
+  unreviewed_high_critical: number;
+  policy_violations_7d: number;
+  stale_integrations: number;
+  /** Fraction of high/critical changes reviewed (0.0–1.0). */
+  review_completion_rate: number;
+  alerts_configured: boolean;
+}
+
+/**
+ * Response from GET /workspaces/{id}/drift-score (M58.17).
+ *
+ * The Drift Control Score is advisory only — it measures review and alert
+ * hygiene for configuration drift.  It is NOT a compliance certification,
+ * security rating, or breach risk score.
+ */
+export interface DriftScoreResponse {
+  /** 0–100, higher is better. */
+  score: number;
+  /** 'strong' | 'good' | 'needs_attention' | 'weak' */
+  grade: "strong" | "good" | "needs_attention" | "weak";
+  /** 'up' | 'down' | 'flat' | 'unknown' */
+  trend: "up" | "down" | "flat" | "unknown";
+  /** One-sentence advisory summary. */
+  summary: string;
+  /** Number of days the score covers (7). */
+  period_days: number;
+  factors: DriftScoreFactor[];
+  positive_signals: string[];
+  recommended_actions: string[];
+  metrics: DriftScoreMetrics;
+}

@@ -52,6 +52,12 @@ const HUB_CARDS = [
     description: "Approve planned change windows so expected drift is annotated, not alarming.",
     color: "#3ccf7e",
   },
+  {
+    href: "/dashboard",
+    title: "Drift Control Score",
+    description: "See your workspace's 0–100 drift control score — review hygiene and alert coverage at a glance.",
+    color: "#4f80f7",
+  },
 ] as const;
 
 // ── Inline message banners ────────────────────────────────────────────────────

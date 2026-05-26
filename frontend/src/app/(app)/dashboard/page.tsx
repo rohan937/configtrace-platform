@@ -7,9 +7,12 @@ import type {
   DashboardRecentChange,
   DashboardRecentFailedSync,
   DashboardSummary,
+  DriftScoreFactor,
+  DriftScoreResponse,
   ReviewQueueCounts,
 } from "@/types";
-import { getDashboardSummary } from "@/lib/api";
+import { getDashboardSummary, getWorkspaceDriftScore } from "@/lib/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
@@ -1059,6 +1062,201 @@ function RecentFailedSyncs({ syncs }: { syncs: DashboardRecentFailedSync[] }) {
   );
 }
 
+// ── Drift Control Score card (M58.17) ────────────────────────────────────────
+
+const GRADE_COLOR: Record<string, string> = {
+  strong: "#3ccf7e",
+  good: "#4f80f7",
+  needs_attention: "#f5a623",
+  weak: "#f5632a",
+};
+
+const GRADE_LABEL: Record<string, string> = {
+  strong: "Strong",
+  good: "Good",
+  needs_attention: "Needs Attention",
+  weak: "Weak",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  good: "#3ccf7e",
+  needs_attention: "#f5a623",
+  critical: "#f5632a",
+};
+
+function DriftScoreFactorRow({ factor }: { factor: DriftScoreFactor }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "10px",
+        padding: "8px 0",
+        borderBottom: "1px solid #1e2130",
+      }}
+    >
+      <span
+        style={{
+          flexShrink: 0,
+          minWidth: "40px",
+          fontSize: "12px",
+          fontWeight: 600,
+          color: STATUS_COLOR[factor.status] ?? "#8b90a0",
+          textAlign: "right",
+        }}
+      >
+        {factor.impact > 0 ? `+${factor.impact}` : factor.impact}
+      </span>
+      <div style={{ flex: 1 }}>
+        <p style={{ margin: 0, fontSize: "12px", color: "#c4c8d4", fontWeight: 500 }}>
+          {factor.label}
+        </p>
+        <p style={{ margin: "2px 0 0", fontSize: "11px", color: "#8b90a0" }}>
+          {factor.detail}
+        </p>
+      </div>
+      {factor.action_href && factor.action_label && (
+        <Link
+          href={factor.action_href}
+          style={{
+            flexShrink: 0,
+            fontSize: "11px",
+            color: "#4f80f7",
+            textDecoration: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {factor.action_label} →
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function DriftScoreCard({ score }: { score: DriftScoreResponse }) {
+  const gradeColor = GRADE_COLOR[score.grade] ?? "#8b90a0";
+  const gradeLabel = GRADE_LABEL[score.grade] ?? score.grade;
+
+  return (
+    <Card style={{ marginBottom: "20px" }}>
+      {/* Header row: score + grade */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: "4px",
+        }}
+      >
+        <div>
+          <SectionLabel>Drift Control Score</SectionLabel>
+          <p
+            style={{
+              margin: 0,
+              fontSize: "13px",
+              color: "#8b90a0",
+              maxWidth: "480px",
+            }}
+          >
+            {score.summary}
+          </p>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0, marginLeft: "16px" }}>
+          <span
+            style={{
+              fontSize: "40px",
+              fontWeight: 700,
+              color: gradeColor,
+              lineHeight: 1,
+            }}
+          >
+            {score.score}
+          </span>
+          <span
+            style={{
+              display: "block",
+              fontSize: "11px",
+              color: gradeColor,
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+              marginTop: "2px",
+            }}
+          >
+            {gradeLabel}
+          </span>
+        </div>
+      </div>
+
+      {/* Score bar */}
+      <div
+        style={{
+          height: "4px",
+          background: "#1e2130",
+          borderRadius: "2px",
+          margin: "14px 0",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${score.score}%`,
+            background: gradeColor,
+            borderRadius: "2px",
+            transition: "width 0.4s ease",
+          }}
+        />
+      </div>
+
+      {/* Penalty factors */}
+      {score.factors.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          {score.factors.map((f) => (
+            <DriftScoreFactorRow key={f.key} factor={f} />
+          ))}
+        </div>
+      )}
+
+      {/* Positive signals */}
+      {score.positive_signals.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px",
+            marginBottom: "12px",
+          }}
+        >
+          {score.positive_signals.map((sig, i) => (
+            <span
+              key={i}
+              style={{
+                fontSize: "11px",
+                color: "#3ccf7e",
+                background: "#0d2018",
+                border: "1px solid #1a4028",
+                borderRadius: "12px",
+                padding: "2px 8px",
+              }}
+            >
+              ✓ {sig}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Footer: period + advisory note */}
+      <p style={{ margin: 0, fontSize: "11px", color: "#565b6e" }}>
+        Based on the last {score.period_days} days ·{" "}
+        <span style={{ fontStyle: "italic" }}>
+          Advisory only — not a compliance or security rating
+        </span>
+      </p>
+    </Card>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -1066,6 +1264,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const { getToken, isLoaded } = useAuth();
+  const { selectedWorkspace } = useWorkspace();
+
+  // ── Drift Control Score state (M58.17) ───────────────────────────────────
+  const [driftScore, setDriftScore] = useState<DriftScoreResponse | null>(null);
 
   const fetchSummary = useCallback(async () => {
     if (!isLoaded) return;
@@ -1089,6 +1291,21 @@ export default function DashboardPage() {
     if (isLoaded) void fetchSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded]);
+
+  // Fetch Drift Control Score whenever the selected workspace changes
+  useEffect(() => {
+    if (!isLoaded || !selectedWorkspace) return;
+    void (async () => {
+      try {
+        const token = await getToken();
+        const scoreData = await getWorkspaceDriftScore(selectedWorkspace.id, token);
+        setDriftScore(scoreData);
+      } catch {
+        // Score fetch failure is non-fatal; card simply won't render
+        setDriftScore(null);
+      }
+    })();
+  }, [isLoaded, selectedWorkspace, getToken]);
 
   const { refresh, lastUpdatedAt } = usePollingRefresh({
     callback: fetchSummary,
@@ -1205,13 +1422,16 @@ export default function DashboardPage() {
           <>
             <RefreshBar lastUpdatedAt={lastUpdatedAt} onRefresh={refresh} />
 
-            {/* 1. Security posture — all-clear or attention-needed */}
+            {/* 1. Drift Control Score — advisory 0-100 hygiene measure (M58.17) */}
+            {driftScore && <DriftScoreCard score={driftScore} />}
+
+            {/* 2. Security posture — all-clear or attention-needed */}
             <AttentionCard summary={summary} />
 
-            {/* 2. Review queue — unreviewed critical / high counts */}
+            {/* 3. Review queue — unreviewed critical / high counts */}
             <ReviewQueueCard rq={summary.review_queue} />
 
-            {/* 3. Risk metrics — Critical / High / Medium / Low (all-time) */}
+            {/* 4. Risk metrics — Critical / High / Medium / Low (all-time) */}
             <RiskMetricsRow data={summary.risk_distribution} />
 
             {/* 4. Recent changes (left) + sidebar: checklist + providers (right) */}

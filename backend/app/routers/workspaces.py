@@ -37,6 +37,7 @@ POST   /workspaces/{workspace_id}/expected-changes                 — create ex
 POST   /workspaces/{workspace_id}/expected-changes/{window_id}/approve — approve window (M58.16)
 POST   /workspaces/{workspace_id}/expected-changes/{window_id}/reject  — reject window (M58.16)
 POST   /workspaces/{workspace_id}/expected-changes/{window_id}/cancel  — cancel window (M58.16)
+GET    /workspaces/{workspace_id}/drift-score                      — Drift Control Score (M58.17)
 """
 
 from __future__ import annotations
@@ -103,11 +104,13 @@ from app.schemas.expected_change_window import (
     ExpectedChangeWindowResponse,
     RejectWindowRequest,
 )
+from app.schemas.drift_score import DriftScoreResponse
 from app.services import workspace_service
 from app.services import notification_service
 from app.services import policy_engine_service
 from app.services import weekly_digest_service
 from app.services import expected_change_service
+from app.services import drift_score_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -1379,3 +1382,36 @@ def cancel_expected_change_window(
     db.commit()
     db.refresh(window)
     return ExpectedChangeWindowResponse.model_validate(window)
+
+
+# ---------------------------------------------------------------------------
+# M58.17 — Drift Control Score
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{workspace_id}/drift-score",
+    response_model=DriftScoreResponse,
+)
+def get_drift_score(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DriftScoreResponse:
+    """Return the Drift Control Score for this workspace.
+
+    The Drift Control Score (0–100) is a deterministic, advisory measure of
+    how well the workspace controls risky configuration drift.  Higher is
+    better.  The score is NOT a compliance certification, security rating, or
+    breach risk score — it measures review and alert hygiene only.
+
+    Requires workspace member role or above.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return drift_score_service.compute_drift_score(workspace_id, db)

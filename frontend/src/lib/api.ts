@@ -1221,3 +1221,20 @@ export async function getExpectedChangeMatch(
   return apiFetch(`/changes/${changeId}/expected-change-match`, { token });
 }
 
+// ── M58.17: Drift Control Score ───────────────────────────────────────────────
+
+/**
+ * Fetch the Drift Control Score for a workspace.
+ *
+ * GET /workspaces/{workspaceId}/drift-score
+ *
+ * The score (0–100) is advisory only — it measures review and alert hygiene
+ * for configuration drift.  It is NOT a compliance or security rating.
+ */
+export async function getWorkspaceDriftScore(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").DriftScoreResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/drift-score`, { token });
+}
+
