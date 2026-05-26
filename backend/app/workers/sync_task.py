@@ -249,6 +249,25 @@ def sync_integration(
 
                 connector = AWSConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "firebase":
+                from app.connectors.firebase import FirebaseConnector
+
+                connector = FirebaseConnector()
+                records = connector.fetch(credentials)
+            elif integration.provider == "supabase":
+                from app.connectors.supabase import SupabaseConnector
+
+                connector = SupabaseConnector()
+                records = connector.fetch(credentials)
+            elif integration.provider == "shopify":
+                # SECURITY: shopify_access_token is NEVER logged.
+                # Customer PII, orders, transactions, and payment data are
+                # never fetched — the ShopifyConnector only calls safe
+                # configuration/metadata endpoints.
+                from app.connectors.shopify import ShopifyConnector
+
+                connector = ShopifyConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

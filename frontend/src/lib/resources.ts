@@ -36,6 +36,7 @@ export function getResourceProvider(resourceType: string): ProviderId {
   if (t.startsWith("github_"))     return "github";
   if (t.startsWith("vercel_"))     return "vercel";
   if (t.startsWith("cloudflare_")) return "cloudflare";
+  if (t.startsWith("shopify_"))   return "shopify";
   return "cloudflare";
 }
 
@@ -119,6 +120,12 @@ export function getResourceCategory(resourceType: string): string | null {
   if (t.includes("payment"))           return "Payments";
   // Note: webhook intentionally checked after GitHub to avoid false positives
   if (t.startsWith("stripe_webhook"))  return "Webhooks";
+
+  // ── Shopify ───────────────────────────────────────────────────────────────
+  if (t === "shopify_shop_metadata")          return "Settings";
+  if (t === "shopify_webhook_subscription")   return "Webhooks";
+  if (t === "shopify_store_policy")           return "Policies";
+  if (t.startsWith("shopify_"))               return "Commerce";
 
   return null;
 }
@@ -209,6 +216,11 @@ const TYPE_LABELS: Record<string, string> = {
   supabase_network_restriction:  "Network restriction",
   supabase_pooler_config:        "Database pooler",
   supabase_custom_domain:        "Custom domain",
+
+  // ── Shopify ────────────────────────────────────────────────────────────
+  shopify_shop_metadata:         "Shop settings",
+  shopify_webhook_subscription:  "Webhook subscription",
+  shopify_store_policy:          "Store policy",
 };
 
 /**
@@ -226,7 +238,7 @@ export function formatResourceTypeLabel(resourceType: string): string {
 
   const PREFIXES = [
     "aws_", "firebase_", "supabase_", "stripe_",
-    "github_", "vercel_", "cloudflare_",
+    "github_", "vercel_", "cloudflare_", "shopify_",
   ];
   let rest = key;
   for (const pfx of PREFIXES) {

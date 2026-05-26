@@ -12,7 +12,8 @@ export type ProviderId =
   | "stripe"
   | "aws"
   | "firebase"
-  | "supabase";
+  | "supabase"
+  | "shopify";
 
 export type ProviderCategory =
   | "cdn_dns"
@@ -20,7 +21,8 @@ export type ProviderCategory =
   | "hosting"
   | "payments"
   | "cloud"
-  | "backend";
+  | "backend"
+  | "commerce";
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -189,6 +191,26 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     bgColor: "rgba(62,207,142,0.10)",
     borderColor: "rgba(62,207,142,0.25)",
   },
+
+  shopify: {
+    id: "shopify",
+    label: "Shopify",
+    shortLabel: "Shopify",
+    category: "commerce",
+    description:
+      "Monitor Shopify store configuration, webhook subscriptions, and store policies for drift.",
+    monitoredSurfaces: [
+      "Store metadata (plan, timezone, currency, locale)",
+      "Storefront access settings (password protection)",
+      "Webhook subscriptions (endpoint domain, topic, HTTPS status)",
+      "Store policies (presence and content hash — raw text never stored)",
+    ],
+    trustNote:
+      "ConfigTrace reads store configuration metadata only. Orders, customers, payment data, transaction records, and storefront theme files are never accessed or stored.",
+    color: "#96bf48",
+    bgColor: "rgba(150,191,72,0.10)",
+    borderColor: "rgba(150,191,72,0.25)",
+  },
 };
 
 /** All provider IDs in display order. */
@@ -200,6 +222,7 @@ export const PROVIDER_IDS: ProviderId[] = [
   "aws",
   "firebase",
   "supabase",
+  "shopify",
 ];
 
 /**

@@ -16,6 +16,7 @@ import StripeIntegrationForm from "@/components/integrations/StripeIntegrationFo
 import AWSIntegrationForm from "@/components/integrations/AWSIntegrationForm";
 import FirebaseIntegrationForm from "@/components/integrations/FirebaseIntegrationForm";
 import SupabaseIntegrationForm from "@/components/integrations/SupabaseIntegrationForm";
+import ShopifyIntegrationForm from "@/components/integrations/ShopifyIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { PROVIDERS, PROVIDER_IDS } from "@/lib/providers";
@@ -34,6 +35,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   payments:  "Payments",
   cloud:     "Cloud infrastructure",
   backend:   "App backend",
+  commerce:  "Commerce",
 };
 
 // Providers where a trust / data-minimisation note is shown on the card.
@@ -459,6 +461,53 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  if (provider === "shopify") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Shopify store
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Open your Shopify admin → Apps → Develop apps.",
+            body: <>In your Shopify admin, navigate to{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>
+                Apps → Develop apps
+              </code>
+              . If not visible, enable app development in your store settings first.</>,
+          },
+          {
+            heading: "Create a custom app and configure API scopes.",
+            body: <>Click &ldquo;Create an app&rdquo;, name it (e.g. &ldquo;ConfigTrace&rdquo;),
+              then open the &ldquo;Configuration&rdquo; tab. Under Admin API access scopes,
+              grant read access to: <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>
+                read_content, read_shipping, read_themes
+              </code> (or at minimum no scopes if the store only needs webhook/shop metadata
+              monitoring). Do not grant write permissions or order/customer data access.</>,
+          },
+          {
+            heading: "Install the app and copy the access token.",
+            body: <>Click &ldquo;Install app&rdquo; → &ldquo;Install&rdquo;. On the next screen,
+              reveal and copy the Admin API access token (starts with{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>shpat_</code>
+              ). Store it securely — it will not be shown again.</>,
+          },
+          {
+            heading: "Connect below.",
+            body: <>Enter your shop domain and the access token. ConfigTrace validates access
+              before saving. The token is encrypted before storage and never returned in
+              any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace monitors store configuration metadata, webhook subscriptions, and store
+          policies only. It does not read orders, customers, payment data, transaction records,
+          gift cards, or storefront theme files.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -556,6 +605,9 @@ export default function IntegrationsPage() {
     }
     if (selectedProvider === "supabase") {
       return <SupabaseIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    if (selectedProvider === "shopify") {
+      return <ShopifyIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

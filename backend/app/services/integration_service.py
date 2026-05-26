@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.connectors.cloudflare import CloudflareConnector
 from app.connectors.exceptions import AuthenticationError, ConnectorError, NetworkError
-from app.core.encryption import EncryptionKeyError, encrypt_credentials
+from app.core.encryption import EncryptionKeyError, decrypt_credentials, encrypt_credentials
 from app.models.integration import Integration
 from app.models.resource import Resource
 
@@ -1185,6 +1185,61 @@ def reconnect_credentials_supabase(
 
     # Validate new credentials against the live Supabase API.
     SupabaseConnector().validate_credentials(new_creds)
+
+    # Encrypt and store.
+    ciphertext, iv = encrypt_credentials(new_creds)
+    integration.encrypted_credentials = ciphertext
+    integration.credential_iv = iv
+
+    if integration.status == "error":
+        integration.status = "active"
+
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def reconnect_credentials_shopify(
+    *,
+    integration_id: uuid.UUID,
+    user_id: uuid.UUID,
+    new_access_token: str,
+    db: Session,
+) -> Integration:
+    """Replace the Admin API access token for an existing Shopify integration.
+
+    The new token is validated against the live Shopify Admin API before the
+    database row is updated.  If validation fails, the existing credentials
+    remain unchanged.  The shop_domain is preserved from the existing
+    encrypted credentials so the resource identity stays stable.
+
+    SECURITY: The access token is stored encrypted only.
+    It is NEVER logged or returned.
+    """
+    from app.connectors.shopify import ShopifyConnector, normalize_shop_domain
+
+    integration = get_integration_by_id(
+        integration_id=integration_id,
+        user_id=user_id,
+        db=db,
+    )
+    if integration is None:
+        raise LookupError("Integration not found.")
+
+    # Retrieve the existing shop_domain from the encrypted credentials.
+    existing_creds = decrypt_credentials(
+        integration.encrypted_credentials,
+        integration.credential_iv,
+    )
+    shop_domain = normalize_shop_domain(existing_creds.get("shop_domain", "") or "")
+
+    new_creds = {
+        "shop_domain": shop_domain,
+        "shopify_access_token": new_access_token,
+    }
+
+    # Validate new credentials against the live Shopify API.
+    ShopifyConnector().validate_credentials(new_creds)
 
     # Encrypt and store.
     ciphertext, iv = encrypt_credentials(new_creds)

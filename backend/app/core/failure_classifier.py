@@ -321,6 +321,16 @@ def _classify_auth(
                 "and reconnect this integration."
             ),
         )
+    if provider == "shopify":
+        return FailureClassification(
+            category="authentication",
+            error_code="shopify_credentials_invalid",
+            recommended_action=(
+                "The Shopify Admin API access token is invalid, expired, or has been revoked. "
+                "Generate a new Admin API access token in your Shopify Partners dashboard "
+                "or custom app settings and reconnect this integration."
+            ),
+        )
     # Unknown provider
     return FailureClassification(
         category="authentication",
@@ -396,6 +406,16 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "Verify the token has the required scopes and the project ref is correct."
                 ),
             )
+        if provider == "shopify":
+            return FailureClassification(
+                category="authentication",
+                error_code="shopify_permission_denied",
+                recommended_action=(
+                    "The Shopify Admin API access token does not have the required permissions. "
+                    "Ensure the token has read access to shop settings, webhooks, and policies. "
+                    "Generate a new token with the correct scopes and reconnect this integration."
+                ),
+            )
         # Other providers: treat as auth failure.
         return _classify_auth(provider, None)
 
@@ -465,6 +485,15 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
                     "access token has access to this project."
                 ),
             )
+        if provider == "shopify":
+            return FailureClassification(
+                category="resource_missing",
+                error_code="shopify_shop_unavailable",
+                recommended_action=(
+                    "The Shopify store was not found or is unavailable. "
+                    "Verify the shop domain is correct and the store is active."
+                ),
+            )
         return FailureClassification(
             category="resource_missing",
             error_code="resource_not_found",
@@ -489,6 +518,8 @@ def _classify_connector(exc: "ConnectorError", provider: str) -> FailureClassifi
             code = "firebase_api_unavailable"
         elif provider == "supabase":
             code = "supabase_api_unavailable"
+        elif provider == "shopify":
+            code = "shopify_api_unavailable"
         else:
             code = "provider_unavailable"
         return FailureClassification(

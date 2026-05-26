@@ -154,7 +154,7 @@ export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
  *             aws_selected_regions (optional, defaults to [aws_default_region])
  */
 export interface IntegrationCreateRequest {
-  provider: "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase" | "supabase";
+  provider: "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase" | "supabase" | "shopify";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -212,6 +212,18 @@ export interface IntegrationCreateRequest {
   supabase_access_token?: string;
   /** Supabase project reference string (20-char alphanumeric). */
   supabase_project_ref?: string;
+  // ── Shopify fields ─────────────────────────────────────────────────────────
+  /**
+   * Shopify store domain, e.g. "mystore.myshopify.com".
+   * Do not include "https://".
+   */
+  shopify_shop_domain?: string;
+  /**
+   * Shopify Admin API access token (shpat_...).
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  shopify_access_token?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */
@@ -435,7 +447,7 @@ export interface ChangeSnoozeRule {
 
 export type AlertRiskThreshold = "critical_only" | "high_and_critical" | "medium_and_above";
 export type TimelineRange = "24h" | "7d" | "30d" | "all";
-export type ProviderFilter = "all" | "cloudflare" | "github" | "vercel" | "stripe" | "aws";
+export type ProviderFilter = "all" | "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "shopify";
 
 export interface UserSettings {
   // Alert policy

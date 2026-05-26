@@ -1776,6 +1776,54 @@ _SUPABASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+
+# ── Shopify-specific tracked fields (M57.5) ───────────────────────────────────
+
+_SHOPIFY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "shopify_shop_metadata": (
+        # Identity / display
+        "shop_name",
+        # Plan / subscription
+        "plan_name",
+        "plan_display_name",
+        # Regional / locale
+        "timezone",
+        "iana_timezone",
+        "currency",
+        "primary_locale",
+        "country_code",
+        # Security / access flags
+        "password_enabled",       # storefront password protection
+        "checkout_api_supported",
+        "has_storefront",
+        "eligible_for_payments",
+        "requires_extra_payments_agreement",
+        # Tax
+        "taxes_included",
+        "tax_shipping",
+    ),
+    "shopify_webhook_subscription": (
+        # Topic — what event type is being delivered
+        "topic",
+        # Endpoint — decomposed (full URL never stored)
+        "endpoint_domain",
+        "endpoint_scheme",
+        "endpoint_path_hash",
+        "endpoint_path_length",
+        "is_https",
+        # Configuration
+        "format",
+        "api_version",
+    ),
+    "shopify_store_policy": (
+        "policy_type",
+        "present",
+        "body_hash",      # SHA-256 of policy body — change detection only
+        "body_length",    # byte length — raw text never stored
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -1791,6 +1839,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_FIREBASE_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"supabase_"`` look up in
       ``_SUPABASE_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"shopify_"`` look up in
+      ``_SHOPIFY_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -1812,6 +1862,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _FIREBASE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("supabase_"):
         return _SUPABASE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("shopify_"):
+        return _SHOPIFY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     return _TRACKED_FIELDS
 
 

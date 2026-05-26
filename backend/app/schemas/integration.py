@@ -41,11 +41,11 @@ class IntegrationCreateRequest(BaseModel):
     is present for the chosen provider.
     """
 
-    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase"] = Field(
+    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase", "shopify"] = Field(
         ...,
         description=(
             "Provider identifier. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase', 'supabase'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase', 'supabase', 'shopify'."
         ),
     )
     display_name: str = Field(
@@ -207,6 +207,27 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Shopify fields ────────────────────────────────────────────────────────
+    shopify_shop_domain: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Shopify shop domain, e.g. 'mystore.myshopify.com' or a custom domain. "
+            "Required when provider='shopify'. "
+            "Do not include 'https://' — the backend normalises the value."
+        ),
+    )
+    shopify_access_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Shopify Admin API access token (starts with 'shpat_' for custom apps). "
+            "Required when provider='shopify'. "
+            "Stored encrypted — NEVER returned in API responses. "
+            "SECURITY: Never logged, never returned to the frontend, stored in plaintext."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -278,6 +299,15 @@ class IntegrationCreateRequest(BaseModel):
             if not self.supabase_project_ref:
                 raise ValueError(
                     "supabase_project_ref is required for Supabase integrations."
+                )
+        elif self.provider == "shopify":
+            if not self.shopify_shop_domain:
+                raise ValueError(
+                    "shopify_shop_domain is required for Shopify integrations."
+                )
+            if not self.shopify_access_token:
+                raise ValueError(
+                    "shopify_access_token is required for Shopify integrations."
                 )
         return self
 
@@ -407,6 +437,15 @@ class IntegrationReconnectRequest(BaseModel):
         description=(
             "New Supabase Management API access token (sbp_...). "
             "Required for Supabase integrations. "
+            "Stored encrypted — never returned in API responses."
+        ),
+    )
+    shopify_access_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "New Shopify Admin API access token. "
+            "Required for Shopify integrations. "
             "Stored encrypted — never returned in API responses."
         ),
     )

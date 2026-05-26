@@ -99,6 +99,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.supabase import classify_supabase_change
         return classify_supabase_change(change)
 
+    if record_type.startswith("shopify_"):
+        from app.services.risk_rules.shopify import classify_shopify_change
+        return classify_shopify_change(change)
+
     return classify_dns_change(change)
 
 
