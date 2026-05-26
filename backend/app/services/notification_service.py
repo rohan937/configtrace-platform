@@ -413,6 +413,30 @@ def dispatch_notifications_for_sync(
     if not qualifying:
         return result
 
+    # ── M57.3: Suppress changes matched by an active SnoozeRule ──────────────
+    # Fail-open: any snooze-rule lookup error keeps the change in the list.
+    try:
+        from app.services.snooze_rule_service import is_change_snoozed_by_rule
+        unsnoozed = []
+        for c in qualifying:
+            if is_change_snoozed_by_rule(c, workspace_id, db):
+                logger.info(
+                    "notifications: suppressed by snooze rule  change_id=%s  "
+                    "sync_run=%s",
+                    c.id, sync_run_id,
+                )
+            else:
+                unsnoozed.append(c)
+        qualifying = unsnoozed
+    except Exception:
+        logger.exception(
+            "notifications: snooze-rule check failed — failing open  sync_run=%s",
+            sync_run_id,
+        )
+
+    if not qualifying:
+        return result
+
     # ── Compose payloads ───────────────────────────────────────────────────────
     try:
         slack_text = _compose_slack_text(integration=integration, changes=qualifying)

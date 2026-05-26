@@ -150,6 +150,32 @@ def dispatch_alerts_for_sync(
     if not alertable:
         return result
 
+    # ── M57.3: Suppress changes matched by an active SnoozeRule ──────────
+    # Fail-open: if the snooze-rule lookup raises, include the change.
+    # We must NOT suppress alerts silently due to DB errors.
+    workspace_id = integration.workspace_id
+    try:
+        from app.services.snooze_rule_service import is_change_snoozed_by_rule
+        unsnoozed = []
+        for c in alertable:
+            if is_change_snoozed_by_rule(c, workspace_id, db):
+                logger.info(
+                    "alerts: suppressed by snooze rule  change_id=%s  sync_run_id=%s",
+                    c.id, sync_run_id,
+                )
+            else:
+                unsnoozed.append(c)
+        alertable = unsnoozed
+    except Exception:
+        logger.exception(
+            "alerts: snooze-rule check failed — failing open  sync_run_id=%s",
+            sync_run_id,
+        )
+        # alertable is unchanged — proceed with all eligible changes
+
+    if not alertable:
+        return result
+
     # ── Short-circuit when email alerting isn't configured ────────────────
     # Avoids the wasted call into email_service.send_email — and, more
     # importantly, makes the no-op intent explicit so tests that assert

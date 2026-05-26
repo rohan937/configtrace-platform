@@ -39,8 +39,10 @@ from app.schemas.dashboard import (
     RecentChange,
     RecentFailedSync,
     ResourceCounts,
+    ReviewQueueCounts,
     RiskDistribution,
 )
+from app.services import changes_service
 from app.services.integration_service import get_latest_sync_run_summary
 
 
@@ -306,6 +308,17 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
             )
         )
 
+    # ── 8. Review queue counts (M57.3) ────────────────────────────────────────
+    review_queue_total    = changes_service.count_needs_review(user_id, db)
+    review_queue_critical = changes_service.count_needs_review_by_risk(user_id, "critical", db)
+    review_queue_high     = changes_service.count_needs_review_by_risk(user_id, "high", db)
+
+    review_queue = ReviewQueueCounts(
+        total=review_queue_total,
+        critical=review_queue_critical,
+        high=review_queue_high,
+    )
+
     return DashboardSummaryResponse(
         integration_health=integration_health,
         resource_counts=resource_counts,
@@ -315,4 +328,5 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
         recent_high_critical_changes=recent_high_critical_changes,
         recent_failed_syncs=recent_failed_syncs,
         last_updated_at=now.isoformat(),
+        review_queue=review_queue,
     )

@@ -90,6 +90,19 @@ class RecentFailedSync(BaseModel):
 # ── Top-level response ────────────────────────────────────────────────────────
 
 
+class ReviewQueueCounts(BaseModel):
+    """M57.3: Counts of changes needing review, broken out by risk level."""
+
+    total: int
+    """Total changes with no review or explicit needs_review status."""
+
+    critical: int
+    """Critical-risk changes needing review."""
+
+    high: int
+    """High-risk changes needing review."""
+
+
 class DashboardSummaryResponse(BaseModel):
     """Full dashboard summary for the authenticated user."""
 
@@ -101,3 +114,5 @@ class DashboardSummaryResponse(BaseModel):
     recent_high_critical_changes: List[RecentChange]
     recent_failed_syncs: List[RecentFailedSync]
     last_updated_at: str                # ISO 8601 UTC
+    # M57.3: review queue
+    review_queue: ReviewQueueCounts

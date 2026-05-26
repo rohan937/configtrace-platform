@@ -7,6 +7,7 @@ import type {
   DashboardRecentChange,
   DashboardRecentFailedSync,
   DashboardSummary,
+  ReviewQueueCounts,
 } from "@/types";
 import { getDashboardSummary } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
@@ -544,9 +545,27 @@ function ChecklistCard({ summary }: { summary: DashboardSummary }) {
     const result: CheckItem[] = [];
     const rd = summary.risk_distribution;
     const ih = summary.integration_health;
+    const rq = summary.review_queue;
     const connectedSet = new Set(summary.provider_distribution.map((p) => p.provider));
 
-    if (rd.critical > 0)
+    // M57.3: unreviewed critical/high changes are the top priority
+    if (rq.critical > 0)
+      result.push({
+        key: "review_critical",
+        label: `Review ${rq.critical} critical unreviewed change${rq.critical !== 1 ? "s" : ""}`,
+        href: "/needs-review",
+        severity: "critical",
+      });
+
+    if (rq.high > 0)
+      result.push({
+        key: "review_high",
+        label: `Review ${rq.high} high-risk unreviewed change${rq.high !== 1 ? "s" : ""}`,
+        href: "/needs-review",
+        severity: "high",
+      });
+
+    if (rd.critical > 0 && rq.critical === 0)
       result.push({
         key: "critical",
         label: `Review ${rd.critical} critical change${rd.critical !== 1 ? "s" : ""} immediately`,
@@ -554,7 +573,7 @@ function ChecklistCard({ summary }: { summary: DashboardSummary }) {
         severity: "critical",
       });
 
-    if (rd.high > 0)
+    if (rd.high > 0 && rq.high === 0)
       result.push({
         key: "high",
         label: `Investigate ${rd.high} high-risk change${rd.high !== 1 ? "s" : ""}`,
@@ -994,6 +1013,13 @@ export default function DashboardPage() {
                 ? "/timeline?time_range=7d&risk_level=high"
                 : undefined
             }
+          />
+          <Divider />
+          <StatCell
+            value={summary.review_queue.total}
+            label="Needs review"
+            valueColor={summary.review_queue.total > 0 ? "#f5a623" : undefined}
+            href={summary.review_queue.total > 0 ? "/needs-review" : undefined}
           />
           {summary.change_activity.last_change_at && (
             <>
