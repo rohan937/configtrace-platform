@@ -1081,3 +1081,55 @@ export async function updateWorkspacePolicy(
   });
 }
 
+// ── M58.15: Weekly Digest ─────────────────────────────────────────────────────
+
+/**
+ * Fetch a live digest preview for the last 7 days (any member).
+ */
+export async function getWeeklyDigestPreview(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").WeeklyDigest> {
+  return apiFetch(`/workspaces/${workspaceId}/weekly-digest/preview`, { token });
+}
+
+/**
+ * Fetch digest schedule settings for a workspace.
+ */
+export async function getWeeklyDigestSettings(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").WeeklyDigestSettings> {
+  return apiFetch(`/workspaces/${workspaceId}/weekly-digest/settings`, { token });
+}
+
+/**
+ * Update digest schedule settings (admin only).
+ */
+export async function updateWeeklyDigestSettings(
+  workspaceId: string,
+  body: import("@/types").WeeklyDigestSettingsUpdateRequest,
+  token?: string | null,
+): Promise<import("@/types").WeeklyDigestSettings> {
+  return apiFetch(`/workspaces/${workspaceId}/weekly-digest/settings`, {
+    token,
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Send a test digest to the requesting user's email (admin only).
+ * Returns the rendered digest body even when email is not configured.
+ */
+export async function sendTestWeeklyDigest(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").WeeklyDigestTestResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/weekly-digest/test`, {
+    token,
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+

@@ -28,6 +28,10 @@ DELETE /workspaces/{workspace_id}/notifications/push/subscriptions/{sub_id} — 
 POST   /workspaces/{workspace_id}/notifications/push/test          — test push delivery (M58.7)
 GET    /workspaces/{workspace_id}/policies                         — list policy catalog with enabled state (M58.14)
 PUT    /workspaces/{workspace_id}/policies/{policy_key}            — enable/disable a policy (M58.14)
+GET    /workspaces/{workspace_id}/weekly-digest/preview            — preview digest for last 7 days (M58.15)
+GET    /workspaces/{workspace_id}/weekly-digest/settings           — get digest schedule settings (M58.15)
+PUT    /workspaces/{workspace_id}/weekly-digest/settings           — update digest schedule settings (M58.15)
+POST   /workspaces/{workspace_id}/weekly-digest/test               — send test digest to current user (M58.15)
 """
 
 from __future__ import annotations
@@ -80,9 +84,16 @@ from app.schemas.policy import (
     PolicyUpdateRequest,
     WorkspacePolicyResponse,
 )
+from app.schemas.weekly_digest import (
+    WeeklyDigest,
+    WeeklyDigestSettings,
+    WeeklyDigestSettingsUpdateRequest,
+    WeeklyDigestTestResponse,
+)
 from app.services import workspace_service
 from app.services import notification_service
 from app.services import policy_engine_service
+from app.services import weekly_digest_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -1057,3 +1068,101 @@ def update_workspace_policy(
 
     db.commit()
     return result
+
+
+# ── Weekly digest endpoints (M58.15) ─────────────────────────────────────────
+
+
+@router.get("/{workspace_id}/weekly-digest/preview", response_model=WeeklyDigest)
+def preview_weekly_digest(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WeeklyDigest:
+    """Return a live digest preview for the last 7 days.
+
+    Any workspace member may request a preview.  Computed on demand — nothing
+    persisted.  Useful for checking what the next scheduled digest will look like.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return weekly_digest_service.compute_digest(workspace_id, db)
+
+
+@router.get(
+    "/{workspace_id}/weekly-digest/settings",
+    response_model=WeeklyDigestSettings,
+)
+def get_weekly_digest_settings(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WeeklyDigestSettings:
+    """Return the current weekly digest schedule settings for this workspace."""
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return weekly_digest_service.get_digest_settings(workspace_id, db)
+
+
+@router.put(
+    "/{workspace_id}/weekly-digest/settings",
+    response_model=WeeklyDigestSettings,
+)
+def update_weekly_digest_settings(
+    workspace_id: UUID4,
+    body: WeeklyDigestSettingsUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WeeklyDigestSettings:
+    """Update the weekly digest schedule settings.
+
+    Only workspace admins may update digest settings.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        result = weekly_digest_service.update_digest_settings(workspace_id, body, db)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    db.commit()
+    return result
+
+
+@router.post(
+    "/{workspace_id}/weekly-digest/test",
+    response_model=WeeklyDigestTestResponse,
+)
+def test_weekly_digest(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WeeklyDigestTestResponse:
+    """Send a test digest to the requesting user's email.
+
+    If email is not configured, returns the rendered digest body so you can
+    preview the content without actually sending.  Admins only.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return weekly_digest_service.test_send_digest(workspace_id, current_user.id, db)

@@ -17,6 +17,10 @@ import {
   listPushSubscriptions,
   deletePushSubscription,
   testPushNotifications,
+  getWeeklyDigestSettings,
+  updateWeeklyDigestSettings,
+  sendTestWeeklyDigest,
+  getWeeklyDigestPreview,
 } from "@/lib/api";
 import type {
   WorkspaceNotificationSettings,
@@ -24,6 +28,8 @@ import type {
   SlackChannel,
   PushMinRiskLevel,
   PushSubscriptionResponse,
+  WeeklyDigestSettings,
+  WeeklyDigest,
 } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
 
@@ -1055,6 +1061,430 @@ function BrowserPushCard({
   );
 }
 
+// ── Weekly Digest Card (M58.15) ────────────────────────────────────────────────
+
+const DAY_LABELS = [
+  "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+];
+
+function WeeklyDigestCard({ workspaceId }: { workspaceId: string }) {
+  const { getToken } = useAuth();
+
+  const [digestSettings, setDigestSettings] = useState<WeeklyDigestSettings | null>(null);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testSending, setTestSending] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<WeeklyDigest | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [testResult, setTestResult] = useState<{ sent: boolean; error: string | null; recipient: string | null; email_configured: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  // Editable state
+  const [enabled, setEnabled] = useState(false);
+  const [day, setDay] = useState(0);
+  const [hour, setHour] = useState(9);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingSettings(true);
+    (async () => {
+      try {
+        const token = await getToken();
+        const data = await getWeeklyDigestSettings(workspaceId, token);
+        if (!cancelled) {
+          setDigestSettings(data);
+          setEnabled(data.weekly_digest_enabled);
+          setDay(data.weekly_digest_day);
+          setHour(data.weekly_digest_hour);
+        }
+      } catch {
+        // Settings load failure is non-critical; show disabled state
+      } finally {
+        if (!cancelled) setLoadingSettings(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [workspaceId, getToken]);
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await getToken();
+      const updated = await updateWeeklyDigestSettings(
+        workspaceId,
+        { weekly_digest_enabled: enabled, weekly_digest_day: day, weekly_digest_hour: hour },
+        token,
+      );
+      setDigestSettings(updated);
+      setSuccess("Weekly digest settings saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save settings.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleTestSend() {
+    setTestSending(true);
+    setTestResult(null);
+    setError(null);
+    try {
+      const token = await getToken();
+      const result = await sendTestWeeklyDigest(workspaceId, token);
+      setTestResult(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send test digest.");
+    } finally {
+      setTestSending(false);
+    }
+  }
+
+  async function handlePreview() {
+    if (showPreview && preview) {
+      setShowPreview(false);
+      return;
+    }
+    setPreviewing(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const data = await getWeeklyDigestPreview(workspaceId, token);
+      setPreview(data);
+      setShowPreview(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load digest preview.");
+    } finally {
+      setPreviewing(false);
+    }
+  }
+
+  if (loadingSettings) {
+    return <p style={{ fontSize: 13, color: "#565b6e" }}>Loading digest settings…</p>;
+  }
+
+  const lastSent = digestSettings?.weekly_digest_last_sent_at
+    ? new Date(digestSettings.weekly_digest_last_sent_at).toLocaleString()
+    : null;
+
+  const inputStyle: React.CSSProperties = {
+    background: "#0e1018",
+    border: "1px solid #2a2d38",
+    borderRadius: 6,
+    color: "#e8eaf0",
+    fontSize: 13,
+    padding: "6px 10px",
+    fontFamily: "inherit",
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#565b6e",
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    display: "block",
+    marginBottom: 5,
+  };
+
+  return (
+    <div>
+      {/* Enable toggle */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          onClick={() => setEnabled((v) => !v)}
+          style={{
+            width: 40,
+            height: 24,
+            borderRadius: 12,
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            background: enabled ? "#6b9cf8" : "#2a2d38",
+            position: "relative",
+            transition: "background 0.15s",
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: 4,
+              left: enabled ? 20 : 4,
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              background: "#fff",
+              transition: "left 0.15s",
+            }}
+          />
+        </button>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#e8eaf0" }}>
+            {enabled ? "Weekly digest enabled" : "Weekly digest disabled"}
+          </div>
+          <div style={{ fontSize: 12, color: "#565b6e", marginTop: 2 }}>
+            Sends a summary of drift activity to workspace admins every week.
+          </div>
+        </div>
+      </div>
+
+      {/* Schedule */}
+      {enabled && (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+          <div>
+            <label style={labelStyle}>Send on</label>
+            <select
+              value={day}
+              onChange={(e) => setDay(Number(e.target.value))}
+              style={inputStyle}
+            >
+              {DAY_LABELS.map((label, i) => (
+                <option key={i} value={i}>{label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>At (UTC hour)</label>
+            <select
+              value={hour}
+              onChange={(e) => setHour(Number(e.target.value))}
+              style={inputStyle}
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Last sent info */}
+      {lastSent && (
+        <p style={{ fontSize: 12, color: "#565b6e", marginBottom: 12 }}>
+          Last sent: {lastSent}
+        </p>
+      )}
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          style={{
+            background: "#6b9cf8",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            padding: "7px 18px",
+            fontSize: 13,
+            cursor: saving ? "not-allowed" : "pointer",
+            opacity: saving ? 0.7 : 1,
+            fontFamily: "inherit",
+          }}
+        >
+          {saving ? "Saving…" : "Save settings"}
+        </button>
+
+        <button
+          type="button"
+          onClick={handlePreview}
+          disabled={previewing}
+          style={{
+            background: "none",
+            color: "#8b90a0",
+            border: "1px solid #2a2d38",
+            borderRadius: 6,
+            padding: "7px 16px",
+            fontSize: 13,
+            cursor: previewing ? "not-allowed" : "pointer",
+            opacity: previewing ? 0.7 : 1,
+            fontFamily: "inherit",
+          }}
+        >
+          {previewing ? "Loading…" : showPreview ? "Hide preview" : "Preview digest"}
+        </button>
+
+        <button
+          type="button"
+          onClick={handleTestSend}
+          disabled={testSending}
+          style={{
+            background: "none",
+            color: "#8b90a0",
+            border: "1px solid #2a2d38",
+            borderRadius: 6,
+            padding: "7px 16px",
+            fontSize: 13,
+            cursor: testSending ? "not-allowed" : "pointer",
+            opacity: testSending ? 0.7 : 1,
+            fontFamily: "inherit",
+          }}
+        >
+          {testSending ? "Sending…" : "Send test digest"}
+        </button>
+      </div>
+
+      {/* Test result */}
+      {testResult && (
+        <div
+          style={{
+            marginTop: 12,
+            background: testResult.sent ? "#0e2a1a" : "#1a1d26",
+            border: `1px solid ${testResult.sent ? "#14532d" : "#2a2d38"}`,
+            borderRadius: 7,
+            padding: "10px 14px",
+            fontSize: 12,
+          }}
+        >
+          {testResult.sent ? (
+            <span style={{ color: "#3ccf7e" }}>
+              ✓ Test digest sent to {testResult.recipient ?? "your email"}.
+            </span>
+          ) : (
+            <div>
+              <span style={{ color: "#f5a623" }}>
+                {testResult.email_configured
+                  ? "⚠ Digest not sent. "
+                  : "⚠ Email not configured. "}
+              </span>
+              {testResult.error && (
+                <span style={{ color: "#6b7280" }}>{testResult.error}</span>
+              )}
+              {!testResult.email_configured && (
+                <span style={{ color: "#6b7280" }}>
+                  {" "}Digest preview is available below.
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error / success banners */}
+      {error && (
+        <p style={{ fontSize: 12, color: "#e84040", marginTop: 8 }}>{error}</p>
+      )}
+      {success && (
+        <p style={{ fontSize: 12, color: "#3ccf7e", marginTop: 8 }}>{success}</p>
+      )}
+
+      {/* Digest preview */}
+      {showPreview && preview && (
+        <div
+          style={{
+            marginTop: 16,
+            background: "#0e1018",
+            border: "1px solid #1e2130",
+            borderRadius: 8,
+            padding: "16px",
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#565b6e", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Digest Preview — last 7 days
+          </div>
+
+          {/* Summary row */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 14 }}>
+            {[
+              { label: "Total changes", value: preview.total_changes, color: "#6b9cf8" },
+              { label: "Critical", value: preview.risk_counts.critical, color: "#e84040" },
+              { label: "High", value: preview.risk_counts.high, color: "#f5632a" },
+              { label: "Policy violations", value: preview.policy_violations.total, color: "#f5a623" },
+              { label: "Needs review", value: preview.review_counts.needs_review, color: "#f87171" },
+              {
+                label: "Review rate",
+                value: `${Math.round(preview.review_completion_rate * 100)}%`,
+                color: "#3ccf7e",
+              },
+            ].map(({ label, value, color }) => (
+              <div
+                key={label}
+                style={{
+                  background: "#13151e",
+                  border: "1px solid #1e2130",
+                  borderRadius: 7,
+                  padding: "8px 14px",
+                  minWidth: 90,
+                }}
+              >
+                <div style={{ fontSize: 18, fontWeight: 700, color }}>{value}</div>
+                <div style={{ fontSize: 11, color: "#565b6e", marginTop: 2 }}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Top risks */}
+          {preview.top_risks.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#565b6e", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                Top risks
+              </div>
+              {preview.top_risks.map((r) => (
+                <div
+                  key={r.change_id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "5px 0",
+                    borderBottom: "1px solid #1e2130",
+                    fontSize: 12,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: r.risk_level === "critical" ? "#e84040" : "#f5632a",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {r.risk_level}
+                  </span>
+                  <span style={{ color: "#b0b8c8", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.title}
+                  </span>
+                  <span style={{ color: "#454a5a", fontSize: 11 }}>
+                    {r.status.replace(/_/g, " ")}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Recommended actions */}
+          {preview.recommended_actions.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#565b6e", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+                Recommended actions
+              </div>
+              <ul style={{ margin: 0, padding: "0 0 0 16px" }}>
+                {preview.recommended_actions.map((a, i) => (
+                  <li key={i} style={{ fontSize: 12, color: "#8b90a0", marginBottom: 3 }}>
+                    {a}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <p style={{ fontSize: 11, color: "#454a5a", marginTop: 10, marginBottom: 0 }}>
+            Digest includes configuration metadata only — no customer data, raw values, or credentials.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function NotificationsSettingsPage() {
@@ -1284,6 +1714,23 @@ export default function NotificationsSettingsPage() {
             workspaceId={selectedWorkspace.id}
             isAdmin={isAdmin}
           />
+        </SectionCard>
+
+        {/* ── Weekly Digest (M58.15) ────────────────────────────────── */}
+        <SectionCard title="Weekly Digest" accentColor="#6b9cf8">
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#8b90a0",
+              margin: "0 0 14px",
+              lineHeight: 1.6,
+            }}
+          >
+            Send a weekly summary of configuration drift, policy violations, and
+            recommended actions to workspace admins. Digest contains metadata
+            only — no raw configuration values, credentials, or customer data.
+          </p>
+          <WeeklyDigestCard workspaceId={selectedWorkspace.id} />
         </SectionCard>
 
         <form onSubmit={handleSave}>

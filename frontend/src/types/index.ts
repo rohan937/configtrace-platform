@@ -896,3 +896,98 @@ export interface PolicyListResponse {
   policies: WorkspacePolicy[];
   total: number;
 }
+
+// ── M58.15: Weekly Digest ─────────────────────────────────────────────────────
+
+export interface WeeklyDigestRiskCounts {
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+}
+
+export interface WeeklyDigestReviewCounts {
+  needs_review: number;
+  acknowledged: number;
+  expected: number;
+  snoozed: number;
+}
+
+export interface WeeklyDigestPolicyViolationEntry {
+  policy_key: string;
+  name: string;
+  count: number;
+  severity: string;
+}
+
+export interface WeeklyDigestPolicyViolations {
+  total: number;
+  top_policies: WeeklyDigestPolicyViolationEntry[];
+}
+
+export interface WeeklyDigestProviderActivity {
+  provider: string;
+  change_count: number;
+  high_or_critical_count: number;
+}
+
+export interface WeeklyDigestTopRisk {
+  change_id: string;
+  title: string;
+  provider: string;
+  risk_level: string;
+  status: string;
+  url: string;
+}
+
+export interface WeeklyDigestStaleIntegration {
+  integration_id: string;
+  provider: string;
+  name: string;
+  last_synced_at: string | null;
+  consecutive_failure_count: number;
+}
+
+/** Full weekly digest object returned by GET /weekly-digest/preview. */
+export interface WeeklyDigest {
+  workspace_id: string;
+  workspace_name: string;
+  period_start: string;
+  period_end: string;
+  generated_at: string;
+  total_changes: number;
+  risk_counts: WeeklyDigestRiskCounts;
+  review_counts: WeeklyDigestReviewCounts;
+  review_completion_rate: number;
+  policy_violations: WeeklyDigestPolicyViolations;
+  provider_activity: WeeklyDigestProviderActivity[];
+  top_risks: WeeklyDigestTopRisk[];
+  stale_integrations: WeeklyDigestStaleIntegration[];
+  recommended_actions: string[];
+}
+
+/** Digest schedule settings from GET/PUT /weekly-digest/settings. */
+export interface WeeklyDigestSettings {
+  workspace_id: string;
+  weekly_digest_enabled: boolean;
+  weekly_digest_day: number;   // 0=Monday … 6=Sunday
+  weekly_digest_hour: number;  // 0–23 UTC
+  weekly_digest_timezone: string | null;
+  weekly_digest_last_sent_at: string | null;
+}
+
+export interface WeeklyDigestSettingsUpdateRequest {
+  weekly_digest_enabled?: boolean;
+  weekly_digest_day?: number;
+  weekly_digest_hour?: number;
+  weekly_digest_timezone?: string | null;
+}
+
+/** Response from POST /weekly-digest/test. */
+export interface WeeklyDigestTestResponse {
+  sent: boolean;
+  recipient: string | null;
+  email_configured: boolean;
+  preview_body: string | null;
+  error: string | null;
+}

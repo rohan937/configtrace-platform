@@ -1,7 +1,8 @@
-"""WorkspaceNotificationSettings model — M57.1.
+"""WorkspaceNotificationSettings model — M57.1 / M58.15.
 
 One row per workspace.  Stores encrypted Slack incoming-webhook URL and
 encrypted generic-webhook URL alongside enabled flags and a risk-level filter.
+M58.15 adds weekly digest scheduling columns.
 
 Security design
 ---------------
@@ -26,7 +27,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -159,6 +160,35 @@ class WorkspaceNotificationSettings(BaseMixin, Base):
     )
     # Last delivery error message (if any).  Safe to return to admins.
     slack_app_last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # ── Weekly digest (M58.15) ─────────────────────────────────────────────────
+    # When True, a weekly digest email is sent to workspace admins on schedule.
+    weekly_digest_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    # Day of week: 0 = Monday … 6 = Sunday (ISO weekday − 1).
+    weekly_digest_day: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    # Hour of day 0–23 (UTC unless weekly_digest_timezone is set).
+    weekly_digest_hour: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=9,
+        server_default="9",
+    )
+    # IANA timezone string (e.g. "America/New_York").  Null = UTC.
+    weekly_digest_timezone: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Last time a digest was successfully sent for this workspace.
+    weekly_digest_last_sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     def __repr__(self) -> str:
         return (
