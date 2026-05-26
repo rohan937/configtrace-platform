@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import type { ChangeDetail, ChangeReviewResponse, DnsRecord, ReviewStatus } from "@/types";
@@ -33,7 +33,9 @@ import { getProviderMeta } from "@/lib/providers";
 import {
   getRemediationGuidance,
   type RemediationGuidance,
+  type FixPlan,
 } from "@/lib/remediation";
+import { getFixPlanForChange } from "@/lib/fixPlans";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -4870,6 +4872,423 @@ function ReviewPanel({ changeId, review, onReviewUpdated }: ReviewPanelProps) {
   );
 }
 
+// ── Fix plan subsection ───────────────────────────────────────────────────────
+
+const SAFETY_META: Record<
+  import("@/lib/remediation").FixPlanSafetyLevel,
+  { label: string; color: string; border: string }
+> = {
+  safe_to_preview:       { label: "Safe to preview",        color: "#22c55e", border: "rgba(34,197,94,0.30)"  },
+  requires_human_review: { label: "Requires human review",  color: "#f5a623", border: "rgba(245,166,35,0.30)" },
+  not_recommended:       { label: "Not recommended",        color: "#e84040", border: "rgba(232,64,64,0.30)"  },
+};
+
+const KIND_LABEL: Record<import("@/lib/remediation").FixPlanKind, string> = {
+  command:          "CLI command",
+  guided_manual:    "Guided manual fix",
+  provider_console: "Provider console",
+  not_supported:    "Not supported",
+};
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard API unavailable — silently fail
+    }
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      aria-label={copied ? "Copied" : "Copy command to clipboard"}
+      style={{
+        background: copied ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)",
+        border: `1px solid ${copied ? "rgba(34,197,94,0.3)" : "#3a3d4a"}`,
+        borderRadius: "4px",
+        color: copied ? "#22c55e" : "#8b90a0",
+        cursor: "pointer",
+        fontSize: "10px",
+        fontFamily: "inherit",
+        fontWeight: 500,
+        padding: "3px 9px",
+        flexShrink: 0,
+        transition: "all 0.15s",
+        letterSpacing: "0.03em",
+      }}
+    >
+      {copied ? "Copied ✓" : "Copy"}
+    </button>
+  );
+}
+
+function FixPlanSubsection({
+  fixPlan,
+  dividerColor,
+}: {
+  fixPlan: FixPlan;
+  dividerColor: string;
+}) {
+  const safety = SAFETY_META[fixPlan.safety_level];
+
+  return (
+    <div
+      style={{
+        marginTop: "14px",
+        paddingTop: "14px",
+        borderTop: `1px solid ${dividerColor}`,
+      }}
+    >
+      {/* Section header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "8px",
+          marginBottom: "8px",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "11px",
+            color: "#565b6e",
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            fontWeight: 500,
+            margin: 0,
+          }}
+        >
+          Fix plan preview
+        </p>
+        {/* Safety level badge */}
+        <span
+          style={{
+            fontSize: "10px",
+            color: safety.color,
+            border: `1px solid ${safety.border}`,
+            borderRadius: "4px",
+            padding: "1px 6px",
+            fontWeight: 600,
+            letterSpacing: "0.03em",
+          }}
+        >
+          {safety.label}
+        </span>
+        {/* Kind badge */}
+        <span
+          style={{
+            fontSize: "10px",
+            color: "#8b90a0",
+            border: "1px solid #2a2d38",
+            borderRadius: "4px",
+            padding: "1px 6px",
+            fontWeight: 500,
+          }}
+        >
+          {KIND_LABEL[fixPlan.kind]}
+        </span>
+        {/* Execution mode badge */}
+        <span
+          style={{
+            fontSize: "10px",
+            color: "#565b6e",
+            border: "1px solid #2a2d38",
+            borderRadius: "4px",
+            padding: "1px 6px",
+          }}
+        >
+          Manual execution required
+        </span>
+      </div>
+
+      {/* Title */}
+      <p
+        style={{
+          fontSize: "13px",
+          fontWeight: 600,
+          color: "#e8eaf0",
+          margin: "0 0 6px",
+          lineHeight: 1.4,
+        }}
+      >
+        {fixPlan.title}
+      </p>
+
+      {/* Summary */}
+      <p style={{ fontSize: "13px", color: "#b0b5c4", lineHeight: 1.6, margin: "0 0 10px" }}>
+        {fixPlan.summary}
+      </p>
+
+      {/* Primary disclaimer */}
+      <div
+        style={{
+          background: "rgba(79,128,247,0.06)",
+          border: "1px solid rgba(79,128,247,0.20)",
+          borderRadius: "5px",
+          padding: "8px 12px",
+          marginBottom: "12px",
+          fontSize: "11px",
+          color: "#8b90a0",
+          lineHeight: 1.6,
+        }}
+      >
+        <span style={{ color: "#4f80f7", fontWeight: 600 }}>
+          ConfigTrace does not execute this fix.
+        </span>{" "}
+        Review the command or steps carefully and apply them manually in your provider environment.
+      </div>
+
+      {/* Warnings — shown before commands */}
+      {fixPlan.warnings && fixPlan.warnings.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          {fixPlan.warnings.map((w, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                gap: "7px",
+                alignItems: "flex-start",
+                marginBottom: i < (fixPlan.warnings?.length ?? 0) - 1 ? "5px" : 0,
+              }}
+            >
+              <span aria-hidden="true" style={{ flexShrink: 0, color: "#f5a623", marginTop: "1px" }}>⚠</span>
+              <span style={{ fontSize: "12px", color: "#8b90a0", lineHeight: 1.6 }}>{w}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Required permissions */}
+      {fixPlan.required_permissions && fixPlan.required_permissions.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            Required permissions
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {fixPlan.required_permissions.map((p, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: "2px",
+                }}
+              >
+                <span aria-hidden="true" style={{ flexShrink: 0, color: "#565b6e", marginTop: "1px" }}>·</span>
+                <span>{p}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Preconditions */}
+      {fixPlan.preconditions && fixPlan.preconditions.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            Before you apply
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {fixPlan.preconditions.map((pre, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: "2px",
+                }}
+              >
+                <span aria-hidden="true" style={{ flexShrink: 0, color: "#565b6e", marginTop: "2px" }}>□</span>
+                <span>{pre}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Command blocks */}
+      {fixPlan.commands && fixPlan.commands.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          {fixPlan.commands.map((cmd, i) => (
+            <div key={i} style={{ marginBottom: i < (fixPlan.commands?.length ?? 0) - 1 ? "10px" : 0 }}>
+              {/* Command header */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: "4px",
+                }}
+              >
+                <span style={{ fontSize: "11px", color: "#565b6e", fontWeight: 500 }}>
+                  {cmd.label}
+                </span>
+                {fixPlan.copy_enabled && <CopyButton text={cmd.command} />}
+              </div>
+              {/* Code block */}
+              <pre
+                style={{
+                  background: "#0d0f14",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "5px",
+                  padding: "12px 14px",
+                  margin: 0,
+                  fontSize: "12px",
+                  fontFamily: "ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace",
+                  color: "#b0b5c4",
+                  lineHeight: 1.6,
+                  overflowX: "auto",
+                  whiteSpace: "pre",
+                }}
+              >
+                <code>{cmd.command}</code>
+              </pre>
+              {/* Placeholder notice */}
+              {cmd.requires_values.length > 0 && (
+                <p style={{ fontSize: "11px", color: "#565b6e", margin: "4px 0 0", lineHeight: 1.5 }}>
+                  Replace before running:{" "}
+                  {cmd.requires_values.map((v, j) => (
+                    <Fragment key={v}>
+                      <code
+                        style={{
+                          background: "rgba(245,166,35,0.10)",
+                          border: "1px solid rgba(245,166,35,0.25)",
+                          borderRadius: "3px",
+                          padding: "0 4px",
+                          fontSize: "10px",
+                          color: "#f5a623",
+                          fontFamily: "ui-monospace, monospace",
+                        }}
+                      >
+                        {"<"}{v}{">"}
+                      </code>
+                      {j < cmd.requires_values.length - 1 && " "}
+                    </Fragment>
+                  ))}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Guided manual steps (for guided_manual kind) */}
+      {fixPlan.manual_steps && fixPlan.manual_steps.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            {fixPlan.kind === "guided_manual" ? "Manual steps" : "Alternative manual steps"}
+          </p>
+          <ol style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {fixPlan.manual_steps.map((step, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: i < (fixPlan.manual_steps?.length ?? 0) - 1 ? "3px" : 0,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    flexShrink: 0,
+                    width: "16px",
+                    fontSize: "11px",
+                    color: "#565b6e",
+                    fontVariantNumeric: "tabular-nums",
+                    marginTop: "2px",
+                  }}
+                >
+                  {i + 1}.
+                </span>
+                <span>{step}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {/* Postconditions */}
+      {fixPlan.postconditions && fixPlan.postconditions.length > 0 && (
+        <div>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#565b6e",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              fontWeight: 500,
+              margin: "0 0 4px",
+            }}
+          >
+            After applying
+          </p>
+          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+            {fixPlan.postconditions.map((post, i) => (
+              <li
+                key={i}
+                style={{
+                  fontSize: "12px",
+                  color: "#8b90a0",
+                  lineHeight: 1.6,
+                  display: "flex",
+                  gap: "7px",
+                  marginBottom: "2px",
+                }}
+              >
+                <span aria-hidden="true" style={{ flexShrink: 0, color: "#22c55e", marginTop: "1px" }}>✓</span>
+                <span>{post}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Remediation section ───────────────────────────────────────────────────────
 
 const CONFIDENCE_COLORS: Record<RemediationGuidance["confidence"], { bg: string; border: string; text: string; label: string }> = {
@@ -4878,7 +5297,13 @@ const CONFIDENCE_COLORS: Record<RemediationGuidance["confidence"], { bg: string;
   low:    { bg: "rgba(86,91,110,0.10)",  border: "#2a2d38",               text: "#8b90a0", label: "Low confidence"    },
 };
 
-function RemediationSection({ guidance }: { guidance: RemediationGuidance }) {
+function RemediationSection({
+  guidance,
+  fixPlan,
+}: {
+  guidance: RemediationGuidance;
+  fixPlan?: FixPlan;
+}) {
   const conf = CONFIDENCE_COLORS[guidance.confidence];
 
   return (
@@ -5175,6 +5600,9 @@ function RemediationSection({ guidance }: { guidance: RemediationGuidance }) {
           </div>
         )}
 
+        {/* ── Fix plan preview subsection ───────────────────────────── */}
+        {fixPlan && <FixPlanSubsection fixPlan={fixPlan} dividerColor={conf.border} />}
+
         {/* Footer: disclaimer + status badges */}
         <div
           style={{
@@ -5336,6 +5764,7 @@ export default function ChangeDetailPage() {
   const whyItMatters  = getWhyItMatters(change);
   const checks        = getSuggestedChecks(change);
   const remediation   = getRemediationGuidance(change);
+  const fixPlan       = getFixPlanForChange(change);
 
   // Non-Cloudflare providers show "Configuration added/removed" instead of "DNS record added/removed"
   const showConfigLabel = provider !== "cloudflare";
@@ -5602,7 +6031,10 @@ export default function ChangeDetailPage() {
 
         {/* ── Suggested remediation ───────────────────────────────────── */}
         {remediation.available && (
-          <RemediationSection guidance={remediation} />
+          <RemediationSection
+            guidance={remediation}
+            fixPlan={fixPlan.available ? fixPlan : undefined}
+          />
         )}
 
         {/* ── Raw configuration diff ──────────────────────────────────── */}
