@@ -1271,3 +1271,71 @@ export interface TerraformFixPreviewResponse {
   /** Always false — Terraform is never executed. */
   execution_enabled: false;
 }
+
+// ── M58.20: GitHub PR Draft Flow ──────────────────────────────────────────────
+
+/**
+ * Hard-wired safety flags for the GitHub PR draft.
+ * All write-action flags are permanently false in M58.20.
+ */
+export interface GitHubPrDraftSafetyFlags {
+  /** Always false — no git refs API calls. */
+  creates_branch: false;
+  /** Always false — no contents write API calls. */
+  commits_code: false;
+  /** Always false — no pulls API calls. */
+  opens_pr: false;
+  /** Always false — Terraform is never executed. */
+  executes_terraform: false;
+  /** Always true. */
+  requires_human_review: true;
+}
+
+/** The GitHub repository and file targeted by the PR draft. */
+export interface GitHubPrDraftRepo {
+  repo_full_name: string;
+  default_branch: string;
+  file_path: string;
+}
+
+/**
+ * The proposed GitHub PR — branch name, commit, title, body, and patch.
+ * All content is read-only. No GitHub API calls are made in M58.20.
+ */
+export interface GitHubPrDraftObject {
+  branch_name: string;
+  commit_message: string;
+  pr_title: string;
+  pr_body: string;
+  target_file_path: string;
+  /** null when the Terraform fix is guidance-only (low confidence). */
+  patch_preview: string | null;
+  labels: string[];
+  review_notes: string[];
+}
+
+/**
+ * Full response for GET /changes/{id}/github-pr-draft.
+ *
+ * PERMANENT SAFETY CONSTANTS:
+ * - safety.creates_branch is ALWAYS false
+ * - safety.commits_code is ALWAYS false
+ * - safety.opens_pr is ALWAYS false
+ * - safety.executes_terraform is ALWAYS false
+ *
+ * Actual PR creation is deferred to M58.21.
+ */
+export interface GitHubPrDraftResponse {
+  available: boolean;
+  /** "draft_preview_only" | "outline_only" */
+  mode: string;
+  title: string | null;
+  summary: string | null;
+  repo: GitHubPrDraftRepo | null;
+  draft: GitHubPrDraftObject | null;
+  safety: GitHubPrDraftSafetyFlags;
+  requirements: string[];
+  next_step: string | null;
+  /** Reason why the draft is unavailable (when available=false). */
+  reason: string | null;
+}

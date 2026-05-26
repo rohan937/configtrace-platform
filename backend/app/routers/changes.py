@@ -1,4 +1,4 @@
-"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16 / M58.18 / M58.19.
+"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16 / M58.18 / M58.19 / M58.20.
 
 Routes
 ------
@@ -23,6 +23,9 @@ GET  /changes/{change_id}/iac-context — advisory IaC mapping context for a cha
 
 M58.19 Terraform fix suggestion preview:
 GET  /changes/{change_id}/terraform-fix-preview — advisory HCL diff preview (read-only)
+
+M58.20 GitHub PR draft flow:
+GET  /changes/{change_id}/github-pr-draft — safe PR draft proposal (no repo mutations)
 
 Both GET routes now include an optional ``review`` field with the current
 review state.  When no review row exists ``review`` is None (treat as
@@ -75,6 +78,7 @@ from app.schemas.policy import PolicyViolationsResponse
 from app.schemas.expected_change_window import ExpectedChangeMatchResponse
 from app.schemas.iac import IacContextResponse
 from app.schemas.terraform_fix import TerraformFixPreviewResponse
+from app.schemas.github_pr_draft import GitHubPrDraftResponse, GitHubPrDraftSafetyFlags
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
@@ -84,6 +88,7 @@ from app.services import policy_engine_service
 from app.services import expected_change_service
 from app.services import iac_mapping_service
 from app.services import terraform_fix_suggestion_service
+from app.services import github_pr_draft_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -718,6 +723,57 @@ def get_terraform_fix_preview(
         )
 
     return terraform_fix_suggestion_service.get_terraform_fix_preview(
+        change_id=change_id,
+        workspace_id=workspace_id,
+        db=db,
+    )
+
+
+# ── GitHub PR draft flow (M58.20) ─────────────────────────────────────────────
+
+
+@router.get("/{change_id}/github-pr-draft", response_model=GitHubPrDraftResponse)
+def get_github_pr_draft(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitHubPrDraftResponse:
+    """Return a safe GitHub PR draft proposal for a change.
+
+    Generates a draft PR object — branch name, commit message, PR title,
+    PR body, and patch preview — derived from the Terraform fix suggestion
+    (M58.19) and the IaC resource mapping (M58.18).
+
+    PERMANENT SAFETY CONSTRAINTS:
+    - creates_branch     is always False. No git refs API calls are made.
+    - commits_code       is always False. No contents write API calls are made.
+    - opens_pr           is always False. No pulls API calls are made.
+    - executes_terraform is always False. Terraform is never executed.
+
+    All content is generated locally. No GitHub write APIs are called.
+    Actual PR creation is deferred to M58.21.
+
+    Returns ``{"available": false}`` when:
+    - The Terraform fix preview (M58.19) is not available for this change.
+    - No IaC repositories have been registered or scanned for the workspace.
+
+    The endpoint always returns 200; ``available`` communicates the result.
+    Only workspace members may call this endpoint.
+    """
+    change, workspace_id = _get_change_and_workspace(change_id, current_user, db)
+
+    if workspace_id is None:
+        return GitHubPrDraftResponse(
+            available=False,
+            safety=GitHubPrDraftSafetyFlags(),
+            reason=(
+                "GitHub PR drafts require a workspace-linked integration. "
+                "Register IaC repositories under Workspace → IaC Awareness settings."
+            ),
+            requirements=github_pr_draft_service._FUTURE_REQUIREMENTS,
+        )
+
+    return github_pr_draft_service.get_github_pr_draft(
         change_id=change_id,
         workspace_id=workspace_id,
         db=db,

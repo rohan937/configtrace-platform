@@ -1319,3 +1319,12 @@ export async function getChangeTerraformFixPreview(
   return apiFetch(`/changes/${changeId}/terraform-fix-preview`, { token });
 }
 
+// ── M58.20: GitHub PR Draft Flow ──────────────────────────────────────────────
+
+export async function getChangeGitHubPrDraft(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").GitHubPrDraftResponse> {
+  return apiFetch(`/changes/${changeId}/github-pr-draft`, { token });
+}
+

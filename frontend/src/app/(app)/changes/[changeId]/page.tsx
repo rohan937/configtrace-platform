@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, IacContextResponse, TerraformFixPreviewResponse, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, IacContextResponse, TerraformFixPreviewResponse, GitHubPrDraftResponse, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
 import {
   getChange,
   acknowledgeChange,
@@ -17,6 +17,7 @@ import {
   getExpectedChangeMatch,
   getChangeIacContext,
   getChangeTerraformFixPreview,
+  getChangeGitHubPrDraft,
 } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
@@ -56,6 +57,7 @@ import BlastRadiusPanel from "@/components/investigation/BlastRadiusPanel";
 import PolicyViolationsPanel from "@/components/investigation/PolicyViolationsPanel";
 import IacContextPanel from "@/components/investigation/IacContextPanel";
 import TerraformFixPreviewPanel from "@/components/investigation/TerraformFixPreviewPanel";
+import GitHubPrDraftPanel from "@/components/investigation/GitHubPrDraftPanel";
 
 // ── Expected Change Panel (M58.16) ────────────────────────────────────────────
 
@@ -6266,6 +6268,9 @@ export default function ChangeDetailPage() {
   // M58.19: Terraform fix suggestion preview
   const [terraformFix, setTerraformFix] = useState<TerraformFixPreviewResponse | null>(null);
   const [terraformFixLoading, setTerraformFixLoading] = useState(false);
+  // M58.20: GitHub PR draft
+  const [githubPrDraft, setGithubPrDraft] = useState<GitHubPrDraftResponse | null>(null);
+  const [githubPrDraftLoading, setGithubPrDraftLoading] = useState(false);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6380,6 +6385,19 @@ export default function ChangeDetailPage() {
     getChangeTerraformFixPreview(changeId, cachedToken)
       .then((data) => { if (!cancelled) { setTerraformFix(data); setTerraformFixLoading(false); } })
       .catch(() => { if (!cancelled) setTerraformFixLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [changeId, cachedToken, change]);
+
+  // M58.20: fetch GitHub PR draft after the change is loaded
+  useEffect(() => {
+    if (!changeId || !cachedToken || !change) return;
+    let cancelled = false;
+
+    setGithubPrDraftLoading(true);
+    getChangeGitHubPrDraft(changeId, cachedToken)
+      .then((data) => { if (!cancelled) { setGithubPrDraft(data); setGithubPrDraftLoading(false); } })
+      .catch(() => { if (!cancelled) setGithubPrDraftLoading(false); });
 
     return () => { cancelled = true; };
   }, [changeId, cachedToken, change]);
@@ -6555,6 +6573,12 @@ export default function ChangeDetailPage() {
         <TerraformFixPreviewPanel
           data={terraformFix}
           loading={terraformFixLoading}
+        />
+
+        {/* ── GitHub PR Draft (M58.20) ──────────────────────────────────── */}
+        <GitHubPrDraftPanel
+          data={githubPrDraft}
+          loading={githubPrDraftLoading}
         />
 
         {/* ── Policy Violations (M58.14) ───────────────────────────────── */}
