@@ -3402,115 +3402,1419 @@ function _sbApiConfigPlaybooks(
 // Playbook 5 — GitHub
 // ─────────────────────────────────────────────────────────────────────────────
 
-function _githubPlaybooks(
+// 5a. Branch protection
+function _ghBranchProtectionPlaybooks(
   rt: string, fp: string, ct: string,
   rl: string, rr: string, nv: unknown,
 ): RemediationGuidance | null {
+  if (rt !== "github_branch_protection") return null;
 
-  if (
-    (rt === "github_branch_protection" || rt === "github_environment_protection") &&
-    (rl === "critical" || rl === "high")
-  ) {
-    const isBranch = rt === "github_branch_protection";
-    const subject  = isBranch ? "branch protection" : "environment protection";
-
+  if (ct === "removed") {
     return _guidance({
-      confidence: rl === "critical" ? "high" : "medium",
-      title:   `Restore ${subject} policy`,
-      summary: `Re-enable required reviewers, required status checks, and prevent-self-review rules that were removed or weakened on this ${isBranch ? "branch" : "environment"}.`,
-      why_this_helps: isBranch
-        ? "Branch protection rules are the primary code review and quality gate for production branches. Reducing required reviewers, removing required status checks, or disabling prevent-self-review means code can be merged without peer review — including code introduced by a compromised developer account or a malicious pull request. For branches that deploy to production, this is a direct path to unauthorized deployments."
-        : "Environment protection rules gate deployments to sensitive environments (production, staging) by requiring specific reviewers to approve before a deployment proceeds. Reducing reviewer counts or wait timers means deployments can run without the intended oversight, increasing the risk of unauthorized or accidental changes reaching production.",
+      confidence: "high",
+      title: "Restore removed GitHub branch protection rule",
+      summary: "Re-create the branch protection rule to reinstate required reviewers, status checks, and push restrictions on this branch.",
+      why_this_helps:
+        "Branch protection rules are the primary code review and quality gate for production branches. Removing the rule entirely means code can be pushed directly or merged without peer review or status checks — including code from a compromised developer account or a malicious pull request. For branches that deploy to production, this is a direct path to unauthorized deployments.",
       verify_first: [
-        `Confirm the ${subject} change was intentional and approved by the team.`,
-        `Review recent GitHub audit log entries for who changed the ${isBranch ? "branch" : "environment"} settings.`,
-        `Identify any open pull requests or pending deployments that were unblocked by this change.`,
-        `Confirm whether this ${isBranch ? "branch" : "environment"} is used for production deployments.`,
+        "Confirm the branch protection rule was intentionally removed by an authorized team member.",
+        "Review the GitHub audit log (Organization → Settings → Audit log) for who deleted the rule and when.",
+        "Identify whether any direct pushes or merged pull requests occurred on this branch during the unprotected window.",
+        "Confirm whether this branch is used for production deployments.",
       ],
       manual_steps: [
-        `Open the GitHub repository settings.`,
-        isBranch
-          ? "Navigate to Code and automation → Branches → Branch protection rules."
-          : "Navigate to Environments → [affected environment] → Environment protection rules.",
-        `Review the current protection settings and restore: required reviewers, required status checks, prevent-self-review, and dismiss stale reviews if applicable.`,
-        `Save the updated protection rules.`,
-        `Audit any pull requests or deployments that may have bypassed protection during the window it was weakened.`,
+        "Open the GitHub repository → Settings → Branches.",
+        "Click 'Add branch ruleset' or 'Add classic branch protection rule'.",
+        "Set the branch name pattern to match the affected branch.",
+        "Re-enable: Require pull request reviews, Require status checks to pass, Restrict direct pushes, Dismiss stale reviews.",
+        "Save the rule.",
+        "Audit any commits or merges that occurred while the rule was absent.",
       ],
       validation_steps: STANDARD_VALIDATION,
       caveats: [
         "Restoring required status checks may block pending pull requests that no longer pass those checks.",
-        "If the change was intentional (e.g. a hotfix bypass during an incident), document it and restore the rules promptly.",
-        "Required reviewers must be current team members — update the reviewer list if team membership has changed.",
+        "If this was an intentional hotfix bypass during an incident, document the decision and restore promptly.",
       ],
-      docs_links: isBranch
-        ? [
-            { label: "GitHub branch protection rules",        url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" },
-          ]
-        : [
-            { label: "GitHub environment protection rules",   url: "https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment" },
-          ],
-      provider_console_hint: isBranch
-        ? "GitHub → [repo] → Settings → Branches → Branch protection rules."
-        : "GitHub → [repo] → Settings → Environments → [environment] → Protection rules.",
+      docs_links: [
+        { label: "GitHub branch protection rules", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" },
+        { label: "GitHub audit log", url: "https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/reviewing-the-audit-log-for-your-organization" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → Add branch protection rule.",
+    });
+  }
+
+  if (fp === "protection_enabled" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable GitHub branch protection",
+      summary: "Re-enable branch protection on this branch to restore required review and push restriction enforcement.",
+      why_this_helps:
+        "Disabling branch protection removes all code review gates and push restrictions. Any developer with repository write access can push commits directly — bypassing required reviewers, status checks, and signed commit requirements. On a production branch, this allows unreviewed code to be deployed immediately.",
+      verify_first: [
+        "Confirm the change was authorized and document the reason.",
+        "Review the GitHub audit log for recent direct pushes to this branch.",
+        "Check whether any CI/CD pipelines or auto-merges ran during the unprotected window.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Locate the protection rule for this branch.",
+        "Re-enable the protection rule and verify all required checks are still configured.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling protection does not retroactively block pushes made during the unprotected window — audit those separately.",
+      ],
+      docs_links: [
+        { label: "GitHub branch protection rules", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Enable protection.",
+    });
+  }
+
+  if (fp === "allow_force_pushes" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Disable force pushes on protected GitHub branch",
+      summary: "Disable the allow_force_pushes setting to prevent history rewriting on this protected branch.",
+      why_this_helps:
+        "Force pushes allow a developer to rewrite git history on a branch — overwriting or removing previous commits. On a production or main branch, this can silently erase evidence of unauthorized commits, overwrite code that was reviewed and approved, or corrupt deployment history.",
+      verify_first: [
+        "Check the GitHub audit log for recent force-push events on this branch.",
+        "Confirm whether any recent commits were overwritten by a force push.",
+        "Identify who enabled force pushes and whether it was for a legitimate one-time purpose.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Uncheck 'Allow force pushes'.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Disabling force pushes immediately prevents any pending rebases from being pushed — coordinate with the team first.",
+      ],
+      docs_links: [
+        { label: "GitHub force push protection", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#allow-force-pushes" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Allow force pushes.",
+    });
+  }
+
+  if (fp === "allow_deletions" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Disable branch deletion on protected GitHub branch",
+      summary: "Disable the allow_deletions setting to prevent the protected branch from being deleted.",
+      why_this_helps:
+        "Allowing deletion of a protected branch means any developer with write access can delete the production or main branch, causing immediate deployment failures and potentially losing commit history.",
+      verify_first: [
+        "Confirm no one has deleted the branch since this change was made.",
+        "Identify who enabled branch deletion and whether it was for a legitimate short-term purpose.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Uncheck 'Allow deletions'.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "If a branch was deleted and needs recovery, use GitHub's branch restoration from the closed pull requests list.",
+      ],
+      docs_links: [
+        { label: "GitHub branch protection rules", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Allow deletions.",
+    });
+  }
+
+  if (fp === "required_status_checks_enabled" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable required status checks on GitHub branch",
+      summary: "Re-enable required status checks to ensure CI tests and security scans must pass before merging pull requests.",
+      why_this_helps:
+        "Required status checks prevent pull requests from being merged unless all configured CI checks (tests, linting, security scans) pass. Disabling them allows code to be merged even when tests fail or security checks are not run — increasing the risk of deploying broken or vulnerable code to production.",
+      verify_first: [
+        "Identify which status checks were previously required and confirm they are still configured in your CI system.",
+        "Check whether any pull requests were merged after status checks were disabled.",
+        "Confirm whether the CI pipeline is currently healthy and running.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Check 'Require status checks to pass before merging'.",
+        "Add back the required checks (e.g. build, test, lint, security scan).",
+        "Optionally check 'Require branches to be up to date before merging'.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling status checks will block currently open pull requests if their checks are not passing.",
+        "Ensure check names match exactly the status check names reported by your CI system.",
+      ],
+      docs_links: [
+        { label: "GitHub required status checks", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-required-status-checks" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Require status checks.",
+    });
+  }
+
+  if (fp === "required_pull_request_reviews_enabled" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable required pull request reviews on GitHub branch",
+      summary: "Re-enable required pull request reviews to ensure code changes on this branch require peer approval before merging.",
+      why_this_helps:
+        "Required pull request reviews ensure at least one additional team member reviews and approves code changes before they are merged. Without this requirement, a single developer can merge their own changes — including malicious code — directly to the production branch without any peer oversight.",
+      verify_first: [
+        "Check whether any pull requests were merged without review after this setting was disabled.",
+        "Confirm the expected required reviewer count for this branch.",
+        "Identify who disabled the review requirement and whether it was intentional.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Check 'Require a pull request before merging'.",
+        "Set the required number of approvals (minimum 1, recommended 2 for production branches).",
+        "Check 'Dismiss stale pull request approvals when new commits are pushed'.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling reviews will require open pull requests to obtain approvals before they can be merged.",
+        "For very small teams, requiring 2 reviewers may block merges — set the count appropriate to your team size.",
+      ],
+      docs_links: [
+        { label: "GitHub required pull request reviews", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-pull-request-reviews-before-merging" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Require pull request reviews.",
+    });
+  }
+
+  if (fp === "enforce_admins" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable branch protection enforcement for administrators",
+      summary: "Re-enable 'Include administrators' so repository admins are subject to the same branch protection rules as all other contributors.",
+      why_this_helps:
+        "When 'Include administrators' is disabled, repository admins can bypass branch protection rules — pushing directly, merging without reviews, and skipping required status checks. Administrator accounts are high-value targets; if compromised, the attacker gains unrestricted write access to the production branch.",
+      verify_first: [
+        "Check whether any admin pushes occurred directly to this branch since enforce_admins was disabled.",
+        "Confirm whether a specific admin needed this bypass for a time-limited purpose.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Check 'Do not allow bypassing the above settings' (or 'Include administrators' in classic rules).",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling this setting applies immediately — admins will no longer be able to bypass required checks or reviews.",
+      ],
+      docs_links: [
+        { label: "GitHub branch protection rules", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Do not allow bypassing.",
+    });
+  }
+
+  if (fp === "required_approving_review_count" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore required approving review count on GitHub branch",
+      summary: "Increase the required approving review count back to the expected minimum to restore peer review coverage.",
+      why_this_helps:
+        "Reducing the required number of approving reviews means pull requests can be merged with less oversight. For production branches the recommended minimum is 2 reviewers — this ensures at least one reviewer is not the author and that mistakes or malicious changes are more likely to be caught before merging.",
+      verify_first: [
+        "Confirm the previous review count and whether the reduction was authorized.",
+        "Check whether pull requests were merged with fewer reviews than previously required during the window after the change.",
+        "Confirm the current team size supports the review count you plan to restore.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Increase 'Required number of approvals before merging' to the expected value.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Open pull requests may need additional approvals before they can be merged after this change.",
+      ],
+      docs_links: [
+        { label: "GitHub pull request reviews", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-pull-request-reviews-before-merging" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Required approvals.",
+    });
+  }
+
+  if (fp === "required_linear_history" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable linear history requirement on GitHub branch",
+      summary: "Re-enable linear history (squash/rebase merges only) to maintain a clean, auditable commit history on this branch.",
+      why_this_helps:
+        "Linear history ensures every commit on the branch has a single parent, making git bisect, revert, and audit log review more straightforward. Allowing merge commits can obscure the actual author of changes and make it harder to trace when a specific vulnerability was introduced.",
+      verify_first: [
+        "Confirm whether any merge commits were introduced after linear history was disabled.",
+        "Confirm the team's preferred merge strategy (squash vs rebase).",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Check 'Require linear history'.",
+        "Save the rule.",
+        "Optionally configure allowed merge types in Settings → General → Pull Requests.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Linear history requires all open pull requests to use squash or rebase merge — standard merge commits will be blocked.",
+      ],
+      docs_links: [
+        { label: "GitHub linear history", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-linear-history" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Require linear history.",
+    });
+  }
+
+  if (fp === "dismiss_stale_reviews") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable stale review dismissal on GitHub branch",
+      summary: "Re-enable automatic dismissal of stale pull request approvals when new commits are pushed.",
+      why_this_helps:
+        "When stale review dismissal is disabled, an approved pull request remains approved even after new commits are pushed. This means code can be added after review and merged immediately using the previously granted approval — bypassing the intent of the review requirement.",
+      verify_first: [
+        "Check whether any pull requests were approved and then had new commits pushed before merging while this setting was disabled.",
+        "Confirm whether the change was intentional.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Select the branch protection rule for this branch.",
+        "Check 'Dismiss stale pull request approvals when new commits are pushed'.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling this setting dismisses approvals on any currently open PRs that had new commits pushed after approval.",
+      ],
+      docs_links: [
+        { label: "GitHub branch protection rules", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches → [rule] → Dismiss stale reviews.",
+    });
+  }
+
+  // Fallback for unrecognised high/critical branch protection changes
+  if (rl === "critical" || rl === "high") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review GitHub branch protection change",
+      summary: "A branch protection rule was weakened. Review the change and restore the appropriate protection settings.",
+      why_this_helps:
+        "Branch protection rules are the primary gate preventing direct pushes and unreviewed merges to important branches. Any weakening of these rules increases the risk of unauthorized code reaching production.",
+      verify_first: [
+        "Confirm the change was authorized.",
+        "Review the GitHub audit log for recent activity on this branch.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Branches.",
+        "Review and restore the appropriate protection settings for this branch.",
+        "Save the rule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [],
+      docs_links: [
+        { label: "GitHub branch protection rules", url: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Branches.",
     });
   }
 
   return null;
 }
 
+// 5b. Environment protection
+function _ghEnvironmentPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "github_environment_protection") return null;
+
+  if (ct === "removed" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed GitHub environment protection rule",
+      summary: "Re-create the environment protection rule to reinstate deployment reviewers and wait timers for this environment.",
+      why_this_helps:
+        "Environment protection rules gate deployments to sensitive environments (production, staging) by requiring specific reviewers to approve before a deployment job runs. Without this rule, any workflow job targeting this environment can deploy immediately without oversight.",
+      verify_first: [
+        "Confirm the environment protection rule removal was authorized.",
+        "Review recent GitHub Actions deployment runs to this environment — check if any unreviewed deployments ran.",
+        "Identify who removed the rule via the GitHub audit log.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Environments.",
+        "Select the affected environment (or click 'New environment' if it was deleted).",
+        "Under Environment protection rules, add: Required reviewers, Wait timer, Deployment branches restriction.",
+        "Save the environment settings.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-adding required reviewers will pause future deployment jobs for that environment until a reviewer approves.",
+      ],
+      docs_links: [
+        { label: "GitHub environment protection rules", url: "https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Environments → [environment] → Protection rules.",
+    });
+  }
+
+  if (fp === "reviewers_count" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore required reviewer count for GitHub environment",
+      summary: "Increase the required deployment reviewer count back to the expected minimum for this environment.",
+      why_this_helps:
+        "Deployment reviewers act as the human approval gate before code reaches sensitive environments. Reducing the reviewer count means fewer eyes on each production deployment, increasing the chance that an unintended or malicious deployment is approved without sufficient scrutiny.",
+      verify_first: [
+        "Confirm the previous reviewer count and whether the reduction was planned.",
+        "Check recent deployment history for deployments that used the reduced reviewer count.",
+        "Confirm the reviewer list is current — team membership may have changed.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Environments → [environment].",
+        "Under 'Required reviewers', add back the appropriate team members or teams.",
+        "Save the environment settings.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Reviewers must have at least read access to the repository.",
+        "GitHub allows up to 6 required reviewers per environment.",
+      ],
+      docs_links: [
+        { label: "GitHub environment protection rules", url: "https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Environments → [environment] → Required reviewers.",
+    });
+  }
+
+  if ((fp === "protected_branches_only" || fp === "protected_branches") && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable deployment branch restriction for GitHub environment",
+      summary: "Restrict deployments to this environment to protected branches only, preventing arbitrary branch deployments to production.",
+      why_this_helps:
+        "Deployment branch restrictions ensure that only code from designated protected branches (e.g. main, release/*) can be deployed to sensitive environments. Without this restriction, any branch — including feature branches with unreviewed code — can trigger a production deployment.",
+      verify_first: [
+        "Confirm whether any unprotected branches have deployed to this environment since the restriction was removed.",
+        "Identify the intended source branches for this environment.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Environments → [environment].",
+        "Under 'Deployment branches and tags', select 'Protected branches only' or specify allowed branch patterns.",
+        "Save the environment settings.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Restricting to protected branches will block any current workflow runs targeting this environment from non-protected branches.",
+      ],
+      docs_links: [
+        { label: "GitHub environment protection rules", url: "https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Environments → [environment] → Deployment branches.",
+    });
+  }
+
+  if (fp === "prevent_self_review") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable prevent self-review for GitHub environment deployments",
+      summary: "Re-enable 'Prevent self-review' so deployment authors cannot approve their own deployment to this environment.",
+      why_this_helps:
+        "Without prevent-self-review, the developer who triggered a deployment workflow can also approve it in the required reviewer step — effectively bypassing the review entirely. For production environments, this removes the oversight value of the reviewer requirement.",
+      verify_first: [
+        "Check whether any self-approved deployments occurred after this setting was disabled.",
+        "Confirm the change was authorized.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Environments → [environment].",
+        "Check 'Prevent self-review'.",
+        "Save the environment settings.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "In very small teams where the same person triggers and reviews deployments, this setting requires an additional team member to be added as a reviewer.",
+      ],
+      docs_links: [
+        { label: "GitHub environment protection rules", url: "https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Environments → [environment] → Prevent self-review.",
+    });
+  }
+
+  if (fp === "wait_timer") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore deployment wait timer for GitHub environment",
+      summary: "Restore the wait timer on this environment to provide a cancellation window for unintended deployments.",
+      why_this_helps:
+        "A wait timer provides a time window between a deployment being triggered and it actually executing. This gives the team an opportunity to review, cancel, or pause a deployment if it was triggered accidentally or at the wrong time.",
+      verify_first: [
+        "Confirm the previous wait timer value.",
+        "Confirm the removal was intentional.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Environments → [environment].",
+        "Under 'Wait timer', enter the desired delay (in minutes, up to 43,200).",
+        "Save the environment settings.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "The wait timer delays all deployments to this environment including urgent hotfixes — coordinate with the team on an acceptable value.",
+      ],
+      docs_links: [
+        { label: "GitHub environment protection rules", url: "https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Environments → [environment] → Wait timer.",
+    });
+  }
+
+  return null;
+}
+
+// 5c. Webhook
+function _ghWebhookPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "github_webhook") return null;
+
+  if (ct === "removed") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed GitHub webhook",
+      summary: "Re-create the GitHub webhook to restore event delivery to your integration endpoint.",
+      why_this_helps:
+        "GitHub webhooks deliver push, pull request, review, and deployment events to your integration endpoints in real time. A removed webhook causes CI/CD pipelines, deployment automation, and external integrations to stop receiving events — silently breaking automation without visible errors.",
+      verify_first: [
+        "Identify which webhook was removed and what integrations depended on it.",
+        "Confirm the removal was intentional (e.g. decommissioning an old integration).",
+        "Check audit logs to identify who deleted the webhook.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository (or organization) → Settings → Webhooks.",
+        "Click 'Add webhook'.",
+        "Enter the Payload URL, Content type (application/json), and Secret.",
+        "Select the events to subscribe to.",
+        "Save and verify delivery using GitHub's 'Recent Deliveries' tab.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "A new webhook will have a different shared secret — update your application's webhook verification code.",
+        "GitHub retains delivery history for existing webhooks but not for newly re-created ones — you may need to manually replay missed events.",
+      ],
+      docs_links: [
+        { label: "GitHub webhooks", url: "https://docs.github.com/en/webhooks/about-webhooks" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Webhooks → Add webhook.",
+    });
+  }
+
+  if (fp === "url") {
+    return _guidance({
+      confidence: "high",
+      title: "Verify GitHub webhook delivery URL change",
+      summary: "Confirm the new webhook delivery URL is expected and under your control — revert to the previous URL if the change was unauthorized.",
+      why_this_helps:
+        "A webhook URL change redirects all future event payloads to the new destination. If changed to a domain not under your control, all push, pull request, and deployment event payloads — including code diffs, branch names, and commit author details — will be sent to that external destination.",
+      verify_first: [
+        "Confirm the new webhook URL is a domain owned by your team.",
+        "Check the GitHub audit log for who changed the webhook URL and when.",
+        "Verify the new endpoint is configured to verify GitHub's HMAC signature.",
+        "Confirm whether any events were already delivered to the new URL.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Webhooks → [webhook].",
+        "Review the Payload URL.",
+        "If unexpected: update the URL back to the correct value.",
+        "Rotate the webhook secret and update the application verification code.",
+        "Verify recent deliveries in the 'Recent Deliveries' tab.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Changing the URL does not affect the webhook secret — if you suspect compromise, rotate the secret separately.",
+      ],
+      docs_links: [
+        { label: "GitHub webhooks", url: "https://docs.github.com/en/webhooks/about-webhooks" },
+        { label: "GitHub webhook security", url: "https://docs.github.com/en/webhooks/using-webhooks/securing-your-webhooks" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Webhooks → [webhook] → Edit.",
+    });
+  }
+
+  if (fp === "active") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable disabled GitHub webhook",
+      summary: "Re-enable the webhook to restore event delivery to your integration endpoint.",
+      why_this_helps:
+        "A disabled GitHub webhook stops receiving all event deliveries. Depending on the integration, this may silently break CI/CD pipeline triggers, deployment notifications, or third-party integrations until the webhook is re-enabled.",
+      verify_first: [
+        "Confirm whether the webhook was disabled intentionally (e.g. during a maintenance window).",
+        "Check whether any events queued during the outage need to be replayed.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Webhooks → [webhook].",
+        "Click 'Edit' and check 'Active'.",
+        "Save the webhook.",
+        "Verify delivery using the 'Recent Deliveries' tab.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "GitHub does not automatically replay events that were missed while the webhook was disabled.",
+      ],
+      docs_links: [
+        { label: "GitHub webhooks", url: "https://docs.github.com/en/webhooks/about-webhooks" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Webhooks → [webhook] → Edit → Active.",
+    });
+  }
+
+  if (fp === "events") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review GitHub webhook event subscription change",
+      summary: "Confirm the updated webhook event subscriptions are correct and your integration will receive all the events it depends on.",
+      why_this_helps:
+        "A webhook's event subscription list determines which GitHub events are delivered. Removing event types means your integration will silently stop receiving those events — for example, removing 'pull_request' events from a CI webhook means pull requests will no longer trigger builds.",
+      verify_first: [
+        "Review the full list of currently subscribed events vs the previous configuration.",
+        "Confirm which events your integration actually depends on.",
+        "Check whether any integrations are failing silently due to missed events.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Webhooks → [webhook] → Edit.",
+        "Review 'Which events would you like to trigger this webhook?'",
+        "Add back any event types that were removed unexpectedly.",
+        "Save the webhook.",
+        "Use 'Redeliver' in Recent Deliveries to replay any missed events if needed.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Subscribing to 'Send me everything' can generate high event volume — prefer explicit event selection for production webhooks.",
+      ],
+      docs_links: [
+        { label: "GitHub webhook events", url: "https://docs.github.com/en/webhooks/webhook-events-and-payloads" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Webhooks → [webhook] → Edit.",
+    });
+  }
+
+  return null;
+}
+
+// 5d. Actions secret
+function _ghActionsSecretPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "github_actions_secret") return null;
+
+  if (ct === "removed" && (rl === "critical" || rl === "high")) {
+    return _guidance({
+      confidence: "high",
+      title: "Restore or rotate removed GitHub Actions secret",
+      summary: "Re-add the removed Actions secret (with a freshly rotated value) so workflows depending on it can resume securely.",
+      why_this_helps:
+        "GitHub Actions secrets are injected as environment variables into workflow jobs. A missing secret causes CI/CD jobs to fail or behave unexpectedly — potentially exposing missing-credential errors in build logs. If the secret was removed by an unauthorized actor, the old value should be considered potentially compromised and rotated before re-adding.",
+      verify_first: [
+        "Identify who removed the secret — check the GitHub audit log.",
+        "Confirm whether the removal was planned (decommissioned credential, secret rotation).",
+        "Check recent workflow run logs for failures related to missing credentials.",
+        "If the removal was unauthorized, treat the old secret value as potentially compromised.",
+      ],
+      manual_steps: [
+        "Rotate the credential at its source (API key provider, cloud console, etc.) to generate a new value.",
+        "Open GitHub repository (or organization) → Settings → Secrets and variables → Actions.",
+        "Click 'New repository secret' (or 'New organization secret').",
+        "Enter the secret name and the new rotated value.",
+        "Save.",
+        "Trigger a test workflow run to confirm the secret is available and workflows succeed.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Rotating the credential may invalidate existing sessions or API tokens — coordinate with services that depend on the old credential.",
+        "GitHub Actions secrets are not visible after creation — only the secret name can be confirmed.",
+      ],
+      docs_links: [
+        { label: "GitHub Actions secrets", url: "https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Secrets and variables → Actions.",
+    });
+  }
+
+  if (ct === "modified" && (rl === "critical" || rl === "high")) {
+    return _guidance({
+      confidence: "medium",
+      title: "Verify GitHub Actions secret rotation",
+      summary: "Confirm the secret was rotated intentionally and that the new value is valid — update dependent workflows if needed.",
+      why_this_helps:
+        "An unexpected change to a GitHub Actions secret means a workflow is now using a different credential value. If the change was unauthorized, an attacker may have replaced your credential with their own — causing workflows to authenticate against an attacker-controlled service or exfiltrate build artifacts.",
+      verify_first: [
+        "Identify who updated the secret — check the GitHub audit log.",
+        "Confirm the change was a planned credential rotation.",
+        "Review recent workflow runs for unexpected authentication failures or behaviour changes.",
+      ],
+      manual_steps: [
+        "If the change was unauthorized: rotate the credential at its source immediately, then update the secret with the new value.",
+        "Open GitHub repository → Settings → Secrets and variables → Actions.",
+        "Click the pencil icon next to the secret and enter the new value.",
+        "Trigger a test workflow run to confirm the new credential is valid.",
+        "Review workflow run logs for authentication errors.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "The previous secret value cannot be retrieved from GitHub — if overwritten, ensure the original credential is rotated at the source.",
+      ],
+      docs_links: [
+        { label: "GitHub Actions secrets", url: "https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Secrets and variables → Actions.",
+    });
+  }
+
+  return null;
+}
+
+// 5e. Deploy key
+function _ghDeployKeyPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "github_deploy_key") return null;
+
+  if (ct === "added" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Review write-enabled GitHub deploy key addition",
+      summary: "Verify the newly added write-access deploy key is authorized and replace it with a read-only key if write access is not required.",
+      why_this_helps:
+        "GitHub deploy keys with write access allow whoever holds the corresponding private key to push commits to the repository. Unlike user credentials, deploy keys do not expire by default and may persist indefinitely. A write-enabled deploy key in unauthorized hands provides persistent write access — enabling silent code injection or history rewriting.",
+      verify_first: [
+        "Identify who added the deploy key — check the GitHub audit log.",
+        "Confirm the key was added for a legitimate automation purpose (deployment, CD pipeline).",
+        "Verify write access is genuinely required — most deploy use cases only need read access.",
+        "Confirm the private key is stored securely (secrets manager, CI secret store) and not in a code repository.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository → Settings → Deploy keys.",
+        "Review the newly added key — confirm its label, fingerprint, and write access status.",
+        "If write access is not required: delete the key and re-add it with read-only access.",
+        "If the key is unknown or unauthorized: delete it immediately.",
+        "If authorized but risky: ensure the private key is stored in a secrets manager and rotated on a schedule.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Deleting a deploy key will break any CI/CD pipeline that uses the corresponding private key.",
+        "If the private key was exposed, deleting the deploy key from GitHub immediately revokes access.",
+      ],
+      docs_links: [
+        { label: "GitHub deploy keys", url: "https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Deploy keys.",
+    });
+  }
+
+  if (ct === "removed" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review removed GitHub deploy key",
+      summary: "Confirm the deploy key removal was intentional and that any dependent CI/CD pipelines have been updated.",
+      why_this_helps:
+        "A removed deploy key may break any automated deployment or CI process that uses the corresponding SSH key pair for authentication to the repository. If removed unexpectedly, the affected pipeline will fail silently or with authentication errors.",
+      verify_first: [
+        "Identify who removed the key via the GitHub audit log.",
+        "Confirm whether the removal was intentional (key rotation, decommission).",
+        "Check whether any CI/CD pipelines are failing due to authentication errors.",
+      ],
+      manual_steps: [
+        "If the removal was intentional: ensure dependent CI/CD systems have been updated with the replacement key.",
+        "If unexpected: open the GitHub repository → Settings → Deploy keys and re-add the key.",
+        "Generate a new SSH key pair and store the private key in a secrets manager.",
+        "Test the deployment pipeline after adding the key.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-adding a deploy key requires generating a new key pair — the old private key cannot be recovered.",
+      ],
+      docs_links: [
+        { label: "GitHub deploy keys", url: "https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Deploy keys.",
+    });
+  }
+
+  if (fp === "read_only" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restrict GitHub deploy key to read-only access",
+      summary: "Remove write access from the deploy key by deleting and re-adding it as a read-only key.",
+      why_this_helps:
+        "A deploy key that was changed from read-only to read-write now has the ability to push commits to the repository. Most automated deployment processes only need to clone or fetch code — write access significantly increases the blast radius if the private key is compromised.",
+      verify_first: [
+        "Confirm whether write access is genuinely required for the automation that uses this key.",
+        "Identify who changed the key access level via the GitHub audit log.",
+        "Check whether any unexpected commits have been pushed using this key.",
+      ],
+      manual_steps: [
+        "GitHub does not support changing a deploy key from read-write back to read-only in place.",
+        "Open the GitHub repository → Settings → Deploy keys.",
+        "Delete the write-enabled key.",
+        "Generate a new SSH key pair.",
+        "Click 'Add deploy key', enter the new public key, and leave 'Allow write access' unchecked.",
+        "Update the corresponding private key in your CI/CD secrets store.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Deleting the key immediately revokes access for the pipeline using it — update the pipeline secrets before deleting if possible.",
+      ],
+      docs_links: [
+        { label: "GitHub deploy keys", url: "https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Deploy keys.",
+    });
+  }
+
+  return null;
+}
+
+// 5f. Actions permissions
+function _ghActionsPermissionPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "github_actions_permissions") return null;
+
+  if (fp === "enabled" && (rl === "high" || rl === "critical")) {
+    return _guidance({
+      confidence: "high",
+      title: "Review GitHub Actions permissions change",
+      summary: "Verify the Actions enabled/disabled state change was intentional and restore if unexpected.",
+      why_this_helps:
+        "GitHub Actions permissions control whether workflows can run in a repository or organization. Disabling Actions stops all CI/CD workflows — including security checks, automated tests, and deployment pipelines. Re-enabling Actions (if previously disabled for security reasons) may allow untrusted workflows to run.",
+      verify_first: [
+        "Identify who changed the Actions permission via the GitHub audit log.",
+        "Confirm whether the change was intentional (e.g. temporarily disabling Actions for a security review).",
+        "Check whether CI/CD pipelines are currently running or broken.",
+      ],
+      manual_steps: [
+        "Open the GitHub repository (or organization) → Settings → Actions → General.",
+        "Review the Actions permissions setting.",
+        "Restore to the expected state (Enabled for all actions, Allow select actions, or Disabled).",
+        "If re-enabling after a security review, also review allowed actions and workflow permissions.",
+        "Save the settings.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "If Actions was disabled due to a security incident, review the incident findings before re-enabling.",
+        "Consider restricting to 'Allow select actions' rather than 'Allow all actions' to reduce supply-chain risk.",
+      ],
+      docs_links: [
+        { label: "GitHub Actions permissions", url: "https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository" },
+      ],
+      provider_console_hint: "GitHub → [repo] → Settings → Actions → General.",
+    });
+  }
+
+  return null;
+}
+
+// 5. GitHub dispatcher
+function _githubPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  return (
+    _ghBranchProtectionPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _ghEnvironmentPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _ghWebhookPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _ghActionsSecretPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _ghDeployKeyPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _ghActionsPermissionPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    null
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Playbook 6 — Stripe
 // ─────────────────────────────────────────────────────────────────────────────
 
-function _stripePlaybooks(
+// 6a. Webhook endpoint
+function _stripeWebhookPlaybooks(
   rt: string, fp: string, ct: string,
   rl: string, rr: string, nv: unknown,
 ): RemediationGuidance | null {
+  if (rt !== "stripe_webhook_endpoint") return null;
 
-  // 6a. Webhook endpoint removed, disabled, or URL changed
-  if (rt === "stripe_webhook_endpoint" && (rl === "high" || rl === "critical")) {
+  if (ct === "removed") {
     return _guidance({
-      confidence: ct === "removed" ? "high" : "medium",
-      title:   "Restore Stripe webhook endpoint",
-      summary: "Re-create or re-enable the webhook endpoint and verify it is receiving the expected events for payment, subscription, and fulfilment flows.",
+      confidence: "high",
+      title: "Restore deleted Stripe webhook endpoint",
+      summary: "Re-create the webhook endpoint to restore event delivery for payment, subscription, and fulfilment flows.",
       why_this_helps:
-        "Stripe webhooks are the event-delivery mechanism for critical payment and subscription lifecycle events (payment_intent.succeeded, invoice.payment_failed, customer.subscription.updated, etc.). If the endpoint is removed, disabled, or its URL is changed to an unexpected destination, your application will silently miss payment events, potentially resulting in unprocessed orders, missed subscription renewals, or failed payment recovery flows. In a worst case, webhook events may be redirected to an attacker-controlled URL.",
+        "Stripe webhooks are the event-delivery mechanism for critical payment and subscription lifecycle events (payment_intent.succeeded, invoice.payment_failed, customer.subscription.updated, etc.). A deleted endpoint means your application silently misses all these events — resulting in unprocessed orders, missed subscription renewals, or failed payment recovery flows.",
       verify_first: [
         "Confirm whether the endpoint was removed as part of a planned migration or decommission.",
-        "If the URL was changed, confirm the new URL is an expected application domain under your control.",
-        "Check Stripe Dashboard → Developers → Webhooks → Event deliveries for recent failed deliveries that may need replaying.",
-        "Confirm the endpoint is correctly handling live vs test mode events.",
+        "Check Stripe Dashboard → Developers → Webhooks → Event deliveries for recent failed deliveries.",
+        "Confirm whether the endpoint was for live or test mode.",
+        "Identify which event types were subscribed to on the deleted endpoint.",
       ],
       manual_steps: [
         "Open the Stripe Dashboard → Developers → Webhooks.",
-        "If the endpoint was deleted: click 'Add endpoint' and recreate it with the correct URL and event subscriptions.",
-        "If the endpoint was disabled: select the endpoint and click 'Enable'.",
-        "If the URL was changed unexpectedly: update it back to the expected value.",
-        "Send a test webhook event from the Stripe dashboard to confirm the endpoint is healthy.",
+        "Click 'Add endpoint'.",
+        "Enter the correct endpoint URL, select the required event types, and add an API version if needed.",
+        "Save the endpoint and copy the new signing secret.",
+        "Update your application's webhook verification code with the new signing secret.",
+        "Send a test webhook event to confirm the endpoint is healthy.",
         "Review recent event delivery failures and replay any events that were missed during the outage window.",
       ],
       validation_steps: STANDARD_VALIDATION,
       caveats: [
-        "Replaying missed events must be done carefully to avoid processing the same payment or subscription event twice — implement idempotency keys in your handler.",
-        "If the endpoint URL was changed by an attacker, rotate the webhook signing secret after restoring the endpoint.",
+        "Replaying missed events must be done carefully to avoid processing the same payment event twice — implement idempotency keys in your handler.",
+        "A new endpoint generates a new signing secret — update your application's secret immediately.",
       ],
       docs_links: [
-        { label: "Stripe webhooks guide",             url: "https://stripe.com/docs/webhooks" },
-        { label: "Stripe webhook event delivery",     url: "https://stripe.com/docs/webhooks/best-practices" },
+        { label: "Stripe webhooks guide", url: "https://stripe.com/docs/webhooks" },
+        { label: "Stripe best practices", url: "https://stripe.com/docs/webhooks/best-practices" },
       ],
-      provider_console_hint:
-        "Stripe Dashboard → Developers → Webhooks → [endpoint] → Enable / Edit.",
+      provider_console_hint: "Stripe Dashboard → Developers → Webhooks → Add endpoint.",
     });
   }
 
-  // 6b. Billing portal configuration weakened
-  if (rt === "stripe_billing_portal_config" && (rl === "high" || rl === "critical")) {
+  if (fp === "url") {
+    return _guidance({
+      confidence: "high",
+      title: "Verify Stripe webhook endpoint URL change",
+      summary: "Confirm the new webhook URL is expected and under your control — revert to the previous URL if the change was unauthorized.",
+      why_this_helps:
+        "A Stripe webhook URL change redirects all future event payloads to the new destination. If changed to a URL not under your control, all payment, subscription, and customer event payloads will be delivered to that external destination — potentially exposing payment intent IDs, customer IDs, and subscription state.",
+      verify_first: [
+        "Confirm the new webhook URL is an application domain owned by your team.",
+        "Identify who changed the URL — check Stripe Dashboard audit logs and your version control for application URL changes.",
+        "Verify the new endpoint is correctly verifying Stripe's webhook signature.",
+        "Check whether any events were already delivered to the new URL.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Developers → Webhooks → [endpoint].",
+        "Review the endpoint URL.",
+        "If unexpected: click 'Edit' and update the URL back to the correct value.",
+        "After restoring the URL, rotate the webhook signing secret.",
+        "Send a test event to confirm the endpoint is receiving events correctly.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "If the URL was changed by an unauthorized party, rotate the signing secret and audit recent event deliveries for data sent to the unexpected destination.",
+      ],
+      docs_links: [
+        { label: "Stripe webhooks guide", url: "https://stripe.com/docs/webhooks" },
+        { label: "Stripe webhook signatures", url: "https://stripe.com/docs/webhooks/signatures" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Developers → Webhooks → [endpoint] → Edit.",
+    });
+  }
+
+  if (fp === "status") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable disabled Stripe webhook endpoint",
+      summary: "Re-enable the webhook endpoint to restore event delivery for payment and subscription flows.",
+      why_this_helps:
+        "A disabled Stripe webhook endpoint stops receiving all event deliveries. Payment intents, subscription renewals, invoice payments, and checkout completions will no longer trigger your application's event handlers — silently breaking order processing, subscription management, and payment recovery flows.",
+      verify_first: [
+        "Confirm whether the endpoint was disabled intentionally (e.g. during a planned maintenance window).",
+        "Check Stripe Dashboard → Developers → Webhooks → Event deliveries for events that failed during the disabled window.",
+        "Confirm whether any orders or subscription renewals were missed.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Developers → Webhooks → [endpoint].",
+        "Click 'Enable endpoint'.",
+        "Send a test event to confirm the endpoint is healthy.",
+        "Review and replay any failed event deliveries from the disabled window.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Replaying missed events may trigger duplicate processing — use idempotency keys to prevent double charges or double fulfilment.",
+      ],
+      docs_links: [
+        { label: "Stripe webhooks guide", url: "https://stripe.com/docs/webhooks" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Developers → Webhooks → [endpoint] → Enable endpoint.",
+    });
+  }
+
+  if (fp === "enabled_events") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Stripe webhook event subscription change",
+      summary: "Confirm the updated event type subscriptions are correct and your application still receives all payment and subscription events it depends on.",
+      why_this_helps:
+        "The webhook event subscription list determines which Stripe events are delivered to your endpoint. Removing event types means your application silently stops receiving those events — for example, removing payment_intent.payment_failed means failed payment recovery flows will no longer be triggered.",
+      verify_first: [
+        "Review which event types were added or removed from the subscription.",
+        "Confirm which event types your application handlers require.",
+        "Check whether any business-critical flows (payment failure recovery, subscription renewal handling) have stopped working.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Developers → Webhooks → [endpoint] → Edit.",
+        "Review the 'Events to send' list.",
+        "Add back any event types that were removed unexpectedly.",
+        "Save the endpoint.",
+        "Send test events for the restored event types to verify delivery.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Adding new event types increases event volume to the endpoint — ensure your handler gracefully ignores unexpected event types.",
+      ],
+      docs_links: [
+        { label: "Stripe webhook events reference", url: "https://stripe.com/docs/api/events/types" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Developers → Webhooks → [endpoint] → Edit → Events to send.",
+    });
+  }
+
+  // Fallback for other webhook endpoint changes
+  if (rl === "high" || rl === "critical") {
     return _guidance({
       confidence: "medium",
-      title:   "Review Stripe billing portal configuration changes",
+      title: "Review Stripe webhook endpoint change",
+      summary: "A Stripe webhook endpoint setting changed. Review and restore to ensure uninterrupted event delivery.",
+      why_this_helps:
+        "Stripe webhooks are the primary mechanism for your application to respond to payment, subscription, and customer events. Any unexpected change to a webhook endpoint configuration may disrupt event delivery.",
+      verify_first: [
+        "Review the change in Stripe Dashboard → Developers → Webhooks.",
+        "Confirm the change was intentional.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Developers → Webhooks → [endpoint].",
+        "Review and restore the correct configuration.",
+        "Send a test event to verify delivery.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [],
+      docs_links: [
+        { label: "Stripe webhooks guide", url: "https://stripe.com/docs/webhooks" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Developers → Webhooks.",
+    });
+  }
+
+  return null;
+}
+
+// 6b. Account settings
+function _stripeAccountPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "stripe_account_settings") return null;
+
+  if (fp === "charges_enabled" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Investigate and re-enable Stripe charges",
+      summary: "Charges have been disabled on this Stripe account. Investigate the reason in the Stripe Dashboard and re-enable if this was unintended.",
+      why_this_helps:
+        "When charges are disabled on a Stripe account, all new payment attempts are rejected immediately. This causes immediate revenue loss — no new orders can be paid for, and checkout flows will fail for all customers. Stripe typically disables charges for compliance or risk reasons, which may require action before charges can be restored.",
+      verify_first: [
+        "Open Stripe Dashboard → Settings → Account details and review any Stripe notifications or alerts.",
+        "Check your email for a Stripe notification explaining why charges were disabled.",
+        "Confirm whether this was intentional (e.g. a planned account pause or migration).",
+        "Verify the account has completed all required KYC / verification steps.",
+      ],
+      manual_steps: [
+        "Log in to the Stripe Dashboard.",
+        "Review any action items listed in the Dashboard home or Settings → Account details.",
+        "Complete any outstanding identity verification, bank account verification, or document submission requirements.",
+        "Contact Stripe support if the reason for disabling charges is unclear or if the action was unexpected.",
+        "After resolution, confirm charges are re-enabled in Settings → Account details.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Stripe may disable charges due to regulatory requirements, risk assessment, or outstanding compliance actions — Stripe support must be contacted to resolve those cases.",
+        "Do not attempt to create a new Stripe account to bypass a suspended account — this may violate Stripe's terms of service.",
+      ],
+      docs_links: [
+        { label: "Stripe account charges", url: "https://stripe.com/docs/account/charges" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Account details.",
+    });
+  }
+
+  if (fp === "payouts_enabled" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Investigate and re-enable Stripe payouts",
+      summary: "Payouts have been disabled on this Stripe account. Investigate the reason in the Stripe Dashboard and re-enable if this was unintended.",
+      why_this_helps:
+        "When payouts are disabled, Stripe will continue accepting payments but funds will not be transferred to your bank account. This can cause a cash flow disruption — incoming revenue accumulates in your Stripe balance but cannot be withdrawn until payouts are re-enabled.",
+      verify_first: [
+        "Check the Stripe Dashboard home and your email for notifications from Stripe explaining why payouts were disabled.",
+        "Confirm whether any bank account or identity verification actions are required.",
+        "Verify the linked bank account is still valid and correctly verified.",
+        "Confirm whether this change was intentional.",
+      ],
+      manual_steps: [
+        "Log in to the Stripe Dashboard.",
+        "Review action items listed in Settings → Bank accounts and scheduling.",
+        "Complete any outstanding bank account verification or document submission requirements.",
+        "Contact Stripe support if the reason is unclear or the action was unexpected.",
+        "After resolution, confirm payouts are re-enabled and a payout is scheduled.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Stripe may pause payouts for compliance or risk reasons — Stripe support must be engaged to resolve those cases.",
+        "Funds held in the Stripe balance during a payout suspension are not lost — they will be paid out once payouts are re-enabled.",
+      ],
+      docs_links: [
+        { label: "Stripe payouts", url: "https://stripe.com/docs/payouts" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Bank accounts and scheduling.",
+    });
+  }
+
+  if (fp === "payout_schedule_interval" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Stripe payout schedule interval change",
+      summary: "Confirm the payout schedule interval change was intentional and aligns with your cash-flow requirements.",
+      why_this_helps:
+        "The payout schedule interval controls how frequently Stripe transfers funds from your Stripe balance to your bank account (daily, weekly, monthly). An unexpected change may delay cash availability — for example, switching from daily to monthly payouts means funds received today won't reach your bank account for up to a month.",
+      verify_first: [
+        "Identify who changed the payout schedule — check Stripe audit logs.",
+        "Confirm the new schedule is intentional and has been communicated to your finance team.",
+        "Verify the change aligns with your business's cash-flow requirements.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Bank accounts and scheduling.",
+        "Review the payout schedule interval.",
+        "If unexpected: update the interval back to the correct value.",
+        "Confirm with your finance team that the current schedule meets cash-flow needs.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Changing from a longer to a shorter interval does not immediately trigger a payout — the new schedule applies from the next scheduled date.",
+      ],
+      docs_links: [
+        { label: "Stripe payout schedule", url: "https://stripe.com/docs/payouts#payout-schedule" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Bank accounts and scheduling.",
+    });
+  }
+
+  if (fp === "controller_type" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Stripe account controller type change",
+      summary: "Confirm the account controller type change was authorized — this may indicate a platform ownership or integration structure change.",
+      why_this_helps:
+        "The Stripe account controller type determines who controls the account's settings and payouts (Stripe-hosted, application, or user). An unexpected change to this field may indicate that a connected platform's application has taken control of account settings or that the account structure has been modified — potentially affecting who can initiate payouts or change account settings.",
+      verify_first: [
+        "Identify who made the change — check Stripe audit logs and your platform integration.",
+        "Confirm whether a connected Stripe application or platform integration was recently added or changed.",
+        "Verify the new controller configuration matches your intended Stripe Connect architecture.",
+      ],
+      manual_steps: [
+        "Review Stripe Dashboard → Settings → Account details for the current controller configuration.",
+        "If this change is unexpected: contact Stripe support to investigate the account structure change.",
+        "Review your connected Stripe applications in Settings → Authorized applications.",
+        "Remove any unauthorized connected applications.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Changing the account controller type may require Stripe support intervention — do not attempt to reverse platform ownership changes unilaterally.",
+      ],
+      docs_links: [
+        { label: "Stripe Connect account types", url: "https://stripe.com/docs/connect/accounts" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Account details / Authorized applications.",
+    });
+  }
+
+  return null;
+}
+
+// 6c. Payment method domain
+function _stripePaymentMethodDomainPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "stripe_payment_method_domain") return null;
+
+  if (ct === "removed") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed Stripe payment method domain",
+      summary: "Re-register the domain with Stripe to restore Apple Pay and Google Pay support on this domain.",
+      why_this_helps:
+        "Stripe payment method domains register your web domain to accept Apple Pay and Google Pay. Removing the domain registration means wallet-based payments (Apple Pay, Google Pay, and Link) will stop working for customers on that domain — reducing checkout conversion, particularly on mobile devices.",
+      verify_first: [
+        "Confirm whether the domain removal was intentional (e.g. decommissioning a domain).",
+        "Verify whether Apple Pay and Google Pay are currently failing for customers on this domain.",
+        "Identify which domain was removed and whether it is still active.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Payment methods → Domains.",
+        "Click 'Add domain'.",
+        "Enter the domain name and complete Stripe's domain verification process.",
+        "Ensure the Stripe Apple Pay domain association file is hosted at the correct path.",
+        "Test Apple Pay and Google Pay in a browser on the restored domain.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Domain registration requires hosting a specific verification file — coordinate with your web team.",
+        "Apple Pay requires an Apple Developer account and domain verification in addition to Stripe registration.",
+      ],
+      docs_links: [
+        { label: "Stripe payment method domains", url: "https://stripe.com/docs/payments/payment-methods/pmd-registration" },
+        { label: "Stripe Apple Pay", url: "https://stripe.com/docs/apple-pay" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Payment methods → Domains → Add domain.",
+    });
+  }
+
+  if ((fp === "apple_pay_enabled" || fp === "google_pay_enabled") && rl === "high") {
+    const method = fp === "apple_pay_enabled" ? "Apple Pay" : "Google Pay";
+    return _guidance({
+      confidence: "high",
+      title: `Re-enable ${method} for Stripe payment method domain`,
+      summary: `Re-enable ${method} on this domain to restore wallet payment availability for customers.`,
+      why_this_helps:
+        `${method} is a widely used wallet payment method, especially on mobile devices. Disabling it on a domain reduces checkout conversion — customers who prefer wallet payments must fall back to manual card entry. For mobile-heavy audiences, this can materially impact checkout completion rates.`,
+      verify_first: [
+        `Confirm whether ${method} was disabled intentionally.`,
+        `Verify whether ${method} payments are currently failing in checkout on this domain.`,
+        "Confirm the domain is still active and registered with Stripe.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Payment methods → Domains.",
+        "Select the affected domain.",
+        `Toggle ${method} to enabled.`,
+        "Save.",
+        `Test ${method} payment flow in a browser or device that supports ${method}.`,
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        `${method === "Apple Pay" ? "Apple Pay requires Safari on an Apple device to test" : "Google Pay requires Chrome on Android or a supported browser"}.`,
+      ],
+      docs_links: [
+        { label: "Stripe payment method domains", url: "https://stripe.com/docs/payments/payment-methods/pmd-registration" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Payment methods → Domains → [domain].",
+    });
+  }
+
+  if (fp === "domain_name" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Stripe payment method domain name change",
+      summary: "Confirm the domain name change was intentional and re-verify the domain with Stripe if needed.",
+      why_this_helps:
+        "Changing the domain name on a payment method domain registration means the previous domain no longer has Stripe-registered Apple Pay and Google Pay support. Wallet payments will stop working on the old domain, and the new domain must complete Stripe's verification process before wallet payments are available.",
+      verify_first: [
+        "Confirm whether the domain name change was planned (e.g. migrating to a new domain).",
+        "Verify whether wallet payments are currently working on the new domain.",
+        "Confirm the previous domain is no longer in use.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Payment methods → Domains.",
+        "If the change was unexpected: delete the modified domain entry and re-add the correct domain.",
+        "Complete domain verification for the correct domain.",
+        "If the migration was planned: complete domain verification for the new domain and test wallet payments.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Domain verification requires hosting a specific file — coordinate with your web infrastructure team.",
+      ],
+      docs_links: [
+        { label: "Stripe payment method domains", url: "https://stripe.com/docs/payments/payment-methods/pmd-registration" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Payment methods → Domains.",
+    });
+  }
+
+  if (fp === "enabled" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable Stripe payment method domain",
+      summary: "Re-enable the payment method domain to restore Apple Pay, Google Pay, and Link support on this domain.",
+      why_this_helps:
+        "Disabling a Stripe payment method domain stops all wallet-based payments (Apple Pay, Google Pay, Link) on the affected domain. Customers cannot use these payment methods at checkout until the domain is re-enabled.",
+      verify_first: [
+        "Confirm whether the domain was disabled intentionally.",
+        "Verify whether wallet payments are currently failing for customers.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Payment methods → Domains.",
+        "Select the disabled domain.",
+        "Toggle the domain to enabled.",
+        "Test Apple Pay and Google Pay in checkout on this domain.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [],
+      docs_links: [
+        { label: "Stripe payment method domains", url: "https://stripe.com/docs/payments/payment-methods/pmd-registration" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Payment methods → Domains → [domain].",
+    });
+  }
+
+  return null;
+}
+
+// 6d. Payment method configuration
+function _stripePaymentMethodConfigPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "stripe_payment_method_configuration") return null;
+
+  if (ct === "removed" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed Stripe payment method configuration",
+      summary: "Re-create the payment method configuration to restore the expected set of available payment methods in checkout and payment flows.",
+      why_this_helps:
+        "Stripe payment method configurations define which payment methods (cards, bank transfers, wallets, Buy Now Pay Later, etc.) are available for a given payment flow or connected account. Removing a configuration may cause checkout to revert to a default configuration that doesn't match your product's intended payment method availability.",
+      verify_first: [
+        "Confirm whether the configuration was removed as part of a planned cleanup or migration.",
+        "Identify which payment flows or connected accounts referenced this configuration.",
+        "Verify whether checkout is currently offering the expected payment methods.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Payment methods.",
+        "Review the list of configurations and identify the removed one.",
+        "Re-create the configuration with the correct name and payment method settings.",
+        "Update any checkout session creation code that referenced the old configuration ID.",
+        "Test checkout to confirm the expected payment methods appear.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Payment method configurations are referenced by ID in your API calls — re-creating a configuration generates a new ID that must be updated in your code.",
+      ],
+      docs_links: [
+        { label: "Stripe payment method configurations", url: "https://stripe.com/docs/payments/payment-methods/integration-options#using-payment-method-configurations" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Payment methods.",
+    });
+  }
+
+  if (fp === "enabled_payment_methods" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Stripe payment method configuration change",
+      summary: "Confirm the updated set of enabled payment methods is correct and checkout flows still offer the expected options to customers.",
+      why_this_helps:
+        "The enabled payment methods in a Stripe configuration determine what options customers see at checkout. An unexpected change may remove payment methods that customers depend on — such as SEPA Direct Debit, Klarna, or local payment methods for specific regions — reducing checkout conversion or causing payment failures for customers who only have access to the removed methods.",
+      verify_first: [
+        "Review which payment methods were added or removed from the configuration.",
+        "Confirm the change was authorized.",
+        "Test checkout in the affected markets to verify the expected payment methods are present.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Payment methods → [configuration].",
+        "Review the enabled payment methods list.",
+        "Re-enable any payment methods that were unexpectedly disabled.",
+        "Save and test checkout in the affected markets.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Some payment methods require additional configuration (e.g. bank verification, regional enablement) before they can be activated.",
+      ],
+      docs_links: [
+        { label: "Stripe payment methods", url: "https://stripe.com/docs/payments/payment-methods/overview" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Payment methods → [configuration].",
+    });
+  }
+
+  if (fp === "is_default" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Stripe default payment method configuration change",
+      summary: "Confirm the correct configuration is set as the default — checkout flows will use the default configuration's payment method availability.",
+      why_this_helps:
+        "The default payment method configuration is used for checkout sessions and payment intents that do not explicitly specify a configuration. Changing or unsetting the default may cause checkout flows across your application to use a different configuration's payment method availability — potentially removing or adding payment methods that were not intended.",
+      verify_first: [
+        "Identify which configuration is now the default.",
+        "Confirm whether the payment method availability in the new default matches your checkout requirements.",
+        "Test checkout to confirm the expected payment methods appear.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Payment methods.",
+        "Review which configuration is marked as default.",
+        "If unexpected: select the correct configuration and mark it as default.",
+        "Test checkout to confirm payment method availability is correct.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Changing the default configuration immediately affects all checkout sessions that do not explicitly specify a configuration ID.",
+      ],
+      docs_links: [
+        { label: "Stripe payment method configurations", url: "https://stripe.com/docs/payments/payment-methods/integration-options#using-payment-method-configurations" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Payment methods.",
+    });
+  }
+
+  return null;
+}
+
+// 6e. Billing portal
+function _stripeBillingPortalPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "stripe_billing_portal_config") return null;
+
+  if (ct === "removed" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed Stripe billing portal configuration",
+      summary: "Re-create the billing portal configuration to restore customer self-service billing access.",
+      why_this_helps:
+        "The Stripe billing portal is the customer self-service interface for managing subscriptions, updating payment methods, and downloading invoices. Removing the portal configuration means customers can no longer access self-service billing — they must contact support for every billing change, increasing support burden and customer friction.",
+      verify_first: [
+        "Confirm whether the configuration was removed intentionally.",
+        "Confirm whether customers are currently unable to access their billing portal.",
+      ],
+      manual_steps: [
+        "Open the Stripe Dashboard → Settings → Billing → Customer portal.",
+        "Click 'Create portal configuration' and configure the required features.",
+        "Update your application's billing portal session creation code with the new configuration ID if needed.",
+        "Test the customer portal using Stripe's 'Preview' feature.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-creating the configuration generates a new ID — update any application code that references the old configuration ID.",
+      ],
+      docs_links: [
+        { label: "Stripe customer portal", url: "https://stripe.com/docs/billing/subscriptions/customer-portal" },
+      ],
+      provider_console_hint: "Stripe Dashboard → Settings → Billing → Customer portal.",
+    });
+  }
+
+  // All other billing portal changes (medium and above) — backend compares prev/new value dicts
+  if (rl === "high" || rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review Stripe billing portal configuration changes",
       summary: "Confirm the billing portal feature changes were intentional and restore any disabled payment method update or subscription management capabilities if needed.",
       why_this_helps:
-        "The Stripe billing portal is the customer self-service interface for managing subscriptions, updating payment methods, and downloading invoices. Disabling or restricting portal features without a business reason can prevent customers from updating expired cards, cancelling subscriptions through proper channels, or managing their own account — leading to involuntary churn and support escalations.",
+        "The Stripe billing portal is the customer self-service interface for managing subscriptions, updating payment methods, and downloading invoices. Disabling or restricting portal features without a business reason can prevent customers from updating expired cards, cancelling subscriptions through proper channels, or managing their own accounts — leading to involuntary churn and increased support escalations.",
       verify_first: [
         "Confirm whether the billing portal change was part of a planned pricing or subscription model update.",
         "Review the Stripe billing portal configuration to understand which features were enabled vs disabled.",
@@ -3529,43 +4833,222 @@ function _stripePlaybooks(
         "Some features (like subscription pausing) require specific Stripe plan features — confirm eligibility.",
       ],
       docs_links: [
-        { label: "Stripe customer portal",    url: "https://stripe.com/docs/billing/subscriptions/customer-portal" },
+        { label: "Stripe customer portal", url: "https://stripe.com/docs/billing/subscriptions/customer-portal" },
       ],
-      provider_console_hint:
-        "Stripe Dashboard → Settings → Billing → Customer portal.",
+      provider_console_hint: "Stripe Dashboard → Settings → Billing → Customer portal.",
     });
   }
 
   return null;
 }
 
+// 6. Stripe dispatcher
+function _stripePlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  return (
+    _stripeWebhookPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _stripeAccountPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _stripePaymentMethodDomainPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _stripePaymentMethodConfigPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _stripeBillingPortalPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    null
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Playbook 7 — Vercel
 // ─────────────────────────────────────────────────────────────────────────────
 
-function _vercelPlaybooks(
+// 7a. Project settings
+function _vercelProjectPlaybooks(
   rt: string, fp: string, ct: string,
   rl: string, rr: string, nv: unknown,
 ): RemediationGuidance | null {
+  if (rt !== "vercel_project") return null;
 
-  // 7a. Deploy hook added, removed, or ref changed
-  if (rt === "vercel_deploy_hook_metadata" && (rl === "high" || rl === "critical")) {
+  if (fp === "sso_protection" && rl === "critical") {
     return _guidance({
-      confidence: ct === "added" ? "medium" : rl === "critical" ? "high" : "medium",
-      title:   "Review and secure Vercel deploy hook",
-      summary: ct === "added"
-        ? "Verify the newly added deploy hook is expected, owned by your team, and scoped to the correct branch/ref."
-        : "Restore or review the removed deploy hook and confirm no unexpected deploy triggers were added.",
+      confidence: "high",
+      title: "Re-enable Vercel SSO deployment protection",
+      summary: "Re-enable SSO-based deployment protection to prevent unauthenticated access to production and preview deployments.",
       why_this_helps:
-        "Vercel deploy hooks are HTTPS endpoints that trigger a new deployment when called. An unexpected deploy hook can allow an external actor to trigger production deployments on demand — without GitHub push access — by simply calling the hook URL. A removed hook may break a CI/CD pipeline or cron-based deployment flow. A hook with a changed ref may deploy from an unexpected branch, potentially shipping unreviewed code to production.",
+        "Vercel SSO protection requires users to authenticate via your team's identity provider before accessing deployment URLs. Disabling SSO protection makes all deployment URLs publicly accessible — including preview deployments that may contain unreleased features, internal tools, or environment-specific data.",
       verify_first: [
-        "Identify who created, modified, or removed the deploy hook — check Vercel audit logs.",
-        "Confirm the hook's target branch/ref is the expected production or deployment branch.",
-        "Verify the hook URL has not been shared or exposed in public repositories, CI logs, or client-side code.",
-        "Confirm the hook is owned by a team member and created for a known, approved integration (e.g. a cron job, CMS trigger, or CI pipeline).",
+        "Identify who disabled SSO protection — check the Vercel audit log.",
+        "Confirm whether any deployment URLs were accessed by unintended parties since the change.",
+        "Check whether the change was part of a planned migration (e.g. switching identity providers).",
       ],
       manual_steps: [
-        "Open the Vercel dashboard → [project] → Settings → Git → Deploy Hooks.",
+        "Open the Vercel Dashboard → [project] → Settings → Deployment Protection.",
+        "Re-enable SSO protection.",
+        "Configure the correct identity provider or team SSO settings.",
+        "Save and verify that accessing a deployment URL redirects to SSO login.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling SSO protection will block all non-authenticated access including automated tests that hit deployment URLs — add bypass tokens for CI/CD if needed.",
+      ],
+      docs_links: [
+        { label: "Vercel deployment protection", url: "https://vercel.com/docs/security/deployment-protection" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Deployment Protection.",
+    });
+  }
+
+  if (fp === "password_protection" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-enable Vercel password deployment protection",
+      summary: "Re-enable password protection to prevent unauthenticated access to preview and production deployments.",
+      why_this_helps:
+        "Password protection on Vercel deployments requires visitors to enter a password before accessing the deployment. Without it, deployment URLs — including preview and staging deployments that may contain unreleased features or internal functionality — are publicly accessible to anyone who has or discovers the URL.",
+      verify_first: [
+        "Identify who disabled password protection — check the Vercel audit log.",
+        "Confirm whether any deployment URLs were accessed without authentication since the change.",
+        "Confirm the current deployment password and who has it.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Deployment Protection.",
+        "Re-enable 'Vercel Authentication' or 'Password Protection' as appropriate.",
+        "Set a strong password and distribute it only to authorized team members.",
+        "Save and test that accessing a deployment URL requires authentication.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Re-enabling protection will require all visitors — including automated health check tools — to authenticate.",
+        "Add deployment protection bypass tokens for CI/CD systems that need to access deployment URLs.",
+      ],
+      docs_links: [
+        { label: "Vercel deployment protection", url: "https://vercel.com/docs/security/deployment-protection" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Deployment Protection.",
+    });
+  }
+
+  if ((fp === "git_branch" || fp === "production_branch") && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore Vercel production branch setting",
+      summary: "Restore the production branch to its expected value to ensure production deployments use the correct source code.",
+      why_this_helps:
+        "The production branch determines which git branch is deployed to your production domain. An unexpected change may cause the wrong branch's code to be deployed to production — potentially shipping a feature branch, a release candidate, or an attacker-modified branch to live users.",
+      verify_first: [
+        "Identify who changed the production branch — check the Vercel audit log and git history.",
+        "Confirm which branch is currently deployed to the production domain.",
+        "Verify the code on the currently deployed branch is what you expect.",
+        "Check whether a redeployment was triggered when the branch changed.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → General.",
+        "Review the 'Production Branch' setting.",
+        "If unexpected: update it back to the correct branch (usually 'main' or 'master').",
+        "Trigger a new deployment from the correct branch to ensure the production domain reflects the intended code.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Changing the production branch back may trigger an automatic redeployment — confirm the correct branch has the latest intended code before saving.",
+      ],
+      docs_links: [
+        { label: "Vercel git configuration", url: "https://vercel.com/docs/deployments/configure-a-build#production-branch" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → General → Production Branch.",
+    });
+  }
+
+  if ((fp === "git_repository") && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Vercel git repository connection change",
+      summary: "Confirm the connected git repository change was authorized — this determines which repository's code is deployed to this project.",
+      why_this_helps:
+        "The connected git repository is the source of code for all Vercel deployments. An unexpected change means deployments may now pull code from a different repository — potentially deploying attacker-controlled code or an unrelated project's code to your production domain.",
+      verify_first: [
+        "Identify who changed the repository connection — check the Vercel audit log.",
+        "Confirm the new repository is the correct one for this project.",
+        "Verify that the most recent deployments pulled code from the expected repository.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Git.",
+        "Review the connected repository.",
+        "If unexpected: disconnect and reconnect to the correct repository.",
+        "Trigger a new deployment from the correct repository and branch.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Changing the connected repository will redeploy from the new repository's production branch head.",
+      ],
+      docs_links: [
+        { label: "Vercel git integration", url: "https://vercel.com/docs/deployments/git" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Git.",
+    });
+  }
+
+  if ((fp === "build_command" || fp === "install_command" || fp === "framework") && rl === "high") {
+    const label = fp === "build_command" ? "build command"
+      : fp === "install_command" ? "install command" : "framework";
+    return _guidance({
+      confidence: "high",
+      title: `Review Vercel project ${label} change`,
+      summary: `Confirm the ${label} change was authorized — unexpected changes to build or install commands can execute arbitrary code during deployments.`,
+      why_this_helps:
+        `The ${label} is executed by Vercel's build infrastructure for every deployment. An unauthorized change to the build or install command is a code injection vector — an attacker who can modify these settings can execute arbitrary commands with access to build-time secrets, environment variables, and the deployment artifact before it reaches production.`,
+      verify_first: [
+        `Identify who changed the ${label} — check the Vercel audit log and any related git commits.`,
+        `Review the current ${label} value and confirm it matches your expected build process.`,
+        "Check recent build logs for unexpected commands or output.",
+        "Confirm build-time environment variables were not exfiltrated during recent deployments.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → General.",
+        `Review the ${label} setting.`,
+        "If unexpected: restore to the correct value or clear it to use the framework default.",
+        "Trigger a new deployment and review the build logs carefully.",
+        "Rotate any secrets that may have been accessible during builds while the unexpected command was active.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Build commands run in the Vercel build environment and have access to all build-time environment variables — treat this as a high-privilege injection point.",
+      ],
+      docs_links: [
+        { label: "Vercel build configuration", url: "https://vercel.com/docs/deployments/configure-a-build" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → General → Build & Development Settings.",
+    });
+  }
+
+  return null;
+}
+
+// 7b. Deploy hook
+function _vercelDeployHookPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "vercel_deploy_hook_metadata") return null;
+
+  // Backend classifies deploy hook added/removed as medium
+  if (rl === "critical" || rl === "high" || rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title: ct === "added" ? "Review newly added Vercel deploy hook" : "Review Vercel deploy hook change",
+      summary: ct === "added"
+        ? "Verify the newly added deploy hook is expected, owned by your team, and scoped to the correct branch."
+        : ct === "removed"
+          ? "Confirm the deploy hook removal was intentional and that dependent integrations have been updated."
+          : "Confirm the deploy hook change was authorized and that the target branch and hook URL are correct.",
+      why_this_helps:
+        "Vercel deploy hooks are HTTPS endpoints that trigger a new deployment when called. An unexpected deploy hook can allow an external actor to trigger production deployments on demand — without GitHub push access — by simply calling the hook URL. A removed hook may silently break a CI/CD pipeline or cron-based deployment flow.",
+      verify_first: [
+        "Identify who created, modified, or removed the deploy hook — check Vercel audit logs.",
+        "Confirm the hook's target branch/ref is the expected deployment branch.",
+        "Verify the hook URL has not been shared or exposed in public repositories, CI logs, or client-side code.",
+        "Confirm the hook is owned by a team member and created for a known, approved integration.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Git → Deploy Hooks.",
         "Review the list of hooks and confirm each is expected.",
         "For unexpected hooks: click the delete icon to remove them.",
         "For hooks with changed refs: update the ref to the correct branch.",
@@ -3578,143 +5061,536 @@ function _vercelPlaybooks(
         "Deploy hook URLs are secrets — treat them like API keys and store them in environment variables or a secrets manager.",
       ],
       docs_links: [
-        { label: "Vercel deploy hooks",    url: "https://vercel.com/docs/deployments/deploy-hooks" },
+        { label: "Vercel deploy hooks", url: "https://vercel.com/docs/deployments/deploy-hooks" },
       ],
-      provider_console_hint:
-        "Vercel Dashboard → [project] → Settings → Git → Deploy Hooks.",
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Git → Deploy Hooks.",
     });
   }
 
-  // 7b. Project: deployment protection or production branch changed
-  if (rt === "vercel_project" && (rl === "high" || rl === "critical")) {
-    const isProtection = fp.includes("protection") || fp.includes("deployment");
-    const isBranch     = fp === "production_branch";
+  return null;
+}
 
-    if (isProtection || isBranch || rl === "critical") {
-      return _guidance({
-        confidence: "medium",
-        title:   "Restore Vercel deployment protection settings",
-        summary: "Re-enable deployment protection or restore the production branch to its expected value to prevent unauthorized preview or production deployments.",
-        why_this_helps:
-          "Vercel deployment protection gates who can trigger and access deployments. Disabling protection allows anyone with the deployment URL to access previews or trigger production deployments without authentication. Changing the production branch without a corresponding code change may deploy a different branch's code to the production domain, overwriting the intended release.",
-        verify_first: [
-          "Confirm the protection or branch change was part of an approved deployment process update.",
-          "Identify the current production branch and confirm it matches the team's release convention.",
-          "Check Vercel audit logs for who made the change and when.",
-        ],
-        manual_steps: [
-          "Open the Vercel dashboard → [project] → Settings → General.",
-          "Review the Production Branch setting and restore if changed unexpectedly.",
-          "Navigate to Settings → Deployment Protection to re-enable password protection or Vercel Authentication.",
-          "Save changes and verify the next deployment uses the correct branch.",
-        ],
-        validation_steps: STANDARD_VALIDATION,
-        caveats: [
-          "Re-enabling deployment protection may block automated CI/CD jobs that access deployment URLs — add bypass tokens if needed.",
-          "Changing the production branch triggers a redeployment from the new branch head.",
-        ],
-        docs_links: [
-          { label: "Vercel deployment protection",   url: "https://vercel.com/docs/security/deployment-protection" },
-        ],
-        provider_console_hint:
-          "Vercel Dashboard → [project] → Settings → General / Deployment Protection.",
-      });
-    }
+// 7c. Environment variables
+function _vercelEnvVarPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "vercel_env_var") return null;
+
+  if (ct === "removed" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed Vercel production environment variable",
+      summary: "Re-add the removed sensitive production environment variable to restore application functionality and prevent credential gaps.",
+      why_this_helps:
+        "A removed production environment variable means the running application immediately loses access to the credential or configuration value it contained. For sensitive variables (API keys, database credentials, secrets), this causes production failures. If the removal was unauthorized, the previous credential value should be treated as potentially compromised and rotated before re-adding.",
+      verify_first: [
+        "Identify who removed the environment variable — check the Vercel audit log.",
+        "Confirm whether the removal was intentional.",
+        "Check whether production deployments are currently failing due to missing configuration.",
+        "If the removal was unauthorized, treat the previous variable value as potentially compromised.",
+      ],
+      manual_steps: [
+        "Rotate the credential at its source (API provider, database console, etc.) to generate a new value.",
+        "Open the Vercel Dashboard → [project] → Settings → Environment Variables.",
+        "Click 'Add New'.",
+        "Enter the variable name, the new rotated value, and select 'Production' as the environment.",
+        "Redeploy to apply the new environment variable.",
+        "Verify production functionality is restored.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Environment variable changes require a new deployment to take effect — a redeploy is necessary after adding the variable.",
+        "Rotating the credential may invalidate existing sessions — coordinate with dependent services.",
+      ],
+      docs_links: [
+        { label: "Vercel environment variables", url: "https://vercel.com/docs/environment-variables" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Environment Variables.",
+    });
+  }
+
+  if (ct === "removed" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed Vercel production environment variable",
+      summary: "Re-add the removed production environment variable to restore correct application configuration.",
+      why_this_helps:
+        "A removed production environment variable means the application running in production no longer has access to that configuration value. Depending on the variable, this may cause silent misconfiguration, feature flag failures, or service integration errors.",
+      verify_first: [
+        "Identify who removed the environment variable — check the Vercel audit log.",
+        "Confirm whether the removal was intentional.",
+        "Check whether any production functionality is currently degraded.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Environment Variables.",
+        "Click 'Add New' and re-add the variable with the correct value.",
+        "Select 'Production' (and other required environments) as the target.",
+        "Redeploy to apply the new environment variable.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Environment variable changes require a new deployment to take effect.",
+      ],
+      docs_links: [
+        { label: "Vercel environment variables", url: "https://vercel.com/docs/environment-variables" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Environment Variables.",
+    });
+  }
+
+  if ((fp === "target" || fp === "targets") && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Vercel environment variable promotion to production",
+      summary: "Confirm the environment variable was intentionally promoted to the production target and that the value is correct for production use.",
+      why_this_helps:
+        "Promoting an environment variable to the production target means its value will be available in all future production deployments. If the value is a test or staging credential, this may expose test API keys to production — or conversely, expose production secrets to less-protected environments.",
+      verify_first: [
+        "Identify who changed the variable's target environments — check the Vercel audit log.",
+        "Confirm the variable value is appropriate for the production environment.",
+        "Verify test/staging credentials were not accidentally promoted to production.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Environment Variables.",
+        "Click the pencil icon next to the variable.",
+        "Review the 'Environment' setting and confirm the correct targets are selected.",
+        "If the value should differ between environments, create separate variables per environment.",
+        "Redeploy to apply.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "A single variable with production target uses the same value in production — use environment-specific variables for credentials that differ between environments.",
+      ],
+      docs_links: [
+        { label: "Vercel environment variables", url: "https://vercel.com/docs/environment-variables" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Environment Variables.",
+    });
+  }
+
+  if (fp === "env_type" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Vercel environment variable type downgrade",
+      summary: "Confirm the environment variable type change was intentional — downgrading from 'Secret' to 'Plain text' or 'Encrypted' may expose sensitive values.",
+      why_this_helps:
+        "Vercel environment variable types determine how the value is stored and displayed. Changing from 'Secret' (hashed, never displayed) to a less protected type may expose the value in the Vercel dashboard, in deployment logs, or to team members with lower privilege levels.",
+      verify_first: [
+        "Identify who changed the variable type — check the Vercel audit log.",
+        "Confirm whether the variable contains a sensitive credential (API key, database password, secret token).",
+        "Verify the variable value has not been exposed in logs or the dashboard.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Environment Variables.",
+        "Click the pencil icon next to the variable.",
+        "Change the type back to 'Secret' if the variable contains a sensitive credential.",
+        "If the value may have been exposed: rotate the credential at its source and update the variable.",
+        "Redeploy to apply.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Secret-type variables cannot be read back after creation — if the value was accidentally exposed, rotate it at the source.",
+      ],
+      docs_links: [
+        { label: "Vercel environment variables", url: "https://vercel.com/docs/environment-variables" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Environment Variables.",
+    });
+  }
+
+  if (fp === "updated_at" && rl === "high") {
+    return _guidance({
+      confidence: "medium",
+      title: "Verify rotation of sensitive Vercel production environment variable",
+      summary: "Confirm the sensitive production environment variable was rotated intentionally and that the new value is valid.",
+      why_this_helps:
+        "An unexpected update to a sensitive production environment variable may mean a credential was replaced with an invalid, expired, or attacker-controlled value. If the new value is wrong, production deployments may fail silently or authenticate against an unintended service.",
+      verify_first: [
+        "Identify who updated the variable — check the Vercel audit log.",
+        "Confirm the change was a planned credential rotation.",
+        "Review recent deployments for authentication failures or unexpected behaviour.",
+      ],
+      manual_steps: [
+        "If the change was unauthorized: rotate the credential at its source immediately and update the variable with the new value.",
+        "Open the Vercel Dashboard → [project] → Settings → Environment Variables.",
+        "Click the pencil icon and update to the correct value.",
+        "Redeploy and verify production functionality.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "The previous variable value cannot be retrieved from Vercel — if it was overwritten, ensure the original credential is rotated at the source.",
+      ],
+      docs_links: [
+        { label: "Vercel environment variables", url: "https://vercel.com/docs/environment-variables" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Environment Variables.",
+    });
   }
 
   return null;
+}
+
+// 7d. Domain
+function _vercelDomainPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "vercel_domain") return null;
+
+  if (ct === "removed" && rl === "critical") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore removed Vercel production domain",
+      summary: "Re-add the production domain to restore the live application URL for users.",
+      why_this_helps:
+        "Removing a production domain from a Vercel project means the live application is no longer accessible at that URL. All users visiting the domain will receive an error. If the domain was removed without a corresponding DNS change, the domain will point nowhere — causing complete availability loss for the application.",
+      verify_first: [
+        "Identify who removed the domain — check the Vercel audit log.",
+        "Confirm whether the domain is currently returning an error for users.",
+        "Verify the DNS records for the domain still point to Vercel.",
+        "Confirm whether the removal was intentional (e.g. migrating to a different Vercel project).",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Domains.",
+        "Click 'Add Domain'.",
+        "Enter the domain name and follow the verification steps.",
+        "Confirm DNS records are correctly configured (A record or CNAME pointing to Vercel).",
+        "Test the domain is accessible and shows the correct deployment.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "DNS changes may take up to 48 hours to propagate globally — use a DNS propagation checker to monitor.",
+        "If the domain was moved to a different project, re-adding it to this project will remove it from the other.",
+      ],
+      docs_links: [
+        { label: "Vercel custom domains", url: "https://vercel.com/docs/projects/domains" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Domains → Add Domain.",
+    });
+  }
+
+  if (fp === "verified" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Re-verify Vercel domain",
+      summary: "Complete domain verification in Vercel to restore secure HTTPS and deployment routing for this domain.",
+      why_this_helps:
+        "An unverified domain in Vercel may not have a valid SSL certificate issued, and Vercel may not route traffic from the domain to the correct deployment. Customers visiting an unverified domain may see SSL errors or be unable to access the application.",
+      verify_first: [
+        "Confirm the current DNS configuration for the domain.",
+        "Check whether Vercel's verification DNS records are still present at your DNS provider.",
+        "Identify whether the domain is currently accessible to users.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Domains.",
+        "Select the affected domain.",
+        "Follow Vercel's verification instructions — add the required TXT or CNAME record at your DNS provider.",
+        "Wait for DNS propagation and click 'Verify' in the Vercel dashboard.",
+        "Confirm the domain shows as verified and test HTTPS access.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "DNS record changes may take up to 48 hours to propagate.",
+      ],
+      docs_links: [
+        { label: "Vercel domain verification", url: "https://vercel.com/docs/projects/domains/verify" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Domains → [domain] → Verify.",
+    });
+  }
+
+  if (fp === "redirect" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Review Vercel production domain redirect change",
+      summary: "Confirm the domain redirect change was authorized — an unexpected redirect may send production traffic to an unintended destination.",
+      why_this_helps:
+        "A domain redirect change at the Vercel level means all traffic arriving at the production domain is forwarded to a different URL. If changed unexpectedly, all users visiting the application URL may be silently redirected to an attacker-controlled or unintended destination — potentially exposing session tokens or credentials in the redirect URL.",
+      verify_first: [
+        "Identify who changed the redirect — check the Vercel audit log.",
+        "Confirm the current redirect destination is expected.",
+        "Verify that users visiting the production domain are being sent to the correct URL.",
+      ],
+      manual_steps: [
+        "Open the Vercel Dashboard → [project] → Settings → Domains.",
+        "Select the affected domain.",
+        "Review and correct the redirect configuration.",
+        "If the redirect was unexpected: remove it or update to the correct destination.",
+        "Test the domain to confirm traffic is routed correctly.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Redirect changes take effect on the next deployment — trigger a redeployment if the change is not reflected immediately.",
+      ],
+      docs_links: [
+        { label: "Vercel custom domains", url: "https://vercel.com/docs/projects/domains" },
+      ],
+      provider_console_hint: "Vercel Dashboard → [project] → Settings → Domains → [domain].",
+    });
+  }
+
+  return null;
+}
+
+// 7. Vercel dispatcher
+function _vercelPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  return (
+    _vercelProjectPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _vercelDeployHookPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _vercelEnvVarPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _vercelDomainPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    null
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Playbook 8 — Shopify
 // ─────────────────────────────────────────────────────────────────────────────
 
-function _shopifyPlaybooks(
+// 8a. App scope summary
+function _shopifyAppScopePlaybooks(
   rt: string, fp: string, ct: string,
   rl: string, rr: string, nv: unknown,
 ): RemediationGuidance | null {
+  if (rt !== "shopify_app_scope_summary") return null;
+  if (rl !== "critical" && rl !== "high") return null;
 
-  // 8a. App scope summary: sensitive or write scopes increased
-  if (rt === "shopify_app_scope_summary" && (rl === "critical" || rl === "high")) {
+  return _guidance({
+    confidence: "high",
+    title: "Review and revoke unexpected Shopify app permission scopes",
+    summary: "Investigate which installed app gained new sensitive or write-access scopes (customer, order, payment data) and revoke permissions for any app that should not have them.",
+    why_this_helps:
+      "Shopify app permission scopes define what store data each installed app can read and write. An increase in write scopes or the appearance of customer, order, or payment data scopes means an app has gained elevated access to sensitive store and customer information. If this was not intentional — caused by an app update, a new app installation, or a compromised OAuth flow — it represents a direct data exposure risk for your customers.",
+    verify_first: [
+      "Identify which app's scope changed by checking Shopify Admin → Apps → [app name] → Permissions.",
+      "Confirm whether the scope change corresponds to a known app update or a new app installation.",
+      "Verify the app is a trusted, legitimate integration from a known developer.",
+      "Confirm whether your business actually requires the app to have the new scopes.",
+    ],
+    manual_steps: [
+      "Open Shopify Admin → Apps.",
+      "Find the app with the expanded scopes.",
+      "Review the listed permissions under the app's detail page.",
+      "If the scopes are not required: uninstall the app and reinstall with only the necessary permissions, or contact the app developer to request a reduced scope.",
+      "If the app is unknown or unexpected: uninstall it immediately.",
+      "After resolving, review the Shopify Partner Dashboard or app listings for recent scope change notifications.",
+    ],
+    validation_steps: STANDARD_VALIDATION,
+    caveats: [
+      "Uninstalling an app may break integrations that depend on it — confirm with your team before uninstalling.",
+      "Some apps require broad scopes by design — confirm the scope is genuinely unexpected before acting.",
+    ],
+    docs_links: [
+      { label: "Shopify app permissions", url: "https://shopify.dev/docs/apps/auth/admin-app-access-tokens/scopes" },
+      { label: "Shopify API access scopes", url: "https://shopify.dev/docs/api/usage/access-scopes" },
+    ],
+    provider_console_hint: "Shopify Admin → Apps → [app name] → View permissions / Uninstall.",
+  });
+}
+
+// 8b. Webhook subscription
+function _shopifyWebhookPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "shopify_webhook_subscription") return null;
+
+  if (ct === "removed" && (rl === "high" || rl === "critical")) {
     return _guidance({
       confidence: "high",
-      title:   "Review and revoke unexpected Shopify app permission scopes",
-      summary: "Investigate which installed app gained new sensitive or write-access scopes (customer, order, payment data) and revoke permissions for any app that should not have them.",
+      title: "Restore removed Shopify webhook subscription",
+      summary: "Re-create the webhook subscription to restore event delivery for order, fulfilment, or payment events.",
       why_this_helps:
-        "Shopify app permission scopes define what store data each installed app can read and write. An increase in write scopes or the appearance of customer, order, or payment data scopes means an app has gained elevated access to sensitive store and customer information. If this was not intentional — caused by an app update, a new app installation, or compromised OAuth flow — it represents a direct data exposure risk for your customers.",
+        "Shopify webhooks deliver real-time event notifications for orders, fulfilment, payments, inventory, and customer data. A removed webhook causes silent failures in order processing, inventory sync, or payment confirmation — your application stops receiving events without any visible error.",
       verify_first: [
-        "Identify which app's scope changed by checking Shopify Admin → Apps → [app name] → Permissions.",
-        "Confirm whether the scope change corresponds to a known app update or a new app installation.",
-        "Verify the app is a trusted, legitimate integration from a known developer.",
-        "Confirm whether your business actually requires the app to have the new scopes.",
-      ],
-      manual_steps: [
-        "Open Shopify Admin → Apps.",
-        "Find the app with the expanded scopes.",
-        "Review the listed permissions under the app's detail page.",
-        "If the scopes are not required: uninstall the app and reinstall with only the necessary permissions, or contact the app developer to request a reduced scope.",
-        "If the app is unknown or unexpected: uninstall it immediately.",
-        "After resolving, review the Shopify Partner Dashboard or app listings for recent scope change notifications.",
-      ],
-      validation_steps: STANDARD_VALIDATION,
-      caveats: [
-        "Uninstalling an app may break integrations that depend on it — confirm with your team before uninstalling.",
-        "Some apps require broad scopes by design — confirm the scope is genuinely unexpected before acting.",
-      ],
-      docs_links: [
-        { label: "Shopify app permissions",      url: "https://shopify.dev/docs/apps/auth/admin-app-access-tokens/scopes" },
-        { label: "Shopify API access scopes",    url: "https://shopify.dev/docs/api/usage/access-scopes" },
-      ],
-      provider_console_hint:
-        "Shopify Admin → Apps → [app name] → View permissions / Uninstall.",
-    });
-  }
-
-  // 8b. Webhook subscription removed or endpoint changed
-  if (rt === "shopify_webhook_subscription" && (rl === "high" || rl === "critical")) {
-    return _guidance({
-      confidence: ct === "removed" ? "high" : "medium",
-      title:   "Restore or review Shopify webhook subscription",
-      summary: ct === "removed"
-        ? "Re-create the removed webhook subscription to restore event delivery for order, fulfilment, or payment events."
-        : "Verify the webhook endpoint change was intentional and that the new endpoint is HTTPS and under your control.",
-      why_this_helps:
-        "Shopify webhooks deliver real-time event notifications for orders, fulfilment, payments, inventory, and customer data. A removed or re-routed webhook can cause silent failures in order processing, inventory sync, or payment confirmation. If a webhook endpoint URL was changed to a domain not under your control, event payloads containing order and customer data may be delivered to an unintended recipient.",
-      verify_first: [
-        "Confirm whether the webhook change was part of a planned endpoint migration.",
-        "Verify the current (or new) webhook endpoint domain is owned by your team.",
+        "Identify which webhook topic was removed and what integrations depended on it.",
+        "Confirm whether the removal was intentional (e.g. decommissioning an old integration).",
         "Check whether order or fulfilment processing is functioning normally following the change.",
-        "Confirm the endpoint uses HTTPS — Shopify requires HTTPS for all webhook endpoints.",
       ],
       manual_steps: [
-        "Open Shopify Admin → Settings → Notifications → Webhooks (or via Shopify Admin API).",
-        "Review the list of active webhooks.",
-        "If a webhook was removed: re-create it with the correct topic and endpoint URL.",
-        "If the endpoint URL changed unexpectedly: update it back to the correct URL.",
-        "Use Shopify's 'Send test notification' feature to verify the endpoint is receiving events.",
+        "Open Shopify Admin → Settings → Notifications → Webhooks (or via the Shopify Admin API).",
+        "Click 'Create webhook'.",
+        "Select the correct event topic and enter the endpoint URL.",
+        "Save and use 'Send test notification' to verify the endpoint is receiving events.",
       ],
       validation_steps: STANDARD_VALIDATION,
       caveats: [
-        "Webhook payloads contain order and customer data — ensure the endpoint has appropriate authentication (HMAC verification using the shared secret).",
-        "Re-creating a webhook assigns a new webhook ID and a new shared secret — update your verification code accordingly.",
+        "Re-creating a webhook assigns a new webhook ID and a new shared secret — update your HMAC verification code.",
+        "Webhook payloads contain order and customer data — ensure the endpoint verifies Stripe HMAC signatures.",
       ],
       docs_links: [
-        { label: "Shopify webhooks overview",      url: "https://shopify.dev/docs/apps/build/webhooks" },
-        { label: "Shopify webhook verification",   url: "https://shopify.dev/docs/apps/build/webhooks/delivery/https#verify-the-webhook" },
+        { label: "Shopify webhooks", url: "https://shopify.dev/docs/apps/build/webhooks" },
+        { label: "Shopify webhook verification", url: "https://shopify.dev/docs/apps/build/webhooks/delivery/https#verify-the-webhook" },
       ],
-      provider_console_hint:
-        "Shopify Admin → Settings → Notifications → Webhooks.",
+      provider_console_hint: "Shopify Admin → Settings → Notifications → Webhooks.",
     });
   }
 
-  // 8c. Store policy removed
-  if (rt === "shopify_store_policy" && ct === "removed" && (rl === "high" || rl === "medium")) {
+  if (fp === "is_https" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore HTTPS for Shopify webhook endpoint",
+      summary: "Update the webhook endpoint URL to use HTTPS to ensure encrypted delivery of event payloads.",
+      why_this_helps:
+        "Shopify webhook payloads contain order details, customer PII, and payment information. Delivering these payloads over HTTP (without TLS) exposes the data to interception in transit. Shopify requires HTTPS for all webhook endpoints — an HTTP endpoint may also stop receiving events if Shopify enforces this requirement.",
+      verify_first: [
+        "Identify which webhook subscription is using an HTTP endpoint.",
+        "Confirm the correct endpoint URL for this webhook topic.",
+        "Verify the intended endpoint supports HTTPS with a valid certificate.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Notifications → Webhooks.",
+        "Edit the affected webhook subscription.",
+        "Update the endpoint URL to use https:// instead of http://.",
+        "Save and send a test notification to confirm delivery.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "If your endpoint does not have a valid SSL certificate, obtain one before updating the URL.",
+      ],
+      docs_links: [
+        { label: "Shopify webhooks", url: "https://shopify.dev/docs/apps/build/webhooks" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Notifications → Webhooks → [webhook] → Edit.",
+    });
+  }
+
+  if (fp === "endpoint_domain" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Verify Shopify webhook endpoint domain change",
+      summary: "Confirm the new webhook endpoint domain is expected and under your control — revert if the change was unauthorized.",
+      why_this_helps:
+        "A changed webhook endpoint domain means Shopify will deliver all future event payloads for this topic to a new destination. If changed to a domain not under your control, order, fulfilment, and customer event data will be delivered to an unintended recipient.",
+      verify_first: [
+        "Confirm the new endpoint domain is owned by your team.",
+        "Identify who changed the webhook endpoint.",
+        "Verify the new endpoint is correctly verifying Shopify's HMAC webhook signature.",
+        "Confirm whether any events were already delivered to the new endpoint.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Notifications → Webhooks.",
+        "Edit the affected webhook.",
+        "If unexpected: update the URL back to the correct domain.",
+        "Save and send a test notification to verify delivery.",
+        "If the old endpoint domain may have received unauthorized data: rotate your Shopify webhook shared secret.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Shopify webhook shared secrets are set per-app or per-store — rotate via the Shopify Partner Dashboard or API if needed.",
+      ],
+      docs_links: [
+        { label: "Shopify webhooks", url: "https://shopify.dev/docs/apps/build/webhooks" },
+        { label: "Shopify webhook verification", url: "https://shopify.dev/docs/apps/build/webhooks/delivery/https#verify-the-webhook" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Notifications → Webhooks → [webhook] → Edit.",
+    });
+  }
+
+  if (fp === "endpoint_scheme" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Restore HTTPS scheme for Shopify webhook endpoint",
+      summary: "Update the webhook endpoint to use HTTPS to ensure encrypted delivery of event payloads.",
+      why_this_helps:
+        "Downgrading a webhook endpoint from HTTPS to HTTP removes TLS encryption from event payload delivery. Shopify webhooks contain order details, customer PII, and payment information — delivering these over HTTP exposes the data to interception.",
+      verify_first: [
+        "Identify who changed the endpoint scheme.",
+        "Confirm whether the endpoint is currently using HTTP.",
+        "Verify the endpoint's SSL certificate is valid.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Notifications → Webhooks.",
+        "Edit the affected webhook and update the URL to use https://.",
+        "Save and send a test notification.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [],
+      docs_links: [
+        { label: "Shopify webhooks", url: "https://shopify.dev/docs/apps/build/webhooks" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Notifications → Webhooks → [webhook] → Edit.",
+    });
+  }
+
+  if (fp === "endpoint_path_hash" && rl === "medium") {
     return _guidance({
       confidence: "medium",
-      title:   "Restore removed Shopify store policy",
+      title: "Review Shopify webhook endpoint path change",
+      summary: "Confirm the webhook endpoint path change was intentional and the new path is correctly configured to receive events.",
+      why_this_helps:
+        "A changed webhook endpoint path means Shopify is now delivering events to a different URL path. If the new path is not configured to handle the webhook payload, events will be silently dropped — breaking order processing or other event-driven flows.",
+      verify_first: [
+        "Confirm the new endpoint path is a valid webhook handler in your application.",
+        "Identify who changed the webhook path.",
+        "Check whether any events have failed to deliver since the change.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Notifications → Webhooks.",
+        "Edit the affected webhook and review the full endpoint URL.",
+        "Update to the correct path if it was changed unexpectedly.",
+        "Send a test notification to verify delivery.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [],
+      docs_links: [
+        { label: "Shopify webhooks", url: "https://shopify.dev/docs/apps/build/webhooks" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Notifications → Webhooks → [webhook] → Edit.",
+    });
+  }
+
+  // Fallback for other webhook changes
+  if (rl === "high" || rl === "critical") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review Shopify webhook subscription change",
+      summary: "Verify the webhook endpoint change was intentional and that the current endpoint is HTTPS and under your control.",
+      why_this_helps:
+        "Shopify webhook payloads contain order, customer, and payment event data. An unexpected change to a webhook subscription may redirect this data to an unintended destination or break event-driven application flows.",
+      verify_first: [
+        "Confirm whether the webhook change was part of a planned endpoint migration.",
+        "Verify the current webhook endpoint domain is owned by your team.",
+        "Check whether order or fulfilment processing is functioning normally.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Notifications → Webhooks.",
+        "Review the list of active webhooks.",
+        "Restore the correct endpoint URL if changed unexpectedly.",
+        "Use 'Send test notification' to verify the endpoint is receiving events.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Webhook payloads contain order and customer data — ensure the endpoint verifies Shopify HMAC signatures.",
+      ],
+      docs_links: [
+        { label: "Shopify webhooks", url: "https://shopify.dev/docs/apps/build/webhooks" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Notifications → Webhooks.",
+    });
+  }
+
+  return null;
+}
+
+// 8c. Store policy
+function _shopifyStorePolicyPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "shopify_store_policy") return null;
+
+  if (ct === "removed" && (rl === "high" || rl === "medium")) {
+    return _guidance({
+      confidence: "medium",
+      title: "Restore removed Shopify store policy",
       summary: "Re-publish the removed store policy (privacy, refund, or terms of service) to maintain legal compliance and customer trust.",
       why_this_helps:
-        "Shopify store policies (Privacy Policy, Refund Policy, Terms of Service, and Shipping Policy) are legally required disclosures in most jurisdictions and are displayed in your store's footer and checkout. Removing a policy means customers can no longer access these disclosures during or after checkout — potentially violating consumer protection laws and payment processor requirements.",
+        "Shopify store policies (Privacy Policy, Refund Policy, Terms of Service, and Shipping Policy) are legally required disclosures in most jurisdictions and are displayed in your store's footer and checkout. Removing a policy means customers can no longer access these disclosures — potentially violating consumer protection laws and payment processor requirements.",
       verify_first: [
         "Confirm whether the policy removal was intentional (e.g. a policy rewrite in progress).",
         "Check whether a replacement policy was published at the same time.",
@@ -3732,12 +5608,243 @@ function _shopifyPlaybooks(
         "Shopify generated templates are starting points only — customise them for your specific business model.",
       ],
       docs_links: [
-        { label: "Shopify store policies",    url: "https://help.shopify.com/en/manual/checkout-settings/refund-privacy-tos" },
+        { label: "Shopify store policies", url: "https://help.shopify.com/en/manual/checkout-settings/refund-privacy-tos" },
       ],
-      provider_console_hint:
-        "Shopify Admin → Settings → Policies.",
+      provider_console_hint: "Shopify Admin → Settings → Policies.",
+    });
+  }
+
+  if (fp === "present" && rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title: "Re-publish missing Shopify store policy",
+      summary: "Publish the required store policy to restore legal compliance disclosures on your Shopify store.",
+      why_this_helps:
+        "A missing store policy means the corresponding legal disclosure (Privacy Policy, Refund Policy, or Terms of Service) is not displayed to customers in the store footer or during checkout. This may violate consumer protection laws, payment processor policies (such as card network requirements for refund policy disclosure), or data protection regulations.",
+      verify_first: [
+        "Confirm which policy is missing from the store.",
+        "Verify whether a draft version of the policy exists.",
+        "Confirm the store's operating jurisdiction and applicable legal requirements.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Policies.",
+        "Locate the policy that shows as unpublished or absent.",
+        "Enter the policy content (draft from previous version or use Shopify's generator).",
+        "Save and publish the policy.",
+        "Confirm it appears in the store footer at checkout.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Consult legal counsel before publishing policies — templates may not satisfy all jurisdictional requirements.",
+      ],
+      docs_links: [
+        { label: "Shopify store policies", url: "https://help.shopify.com/en/manual/checkout-settings/refund-privacy-tos" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Policies.",
+    });
+  }
+
+  if (fp === "body_hash" && rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review Shopify store policy content change",
+      summary: "Confirm the policy content change was authorized — review the updated text to ensure it is accurate and legally compliant.",
+      why_this_helps:
+        "A store policy content change means customers are now shown different terms for privacy, refunds, or service usage. Unexpected policy changes may reflect unauthorized edits, content errors, or a broken policy generation workflow. In regulated industries, incorrect policy content can create legal liability.",
+      verify_first: [
+        "Identify who changed the policy content — check Shopify Admin activity log.",
+        "Review the current policy text against your approved version.",
+        "Confirm whether the change was intentional (e.g. annual policy review, legal requirement update).",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Policies.",
+        "Review the current policy content for the affected policy type.",
+        "If the content is incorrect: restore the previous version or enter the correct content.",
+        "Publish and confirm the policy is correct in the store footer.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Policy content changes take effect immediately for all customers visiting the store.",
+      ],
+      docs_links: [
+        { label: "Shopify store policies", url: "https://help.shopify.com/en/manual/checkout-settings/refund-privacy-tos" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Policies.",
     });
   }
 
   return null;
+}
+
+// 8d. Shop metadata
+function _shopifyShopMetadataPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  if (rt !== "shopify_shop_metadata") return null;
+
+  if (fp === "eligible_for_payments" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Investigate Shopify store payment eligibility loss",
+      summary: "The store is no longer eligible to accept payments — investigate the reason in Shopify Admin and resolve any outstanding actions.",
+      why_this_helps:
+        "When a Shopify store loses payment eligibility, customers cannot complete purchases. This may be caused by outstanding compliance requirements, a billing issue with Shopify Payments, or account verification needs. The store may continue to display products but checkout will fail for all payment methods.",
+      verify_first: [
+        "Log in to Shopify Admin and check the home page for any notifications or action items.",
+        "Check Shopify Admin → Settings → Payments for the current status and any required actions.",
+        "Confirm whether any identity verification, bank account verification, or compliance documents are outstanding.",
+        "Check your email for notifications from Shopify or Shopify Payments.",
+      ],
+      manual_steps: [
+        "Review all action items in the Shopify Admin home dashboard.",
+        "Complete any outstanding verification steps in Settings → Payments.",
+        "Contact Shopify support if the reason for ineligibility is unclear or the change was unexpected.",
+        "After resolution, verify that checkout works end-to-end with a test order.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Payment eligibility may be suspended by Shopify for compliance, risk, or legal reasons — contact Shopify support to investigate.",
+        "Do not attempt to create a new Shopify store to bypass a suspended store — this may violate Shopify's terms of service.",
+      ],
+      docs_links: [
+        { label: "Shopify Payments", url: "https://help.shopify.com/en/manual/payments/shopify-payments" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Payments.",
+    });
+  }
+
+  if (fp === "has_storefront" && rl === "high") {
+    return _guidance({
+      confidence: "high",
+      title: "Investigate Shopify storefront availability change",
+      summary: "The Shopify storefront may no longer be publicly accessible — investigate whether the store was taken offline intentionally.",
+      why_this_helps:
+        "The has_storefront flag indicates whether the Shopify store is currently accessible to customers. A change to false means the storefront may be disabled or in password-protected mode — customers visiting the store URL will not be able to browse products or complete purchases.",
+      verify_first: [
+        "Confirm whether the store is accessible at its primary URL.",
+        "Check Shopify Admin → Online Store → Preferences for the password protection setting.",
+        "Identify who changed the storefront setting.",
+        "Confirm whether the change was intentional (e.g. a planned maintenance window or store migration).",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Online Store → Preferences.",
+        "Review the 'Password protection' section — disable password protection if the store should be public.",
+        "If the storefront was disabled for other reasons: contact Shopify support.",
+        "Test the store URL to confirm public accessibility after making changes.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Shopify stores on the development plan are always password protected — upgrade the plan to make the store public.",
+      ],
+      docs_links: [
+        { label: "Shopify storefront settings", url: "https://help.shopify.com/en/manual/online-store/storefront-password" },
+      ],
+      provider_console_hint: "Shopify Admin → Online Store → Preferences → Password protection.",
+    });
+  }
+
+  if (fp === "password_enabled" && rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review Shopify store password protection change",
+      summary: "Confirm whether the store's password protection status change was intentional — ensure the store is accessible or protected as intended.",
+      why_this_helps:
+        "Shopify store password protection controls whether the storefront is publicly accessible or requires a password. Disabling password protection makes the store publicly visible — important to confirm this is intended before a launch or after maintenance. Enabling it takes the store offline for customers.",
+      verify_first: [
+        "Confirm the current password protection state in Shopify Admin → Online Store → Preferences.",
+        "Identify who changed the setting.",
+        "Confirm whether the change aligns with a planned launch, maintenance window, or other event.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Online Store → Preferences.",
+        "Review the 'Password protection' setting.",
+        "Enable or disable as appropriate for the current operational state.",
+        "Test the store URL to confirm the expected behaviour.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Disabling password protection immediately makes the storefront publicly accessible — confirm this is intended.",
+      ],
+      docs_links: [
+        { label: "Shopify storefront password", url: "https://help.shopify.com/en/manual/online-store/storefront-password" },
+      ],
+      provider_console_hint: "Shopify Admin → Online Store → Preferences → Password protection.",
+    });
+  }
+
+  if ((fp === "plan_name" || fp === "plan_display_name") && rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review Shopify store plan change",
+      summary: "Confirm the Shopify subscription plan change was intentional and review any feature or limit changes that accompany the new plan.",
+      why_this_helps:
+        "A Shopify plan change may reduce or expand the features available to the store — including staff account limits, transaction fee rates, API rate limits, and access to advanced features like third-party calculated shipping or professional reports. An unexpected downgrade may remove functionality that production workflows depend on.",
+      verify_first: [
+        "Confirm who made the plan change and whether it was authorized.",
+        "Review the differences between the previous and new plan.",
+        "Identify any features that are no longer available on the new plan.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Plan.",
+        "Review the current plan and compare features to the previous plan.",
+        "If the downgrade was unauthorized or caused functional regressions: upgrade to the appropriate plan.",
+        "Contact Shopify support if billing was affected unexpectedly.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Plan changes take effect immediately — transaction fee rates may change from the billing date.",
+      ],
+      docs_links: [
+        { label: "Shopify plans", url: "https://help.shopify.com/en/manual/your-account/manage-billing/your-invoice/plans" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Plan.",
+    });
+  }
+
+  if ((fp === "currency" || fp === "money_format") && rl === "medium") {
+    return _guidance({
+      confidence: "medium",
+      title: "Review Shopify store currency change",
+      summary: "Confirm the store currency change was intentional and review any impacts on pricing, reporting, and payment processing.",
+      why_this_helps:
+        "The Shopify store currency affects how prices are displayed and how Shopify Payments processes transactions. An unexpected currency change may mean products are priced in the wrong currency, payment processing is routed differently, or financial reporting is denominated in an unintended currency.",
+      verify_first: [
+        "Confirm who changed the store currency and whether it was authorized.",
+        "Review whether product prices and checkout are now displaying the correct currency.",
+        "Confirm the new currency is supported by your payment providers.",
+      ],
+      manual_steps: [
+        "Open Shopify Admin → Settings → Store details.",
+        "Review the store currency setting.",
+        "If changed unexpectedly: update back to the correct currency.",
+        "Review product pricing to ensure prices are correct in the new currency.",
+        "Test checkout to confirm payment processing is working correctly.",
+      ],
+      validation_steps: STANDARD_VALIDATION,
+      caveats: [
+        "Shopify warns that changing currency after orders have been placed may affect reporting — consult Shopify support for guidance.",
+      ],
+      docs_links: [
+        { label: "Shopify store currency", url: "https://help.shopify.com/en/manual/payments/currency" },
+      ],
+      provider_console_hint: "Shopify Admin → Settings → Store details → Store currency.",
+    });
+  }
+
+  return null;
+}
+
+// 8. Shopify dispatcher
+function _shopifyPlaybooks(
+  rt: string, fp: string, ct: string,
+  rl: string, rr: string, nv: unknown,
+): RemediationGuidance | null {
+  return (
+    _shopifyAppScopePlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _shopifyWebhookPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _shopifyStorePolicyPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    _shopifyShopMetadataPlaybooks(rt, fp, ct, rl, rr, nv) ??
+    null
+  );
 }
