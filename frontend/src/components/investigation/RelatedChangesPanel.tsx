@@ -108,6 +108,8 @@ interface RelatedChangesPanelProps {
   integrationId: string;
   detectedAt: string;
   token: string | null;
+  /** M58.9: optional callback so parent can consume the count for the assistant. */
+  onCountChange?: (count: number) => void;
 }
 
 export default function RelatedChangesPanel({
@@ -115,6 +117,7 @@ export default function RelatedChangesPanel({
   integrationId,
   detectedAt,
   token,
+  onCountChange,
 }: RelatedChangesPanelProps) {
   const [items, setItems] = useState<ChangeListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -146,6 +149,7 @@ export default function RelatedChangesPanel({
             .slice(0, MAX_RESULTS);
           setItems(filtered);
           setError(null);
+          onCountChange?.(filtered.length);
         }
       } catch (err) {
         if (!cancelled) {

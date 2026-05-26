@@ -44,6 +44,7 @@ import {
 import InvestigationTimeline from "@/components/investigation/InvestigationTimeline";
 import ChangeNotesPanel from "@/components/investigation/ChangeNotesPanel";
 import RelatedChangesPanel from "@/components/investigation/RelatedChangesPanel";
+import AskConfigTrace from "@/components/investigation/AskConfigTrace";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -6123,6 +6124,8 @@ export default function ChangeDetailPage() {
   const [review, setReview] = useState<ChangeReviewResponse | null>(null);
   // M58.8: token cached for investigation sub-components (notes, related changes)
   const [cachedToken, setCachedToken] = useState<string | null>(null);
+  // M58.9: related changes count fed into the assistant panel
+  const [relatedChangesCount, setRelatedChangesCount] = useState(0);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6311,6 +6314,15 @@ export default function ChangeDetailPage() {
 
         {/* ── Investigation timeline (M58.8) ──────────────────────────── */}
         <InvestigationTimeline change={change} review={review} />
+
+        {/* ── Ask ConfigTrace (M58.9) ─────────────────────────────────── */}
+        <AskConfigTrace
+          change={change}
+          remediation={remediation}
+          fixPlan={fixPlan}
+          preview={preview}
+          relatedChangesCount={relatedChangesCount}
+        />
 
         {/* ── Risk summary ────────────────────────────────────────────── */}
         <section aria-labelledby="section-risk">
@@ -6638,6 +6650,7 @@ export default function ChangeDetailPage() {
           integrationId={change.integration_id}
           detectedAt={change.created_at}
           token={cachedToken}
+          onCountChange={setRelatedChangesCount}
         />
 
         {/* ── Technical details (collapsed) ────────────────────────────── */}
