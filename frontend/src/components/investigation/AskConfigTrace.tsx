@@ -330,6 +330,8 @@ interface AskConfigTraceProps {
   relatedChangesCount?: number;
   /** Title of the detected change cluster from M58.10 correlation, if any. */
   clusterSummary?: string | null;
+  /** Summary from the M58.11 blast radius analysis, if any. */
+  blastRadiusSummary?: string | null;
 }
 
 export default function AskConfigTrace({
@@ -339,6 +341,7 @@ export default function AskConfigTrace({
   preview,
   relatedChangesCount = 0,
   clusterSummary,
+  blastRadiusSummary,
 }: AskConfigTraceProps) {
   const [activeQuestionId, setActiveQuestionId] = useState<AssistantQuestionId | null>(null);
   const [copied, setCopied] = useState(false);
@@ -350,6 +353,7 @@ export default function AskConfigTrace({
     preview,
     relatedChangesCount,
     clusterSummary,
+    blastRadiusSummary,
   );
 
   const questions = getAssistantQuestionsForChange(ctx);

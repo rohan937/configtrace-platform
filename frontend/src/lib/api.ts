@@ -1009,6 +1009,21 @@ export async function createChangeNote(
   });
 }
 
+// ── M58.11: Blast Radius ──────────────────────────────────────────────────────
+
+/**
+ * Fetch the deterministic blast radius / potential impact analysis for a change.
+ *
+ * Returns { available: false } when no meaningful blast radius model applies.
+ * Always resolves (never rejects on 200 responses).
+ */
+export async function getChangeBlastRadius(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").BlastRadiusResponse> {
+  return apiFetch(`/changes/${changeId}/blast-radius`, { token });
+}
+
 // ── M58.10: Change Correlation / Risk Clusters ────────────────────────────────
 
 /**

@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, CorrelationResponse, DnsRecord, ReviewStatus } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, ReviewStatus } from "@/types";
 import {
   getChange,
   acknowledgeChange,
@@ -12,6 +12,7 @@ import {
   snoozeChange,
   reopenChange,
   getChangeCorrelation,
+  getChangeBlastRadius,
 } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
@@ -47,6 +48,7 @@ import ChangeNotesPanel from "@/components/investigation/ChangeNotesPanel";
 import RelatedChangesPanel from "@/components/investigation/RelatedChangesPanel";
 import AskConfigTrace from "@/components/investigation/AskConfigTrace";
 import CorrelationPanel from "@/components/investigation/CorrelationPanel";
+import BlastRadiusPanel from "@/components/investigation/BlastRadiusPanel";
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -6131,6 +6133,9 @@ export default function ChangeDetailPage() {
   // M58.10: correlation/cluster data
   const [correlation, setCorrelation] = useState<CorrelationResponse | null>(null);
   const [correlationLoading, setCorrelationLoading] = useState(false);
+  // M58.11: blast radius data
+  const [blastRadius, setBlastRadius] = useState<BlastRadiusResponse | null>(null);
+  const [blastRadiusLoading, setBlastRadiusLoading] = useState(false);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6180,6 +6185,19 @@ export default function ChangeDetailPage() {
     getChangeCorrelation(changeId, cachedToken)
       .then((data) => { if (!cancelled) { setCorrelation(data); setCorrelationLoading(false); } })
       .catch(() => { if (!cancelled) setCorrelationLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [changeId, cachedToken, change]);
+
+  // M58.11: fetch blast radius after the change is loaded
+  useEffect(() => {
+    if (!changeId || !cachedToken || !change) return;
+    let cancelled = false;
+
+    setBlastRadiusLoading(true);
+    getChangeBlastRadius(changeId, cachedToken)
+      .then((data) => { if (!cancelled) { setBlastRadius(data); setBlastRadiusLoading(false); } })
+      .catch(() => { if (!cancelled) setBlastRadiusLoading(false); });
 
     return () => { cancelled = true; };
   }, [changeId, cachedToken, change]);
@@ -6339,6 +6357,12 @@ export default function ChangeDetailPage() {
           loading={correlationLoading}
         />
 
+        {/* ── Blast Radius (M58.11) ────────────────────────────────────── */}
+        <BlastRadiusPanel
+          blastRadius={blastRadius}
+          loading={blastRadiusLoading}
+        />
+
         {/* ── Ask ConfigTrace (M58.9) ─────────────────────────────────── */}
         <AskConfigTrace
           change={change}
@@ -6347,6 +6371,7 @@ export default function ChangeDetailPage() {
           preview={preview}
           relatedChangesCount={relatedChangesCount}
           clusterSummary={correlation?.primary_cluster?.title ?? null}
+          blastRadiusSummary={blastRadius?.available ? blastRadius.summary : null}
         />
 
         {/* ── Risk summary ────────────────────────────────────────────── */}

@@ -490,6 +490,42 @@ export interface CorrelationResponse {
   primary_cluster: CorrelationCluster | null;
 }
 
+// ── M58.11: Blast Radius ──────────────────────────────────────────────────────
+
+/** One potential impact area in a blast radius analysis. */
+export interface BlastRadiusItem {
+  label: string;
+  description: string;
+  severity: string;       // "critical" | "high" | "medium" | "low"
+  confidence: string;     // "high" | "medium" | "low"
+  evidence: string[];
+  recommended_review: string[];
+}
+
+/** A surface (resource class, workflow, or infra) that may be affected. */
+export interface AffectedSurface {
+  type: string;           // "resource" | "integration" | "workflow" | "infra"
+  provider: string;
+  label: string;
+  description: string;
+  count: number | null;
+  confidence: string;     // "high" | "medium" | "low"
+  known: boolean;
+}
+
+/** Response from GET /changes/{id}/blast-radius */
+export interface BlastRadiusResponse {
+  available: boolean;
+  confidence: string;
+  title: string;
+  summary: string;
+  /** e.g. ["network_exposure", "admin_access", "data_access"] */
+  impact_domains: string[];
+  items: BlastRadiusItem[];
+  affected_surfaces: AffectedSurface[];
+  limitations: string[];
+}
+
 // ── User settings (M34) ───────────────────────────────────────────────────────
 
 export type AlertRiskThreshold = "critical_only" | "high_and_critical" | "medium_and_above";

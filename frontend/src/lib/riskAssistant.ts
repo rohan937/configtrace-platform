@@ -87,6 +87,8 @@ export interface AssistantContext {
   relatedChangesCount: number;
   /** Title of the detected change cluster, if any (from M58.10 correlation). */
   clusterSummary?: string | null;
+  /** Summary from the blast radius analysis, if any (from M58.11). */
+  blastRadiusSummary?: string | null;
   // Derived / normalised fields (set once, used everywhere)
   provider: string;
   recordType: string;        // lowercase provider_metadata.record_type
@@ -124,6 +126,7 @@ export function buildRiskAssistantContext(
   preview: RemediationPreviewResult,
   relatedChangesCount = 0,
   clusterSummary?: string | null,
+  blastRadiusSummary?: string | null,
 ): AssistantContext {
   const pm = change.provider_metadata ?? {};
   const rt = ((pm["record_type"] as string) ?? "").toLowerCase();
@@ -134,6 +137,7 @@ export function buildRiskAssistantContext(
     preview,
     relatedChangesCount,
     clusterSummary: clusterSummary ?? null,
+    blastRadiusSummary: blastRadiusSummary ?? null,
     provider:         _deriveProvider(rt),
     recordType:       rt,
     riskLevel:        (change.risk_level   ?? "unknown").toLowerCase(),
@@ -754,8 +758,12 @@ function _answerWhatToCheck(ctx: AssistantContext): AssistantResponse {
   const checks = rem?.verify_first?.slice(0, 5) ??
     _genericChecks(ctx.provider, ctx.recordType);
 
+  const blastSentence = ctx.blastRadiusSummary
+    ? ` The blast radius analysis also suggests: ${ctx.blastRadiusSummary.split(".")[0]}.`
+    : "";
+
   const answer =
-    `Start by confirming whether this change was intentional, then assess its potential impact. ` +
+    `Start by confirming whether this change was intentional, then assess its potential impact.${blastSentence} ` +
     `The checks below are based on the resource type and risk classification.`;
 
   return {
@@ -929,6 +937,11 @@ function _answerNextSteps(ctx: AssistantContext): AssistantResponse {
   if (ctx.relatedChangesCount > 0) {
     bullets.push(
       `${ctx.relatedChangesCount} nearby related change${ctx.relatedChangesCount === 1 ? "" : "s"} detected — review the Related Changes panel below.`,
+    );
+  }
+  if (ctx.blastRadiusSummary) {
+    bullets.push(
+      `Blast radius analysis available — review the Blast Radius panel to understand potentially affected surfaces.`,
     );
   }
   bullets.push("After remediation: run a ConfigTrace sync to confirm the finding is resolved.");

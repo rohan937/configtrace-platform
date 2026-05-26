@@ -57,10 +57,12 @@ from app.schemas.change_note import (
     ChangeNoteResponse,
 )
 from app.schemas.change_correlation import CorrelationResponse
+from app.schemas.blast_radius import BlastRadiusResponse
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
 from app.services import change_correlation_service
+from app.services import blast_radius_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -492,6 +494,39 @@ def get_change_correlation(
     _get_change_and_workspace(change_id, current_user, db)
 
     return change_correlation_service.correlate_change(
+        change_id=change_id,
+        user_id=current_user.id,
+        db=db,
+    )
+
+
+# ── Blast Radius endpoint (M58.11) ────────────────────────────────────────────
+
+
+@router.get("/{change_id}/blast-radius", response_model=BlastRadiusResponse)
+def get_change_blast_radius(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> BlastRadiusResponse:
+    """Return deterministic blast radius / potential impact analysis for a change.
+
+    Computes which surfaces, workflows, and infrastructure components may be
+    affected by this change, based on provider-specific rules and configuration
+    metadata.  No external API calls, no LLM, no persisted state.
+
+    Returns ``{"available": false}`` when:
+    - No blast radius model exists for this provider/record type.
+    - The change is low-risk with no meaningful surfaces.
+    - The change does not belong to the requester's workspace.
+
+    The endpoint always returns 200; ``available`` communicates whether a
+    blast radius analysis was produced.
+    """
+    # Authorise: requester must be a workspace member (same pattern as review actions).
+    _get_change_and_workspace(change_id, current_user, db)
+
+    return blast_radius_service.compute_blast_radius(
         change_id=change_id,
         user_id=current_user.id,
         db=db,
