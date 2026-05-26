@@ -549,6 +549,54 @@ def _classify_domain_change(
     )
 
 
+def _classify_deploy_hook_metadata(
+    change_type: str,
+    field_path: str | None,
+    prev_value: Any,
+    new_value: Any,
+    record_name: str,
+) -> tuple[str, str]:
+    """Rules for ``vercel_deploy_hook_metadata`` records — M57.9.
+
+    Deploy hooks trigger deployments via a secret URL.  Changes to hooks
+    may indicate unauthorised CI/CD pipeline additions or removal of
+    deployment triggers.
+
+    Priority chain (first match wins):
+    1. removed → medium (existing trigger gone)
+    2. added   → medium (new deployment trigger)
+    3. hook_ref changed → low (branch/ref target changed)
+    4. hook_name changed → low (cosmetic rename)
+    """
+    hook_label = f"Deploy hook '{record_name}'" if record_name else "A deploy hook"
+
+    if change_type == "removed":
+        return (
+            "medium",
+            f"{hook_label} was removed. Any CI/CD pipeline using this hook "
+            "will no longer be able to trigger deployments.",
+        )
+
+    if change_type == "added":
+        return (
+            "medium",
+            f"{hook_label} was added. A new trigger may now initiate Vercel "
+            "deployments. Verify it was added intentionally.",
+        )
+
+    if field_path == "hook_ref":
+        return (
+            "low",
+            f"{hook_label} target branch changed from '{prev_value}' to "
+            f"'{new_value}'.",
+        )
+
+    return (
+        "low",
+        f"{hook_label} configuration changed (field: {field_path}).",
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main classifier
 # ─────────────────────────────────────────────────────────────────────────────
@@ -589,6 +637,11 @@ def classify_vercel_change(change: Any) -> tuple[str, str]:
     if record_type == "vercel_domain":
         return _classify_domain_change(
             change_type, field_path, prev_value, new_value, record_name, provider_metadata
+        )
+
+    if record_type == "vercel_deploy_hook_metadata":
+        return _classify_deploy_hook_metadata(
+            change_type, field_path, prev_value, new_value, record_name
         )
 
     # Unknown Vercel record type — return low with a generic message

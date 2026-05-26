@@ -145,6 +145,23 @@ RAW_PM_DOMAIN = {
     "link": {"status": "inactive"},
 }
 
+RAW_BILLING_PORTAL_CONFIG = {
+    "id": "bpc_testDEF",
+    "active": True,
+    "is_default": True,
+    "default_return_url": "https://example.com/billing",
+    "login_page": {"enabled": True},
+    "features": {
+        "customer_update": {"enabled": True, "allowed_updates": ["email"]},
+        "invoice_history": {"enabled": True},
+        "payment_method_update": {"enabled": True},
+        "subscription_cancel": {"enabled": False, "mode": None,
+                                "cancellation_reason": {"enabled": False}},
+        "subscription_update": {"enabled": False, "default_allowed_updates": []},
+        "subscription_pause": {"enabled": False},
+    },
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Account settings normalisation
@@ -446,7 +463,8 @@ class TestStripeConnectorFetch:
         webhooks_resp   = _make_list_response([RAW_WEBHOOK])
         pm_config_resp  = _make_list_response([RAW_PM_CONFIG])
         pm_domain_resp  = _make_list_response([RAW_PM_DOMAIN])
-        return [account_resp, webhooks_resp, pm_config_resp, pm_domain_resp]
+        bp_config_resp  = _make_list_response([RAW_BILLING_PORTAL_CONFIG])  # M57.9
+        return [account_resp, webhooks_resp, pm_config_resp, pm_domain_resp, bp_config_resp]
 
     @patch("httpx.get")
     def test_fetch_returns_all_record_types(self, mock_get):
@@ -459,8 +477,8 @@ class TestStripeConnectorFetch:
     def test_fetch_total_count(self, mock_get):
         mock_get.side_effect = self._mock_all_responses()
         records = StripeConnector().fetch(CREDS)
-        # 1 account + 1 webhook + 1 pm_config + 1 pm_domain = 4
-        assert len(records) == 4
+        # 1 account + 1 webhook + 1 pm_config + 1 pm_domain + 1 bp_config = 5
+        assert len(records) == 5
 
     @patch("httpx.get")
     def test_fetch_security_no_api_key_in_any_record(self, mock_get):

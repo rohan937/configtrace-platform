@@ -40,7 +40,12 @@ from app.connectors.exceptions import (
     NetworkError,
     RateLimitError,
 )
-from app.connectors.vercel_schema import VERCEL_DOMAIN, VERCEL_ENV_VAR, VERCEL_PROJECT
+from app.connectors.vercel_schema import (
+    VERCEL_DEPLOY_HOOK_METADATA,
+    VERCEL_DOMAIN,
+    VERCEL_ENV_VAR,
+    VERCEL_PROJECT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +116,11 @@ class VercelConnector(BaseConnector):
         # ── 3. Custom domains (paginated) ────────────────────────────────────
         domain_records = self._fetch_domains(project_id, headers)
         records.extend(domain_records)
+
+        # ── 4. Deploy hook metadata (M57.9) — extracted from project response
+        #       SECURITY: hook URLs (auth tokens) are NEVER stored.
+        hook_records = _extract_deploy_hooks(raw_project, project_id)
+        records.extend(hook_records)
 
         logger.info(
             "vercel connector fetch  project=%s  total_records=%d  "
@@ -368,3 +378,47 @@ def _normalize_domain(raw: dict) -> dict:
         "created_at":  raw.get("createdAt"),
         "updated_at":  raw.get("updatedAt"),
     }
+
+
+def _extract_deploy_hooks(raw_project: dict, project_id: str) -> list[dict]:
+    """Extract deploy hook metadata from the project API response — M57.9.
+
+    Deploy hooks are returned in the ``deployHooks`` array of
+    ``GET /v9/projects/{id}``.  No extra API call is made.
+
+    SECURITY: Each hook's ``url`` field acts as an auth token and is NEVER
+    stored.  Only the stable hook ID, user-visible name, and target git ref
+    are recorded.
+
+    Args:
+        raw_project: Parsed JSON body of the ``GET /v9/projects/{id}`` response.
+        project_id:  Vercel project ID used to build stable record IDs.
+
+    Returns:
+        List of ``vercel_deploy_hook_metadata`` record dicts.
+    """
+    hooks = raw_project.get("deployHooks")
+    if not isinstance(hooks, list):
+        return []
+
+    records: list[dict] = []
+    for hook in hooks:
+        if not isinstance(hook, dict):
+            continue
+        hook_id: str = hook.get("id") or ""
+        if not hook_id:
+            continue
+        hook_name: str = hook.get("name") or f"deploy hook {hook_id}"
+        hook_ref: str | None = hook.get("ref")
+        # SECURITY: hook["url"] is intentionally NOT read or stored here.
+        records.append(
+            {
+                "record_id":   f"{project_id}#deploy_hook#{hook_id}",
+                "record_type": VERCEL_DEPLOY_HOOK_METADATA,
+                "name":        hook_name,
+                "hook_id":     hook_id,
+                "hook_name":   hook_name,
+                "hook_ref":    hook_ref,
+            }
+        )
+    return records

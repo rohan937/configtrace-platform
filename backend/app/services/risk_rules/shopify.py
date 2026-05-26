@@ -357,6 +357,115 @@ def _classify_store_policy_change(change: Change) -> tuple[str, str]:
 
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 
+# ── shopify_app_scope_summary ──────────────────────────────────────────────────
+
+
+def _classify_app_scope_summary_change(change: Change) -> tuple[str, str]:
+    """Risk rules for ``shopify_app_scope_summary`` records — M57.9.
+
+    Priority chain (first match wins):
+    1. removed → high
+    2. added   → low
+    3. sensitive_scope_count increased → high
+    4. write_scope_count increased → high
+    5. customer/order/payment scope newly present → high
+    6. scope_count increased (other) → medium
+    7. scope_count decreased → medium
+    8. scope_hash / scope_names changed → medium
+    9. other → low
+    """
+    change_type = (_get(change, "change_type") or "").lower()
+    field_path = _get(change, "field_path") or ""
+    prev_value = _get(change, "prev_value")
+    new_value  = _get(change, "new_value")
+
+    if change_type == "removed":
+        return (
+            "high",
+            "The Shopify app access scope record was removed. "
+            "Scope drift can no longer be detected for this integration.",
+        )
+
+    if change_type == "added":
+        return (
+            "low",
+            "Shopify app access scopes were recorded for the first time.",
+        )
+
+    # sensitive_scope_count increased
+    if field_path == "sensitive_scope_count":
+        try:
+            old_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (ValueError, TypeError):
+            old_n, new_n = 0, 0
+        if new_n > old_n:
+            return (
+                "high",
+                f"The number of sensitive Shopify scopes (orders, customers, "
+                f"payments) increased from {old_n} to {new_n}. "
+                "Review newly granted scopes and rotate credentials if unexpected.",
+            )
+
+    # write_scope_count increased
+    if field_path == "write_scope_count":
+        try:
+            old_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (ValueError, TypeError):
+            old_n, new_n = 0, 0
+        if new_n > old_n:
+            return (
+                "high",
+                f"Write-access Shopify scopes increased from {old_n} to {new_n}. "
+                "The app can now modify more store data — confirm this is intended.",
+            )
+
+    # Customer/order/payment scope newly present
+    if field_path in ("customer_scope_present", "order_scope_present", "payment_scope_present"):
+        if new_value is True and prev_value is not True:
+            scope_label = field_path.replace("_scope_present", "")
+            return (
+                "high",
+                f"The Shopify app may now access {scope_label} data "
+                f"(scope category newly granted). "
+                "Verify this permission is required and rotate credentials if unexpected.",
+            )
+
+    # scope_count increased
+    if field_path == "scope_count":
+        try:
+            old_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (ValueError, TypeError):
+            old_n, new_n = 0, 0
+        if new_n > old_n:
+            return (
+                "medium",
+                f"Shopify app scope count increased from {old_n} to {new_n}. "
+                "Review the scope_names field to identify newly granted permissions.",
+            )
+        if new_n < old_n:
+            return (
+                "medium",
+                f"Shopify app scope count decreased from {old_n} to {new_n}. "
+                "Some permissions may have been revoked.",
+            )
+
+    # scope_hash or scope_names changed
+    if field_path in ("scope_hash", "scope_names"):
+        return (
+            "medium",
+            "The set of Shopify app access scopes changed. "
+            "Review scope_names to identify added or removed permissions.",
+        )
+
+    return (
+        "low",
+        f"Shopify app scope summary field '{field_path}' changed.",
+    )
+
+
 def classify_shopify_change(change: Change) -> tuple[str, str]:
     """Return ``(risk_level, risk_reason)`` for a Shopify change.
 
@@ -364,6 +473,7 @@ def classify_shopify_change(change: Change) -> tuple[str, str]:
       * ``shopify_shop_metadata``       → shop settings rules
       * ``shopify_webhook_subscription`` → webhook rules
       * ``shopify_store_policy``         → store policy rules
+      * ``shopify_app_scope_summary``    → app scope rules (M57.9)
 
     Args:
         change: A ``Change`` ORM instance (or a plain dict, for testing).
@@ -384,6 +494,8 @@ def classify_shopify_change(change: Change) -> tuple[str, str]:
         return _classify_webhook_change(change)
     if record_type == "shopify_store_policy":
         return _classify_store_policy_change(change)
+    if record_type == "shopify_app_scope_summary":
+        return _classify_app_scope_summary_change(change)
 
     # Fallback for unknown shopify_ subtypes
     return (

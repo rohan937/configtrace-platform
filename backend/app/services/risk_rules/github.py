@@ -150,6 +150,11 @@ def classify_github_change(change: Any) -> tuple[str, str]:
     if record_type == "github_deploy_key":
         return _classify_deploy_key(change_type, field_path, prev_value, new_value)
 
+    if record_type == "github_environment_protection":
+        return _classify_environment_protection(
+            change_type, field_path, prev_value, new_value, record_name
+        )
+
     # Unknown GitHub record type — safe low-severity fallback.
     return (
         "low",
@@ -806,3 +811,114 @@ def _classify_deploy_key(
         )
 
     return ("low", "No specific risk pattern matched for this deploy key change.")
+
+
+def _classify_environment_protection(
+    change_type: str,
+    field_path: str,
+    prev_value: Any,
+    new_value: Any,
+    record_name: str,
+) -> tuple[str, str]:
+    """Rules for ``github_environment_protection`` records — M57.9.
+
+    Priority chain (first match wins):
+    1. removed → high
+    2. added   → low (new environment = new deployment target)
+    3. reviewers_count decreased → high
+    4. prevent_self_review disabled → medium
+    5. reviewers_count increased → low
+    6. wait_timer decreased/removed → medium
+    7. wait_timer increased → low
+    8. protected_branches → False / custom_branch_policies added → high
+    9. other branch policy changes → medium
+    10. other field changes → low
+    """
+    env_label = f"Environment '{record_name}'" if record_name else "A deployment environment"
+
+    if change_type == "removed":
+        return (
+            "high",
+            f"{env_label} was removed. Deployment protection rules for this "
+            "environment no longer apply.",
+        )
+
+    if change_type == "added":
+        return (
+            "low",
+            f"{env_label} was added as a new deployment environment. "
+            "Review its protection rules.",
+        )
+
+    # reviewers_count decreased
+    if field_path == "reviewers_count":
+        try:
+            old_count = int(prev_value or 0)
+            new_count = int(new_value or 0)
+        except (ValueError, TypeError):
+            old_count, new_count = 0, 0
+        if new_count < old_count:
+            return (
+                "high",
+                f"{env_label} required reviewers decreased from {old_count} "
+                f"to {new_count}. Production deployment approval may now require "
+                "fewer reviewers.",
+            )
+        if new_count > old_count:
+            return (
+                "low",
+                f"{env_label} required reviewers increased from {old_count} "
+                f"to {new_count}.",
+            )
+
+    # prevent_self_review disabled
+    if field_path == "prevent_self_review" and new_value is False and prev_value is True:
+        return (
+            "medium",
+            f"{env_label} no longer prevents self-review. The actor who triggers "
+            "a deployment could now approve it.",
+        )
+
+    # prevent_self_review enabled
+    if field_path == "prevent_self_review" and new_value is True:
+        return (
+            "low",
+            f"{env_label} now requires that a different person approves deployments.",
+        )
+
+    # wait_timer changed
+    if field_path == "wait_timer":
+        try:
+            old_t = int(prev_value or 0)
+            new_t = int(new_value or 0)
+        except (ValueError, TypeError):
+            old_t, new_t = 0, 0
+        if new_t < old_t:
+            return (
+                "medium",
+                f"{env_label} wait timer decreased from {old_t} to {new_t} minutes. "
+                "Deployments may proceed sooner than before.",
+            )
+        return (
+            "low",
+            f"{env_label} wait timer changed from {old_t} to {new_t} minutes.",
+        )
+
+    # Branch policy weakened
+    if field_path == "protected_branches" and new_value is False and prev_value is True:
+        return (
+            "high",
+            f"{env_label} no longer restricts deployments to protected branches. "
+            "Unprotected branches may now trigger deployments.",
+        )
+
+    if field_path in ("protected_branches", "custom_branch_policies"):
+        return (
+            "medium",
+            f"{env_label} deployment branch policy changed (field: {field_path}).",
+        )
+
+    return (
+        "low",
+        f"{env_label} protection setting '{field_path}' changed.",
+    )

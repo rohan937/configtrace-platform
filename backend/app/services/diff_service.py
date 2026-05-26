@@ -130,6 +130,11 @@ _VERCEL_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "redirect",    # redirect target (None = no redirect)
         "git_branch",  # branch-specific domain scope
     ),
+    # M57.9 — deploy hook metadata (hook url is NEVER stored — it's an auth token)
+    "vercel_deploy_hook_metadata": (
+        "hook_name",   # user-visible name change
+        "hook_ref",    # target branch/ref change
+    ),
 }
 
 #: Per-record-type tracked field tuples for GitHub records.
@@ -181,6 +186,15 @@ _GITHUB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "title",
         "read_only",
         "verified",
+    ),
+    # M57.9 — deployment environment protection rules
+    "github_environment_protection": (
+        "environment_name",
+        "wait_timer",
+        "reviewers_count",
+        "prevent_self_review",
+        "protected_branches",
+        "custom_branch_policies",
     ),
 }
 
@@ -237,6 +251,23 @@ _STRIPE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "google_pay_enabled",
         "link_enabled",
         "domain_name",
+    ),
+    # M57.9 — Billing Portal configuration
+    "stripe_billing_portal_config": (
+        "active",
+        "is_default",
+        "login_page_enabled",
+        "return_url_domain",
+        "customer_update_enabled",
+        "customer_update_allowed_updates",
+        "invoice_history_enabled",
+        "payment_method_update_enabled",
+        "subscription_cancel_enabled",
+        "subscription_cancel_mode",
+        "subscription_cancel_reason_enabled",
+        "subscription_update_enabled",
+        "subscription_update_allowed_updates",
+        "subscription_pause_enabled",
     ),
 }
 
@@ -1879,6 +1910,17 @@ _SHOPIFY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "present",
         "body_hash",      # SHA-256 of policy body — change detection only
         "body_length",    # byte length — raw text never stored
+    ),
+    # M57.9 — access scope summary
+    "shopify_app_scope_summary": (
+        "scope_count",
+        "write_scope_count",
+        "sensitive_scope_count",
+        "customer_scope_present",
+        "order_scope_present",
+        "payment_scope_present",
+        "scope_hash",
+        "scope_names",
     ),
 }
 

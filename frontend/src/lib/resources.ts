@@ -105,6 +105,7 @@ export function getResourceCategory(resourceType: string): string | null {
   if (t.includes("custom_domain"))     return "Domains";
 
   // ── GitHub ────────────────────────────────────────────────────────────────
+  if (t === "github_environment_protection") return "Deployment Security";
   if (t.includes("branch_protection")) return "Security";
   if (t.includes("secret"))            return "Secrets";
   if (t.includes("deploy_key"))        return "Security";
@@ -119,10 +120,12 @@ export function getResourceCategory(resourceType: string): string | null {
   if (t.includes("zone_setting"))      return "Settings";
 
   // ── Vercel ────────────────────────────────────────────────────────────────
+  if (t === "vercel_deploy_hook_metadata") return "Deployment";
   if (t.includes("domain"))            return "Domains";
   if (t.includes("env"))               return "Config";
 
   // ── Stripe ────────────────────────────────────────────────────────────────
+  if (t === "stripe_billing_portal_config")  return "Billing";
   if (t.includes("payment"))           return "Payments";
   // Note: webhook intentionally checked after GitHub to avoid false positives
   if (t.startsWith("stripe_webhook"))  return "Webhooks";
@@ -131,6 +134,7 @@ export function getResourceCategory(resourceType: string): string | null {
   if (t === "shopify_shop_metadata")          return "Settings";
   if (t === "shopify_webhook_subscription")   return "Webhooks";
   if (t === "shopify_store_policy")           return "Policies";
+  if (t === "shopify_app_scope_summary")      return "Commerce Security";
   if (t.startsWith("shopify_"))               return "Commerce";
 
   return null;
@@ -156,11 +160,13 @@ const TYPE_LABELS: Record<string, string> = {
   github_webhook:                "Webhook",
   github_secret:                 "Actions secret",
   github_deploy_key:             "Deploy key",
+  github_environment_protection: "Environment protection",
 
   // ── Vercel ────────────────────────────────────────────────────────────
   vercel_project:                "Project",
   vercel_domain:                 "Domain",
   vercel_env_variable:           "Environment variable",
+  vercel_deploy_hook_metadata:   "Deploy hook",
 
   // ── Stripe ────────────────────────────────────────────────────────────
   stripe_account:                "Account",
@@ -168,6 +174,7 @@ const TYPE_LABELS: Record<string, string> = {
   stripe_payment_method:         "Payment method",
   stripe_payment_method_domain:  "Payment domain",
   stripe_product:                "Product",
+  stripe_billing_portal_config:  "Billing portal config",
 
   // ── AWS ──────────────────────────────────────────────────────────────
   aws_account:                   "Account",
@@ -233,6 +240,7 @@ const TYPE_LABELS: Record<string, string> = {
   shopify_shop_metadata:         "Shop settings",
   shopify_webhook_subscription:  "Webhook subscription",
   shopify_store_policy:          "Store policy",
+  shopify_app_scope_summary:     "App scopes",
 };
 
 /**

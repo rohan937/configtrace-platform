@@ -37,12 +37,14 @@ from typing import TypedDict
 SHOPIFY_SHOP_METADATA = "shopify_shop_metadata"
 SHOPIFY_WEBHOOK_SUBSCRIPTION = "shopify_webhook_subscription"
 SHOPIFY_STORE_POLICY = "shopify_store_policy"
+SHOPIFY_APP_SCOPE_SUMMARY = "shopify_app_scope_summary"  # M57.9
 
 SHOPIFY_RECORD_TYPES: frozenset[str] = frozenset(
     {
         SHOPIFY_SHOP_METADATA,
         SHOPIFY_WEBHOOK_SUBSCRIPTION,
         SHOPIFY_STORE_POLICY,
+        SHOPIFY_APP_SCOPE_SUMMARY,
     }
 )
 
@@ -160,3 +162,39 @@ class ShopifyStorePolicyRecord(TypedDict, total=False):
     body_hash: str | None       # SHA-256(body) for change detection
     body_length: int | None     # byte length of the body text
     updated_at: str | None
+
+
+class ShopifyAppScopeSummaryRecord(TypedDict, total=False):
+    """Aggregate summary of the access token's OAuth scopes — M57.9.
+
+    Fetched from GET /admin/oauth/access_scopes.json — no extra permissions
+    required beyond what the token already has.  Scope names (e.g.
+    "read_orders", "write_products") are infrastructure permission labels,
+    not customer data.
+
+    SECURITY
+    --------
+    - No customer PII, order data, or payment data is fetched.
+    - Scope names are permission labels, not secret values.
+    - The access token itself is NEVER stored.
+    """
+
+    record_type: str            # "shopify_app_scope_summary"
+    record_id: str              # stable: "{shop_domain}:app_scopes"
+    name: str                   # display: "app scopes ({shop_domain})"
+
+    # Aggregate counts
+    scope_count: int            # total number of granted scopes
+    write_scope_count: int      # scopes beginning with "write_"
+    sensitive_scope_count: int  # scopes matching SENSITIVE_SHOPIFY_SCOPES
+
+    # Presence flags for high-risk scope categories
+    customer_scope_present: bool   # any scope contains "customer"
+    order_scope_present: bool      # any scope contains "order"
+    payment_scope_present: bool    # any scope relates to payments/financials
+
+    # Structural hash for change detection
+    scope_hash: str             # SHA-256[:16] of sorted comma-joined scope handles
+
+    # Full sorted scope list (permission labels — not secrets)
+    scope_names: list[str]

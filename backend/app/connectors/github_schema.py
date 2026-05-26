@@ -47,6 +47,7 @@ GITHUB_ACTIONS_VARIABLE = "github_actions_variable"
 GITHUB_WEBHOOK = "github_webhook"
 GITHUB_ACTIONS_PERMISSIONS = "github_actions_permissions"
 GITHUB_DEPLOY_KEY = "github_deploy_key"
+GITHUB_ENVIRONMENT_PROTECTION = "github_environment_protection"  # M57.9
 
 #: Set of all GitHub record type strings — used for fast membership checks.
 GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
@@ -57,6 +58,7 @@ GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
     GITHUB_WEBHOOK,
     GITHUB_ACTIONS_PERMISSIONS,
     GITHUB_DEPLOY_KEY,
+    GITHUB_ENVIRONMENT_PROTECTION,
 })
 
 
@@ -289,3 +291,53 @@ class GitHubDeployKey(TypedDict):
     title: str
     read_only: bool
     verified: bool
+
+
+class GitHubEnvironmentProtection(TypedDict):
+    """Deployment environment protection rules — M57.9.
+
+    One record per environment per repository.  Captures deployment guard rails
+    (required reviewers, wait timers, branch policies) without reading source
+    code, secret values, workflow files, or reviewer identities.
+
+    Fields
+    ------
+    record_id
+        ``"{owner}/{repo}#environment#{name}"``
+    record_type
+        ``GITHUB_ENVIRONMENT_PROTECTION``
+    name
+        Environment name (e.g. ``"production"``, ``"staging"``).
+    environment_name
+        Duplicate of ``name`` — explicit tracked field.
+    wait_timer
+        Required wait time in minutes before allowing deployments.  ``0`` when
+        no wait timer protection rule is configured.
+    reviewers_count
+        Number of required reviewers before deployments are allowed.  ``0``
+        when no reviewer requirement is configured.
+    prevent_self_review
+        Whether the actor who triggered the deployment is blocked from
+        approving it.
+    protected_branches
+        ``True`` when only protected branches may deploy to this environment.
+        ``None`` when no deployment branch policy is configured.
+    custom_branch_policies
+        ``True`` when custom branch name patterns control which branches can
+        deploy.  ``None`` when no deployment branch policy is configured.
+
+    SECURITY
+    --------
+    - Reviewer identities (user names / team names) are NEVER stored.
+    - Secret names and values are NEVER read.
+    - Workflow file contents are NEVER accessed.
+    """
+    record_id: str
+    record_type: str
+    name: str
+    environment_name: str
+    wait_timer: int
+    reviewers_count: int
+    prevent_self_review: bool
+    protected_branches: Optional[bool]
+    custom_branch_policies: Optional[bool]

@@ -38,6 +38,7 @@ STRIPE_ACCOUNT_SETTINGS = "stripe_account_settings"
 STRIPE_WEBHOOK_ENDPOINT = "stripe_webhook_endpoint"
 STRIPE_PAYMENT_METHOD_CONFIGURATION = "stripe_payment_method_configuration"
 STRIPE_PAYMENT_METHOD_DOMAIN = "stripe_payment_method_domain"
+STRIPE_BILLING_PORTAL_CONFIG = "stripe_billing_portal_config"   # M57.9
 
 STRIPE_RECORD_TYPES: frozenset[str] = frozenset(
     {
@@ -45,6 +46,7 @@ STRIPE_RECORD_TYPES: frozenset[str] = frozenset(
         STRIPE_WEBHOOK_ENDPOINT,
         STRIPE_PAYMENT_METHOD_CONFIGURATION,
         STRIPE_PAYMENT_METHOD_DOMAIN,
+        STRIPE_BILLING_PORTAL_CONFIG,
     }
 )
 
@@ -136,3 +138,56 @@ class StripePaymentMethodDomainRecord(TypedDict, total=False):
     apple_pay_enabled: bool
     google_pay_enabled: bool
     link_enabled: bool
+
+
+class StripeBillingPortalConfigRecord(TypedDict, total=False):
+    """Normalised stripe_billing_portal_config record — M57.9.
+
+    Captures Stripe Customer Portal configuration posture: which self-service
+    actions the portal allows (cancel, update payment method, update
+    subscription, etc.).  No customer data, subscription data, or invoice data
+    is ever fetched or stored.
+
+    SECURITY
+    --------
+    - business_profile URLs (privacy_policy_url, terms_of_service_url) may
+      contain internal paths; only domain is extracted, never the full URL.
+    - return_url domain only — full URL may contain path tokens.
+    - No customer PII, no invoice data, no subscription data.
+    """
+
+    record_type: str           # "stripe_billing_portal_config"
+    record_id: str             # Stripe billing portal config ID, e.g. "bpc_xxx"
+    name: str                  # display: config ID or "default billing portal"
+
+    config_id: str
+    active: bool
+    is_default: bool
+
+    # Portal login page
+    login_page_enabled: bool
+
+    # Return URL — domain only (full URL may contain path tokens)
+    return_url_domain: str | None
+
+    # Customer update feature
+    customer_update_enabled: bool
+    customer_update_allowed_updates: list[str]   # sorted, e.g. ["address","email"]
+
+    # Invoice history access
+    invoice_history_enabled: bool
+
+    # Payment method update
+    payment_method_update_enabled: bool
+
+    # Subscription cancel
+    subscription_cancel_enabled: bool
+    subscription_cancel_mode: str | None        # "immediately" | "at_period_end"
+    subscription_cancel_reason_enabled: bool
+
+    # Subscription update
+    subscription_update_enabled: bool
+    subscription_update_allowed_updates: list[str]  # sorted
+
+    # Subscription pause
+    subscription_pause_enabled: bool

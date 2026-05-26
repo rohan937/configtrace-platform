@@ -28,11 +28,13 @@ from typing_extensions import TypedDict
 VERCEL_PROJECT: str = "vercel_project"
 VERCEL_ENV_VAR: str = "vercel_env_var"
 VERCEL_DOMAIN: str = "vercel_domain"
+VERCEL_DEPLOY_HOOK_METADATA: str = "vercel_deploy_hook_metadata"  # M57.9
 
 VERCEL_RECORD_TYPES: frozenset[str] = frozenset({
     VERCEL_PROJECT,
     VERCEL_ENV_VAR,
     VERCEL_DOMAIN,
+    VERCEL_DEPLOY_HOOK_METADATA,
 })
 
 
@@ -91,3 +93,40 @@ class VercelDomainRecord(TypedDict):
     redirect: Optional[str]      # redirect target if this domain redirects
     created_at: Optional[int]    # Unix ms timestamp
     updated_at: Optional[int]    # Unix ms timestamp
+
+
+class VercelDeployHookMetadataRecord(TypedDict):
+    """Deploy hook metadata — M57.9.
+
+    One record per deploy hook on the project.  Deploy hooks trigger
+    deployments via a unique URL; that URL is NOT stored because it acts as an
+    auth token.  Only the hook's stable ID, user-visible name, and target git
+    ref are recorded so operators can detect when hooks are added or removed.
+
+    Fields
+    ------
+    record_id
+        ``"{project_id}#deploy_hook#{hook_id}"``
+    record_type
+        ``VERCEL_DEPLOY_HOOK_METADATA``
+    name
+        User-defined hook name (e.g. ``"nightly-rebuild"``).
+    hook_id
+        The hook's stable UUID assigned by Vercel.
+    hook_name
+        Duplicate of ``name`` — explicit tracked field.
+    hook_ref
+        Git branch or tag this hook deploys (e.g. ``"main"``).
+
+    SECURITY
+    --------
+    The hook ``url`` field is NEVER stored — it functions as an auth token
+    and its exposure would allow unauthorized deployments.
+    """
+
+    record_id: str           # "{project_id}#deploy_hook#{hook_id}"
+    record_type: str         # "vercel_deploy_hook_metadata"
+    name: str                # user-defined hook name
+    hook_id: str             # stable hook UUID
+    hook_name: str           # same as name — explicit tracked field
+    hook_ref: Optional[str]  # target git ref/branch, e.g. "main"

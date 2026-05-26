@@ -348,6 +348,133 @@ def _classify_payment_method_domain_change(change: Change) -> tuple[str, str]:
 
 # ── Main dispatcher ───────────────────────────────────────────────────────────
 
+# ── stripe_billing_portal_config ──────────────────────────────────────────────
+
+def _classify_billing_portal_config_change(change: Change) -> tuple[str, str]:
+    """Risk rules for ``stripe_billing_portal_config`` records — M57.9.
+
+    Priority chain (first match wins):
+    1. removed → high
+    2. added   → low
+    3. active disabled → medium
+    4. payment_method_update_enabled disabled → medium
+    5. subscription_cancel_enabled changed → medium
+    6. customer_update_allowed_updates changed → medium
+    7. subscription_update_allowed_updates changed → medium
+    8. login_page_enabled disabled → medium
+    9. subscription_cancel_mode changed → low
+    10. subscription_pause_enabled changed → low
+    11. invoice_history_enabled changed → low
+    12. is_default changed → low
+    """
+    change_type = (_get(change, "change_type") or "").lower()
+
+    if change_type == "removed":
+        return (
+            "high",
+            "A Stripe customer billing portal configuration was removed. "
+            "Customers may lose access to self-service billing features.",
+        )
+    if change_type == "added":
+        return (
+            "low",
+            "A new Stripe customer billing portal configuration was created.",
+        )
+
+    old = _get(change, "prev_value") or {}
+    new = _get(change, "new_value") or {}
+    if not isinstance(old, dict):
+        old = {}
+    if not isinstance(new, dict):
+        new = {}
+
+    # active disabled
+    if old.get("active") is True and new.get("active") is False:
+        return (
+            "medium",
+            "The Stripe customer billing portal configuration was deactivated. "
+            "Customers may be unable to access self-service billing.",
+        )
+
+    # payment_method_update_enabled disabled
+    if old.get("payment_method_update_enabled") is True and new.get("payment_method_update_enabled") is False:
+        return (
+            "medium",
+            "Payment method updates were disabled in the Stripe billing portal. "
+            "Customers may no longer be able to update their payment methods.",
+        )
+
+    # subscription_cancel_enabled changed
+    if old.get("subscription_cancel_enabled") != new.get("subscription_cancel_enabled"):
+        enabled_now = new.get("subscription_cancel_enabled")
+        return (
+            "medium",
+            f"Subscription self-cancellation in the billing portal was "
+            f"{'enabled' if enabled_now else 'disabled'}. "
+            "Confirm this change is intentional.",
+        )
+
+    # customer_update_allowed_updates changed
+    if old.get("customer_update_allowed_updates") != new.get("customer_update_allowed_updates"):
+        return (
+            "medium",
+            "The set of customer-editable fields in the billing portal changed. "
+            "Review which account details customers may now update.",
+        )
+
+    # subscription_update_allowed_updates changed
+    if old.get("subscription_update_allowed_updates") != new.get("subscription_update_allowed_updates"):
+        return (
+            "medium",
+            "Subscription update options in the billing portal changed. "
+            "Verify the permitted plan changes are intentional.",
+        )
+
+    # login_page_enabled disabled
+    if old.get("login_page_enabled") is True and new.get("login_page_enabled") is False:
+        return (
+            "medium",
+            "The billing portal login page was disabled. "
+            "Customers may no longer be able to sign in to the portal directly.",
+        )
+
+    # subscription_cancel_mode changed
+    if old.get("subscription_cancel_mode") != new.get("subscription_cancel_mode"):
+        return (
+            "low",
+            f"Subscription cancellation timing changed to "
+            f"\"{new.get('subscription_cancel_mode')}\". "
+            "Customers will experience different cancellation behaviour.",
+        )
+
+    # subscription_pause_enabled changed
+    if old.get("subscription_pause_enabled") != new.get("subscription_pause_enabled"):
+        return (
+            "low",
+            "Subscription pause capability in the billing portal changed.",
+        )
+
+    # invoice_history_enabled changed
+    if old.get("invoice_history_enabled") != new.get("invoice_history_enabled"):
+        return (
+            "low",
+            "Invoice history visibility in the billing portal changed.",
+        )
+
+    # is_default changed
+    if old.get("is_default") != new.get("is_default"):
+        return (
+            "low",
+            "The default billing portal configuration assignment changed.",
+        )
+
+    return (
+        "low",
+        "A Stripe billing portal configuration setting changed. "
+        "Review for intended customer self-service impact.",
+    )
+
+
 def classify_stripe_change(change: Change) -> tuple[str, str]:
     """Return (risk_level, risk_reason) for a Stripe change.
 
@@ -368,5 +495,7 @@ def classify_stripe_change(change: Change) -> tuple[str, str]:
         return _classify_payment_method_configuration_change(change)
     if record_type == "stripe_payment_method_domain":
         return _classify_payment_method_domain_change(change)
+    if record_type == "stripe_billing_portal_config":
+        return _classify_billing_portal_config_change(change)
 
     return ("low", f"A Stripe configuration record changed ({record_type}).")

@@ -58,6 +58,8 @@ from app.connectors.exceptions import (
     RateLimitError,
 )
 from app.connectors.shopify_schema import (
+    SENSITIVE_SHOPIFY_SCOPES,
+    SHOPIFY_APP_SCOPE_SUMMARY,
     SHOPIFY_SHOP_METADATA,
     SHOPIFY_STORE_POLICY,
     SHOPIFY_WEBHOOK_SUBSCRIPTION,
@@ -395,6 +397,97 @@ class ShopifyConnector(BaseConnector):
 
     # ── Fetch helpers ──────────────────────────────────────────────────────────
 
+    def _fetch_access_scopes(self, credentials: dict) -> dict | None:
+        """Fetch GET /admin/oauth/access_scopes.json — M57.9.
+
+        Returns a single ``shopify_app_scope_summary`` aggregate record
+        summarising the OAuth scopes granted to the access token.
+
+        Returns None when the endpoint is inaccessible (403) — the token
+        may be a legacy private-app token that does not expose this endpoint.
+
+        SECURITY
+        --------
+        - Scope names (e.g. "read_orders", "write_products") are permission
+          labels — they are NOT customer data, order data, or payment data.
+        - No customer PII, order data, or financial data is fetched.
+        - The access token itself is NEVER read or stored.
+        """
+        # Note: access_scopes endpoint is relative to the shop root, not the
+        # versioned API path, so we build the URL directly.
+        base_domain = normalize_shop_domain(credentials.get("shop_domain", ""))
+        url_path = "/oauth/access_scopes.json"
+        url = f"https://{base_domain}/admin{url_path}"
+        headers = self._auth_headers(credentials)
+
+        try:
+            resp = httpx.get(url, headers=headers, timeout=_TIMEOUT)
+        except Exception as exc:
+            logger.info(
+                "shopify: access_scopes fetch failed (%s) — skipping",
+                type(exc).__name__,
+            )
+            return None
+
+        if resp.status_code == 403:
+            logger.info(
+                "shopify: /admin/oauth/access_scopes.json returned 403 "
+                "(legacy token or insufficient scope) — skipping"
+            )
+            return None
+
+        if not resp.is_success:
+            logger.info(
+                "shopify: /admin/oauth/access_scopes.json returned %d — skipping",
+                resp.status_code,
+            )
+            return None
+
+        try:
+            data = resp.json()
+        except Exception:
+            return None
+
+        raw_scopes: list[dict] = data.get("access_scopes") or []
+        if not isinstance(raw_scopes, list):
+            raw_scopes = []
+
+        # Extract scope handle strings
+        scope_names: list[str] = sorted(
+            s["handle"]
+            for s in raw_scopes
+            if isinstance(s, dict) and s.get("handle")
+        )
+
+        scope_count = len(scope_names)
+        write_scope_count = sum(1 for s in scope_names if s.startswith("write_"))
+        sensitive_scope_count = sum(1 for s in scope_names if s in SENSITIVE_SHOPIFY_SCOPES)
+
+        customer_scope_present = any("customer" in s for s in scope_names)
+        order_scope_present = any("order" in s for s in scope_names)
+        payment_scope_present = any(
+            kw in s for s in scope_names
+            for kw in ("payment", "financial", "shopify_payments")
+        )
+
+        scope_hash = self._hash(",".join(scope_names))
+
+        shop_domain = base_domain
+
+        return {
+            "record_type": SHOPIFY_APP_SCOPE_SUMMARY,
+            "record_id":   f"{shop_domain}:app_scopes",
+            "name":        f"app scopes ({shop_domain})",
+            "scope_count":            scope_count,
+            "write_scope_count":      write_scope_count,
+            "sensitive_scope_count":  sensitive_scope_count,
+            "customer_scope_present": customer_scope_present,
+            "order_scope_present":    order_scope_present,
+            "payment_scope_present":  payment_scope_present,
+            "scope_hash":             scope_hash,
+            "scope_names":            scope_names,
+        }
+
     def _fetch_shop_metadata(self, credentials: dict) -> dict | None:
         """Fetch GET /admin/api/{version}/shop.json and normalise.
 
@@ -586,6 +679,14 @@ class ShopifyConnector(BaseConnector):
             "ShopifyConnector.fetch: store_policies fetched count=%d",
             len(policy_records),
         )
+
+        # 4. App scope summary — M57.9 (optional: skipped on 403 or legacy token).
+        scope_record = self._fetch_access_scopes(credentials)
+        if scope_record is not None:
+            records.append(scope_record)
+            logger.info("ShopifyConnector.fetch: app_scope_summary fetched")
+        else:
+            logger.info("ShopifyConnector.fetch: app_scope_summary skipped")
 
         logger.info(
             "ShopifyConnector.fetch: complete total_records=%d",

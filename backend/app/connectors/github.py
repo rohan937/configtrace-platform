@@ -76,6 +76,7 @@ from app.connectors.github_schema import (
     GITHUB_ACTIONS_VARIABLE,
     GITHUB_BRANCH_PROTECTION,
     GITHUB_DEPLOY_KEY,
+    GITHUB_ENVIRONMENT_PROTECTION,
     GITHUB_REPO_SETTINGS,
     GITHUB_WEBHOOK,
 )
@@ -180,6 +181,11 @@ class GitHubConnector(BaseConnector):
             # 7. Deploy keys
             records.extend(
                 self._fetch_deploy_keys(client, headers, owner, repo, slug)
+            )
+
+            # 8. Deployment environment protection rules — optional, M57.9
+            records.extend(
+                self._fetch_environments(client, headers, owner, repo, slug)
             )
 
         logger.info(
@@ -447,6 +453,107 @@ class GitHubConnector(BaseConnector):
             }
             for item in items
         ]
+
+    def _fetch_environments(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch deployment environment protection rules — M57.9.
+
+        API: GET /repos/{owner}/{repo}/environments
+
+        Returns one ``github_environment_protection`` record per environment.
+        Returns an empty list when:
+          - the repository has no environments (404)
+          - the token lacks the ``environments: read`` permission (403)
+
+        SECURITY
+        --------
+        - Reviewer identities (usernames, team slugs) are NEVER stored.
+        - Only reviewer *count* is recorded.
+        - Secret names and values are NEVER fetched.
+        - Workflow file contents are NEVER accessed.
+        """
+        url = f"{_BASE_URL}/repos/{owner}/{repo}/environments"
+        try:
+            resp = self._get(client, url, headers)
+        except Exception as exc:
+            # 404 = no environments configured; 403 = no permission.
+            # Both are soft failures — return empty list.
+            logger.info(
+                "github: environments not accessible repo=%s (%s) — skipping",
+                slug,
+                type(exc).__name__,
+            )
+            return []
+
+        body = resp.json()
+        if not isinstance(body, dict):
+            return []
+
+        environments = body.get("environments") or []
+        if not isinstance(environments, list):
+            return []
+
+        records: list[dict[str, Any]] = []
+        for env in environments:
+            if not isinstance(env, dict):
+                continue
+
+            env_name: str = env.get("name") or ""
+            if not env_name:
+                continue
+
+            # Parse protection rules — each rule has a "type" field.
+            protection_rules: list[dict] = env.get("protection_rules") or []
+            wait_timer: int = 0
+            reviewers_count: int = 0
+            prevent_self_review: bool = False
+
+            for rule in protection_rules:
+                if not isinstance(rule, dict):
+                    continue
+                rule_type = rule.get("type") or ""
+                if rule_type == "wait_timer":
+                    wait_timer = int(rule.get("wait_timer") or 0)
+                elif rule_type == "required_reviewers":
+                    reviewers: list = rule.get("reviewers") or []
+                    reviewers_count = len(reviewers)
+                    # prevent_self_review may appear on this rule
+                    if rule.get("prevent_self_review") is True:
+                        prevent_self_review = True
+
+            # prevent_self_review may also appear at the environment level
+            if env.get("prevent_self_review") is True:
+                prevent_self_review = True
+
+            # Deployment branch policy
+            dbp = env.get("deployment_branch_policy")
+            protected_branches: bool | None = None
+            custom_branch_policies: bool | None = None
+            if isinstance(dbp, dict):
+                protected_branches = bool(dbp.get("protected_branches", False))
+                custom_branch_policies = bool(dbp.get("custom_branch_policies", False))
+
+            records.append(
+                {
+                    "record_id":            f"{slug}#environment#{env_name}",
+                    "record_type":          GITHUB_ENVIRONMENT_PROTECTION,
+                    "name":                 env_name,
+                    "environment_name":     env_name,
+                    "wait_timer":           wait_timer,
+                    "reviewers_count":      reviewers_count,
+                    "prevent_self_review":  prevent_self_review,
+                    "protected_branches":   protected_branches,
+                    "custom_branch_policies": custom_branch_policies,
+                }
+            )
+
+        return records
 
     # ── Pagination helper ────────────────────────────────────────────────────
 

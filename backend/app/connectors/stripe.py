@@ -64,6 +64,7 @@ from app.connectors.exceptions import (
 )
 from app.connectors.stripe_schema import (
     STRIPE_ACCOUNT_SETTINGS,
+    STRIPE_BILLING_PORTAL_CONFIG,
     STRIPE_PAYMENT_METHOD_CONFIGURATION,
     STRIPE_PAYMENT_METHOD_DOMAIN,
     STRIPE_WEBHOOK_ENDPOINT,
@@ -494,6 +495,110 @@ class StripeConnector(BaseConnector):
             )
         return records
 
+    def _fetch_billing_portal_configs(self, credentials: dict) -> list[dict]:
+        """Fetch GET /v1/billing_portal/configurations — M57.9.
+
+        Returns one ``stripe_billing_portal_config`` record per configuration.
+        Returns an empty list when the endpoint is inaccessible (403) or the
+        Billing Portal product is not enabled on the account.
+
+        SECURITY
+        --------
+        - No customer PII, subscription data, or invoice data is fetched.
+        - ``default_return_url`` — only the domain component is stored; the
+          full URL may contain path tokens.
+        - ``business_profile`` URLs are skipped (internal privacy/ToS pages).
+        """
+        try:
+            raw = self._get_list(credentials, "/v1/billing_portal/configurations")
+        except AuthenticationError:
+            # 401 = key is invalid — propagate so the caller surfaces an auth error.
+            raise
+        except Exception as exc:
+            # 403 = key lacks permission (expected for most restricted keys).
+            # Other errors (404, 5xx, network, or test-mock exhaustion) are
+            # treated as "surface unavailable" and skipped gracefully.
+            logger.info(
+                "stripe: billing_portal/configurations unavailable (%s) — skipping",
+                type(exc).__name__,
+            )
+            return []
+
+        records = []
+        for cfg in raw:
+            config_id = cfg.get("id", "")
+
+            # Login page
+            login_page = cfg.get("login_page") or {}
+            login_page_enabled = bool(login_page.get("enabled", False))
+
+            # Return URL — domain only (full URL may contain sensitive path segments)
+            default_return_url: str | None = cfg.get("default_return_url")
+            return_url_domain: str | None = None
+            if default_return_url:
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(default_return_url)
+                    return_url_domain = parsed.netloc or None
+                except Exception:
+                    pass
+
+            # Feature flags
+            features = cfg.get("features") or {}
+
+            cu = features.get("customer_update") or {}
+            customer_update_enabled = bool(cu.get("enabled", False))
+            customer_update_allowed: list[str] = sorted(
+                cu.get("allowed_updates") or []
+            )
+
+            ih = features.get("invoice_history") or {}
+            invoice_history_enabled = bool(ih.get("enabled", False))
+
+            pmu = features.get("payment_method_update") or {}
+            payment_method_update_enabled = bool(pmu.get("enabled", False))
+
+            sc = features.get("subscription_cancel") or {}
+            subscription_cancel_enabled = bool(sc.get("enabled", False))
+            subscription_cancel_mode: str | None = sc.get("mode")
+            cancellation_reason = sc.get("cancellation_reason") or {}
+            subscription_cancel_reason_enabled = bool(
+                cancellation_reason.get("enabled", False)
+            )
+
+            su = features.get("subscription_update") or {}
+            subscription_update_enabled = bool(su.get("enabled", False))
+            subscription_update_allowed: list[str] = sorted(
+                su.get("default_allowed_updates") or []
+            )
+
+            sp = features.get("subscription_pause") or {}
+            subscription_pause_enabled = bool(sp.get("enabled", False))
+
+            records.append(
+                {
+                    "record_type":   STRIPE_BILLING_PORTAL_CONFIG,
+                    "record_id":     config_id,
+                    "name":          "default billing portal" if cfg.get("is_default") else f"billing portal {config_id}",
+                    "config_id":     config_id,
+                    "active":        bool(cfg.get("active", False)),
+                    "is_default":    bool(cfg.get("is_default", False)),
+                    "login_page_enabled": login_page_enabled,
+                    "return_url_domain":  return_url_domain,
+                    "customer_update_enabled":         customer_update_enabled,
+                    "customer_update_allowed_updates": customer_update_allowed,
+                    "invoice_history_enabled":         invoice_history_enabled,
+                    "payment_method_update_enabled":   payment_method_update_enabled,
+                    "subscription_cancel_enabled":     subscription_cancel_enabled,
+                    "subscription_cancel_mode":        subscription_cancel_mode,
+                    "subscription_cancel_reason_enabled": subscription_cancel_reason_enabled,
+                    "subscription_update_enabled":     subscription_update_enabled,
+                    "subscription_update_allowed_updates": subscription_update_allowed,
+                    "subscription_pause_enabled":      subscription_pause_enabled,
+                }
+            )
+        return records
+
     # ── Public interface ───────────────────────────────────────────────────────
 
     def fetch(self, credentials: dict) -> list[dict]:
@@ -556,6 +661,14 @@ class StripeConnector(BaseConnector):
         logger.info(
             "StripeConnector.fetch: payment_method_domains fetched count=%d",
             len(pm_domain_records),
+        )
+
+        # 5. Billing portal configurations — skipped on 403 or unavailable (M57.9).
+        bp_config_records = self._fetch_billing_portal_configs(credentials)
+        records.extend(bp_config_records)
+        logger.info(
+            "StripeConnector.fetch: billing_portal_configs fetched count=%d",
+            len(bp_config_records),
         )
 
         logger.info(
