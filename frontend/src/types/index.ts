@@ -1209,3 +1209,65 @@ export interface IacContextResponse {
   future_fix_available: boolean;
   future_fix_note: string | null;
 }
+
+// ── M58.19: Terraform Fix Suggestion Preview ──────────────────────────────────
+
+/** The IaC mapping that was used to derive a Terraform fix suggestion. */
+export interface TerraformFixMappingInfo {
+  repo_full_name: string | null;
+  file_path: string;
+  terraform_resource_type: string | null;
+  terraform_resource_name: string | null;
+  /** "high" | "medium" | "low" */
+  match_confidence: string;
+}
+
+/** A named placeholder inside a conceptual HCL diff. */
+export interface TerraformFixPlaceholder {
+  name: string;
+  description: string;
+  example: string;
+}
+
+/**
+ * A single fix suggestion — either an HCL diff (conceptual_preview) or
+ * human-readable guidance (guided_only).
+ *
+ * safety_level is always "requires_human_review".
+ */
+export interface TerraformFixSuggestion {
+  /** "hcl_diff" | "guidance_only" */
+  kind: string;
+  title: string;
+  description: string;
+  /** "diff" | "hcl" | "text" */
+  language: string;
+  /** null for guidance_only */
+  diff: string | null;
+  /** Always "requires_human_review" */
+  safety_level: string;
+  placeholders: TerraformFixPlaceholder[];
+  warnings: string[];
+}
+
+/**
+ * Full response for GET /changes/{id}/terraform-fix-preview.
+ *
+ * PERMANENT SAFETY CONSTANTS (enforced by backend schema validators):
+ * - execution_enabled is ALWAYS false
+ * - pr_available is ALWAYS false
+ */
+export interface TerraformFixPreviewResponse {
+  available: boolean;
+  /** "high" | "medium" | "low" | null when unavailable */
+  confidence: string | null;
+  title: string | null;
+  summary: string | null;
+  mapping: TerraformFixMappingInfo | null;
+  suggestions: TerraformFixSuggestion[];
+  recommended_workflow: string[];
+  /** Always false — GitHub PR creation not available in M58.19. */
+  pr_available: false;
+  /** Always false — Terraform is never executed. */
+  execution_enabled: false;
+}

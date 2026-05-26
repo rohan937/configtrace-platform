@@ -1310,3 +1310,12 @@ export async function getChangeIacContext(
   return apiFetch(`/changes/${changeId}/iac-context`, { token });
 }
 
+// ── M58.19: Terraform Fix Suggestion Preview ──────────────────────────────────
+
+export async function getChangeTerraformFixPreview(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").TerraformFixPreviewResponse> {
+  return apiFetch(`/changes/${changeId}/terraform-fix-preview`, { token });
+}
+

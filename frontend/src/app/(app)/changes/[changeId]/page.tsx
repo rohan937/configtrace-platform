@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, IacContextResponse, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, IacContextResponse, TerraformFixPreviewResponse, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
 import {
   getChange,
   acknowledgeChange,
@@ -16,6 +16,7 @@ import {
   getChangePolicyViolations,
   getExpectedChangeMatch,
   getChangeIacContext,
+  getChangeTerraformFixPreview,
 } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
@@ -54,6 +55,7 @@ import CorrelationPanel from "@/components/investigation/CorrelationPanel";
 import BlastRadiusPanel from "@/components/investigation/BlastRadiusPanel";
 import PolicyViolationsPanel from "@/components/investigation/PolicyViolationsPanel";
 import IacContextPanel from "@/components/investigation/IacContextPanel";
+import TerraformFixPreviewPanel from "@/components/investigation/TerraformFixPreviewPanel";
 
 // ── Expected Change Panel (M58.16) ────────────────────────────────────────────
 
@@ -6261,6 +6263,9 @@ export default function ChangeDetailPage() {
   // M58.18: IaC context
   const [iacContext, setIacContext] = useState<IacContextResponse | null>(null);
   const [iacContextLoading, setIacContextLoading] = useState(false);
+  // M58.19: Terraform fix suggestion preview
+  const [terraformFix, setTerraformFix] = useState<TerraformFixPreviewResponse | null>(null);
+  const [terraformFixLoading, setTerraformFixLoading] = useState(false);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6362,6 +6367,19 @@ export default function ChangeDetailPage() {
     getChangeIacContext(changeId, cachedToken)
       .then((data) => { if (!cancelled) { setIacContext(data); setIacContextLoading(false); } })
       .catch(() => { if (!cancelled) setIacContextLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [changeId, cachedToken, change]);
+
+  // M58.19: fetch Terraform fix suggestion preview after the change is loaded
+  useEffect(() => {
+    if (!changeId || !cachedToken || !change) return;
+    let cancelled = false;
+
+    setTerraformFixLoading(true);
+    getChangeTerraformFixPreview(changeId, cachedToken)
+      .then((data) => { if (!cancelled) { setTerraformFix(data); setTerraformFixLoading(false); } })
+      .catch(() => { if (!cancelled) setTerraformFixLoading(false); });
 
     return () => { cancelled = true; };
   }, [changeId, cachedToken, change]);
@@ -6531,6 +6549,12 @@ export default function ChangeDetailPage() {
         <IacContextPanel
           data={iacContext}
           loading={iacContextLoading}
+        />
+
+        {/* ── Terraform Fix Preview (M58.19) ────────────────────────────── */}
+        <TerraformFixPreviewPanel
+          data={terraformFix}
+          loading={terraformFixLoading}
         />
 
         {/* ── Policy Violations (M58.14) ───────────────────────────────── */}

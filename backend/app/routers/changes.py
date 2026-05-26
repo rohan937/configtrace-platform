@@ -1,4 +1,4 @@
-"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16 / M58.18.
+"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16 / M58.18 / M58.19.
 
 Routes
 ------
@@ -20,6 +20,9 @@ GET  /changes/{change_id}/expected-change-match — check if change falls within
 
 M58.18 IaC awareness:
 GET  /changes/{change_id}/iac-context — advisory IaC mapping context for a change
+
+M58.19 Terraform fix suggestion preview:
+GET  /changes/{change_id}/terraform-fix-preview — advisory HCL diff preview (read-only)
 
 Both GET routes now include an optional ``review`` field with the current
 review state.  When no review row exists ``review`` is None (treat as
@@ -71,6 +74,7 @@ from app.schemas.blast_radius import BlastRadiusResponse
 from app.schemas.policy import PolicyViolationsResponse
 from app.schemas.expected_change_window import ExpectedChangeMatchResponse
 from app.schemas.iac import IacContextResponse
+from app.schemas.terraform_fix import TerraformFixPreviewResponse
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
@@ -79,6 +83,7 @@ from app.services import blast_radius_service
 from app.services import policy_engine_service
 from app.services import expected_change_service
 from app.services import iac_mapping_service
+from app.services import terraform_fix_suggestion_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -660,6 +665,59 @@ def get_change_iac_context(
         )
 
     return iac_mapping_service.get_iac_context(
+        change_id=change_id,
+        workspace_id=workspace_id,
+        db=db,
+    )
+
+
+# ── Terraform fix suggestion preview (M58.19) ─────────────────────────────────
+
+
+@router.get("/{change_id}/terraform-fix-preview", response_model=TerraformFixPreviewResponse)
+def get_terraform_fix_preview(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TerraformFixPreviewResponse:
+    """Return an advisory Terraform fix suggestion preview for a change.
+
+    Provides a conceptual HCL diff preview showing how the changed cloud
+    resource *may* be corrected in Terraform.  All suggestions are advisory
+    only — no Terraform is executed, no GitHub PRs are created, and no
+    provider resources are mutated.
+
+    PERMANENT SAFETY CONSTRAINTS:
+    - execution_enabled is always False.
+    - pr_available is always False.
+    - safety_level on every suggestion is always "requires_human_review".
+    - All diffs contain placeholder values, not real infrastructure data.
+
+    Generation mode is determined by IaC mapping confidence:
+    - low confidence     → guided_only  (no diff; human-readable guidance only)
+    - medium/high        → conceptual_preview  (HCL diff with <PLACEHOLDER> values)
+
+    Returns ``{"available": false}`` when:
+    - No IaC repositories are registered or scanned for the workspace.
+    - No Terraform resource mappings match this change's resource type.
+
+    The endpoint always returns 200; ``available`` communicates the result.
+    Only workspace members may call this endpoint.
+    """
+    change, workspace_id = _get_change_and_workspace(change_id, current_user, db)
+
+    if workspace_id is None:
+        return TerraformFixPreviewResponse(
+            available=False,
+            summary=(
+                "Terraform fix suggestions require a workspace-linked integration. "
+                "Register IaC repositories under Workspace → IaC Awareness settings."
+            ),
+            pr_available=False,
+            execution_enabled=False,
+        )
+
+    return terraform_fix_suggestion_service.get_terraform_fix_preview(
         change_id=change_id,
         workspace_id=workspace_id,
         db=db,
