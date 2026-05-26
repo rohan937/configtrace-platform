@@ -24,7 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Audit Log",      href: "/settings/workspace/audit",         sub: true },
   { label: "Billing",        href: "/settings/workspace/billing",       sub: true },
   { label: "Notifications",  href: "/settings/workspace/notifications", sub: true },
-  { label: "Data Access",    href: "/settings/workspace/data-access",   sub: true },
+  { label: "Trust Center",   href: "/settings/workspace/data-access",   sub: true },
 ];
 
 export default function Sidebar() {

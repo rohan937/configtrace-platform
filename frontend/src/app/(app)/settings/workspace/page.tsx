@@ -36,8 +36,8 @@ const HUB_CARDS = [
   },
   {
     href: "/settings/workspace/data-access",
-    title: "Data Access & Permissions",
-    description: "See exactly what ConfigTrace reads from each provider.",
+    title: "Trust Center",
+    description: "Review provider permissions, read boundaries, and export a security packet.",
     color: "#b0b5c4",
   },
 ] as const;
