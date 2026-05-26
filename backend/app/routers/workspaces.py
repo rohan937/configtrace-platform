@@ -1,4 +1,4 @@
-"""Workspace and member management routes — M50/M51/M57.1/M58.5/M58.7/M58.14.
+"""Workspace and member management routes — M50/M51/M57.1/M58.5/M58.7/M58.14/M58.16.
 
 Routes
 ------
@@ -32,6 +32,11 @@ GET    /workspaces/{workspace_id}/weekly-digest/preview            — preview d
 GET    /workspaces/{workspace_id}/weekly-digest/settings           — get digest schedule settings (M58.15)
 PUT    /workspaces/{workspace_id}/weekly-digest/settings           — update digest schedule settings (M58.15)
 POST   /workspaces/{workspace_id}/weekly-digest/test               — send test digest to current user (M58.15)
+GET    /workspaces/{workspace_id}/expected-changes                 — list expected change windows (M58.16)
+POST   /workspaces/{workspace_id}/expected-changes                 — create expected change window (M58.16)
+POST   /workspaces/{workspace_id}/expected-changes/{window_id}/approve — approve window (M58.16)
+POST   /workspaces/{workspace_id}/expected-changes/{window_id}/reject  — reject window (M58.16)
+POST   /workspaces/{workspace_id}/expected-changes/{window_id}/cancel  — cancel window (M58.16)
 """
 
 from __future__ import annotations
@@ -90,10 +95,19 @@ from app.schemas.weekly_digest import (
     WeeklyDigestSettingsUpdateRequest,
     WeeklyDigestTestResponse,
 )
+from app.schemas.expected_change_window import (
+    ApproveWindowRequest,
+    CancelWindowRequest,
+    ExpectedChangeWindowCreate,
+    ExpectedChangeWindowListResponse,
+    ExpectedChangeWindowResponse,
+    RejectWindowRequest,
+)
 from app.services import workspace_service
 from app.services import notification_service
 from app.services import policy_engine_service
 from app.services import weekly_digest_service
+from app.services import expected_change_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -1166,3 +1180,202 @@ def test_weekly_digest(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     return weekly_digest_service.test_send_digest(workspace_id, current_user.id, db)
+
+
+# ── Expected Change Windows (M58.16) ──────────────────────────────────────────
+
+
+@router.get(
+    "/{workspace_id}/expected-changes",
+    response_model=ExpectedChangeWindowListResponse,
+)
+def list_expected_change_windows(
+    workspace_id: UUID4,
+    status: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by status: pending, approved, rejected, cancelled. "
+            "Omit to return all."
+        ),
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ExpectedChangeWindowListResponse:
+    """Return all expected change windows for this workspace.
+
+    Any workspace member may view windows.  Results are ordered by
+    start_time descending.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return expected_change_service.list_windows(
+        workspace_id=workspace_id,
+        db=db,
+        status_filter=status,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "/{workspace_id}/expected-changes",
+    response_model=ExpectedChangeWindowResponse,
+    status_code=201,
+)
+def create_expected_change_window(
+    workspace_id: UUID4,
+    body: ExpectedChangeWindowCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ExpectedChangeWindowResponse:
+    """Create a new expected change window in 'pending' status.
+
+    The window must be approved by an admin before it is eligible for
+    matching against changes.  Only workspace admins may create windows.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        window = expected_change_service.create_window(
+            workspace_id=workspace_id,
+            created_by_user_id=current_user.id,
+            body=body,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(window)
+    return ExpectedChangeWindowResponse.model_validate(window)
+
+
+@router.post(
+    "/{workspace_id}/expected-changes/{window_id}/approve",
+    response_model=ExpectedChangeWindowResponse,
+)
+def approve_expected_change_window(
+    workspace_id: UUID4,
+    window_id: UUID4,
+    body: ApproveWindowRequest,  # noqa: ARG001 (no-op body for consistent shape)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ExpectedChangeWindowResponse:
+    """Approve a pending expected change window.
+
+    Once approved the window becomes active for matching.
+    Only workspace admins may approve windows.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        window = expected_change_service.approve_window(
+            workspace_id=workspace_id,
+            window_id=window_id,
+            approver_user_id=current_user.id,
+            db=db,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(window)
+    return ExpectedChangeWindowResponse.model_validate(window)
+
+
+@router.post(
+    "/{workspace_id}/expected-changes/{window_id}/reject",
+    response_model=ExpectedChangeWindowResponse,
+)
+def reject_expected_change_window(
+    workspace_id: UUID4,
+    window_id: UUID4,
+    body: RejectWindowRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ExpectedChangeWindowResponse:
+    """Reject a pending expected change window.
+
+    Rejected windows cannot be approved or re-opened.
+    Only workspace admins may reject windows.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        window = expected_change_service.reject_window(
+            workspace_id=workspace_id,
+            window_id=window_id,
+            db=db,
+            reason=body.reason,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(window)
+    return ExpectedChangeWindowResponse.model_validate(window)
+
+
+@router.post(
+    "/{workspace_id}/expected-changes/{window_id}/cancel",
+    response_model=ExpectedChangeWindowResponse,
+)
+def cancel_expected_change_window(
+    workspace_id: UUID4,
+    window_id: UUID4,
+    body: CancelWindowRequest,  # noqa: ARG001
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ExpectedChangeWindowResponse:
+    """Cancel a pending or approved expected change window.
+
+    Cancellation prevents the window from matching future changes.
+    Only workspace admins may cancel windows.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "admin", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        window = expected_change_service.cancel_window(
+            workspace_id=workspace_id,
+            window_id=window_id,
+            db=db,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    db.commit()
+    db.refresh(window)
+    return ExpectedChangeWindowResponse.model_validate(window)

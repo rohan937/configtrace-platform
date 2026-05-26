@@ -19,6 +19,7 @@ from app.models.notification_settings import WorkspaceNotificationSettings  # no
 from app.models.change_review import ChangeReview  # noqa: F401  (after Change + Workspace)
 from app.models.change_snooze_rule import ChangeSnoozeRule  # noqa: F401  (M57.3)
 from app.models.workspace_policy import WorkspacePolicy  # noqa: F401  (M58.14)
+from app.models.expected_change_window import ExpectedChangeWindow  # noqa: F401  (M58.16)
 
 __all__ = [
     "Base",
@@ -39,4 +40,5 @@ __all__ = [
     "ChangeReview",
     "ChangeSnoozeRule",
     "WorkspacePolicy",
+    "ExpectedChangeWindow",
 ]

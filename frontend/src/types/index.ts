@@ -991,3 +991,67 @@ export interface WeeklyDigestTestResponse {
   preview_body: string | null;
   error: string | null;
 }
+
+// ── M58.16: Expected Change Windows ──────────────────────────────────────────
+
+export type ExpectedChangeWindowStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled";
+
+export type ExpectedChangeAlertBehavior = "annotate_only" | "suppress";
+
+/** A single expected change window returned by the API. */
+export interface ExpectedChangeWindow {
+  id: string;
+  workspace_id: string;
+  created_by_user_id: string | null;
+  approved_by_user_id: string | null;
+  title: string;
+  description: string | null;
+  start_time: string;      // ISO 8601 UTC
+  end_time: string;        // ISO 8601 UTC
+  status: ExpectedChangeWindowStatus;
+  alert_behavior: ExpectedChangeAlertBehavior;
+  /** Optional provider filter. null = matches all providers. */
+  filter_provider: string | null;
+  /** Optional integration UUID filter. null = matches all integrations. */
+  filter_integration_id: string | null;
+  /** Optional risk level filter. null = matches all risk levels. */
+  filter_risk_level: string | null;
+  rejection_reason: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response from GET /workspaces/{id}/expected-changes. */
+export interface ExpectedChangeWindowListResponse {
+  windows: ExpectedChangeWindow[];
+  total: number;
+}
+
+/** Request body for POST /workspaces/{id}/expected-changes. */
+export interface ExpectedChangeWindowCreate {
+  title: string;
+  description?: string;
+  start_time: string;      // ISO 8601 UTC
+  end_time: string;        // ISO 8601 UTC
+  alert_behavior?: ExpectedChangeAlertBehavior;
+  filter_provider?: string | null;
+  filter_integration_id?: string | null;
+  filter_risk_level?: string | null;
+}
+
+/** Request body for POST .../reject. */
+export interface RejectWindowRequest {
+  reason?: string;
+}
+
+/** Response from GET /changes/{id}/expected-change-match. */
+export interface ExpectedChangeMatchResponse {
+  matched: boolean;
+  window: ExpectedChangeWindow | null;
+  annotation: string | null;
+}

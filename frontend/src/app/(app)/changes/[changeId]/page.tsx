@@ -4,7 +4,7 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, ReviewStatus, PolicyViolationsResponse } from "@/types";
+import type { ChangeDetail, ChangeReviewResponse, BlastRadiusResponse, CorrelationResponse, DnsRecord, ReviewStatus, PolicyViolationsResponse, ExpectedChangeMatchResponse } from "@/types";
 import {
   getChange,
   acknowledgeChange,
@@ -14,6 +14,7 @@ import {
   getChangeCorrelation,
   getChangeBlastRadius,
   getChangePolicyViolations,
+  getExpectedChangeMatch,
 } from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import RiskBadge from "@/components/common/RiskBadge";
@@ -51,6 +52,117 @@ import AskConfigTrace from "@/components/investigation/AskConfigTrace";
 import CorrelationPanel from "@/components/investigation/CorrelationPanel";
 import BlastRadiusPanel from "@/components/investigation/BlastRadiusPanel";
 import PolicyViolationsPanel from "@/components/investigation/PolicyViolationsPanel";
+
+// ── Expected Change Panel (M58.16) ────────────────────────────────────────────
+
+function ExpectedChangePanel({
+  data,
+  loading,
+}: {
+  data: ExpectedChangeMatchResponse | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div
+        style={{
+          background: "#13151a",
+          border: "1px solid #2a2d38",
+          borderRadius: "6px",
+          padding: "16px",
+          marginBottom: "12px",
+        }}
+      >
+        <p style={{ fontSize: "11px", color: "#565b6e", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "8px", fontWeight: 500 }}>
+          Expected Change Window
+        </p>
+        <p style={{ fontSize: "12px", color: "#565b6e" }}>Checking windows…</p>
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  if (!data.matched) {
+    return (
+      <div
+        style={{
+          background: "#13151a",
+          border: "1px solid #2a2d38",
+          borderRadius: "6px",
+          padding: "16px",
+          marginBottom: "12px",
+        }}
+      >
+        <p style={{ fontSize: "11px", color: "#565b6e", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "8px", fontWeight: 500 }}>
+          Expected Change Window
+        </p>
+        <p style={{ fontSize: "12px", color: "#565b6e" }}>
+          This change does not fall within any approved expected change window.
+        </p>
+      </div>
+    );
+  }
+
+  const w = data.window!;
+  const start = new Date(w.start_time).toLocaleString();
+  const end   = new Date(w.end_time).toLocaleString();
+
+  return (
+    <div
+      style={{
+        background: "rgba(60,207,126,0.06)",
+        border: "1px solid rgba(60,207,126,0.30)",
+        borderRadius: "6px",
+        padding: "16px",
+        marginBottom: "12px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "10px" }}>
+        <span
+          style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            background: "rgba(60,207,126,0.15)",
+            color: "#3ccf7e",
+            padding: "2px 8px",
+            borderRadius: "3px",
+            letterSpacing: "0.04em",
+          }}
+        >
+          ✓ EXPECTED CHANGE
+        </span>
+        <span style={{ fontSize: "11px", color: "#565b6e" }}>
+          This change falls within an approved window.
+        </span>
+      </div>
+
+      <p style={{ fontSize: "14px", fontWeight: 600, color: "#e2e5ef", marginBottom: "6px" }}>
+        {w.title}
+      </p>
+
+      {w.description && (
+        <p style={{ fontSize: "12px", color: "#8b90a0", marginBottom: "8px", lineHeight: 1.5 }}>
+          {w.description}
+        </p>
+      )}
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "6px" }}>
+        <span style={{ fontSize: "11px", color: "#565b6e" }}>
+          Window: <span style={{ color: "#c4c8d4" }}>{start}</span>
+          {" — "}
+          <span style={{ color: "#c4c8d4" }}>{end}</span>
+        </span>
+      </div>
+
+      {data.annotation && (
+        <p style={{ fontSize: "11px", color: "#3ccf7e", marginTop: "6px" }}>
+          {data.annotation}
+        </p>
+      )}
+    </div>
+  );
+}
 
 // ── Risk panel background colors ──────────────────────────────────────────────
 
@@ -6141,6 +6253,9 @@ export default function ChangeDetailPage() {
   // M58.14: policy violations
   const [policyViolations, setPolicyViolations] = useState<PolicyViolationsResponse | null>(null);
   const [policyViolationsLoading, setPolicyViolationsLoading] = useState(false);
+  // M58.16: expected change window match
+  const [expectedMatch, setExpectedMatch] = useState<ExpectedChangeMatchResponse | null>(null);
+  const [expectedMatchLoading, setExpectedMatchLoading] = useState(false);
   const { getToken, isLoaded } = useAuth();
 
   useEffect(() => {
@@ -6216,6 +6331,19 @@ export default function ChangeDetailPage() {
     getChangePolicyViolations(changeId, cachedToken)
       .then((data) => { if (!cancelled) { setPolicyViolations(data); setPolicyViolationsLoading(false); } })
       .catch(() => { if (!cancelled) setPolicyViolationsLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [changeId, cachedToken, change]);
+
+  // M58.16: fetch expected change window match after the change is loaded
+  useEffect(() => {
+    if (!changeId || !cachedToken || !change) return;
+    let cancelled = false;
+
+    setExpectedMatchLoading(true);
+    getExpectedChangeMatch(changeId, cachedToken)
+      .then((data) => { if (!cancelled) { setExpectedMatch(data); setExpectedMatchLoading(false); } })
+      .catch(() => { if (!cancelled) setExpectedMatchLoading(false); });
 
     return () => { cancelled = true; };
   }, [changeId, cachedToken, change]);
@@ -6385,6 +6513,12 @@ export default function ChangeDetailPage() {
         <PolicyViolationsPanel
           data={policyViolations}
           loading={policyViolationsLoading}
+        />
+
+        {/* ── Expected Change Window (M58.16) ─────────────────────────── */}
+        <ExpectedChangePanel
+          data={expectedMatch}
+          loading={expectedMatchLoading}
         />
 
         {/* ── Ask ConfigTrace (M58.9) ─────────────────────────────────── */}

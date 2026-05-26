@@ -1,4 +1,4 @@
-"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14.
+"""Changes router — Milestone 11 / M57.2 / M57.3 / M58.14 / M58.16.
 
 Routes
 ------
@@ -14,6 +14,9 @@ POST /changes/{change_id}/reopen         — reset to needs_review
 
 M58.14 policy engine:
 GET  /changes/{change_id}/policy-violations — evaluate built-in policies against a change
+
+M58.16 expected change windows:
+GET  /changes/{change_id}/expected-change-match — check if change falls within an approved window
 
 Both GET routes now include an optional ``review`` field with the current
 review state.  When no review row exists ``review`` is None (treat as
@@ -63,12 +66,14 @@ from app.schemas.change_note import (
 from app.schemas.change_correlation import CorrelationResponse
 from app.schemas.blast_radius import BlastRadiusResponse
 from app.schemas.policy import PolicyViolationsResponse
+from app.schemas.expected_change_window import ExpectedChangeMatchResponse
 from app.services import changes_service
 from app.services import change_review_service
 from app.services import change_note_service
 from app.services import change_correlation_service
 from app.services import blast_radius_service
 from app.services import policy_engine_service
+from app.services import expected_change_service
 
 router = APIRouter(prefix="/changes", tags=["changes"])
 
@@ -568,5 +573,41 @@ def get_change_policy_violations(
     return policy_engine_service.compute_violations(
         change_id=change_id,
         user_id=current_user.id,
+        db=db,
+    )
+
+
+# ── Expected change window match endpoint (M58.16) ────────────────────────────
+
+
+@router.get(
+    "/{change_id}/expected-change-match",
+    response_model=ExpectedChangeMatchResponse,
+)
+def get_expected_change_match(
+    change_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ExpectedChangeMatchResponse:
+    """Check whether a change falls within an approved expected change window.
+
+    Returns ``{"matched": false}`` when:
+    - No approved windows exist for this workspace.
+    - The change's timestamp is outside all approved windows' time ranges.
+    - All matching windows' provider/integration/risk-level filters exclude
+      this change.
+
+    When matched, returns the most-recently approved matching window along
+    with a human-readable annotation.
+
+    The endpoint always returns 200; ``matched`` communicates the result.
+
+    Only workspace members may call this endpoint.
+    """
+    # Auth: 404-not-403 pattern — same as all change sub-endpoints.
+    _get_change_and_workspace(change_id, current_user, db)
+
+    return expected_change_service.match_change(
+        change_id=change_id,
         db=db,
     )

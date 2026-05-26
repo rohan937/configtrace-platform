@@ -46,6 +46,12 @@ const HUB_CARDS = [
     description: "Enable or disable built-in policy checks for configuration drift violations.",
     color: "#e84040",
   },
+  {
+    href: "/settings/workspace/expected-changes",
+    title: "Expected Changes",
+    description: "Approve planned change windows so expected drift is annotated, not alarming.",
+    color: "#3ccf7e",
+  },
 ] as const;
 
 // ── Inline message banners ────────────────────────────────────────────────────

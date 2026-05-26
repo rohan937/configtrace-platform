@@ -1133,3 +1133,91 @@ export async function sendTestWeeklyDigest(
   });
 }
 
+// ── M58.16: Expected Change Windows ──────────────────────────────────────────
+
+/**
+ * List expected change windows for a workspace.
+ * Any workspace member may call this.
+ */
+export async function listExpectedChangeWindows(
+  workspaceId: string,
+  params?: { status?: string; page?: number; page_size?: number },
+  token?: string | null,
+): Promise<import("@/types").ExpectedChangeWindowListResponse> {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.page_size) qs.set("page_size", String(params.page_size));
+  const query = qs.toString() ? `?${qs.toString()}` : "";
+  return apiFetch(`/workspaces/${workspaceId}/expected-changes${query}`, { token });
+}
+
+/**
+ * Create a new expected change window in 'pending' status (admin only).
+ */
+export async function createExpectedChangeWindow(
+  workspaceId: string,
+  body: import("@/types").ExpectedChangeWindowCreate,
+  token?: string | null,
+): Promise<import("@/types").ExpectedChangeWindow> {
+  return apiFetch(`/workspaces/${workspaceId}/expected-changes`, {
+    token,
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Approve a pending expected change window (admin only).
+ */
+export async function approveExpectedChangeWindow(
+  workspaceId: string,
+  windowId: string,
+  token?: string | null,
+): Promise<import("@/types").ExpectedChangeWindow> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/expected-changes/${windowId}/approve`,
+    { token, method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/**
+ * Reject a pending expected change window (admin only).
+ */
+export async function rejectExpectedChangeWindow(
+  workspaceId: string,
+  windowId: string,
+  reason?: string,
+  token?: string | null,
+): Promise<import("@/types").ExpectedChangeWindow> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/expected-changes/${windowId}/reject`,
+    { token, method: "POST", body: JSON.stringify({ reason }) },
+  );
+}
+
+/**
+ * Cancel a pending or approved expected change window (admin only).
+ */
+export async function cancelExpectedChangeWindow(
+  workspaceId: string,
+  windowId: string,
+  token?: string | null,
+): Promise<import("@/types").ExpectedChangeWindow> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/expected-changes/${windowId}/cancel`,
+    { token, method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/**
+ * Check whether a change falls within an approved expected change window.
+ * Returns matched=false when no window covers this change.
+ */
+export async function getExpectedChangeMatch(
+  changeId: string,
+  token?: string | null,
+): Promise<import("@/types").ExpectedChangeMatchResponse> {
+  return apiFetch(`/changes/${changeId}/expected-change-match`, { token });
+}
+
