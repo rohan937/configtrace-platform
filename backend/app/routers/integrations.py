@@ -92,6 +92,10 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
         connection_method=connection_method,
         consecutive_failure_count=consecutive,
         needs_attention=consecutive >= NEEDS_ATTENTION_THRESHOLD,
+        # M57.6: expose scheduled sync flag and last failure timestamp so the
+        # frontend can display honest monitoring cadence and stale-sync warnings.
+        scheduled_sync_enabled=bool(integration.scheduled_sync_enabled),
+        last_failure_at=integration.last_failure_at,
     )
 
 

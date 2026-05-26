@@ -262,6 +262,18 @@ export interface Integration {
    * the frontend doesn't need to know the threshold.
    */
   needs_attention: boolean;
+  // M57.6 additions
+  /**
+   * Whether automated scheduled sync is enabled for this integration.
+   * false → manual-only (user must trigger syncs explicitly).
+   * Used to display honest cadence copy: "Manual sync only" vs. "Monitoring cadence: every N min".
+   */
+  scheduled_sync_enabled: boolean;
+  /**
+   * UTC ISO timestamp of the most recent sync failure of any type, or null.
+   * Used for time-since-failure display and stale-sync warnings.
+   */
+  last_failure_at: string | null;
 }
 
 // ── GitHub App install flow (M31) ─────────────────────────────────────────────

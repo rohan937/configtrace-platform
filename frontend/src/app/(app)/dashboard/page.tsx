@@ -111,6 +111,7 @@ function providerLabel(provider: string | null | undefined): string {
     case "aws":        return "AWS";
     case "firebase":   return "Firebase";
     case "supabase":   return "Supabase";
+    case "shopify":    return "Shopify";
     default:           return provider ?? "Unknown";
   }
 }
@@ -1056,7 +1057,7 @@ export default function DashboardPage() {
               {
                 num: 1,
                 label: "Connect a provider",
-                body: "Add an integration — ConfigTrace supports Cloudflare, GitHub, Vercel, Stripe, AWS, Firebase, and Supabase. It monitors configuration drift, not code.",
+                body: "Add an integration — ConfigTrace supports Cloudflare, GitHub, Vercel, Stripe, AWS, Firebase, Supabase, and Shopify. It monitors configuration drift, not code.",
               },
               {
                 num: 2,

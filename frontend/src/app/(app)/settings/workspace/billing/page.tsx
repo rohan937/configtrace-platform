@@ -29,7 +29,7 @@ const PLAN_META: Record<BillingPlan, PlanMeta> = {
     features: [
       "3 integrations",
       "1 member (owner only)",
-      "Hourly scheduled sync",
+      "Monitoring cadence: every 1 hour",
       "30-day history",
     ],
     priceId: null,
@@ -40,7 +40,7 @@ const PLAN_META: Record<BillingPlan, PlanMeta> = {
     features: [
       "20 integrations",
       "5 members",
-      "15-minute scheduled sync",
+      "Monitoring cadence: every 15 min",
       "180-day history",
     ],
     priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTHLY ?? null,
@@ -51,7 +51,7 @@ const PLAN_META: Record<BillingPlan, PlanMeta> = {
     features: [
       "100 integrations",
       "25 members",
-      "5-minute scheduled sync",
+      "Monitoring cadence: every 5 min",
       "365-day history",
       "Workspace audit logs",
     ],
@@ -132,7 +132,7 @@ function getStatusBodyText(billing: WorkspaceBilling): string {
   const { plan, status, current_period_end, cancel_at_period_end, trial_end } = billing;
 
   if (plan === "free") {
-    return "Upgrade when you need more integrations, team members, or faster syncs.";
+    return "Upgrade when you need more integrations, team members, or a faster monitoring cadence.";
   }
   if (status === "trialing" && trial_end) {
     return `Trial ends on ${formatDate(trial_end)}.`;

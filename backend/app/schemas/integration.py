@@ -489,6 +489,16 @@ class IntegrationResponse(BaseModel):
     consecutive_failure_count: int = 0
     needs_attention: bool = False
 
+    # ── M57.6 additions ───────────────────────────────────────────────────────
+    # scheduled_sync_enabled: whether automated scheduled syncing is turned on.
+    #   False → manual-only integration (syncs only when user triggers explicitly).
+    #   Exposed so the frontend can show honest cadence copy:
+    #   "Manual sync only" vs. "Monitoring cadence: every N min".
+    # last_failure_at: UTC timestamp of the most recent sync failure of any type.
+    #   Used for time-since-failure display and stale-sync warnings.
+    scheduled_sync_enabled: bool = False
+    last_failure_at: Optional[datetime] = None
+
     model_config = {"from_attributes": True}
 
 

@@ -9,6 +9,14 @@ import StatusBadge from "@/components/common/StatusBadge";
 import { formatRelativeTime } from "@/lib/utils";
 import { getGitHubAppInstallUrl, getSyncStatus, patchIntegration, triggerSync } from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
+import {
+  formatCadence,
+  formatIntervalLabel,
+  getFriendlyErrorCopy,
+  getNextExpectedSync,
+  getStalenessWarning,
+  getSyncHealth,
+} from "@/lib/syncHealth";
 import RenameIntegrationModal from "./RenameIntegrationModal";
 import DeleteIntegrationModal from "./DeleteIntegrationModal";
 import ReconnectIntegrationModal from "./ReconnectIntegrationModal";
@@ -38,14 +46,6 @@ function ProviderBadge({ provider }: { provider: string }) {
       {meta.shortLabel}
     </span>
   );
-}
-
-// ── Sync interval display helper ──────────────────────────────────────────────
-
-function formatInterval(minutes: number | null): string {
-  const m = minutes ?? 60;
-  if (m < 60) return `every ${m} min`;
-  return "every 1 hour";
 }
 
 // ── Per-row sync state ────────────────────────────────────────────────────────
@@ -224,7 +224,7 @@ function SyncIntervalSelector({ integration, onChanged }: SyncIntervalSelectorPr
     >
       {INTERVAL_OPTIONS.map((m) => (
         <option key={m} value={m}>
-          {m < 60 ? `${m} min` : "1 hour"}
+          {formatIntervalLabel(m)}
         </option>
       ))}
     </select>
@@ -400,43 +400,24 @@ export default function IntegrationList({
     poll();
   }
 
-  // ── Last-sync status chip ─────────────────────────────────────────────────
+  // ── Sync health chip (M57.6) ─────────────────────────────────────────────
 
-  function LastSyncDot({ integration }: { integration: Integration }) {
-    const status = integration.last_sync_status;
-    if (!status) {
-      return (
-        <span style={{ color: "#565b6e", fontSize: "10px" }}>
-          ● Never synced
-        </span>
-      );
-    }
-    if (status === "failed") {
-      return (
-        <span
-          title={integration.last_sync_error ?? "Last sync failed"}
-          style={{ color: "#e84040", fontSize: "10px" }}
-          aria-label={`Sync failed: ${integration.last_sync_error ?? "unknown error"}`}
-        >
-          ● Sync failed
-        </span>
-      );
-    }
-    if (status === "running" || status === "pending") {
-      return (
-        <span style={{ color: "#f5a623", fontSize: "10px" }} aria-live="polite">
-          ● Sync running…
-        </span>
-      );
-    }
-    if (status === "completed" && integration.last_synced_at) {
-      return (
-        <span style={{ color: "#3ccf7e", fontSize: "10px" }}>
-          ● Recently synced
-        </span>
-      );
-    }
-    return null;
+  function SyncHealthChip({ integration }: { integration: Integration }) {
+    const health = getSyncHealth(integration);
+    return (
+      <span
+        style={{ color: health.color, fontSize: "10px" }}
+        title={
+          health.status === "sync_failed"
+            ? (integration.last_sync_error ?? "Last sync failed")
+            : health.label
+        }
+        aria-label={health.label}
+        aria-live={health.status === "sync_running" ? "polite" : undefined}
+      >
+        ● {health.label}
+      </span>
+    );
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -587,43 +568,49 @@ export default function IntegrationList({
 
               {/* Metadata strip */}
               <div
-                className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-3"
+                className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-2"
                 style={{ fontSize: "11px", color: "#565b6e" }}
               >
-                {/* Scheduled sync interval / paused state */}
+                {/* Monitoring cadence (M57.6 — honest label) */}
                 {isPaused ? (
                   <span>
-                    Scheduled sync:{" "}
-                    <span style={{ color: "#f5a623" }}>Paused</span>
+                    <span style={{ color: "#f5a623" }}>Monitoring paused</span>
                   </span>
                 ) : (
                   <span className="flex items-center gap-1.5">
-                    Scheduled sync:{" "}
-                    <span style={{ color: integration.last_sync_status === "failed" ? "#f5a623" : "#8b90a0" }}>
-                      {formatInterval(integration.sync_interval_minutes)}
+                    <span style={{ color: "#8b90a0" }}>
+                      {formatCadence(integration)}
                     </span>
-                    <SyncIntervalSelector
-                      integration={integration}
-                      onChanged={(updated) => updateLocal(updated)}
-                    />
+                    {/* Interval selector only shown when scheduled sync is on */}
+                    {integration.scheduled_sync_enabled && (
+                      <SyncIntervalSelector
+                        integration={integration}
+                        onChanged={(updated) => updateLocal(updated)}
+                      />
+                    )}
                   </span>
                 )}
 
                 <span style={{ color: "#2a2d38" }}>·</span>
 
-                {/* Email alerts */}
-                <span>
-                  Email alerts:{" "}
-                  <span style={{ color: "#8b90a0" }}>High-risk changes</span>
-                </span>
-
-                <span style={{ color: "#2a2d38" }}>·</span>
-
                 {/* Resource count */}
                 <span>
-                  Resources monitored:{" "}
+                  Resources:{" "}
                   <span style={{ color: "#8b90a0" }}>{integration.resource_count}</span>
                 </span>
+
+                {/* Last sync timestamp */}
+                {integration.last_synced_at && (
+                  <>
+                    <span style={{ color: "#2a2d38" }}>·</span>
+                    <span>
+                      Last synced:{" "}
+                      <span style={{ color: "#8b90a0" }}>
+                        {formatRelativeTime(integration.last_synced_at)}
+                      </span>
+                    </span>
+                  </>
+                )}
 
                 {/* GitHub connection method sub-label */}
                 {integration.provider === "github" && integration.connection_method && (
@@ -644,11 +631,65 @@ export default function IntegrationList({
                   </>
                 )}
 
-                {/* Last sync status dot */}
-                <LastSyncDot integration={integration} />
+                {/* Sync health chip (M57.6) */}
+                <SyncHealthChip integration={integration} />
               </div>
 
-              {/* Feedback row */}
+              {/* Next expected sync / stale warning strip (M57.6) */}
+              {(() => {
+                const stalenessWarn = getStalenessWarning(integration);
+                const nextSync = !stalenessWarn ? getNextExpectedSync(integration) : null;
+                if (!stalenessWarn && !nextSync) return null;
+                return (
+                  <div
+                    className="px-4 pb-2"
+                    style={{ fontSize: "11px" }}
+                  >
+                    {stalenessWarn && (
+                      <span style={{ color: "#f5a623" }}>
+                        ⚠ {stalenessWarn}
+                      </span>
+                    )}
+                    {nextSync && !stalenessWarn && (
+                      <span style={{ color: "#565b6e" }}>
+                        {nextSync}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Sync failure error copy (M57.6) */}
+              {integration.last_sync_status === "failed" && integration.last_sync_error && (
+                <div className="px-4 pb-2" style={{ fontSize: "11px" }}>
+                  <span style={{ color: "#e84040" }}>
+                    {getFriendlyErrorCopy(integration.last_sync_error, integration.needs_attention)}
+                  </span>
+                  {" "}
+                  {(integration.last_sync_error.toLowerCase().includes("invalid") ||
+                    integration.last_sync_error.toLowerCase().includes("authentication") ||
+                    integration.last_sync_error.toLowerCase().includes("revoked") ||
+                    integration.needs_attention) && (
+                    <button
+                      onClick={() => openModal("reconnect", integration)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: "#4f80f7",
+                        fontSize: "11px",
+                        cursor: "pointer",
+                        padding: 0,
+                        fontFamily: "inherit",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Reconnect →
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Feedback row (manual sync result) */}
               {(state.result || state.error) && (
                 <div
                   className="px-4 pb-3"

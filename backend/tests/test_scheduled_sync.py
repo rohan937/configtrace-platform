@@ -667,3 +667,131 @@ class TestScheduledSyncEligibilityBackwardCompat:
             f"Expected all 5 providers to be enqueued with backward-compat flag; "
             f"got enqueued={result['enqueued']}"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M57.6: Shopify provider in scheduler + IntegrationResponse new fields
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestM576SyncHealthFields:
+    """M57.6: Verify that the Shopify provider is included in the scheduler and
+    that the IntegrationResponse schema exposes the new scheduled_sync_enabled
+    and last_failure_at fields added in M57.6."""
+
+    # ── 1. Shopify in _SUPPORTED_PROVIDERS ───────────────────────────────────
+
+    def test_shopify_in_supported_providers(self):
+        """'shopify' must be present in sync_service._SUPPORTED_PROVIDERS so
+        Shopify integrations get scheduled syncs.
+
+        Before M57.6 this was missing, causing Shopify scheduled syncs to be
+        silently skipped on every Beat tick.
+        """
+        from app.services import sync_service
+        # _SUPPORTED_PROVIDERS is module-level but constructed inside the function;
+        # we instantiate it by calling the scheduler and inspecting the log,
+        # OR we just read the source constant from the service module's function
+        # by running a dry-run scheduler with a Shopify integration.
+        shopify_int = _make_integration(
+            provider="shopify",
+            scheduled_sync_enabled=True,
+            sync_interval_minutes=60,
+            last_synced_at=None,
+        )
+        result = _run_scheduler([shopify_int])
+        assert result["enqueued"] == 1, (
+            "'shopify' provider is not in _SUPPORTED_PROVIDERS — "
+            "Shopify integration was not enqueued.  "
+            "Did you forget to add 'shopify' to the tuple?"
+        )
+        assert result["integrations_seen"] == 1
+
+    def test_shopify_backward_compat_flag_false_with_interval(self):
+        """Shopify with old-style False flag + interval is still eligible."""
+        shopify_int = _make_integration(
+            provider="shopify",
+            scheduled_sync_enabled=False,
+            sync_interval_minutes=60,
+            last_synced_at=None,
+        )
+        result = _run_scheduler([shopify_int])
+        assert result["enqueued"] == 1, (
+            "Shopify integration with scheduled_sync_enabled=False but "
+            "sync_interval_minutes=60 was not enqueued."
+        )
+
+    def test_all_eight_providers_backward_compat(self):
+        """All eight providers (including shopify) with old-style flag are enqueued."""
+        all_providers = (
+            "cloudflare", "github", "vercel", "stripe",
+            "aws", "firebase", "supabase", "shopify",
+        )
+        integrations = [
+            _make_integration(provider=p, scheduled_sync_enabled=False, sync_interval_minutes=60)
+            for p in all_providers
+        ]
+        result = _run_scheduler(integrations)
+        assert result["enqueued"] == len(all_providers), (
+            f"Expected all {len(all_providers)} providers to be enqueued; "
+            f"got enqueued={result['enqueued']}.  "
+            f"Check that _SUPPORTED_PROVIDERS includes all eight providers."
+        )
+
+    # ── 2. IntegrationResponse exposes new M57.6 fields ──────────────────────
+
+    def test_integration_response_has_scheduled_sync_enabled_field(self):
+        """IntegrationResponse must have a scheduled_sync_enabled field (M57.6)."""
+        from app.schemas.integration import IntegrationResponse
+        fields = IntegrationResponse.model_fields
+        assert "scheduled_sync_enabled" in fields, (
+            "IntegrationResponse is missing the 'scheduled_sync_enabled' field added "
+            "in M57.6.  The frontend needs this to display honest monitoring cadence copy."
+        )
+
+    def test_integration_response_has_last_failure_at_field(self):
+        """IntegrationResponse must have a last_failure_at field (M57.6)."""
+        from app.schemas.integration import IntegrationResponse
+        fields = IntegrationResponse.model_fields
+        assert "last_failure_at" in fields, (
+            "IntegrationResponse is missing the 'last_failure_at' field added "
+            "in M57.6.  The frontend needs this for stale-sync warnings."
+        )
+
+    def test_integration_response_scheduled_sync_enabled_default_false(self):
+        """scheduled_sync_enabled must default to False in IntegrationResponse."""
+        from app.schemas.integration import IntegrationResponse
+        field_info = IntegrationResponse.model_fields["scheduled_sync_enabled"]
+        assert field_info.default is False, (
+            "scheduled_sync_enabled default should be False "
+            f"(safe default when field is absent), got {field_info.default!r}"
+        )
+
+    def test_integration_response_last_failure_at_default_none(self):
+        """last_failure_at must default to None in IntegrationResponse."""
+        from app.schemas.integration import IntegrationResponse
+        field_info = IntegrationResponse.model_fields["last_failure_at"]
+        assert field_info.default is None, (
+            f"last_failure_at default should be None, got {field_info.default!r}"
+        )
+
+    def test_integration_response_serializes_scheduled_sync_enabled(self):
+        """IntegrationResponse round-trips scheduled_sync_enabled correctly."""
+        from app.schemas.integration import IntegrationResponse
+        import uuid
+        from datetime import datetime, timezone
+
+        resp = IntegrationResponse(
+            id=uuid.uuid4(),
+            provider="shopify",
+            display_name="Test Shopify",
+            status="active",
+            last_synced_at=None,
+            created_at=datetime.now(timezone.utc),
+            resource_count=0,
+            scheduled_sync_enabled=True,
+            last_failure_at=None,
+        )
+        data = resp.model_dump()
+        assert data["scheduled_sync_enabled"] is True
+        assert data["last_failure_at"] is None
