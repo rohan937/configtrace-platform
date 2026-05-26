@@ -351,7 +351,22 @@ def build_settings_response(row: WorkspaceNotificationSettings) -> dict:
         "slack_installed_at": getattr(row, "slack_installed_at", None),
         "slack_app_last_test_at": getattr(row, "slack_app_last_test_at", None),
         "slack_app_last_error": getattr(row, "slack_app_last_error", None),
+        # Web Push (M58.7) — VAPID public key only; private key is never returned.
+        "vapid_public_key": _get_vapid_public_key_safe(),
     }
+
+
+def _get_vapid_public_key_safe() -> Optional[str]:
+    """Return the VAPID public key from config, or None if unconfigured.
+
+    This is the only VAPID value ever returned in API responses.
+    The private key is NEVER included.
+    """
+    try:
+        from app.services.push_notification_service import get_vapid_public_key
+        return get_vapid_public_key()
+    except Exception:
+        return None
 
 
 # ── Notification dispatch ─────────────────────────────────────────────────────
@@ -389,6 +404,7 @@ def dispatch_notifications_for_sync(
     result: dict = {
         "slack_sent": 0,
         "webhook_sent": 0,
+        "push_sent": 0,
         "skipped_no_settings": False,
         "failed": 0,
     }
@@ -418,8 +434,27 @@ def dispatch_notifications_for_sync(
         result["skipped_no_settings"] = True
         return result
 
-    # ── Check whether any channel is active ───────────────────────────────────
+    # ── Check whether any traditional channel is active ───────────────────────
     if not settings_row.slack_enabled and not settings_row.webhook_enabled:
+        # Traditional channels inactive.  Push (M58.7) may still be active —
+        # attempt push dispatch with its own qualifying filter, then return.
+        try:
+            alertable_set_push = _alertable_levels(settings_row.notify_on_risk_level)
+            push_qualifying = [c for c in changes if c.risk_level in alertable_set_push]
+            if push_qualifying:
+                from app.services.push_notification_service import dispatch_push_for_sync
+                result["push_sent"] = dispatch_push_for_sync(
+                    workspace_id=workspace_id,
+                    changes=push_qualifying,
+                    integration=integration,
+                    sync_run_id=sync_run_id,
+                    db=db,
+                )
+        except Exception:
+            logger.debug(
+                "notifications: push-only dispatch skipped  workspace=%s  sync_run=%s",
+                workspace_id, sync_run_id,
+            )
         return result
 
     # ── Filter changes to alertable risk levels ────────────────────────────────
@@ -553,6 +588,23 @@ def dispatch_notifications_for_sync(
                 "error=%r",
                 workspace_id, sync_run_id, type(exc).__name__,
             )
+
+    # ── Push dispatch (M58.7 — independent of Slack/webhook settings) ─────────
+    # Runs after traditional channels.  Fail-safe: never raises or blocks sync.
+    try:
+        from app.services.push_notification_service import dispatch_push_for_sync
+        result["push_sent"] = dispatch_push_for_sync(
+            workspace_id=workspace_id,
+            changes=list(qualifying),
+            integration=integration,
+            sync_run_id=sync_run_id,
+            db=db,
+        )
+    except Exception:
+        logger.debug(
+            "notifications: push dispatch skipped/failed  workspace=%s  sync_run=%s",
+            workspace_id, sync_run_id,
+        )
 
     return result
 

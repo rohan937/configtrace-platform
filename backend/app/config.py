@@ -134,6 +134,16 @@ class Settings(BaseSettings):
     # NEVER log or expose this value.
     SLACK_SIGNING_SECRET: Optional[str] = None
 
+    # ── Required for Milestone 58.7 (Web Push / PWA notifications) ─────────────
+    # VAPID (Voluntary Application Server Identification) keys for Web Push.
+    # Generate with: python -c "from py_vapid import Vapid; v=Vapid(); v.generate_keys(); print('PUB:', v.public_key_urlsafe_base64); print('PRIV:', v.private_key_urlsafe_base64)"
+    # WEB_PUSH_VAPID_PUBLIC_KEY: base64url-encoded uncompressed EC public key (65 bytes uncompressed)
+    # WEB_PUSH_VAPID_PRIVATE_KEY: base64url-encoded EC private key — NEVER expose to frontend.
+    WEB_PUSH_VAPID_PUBLIC_KEY: Optional[str] = None
+    WEB_PUSH_VAPID_PRIVATE_KEY: Optional[str] = None  # NEVER log or expose
+    # mailto: URI or https: URL identifying the push sender.
+    WEB_PUSH_SUBJECT: Optional[str] = "mailto:security@configtrace.org"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         # Ignore extra env vars passed by Docker Compose (POSTGRES_*, etc.)
@@ -226,6 +236,17 @@ class Settings(BaseSettings):
         placeholders = ("replace-with", "CHANGE_ME", "your-slack")
         return not any(
             p in (self.SLACK_CLIENT_ID or "") or p in (self.SLACK_CLIENT_SECRET or "")
+            for p in placeholders
+        )
+
+    @property
+    def is_web_push_configured(self) -> bool:
+        """Return True when VAPID keys are set and not placeholders."""
+        if not self.WEB_PUSH_VAPID_PUBLIC_KEY or not self.WEB_PUSH_VAPID_PRIVATE_KEY:
+            return False
+        placeholders = ("replace-with", "CHANGE_ME", "your-vapid")
+        return not any(
+            p in (self.WEB_PUSH_VAPID_PUBLIC_KEY or "") or p in (self.WEB_PUSH_VAPID_PRIVATE_KEY or "")
             for p in placeholders
         )
 
