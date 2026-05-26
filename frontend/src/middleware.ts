@@ -23,6 +23,8 @@ const isPublicRoute = createRouteMatcher([
   // which is protected, so signed-out users still bounce to /sign-in via
   // the protect() call below.
   "/",
+  // M58.13: Public demo — no auth required.
+  "/demo(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, request) => {
