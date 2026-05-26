@@ -7,10 +7,16 @@ import {
   getNotificationSettings,
   updateNotificationSettings,
   sendTestNotification,
+  getSlackInstallUrl,
+  listSlackChannels,
+  updateSlackChannel,
+  sendSlackAppTest,
+  disconnectSlackApp,
 } from "@/lib/api";
 import type {
   WorkspaceNotificationSettings,
   NotifyRiskLevel,
+  SlackChannel,
 } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
 
@@ -60,10 +66,12 @@ function SuccessBanner({ message }: { message: string }) {
 function SectionCard({
   title,
   accentColor,
+  badge,
   children,
 }: {
   title: string;
   accentColor: string;
+  badge?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -76,18 +84,44 @@ function SectionCard({
         marginBottom: "20px",
       }}
     >
-      <h2
+      <div
         style={{
-          fontSize: "13px",
-          fontWeight: 600,
-          color: accentColor,
-          margin: "0 0 16px",
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          marginBottom: "16px",
         }}
       >
-        {title}
-      </h2>
+        <h2
+          style={{
+            fontSize: "13px",
+            fontWeight: 600,
+            color: accentColor,
+            margin: 0,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {title}
+        </h2>
+        {badge && (
+          <span
+            style={{
+              fontSize: "10px",
+              fontWeight: 600,
+              color: "#4ade80",
+              background: "#1a3a1a",
+              border: "1px solid #2a5a2a",
+              borderRadius: "4px",
+              padding: "1px 6px",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {badge}
+          </span>
+        )}
+      </div>
       {children}
     </section>
   );
@@ -147,6 +181,363 @@ function Toggle({
       </div>
       <span style={{ fontSize: "13px", color: "#c4c8d4" }}>{label}</span>
     </label>
+  );
+}
+
+// ── Slack App card ─────────────────────────────────────────────────────────────
+
+function SlackAppCard({
+  settings,
+  workspaceId: _workspaceId,
+  onUpdate,
+}: {
+  settings: WorkspaceNotificationSettings | null;
+  workspaceId: string;
+  onUpdate: (msg: string) => void;
+}) {
+  const { getToken } = useAuth();
+  const { selectedWorkspace } = useWorkspace();
+  const [installing, setInstalling] = useState(false);
+  const [loadingChannels, setLoadingChannels] = useState(false);
+  const [channels, setChannels] = useState<SlackChannel[]>([]);
+  const [selectedChannel, setSelectedChannel] = useState<string>("");
+  const [savingChannel, setSavingChannel] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isInstalled = settings?.slack_app_installed ?? false;
+  const isEnabled = settings?.slack_app_enabled ?? false;
+  const hasChannel = !!(settings?.slack_channel_id);
+
+  // Check for install success/error from URL params (after OAuth redirect).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const installStatus = params.get("slack_install");
+    if (installStatus === "success") {
+      onUpdate("Slack App installed successfully. Select a channel to activate notifications.");
+      // Remove query param without re-render loop.
+      const url = new URL(window.location.href);
+      url.searchParams.delete("slack_install");
+      window.history.replaceState({}, "", url.toString());
+    } else if (installStatus === "error") {
+      const reason = params.get("reason") ?? "unknown";
+      setError(`Slack App installation failed (${reason}). Please try again.`);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("slack_install");
+      url.searchParams.delete("reason");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleInstall() {
+    if (!selectedWorkspace) return;
+    setInstalling(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const { install_url } = await getSlackInstallUrl(selectedWorkspace.id, token);
+      // Redirect to Slack's OAuth page in the same tab.
+      window.location.href = install_url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to get install URL.");
+      setInstalling(false);
+    }
+  }
+
+  async function handleLoadChannels() {
+    if (!selectedWorkspace) return;
+    setLoadingChannels(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const { channels: ch } = await listSlackChannels(selectedWorkspace.id, token);
+      setChannels(ch);
+      if (settings?.slack_channel_id) {
+        setSelectedChannel(settings.slack_channel_id);
+      } else if (ch.length > 0) {
+        setSelectedChannel(ch[0].id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load channels.");
+    } finally {
+      setLoadingChannels(false);
+    }
+  }
+
+  async function handleSaveChannel() {
+    if (!selectedWorkspace || !selectedChannel) return;
+    setSavingChannel(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const ch = channels.find((c) => c.id === selectedChannel);
+      await updateSlackChannel(
+        selectedWorkspace.id,
+        selectedChannel,
+        ch?.name ?? "",
+        token,
+      );
+      onUpdate("Slack channel saved. Alerts will be delivered to this channel.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save channel.");
+    } finally {
+      setSavingChannel(false);
+    }
+  }
+
+  async function handleTest() {
+    if (!selectedWorkspace) return;
+    setTesting(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      const result = await sendSlackAppTest(selectedWorkspace.id, token);
+      if (result.slack_sent) {
+        onUpdate("Test message sent successfully via Slack App.");
+      } else {
+        setError(result.error ?? "Test failed. Check channel permissions.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Test failed.");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!selectedWorkspace) return;
+    if (
+      !window.confirm(
+        "Disconnect the Slack App? Existing webhook configuration is unaffected.",
+      )
+    )
+      return;
+    setDisconnecting(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      await disconnectSlackApp(selectedWorkspace.id, token);
+      onUpdate("Slack App disconnected.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect.");
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  return (
+    <>
+      {error && <ErrorBanner message={error} />}
+
+      {!isInstalled ? (
+        /* ── Not installed ── */
+        <div>
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#8b90a0",
+              margin: "0 0 14px",
+              lineHeight: 1.6,
+            }}
+          >
+            Install the ConfigTrace Slack App to deliver alerts directly to any
+            channel in your Slack workspace. The app requires{" "}
+            <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
+              chat:write
+            </code>{" "}
+            and{" "}
+            <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
+              channels:read
+            </code>{" "}
+            scopes.
+          </p>
+          <button
+            type="button"
+            onClick={handleInstall}
+            disabled={installing}
+            style={{
+              background: "#4a9eff",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              padding: "8px 18px",
+              fontSize: "13px",
+              cursor: installing ? "not-allowed" : "pointer",
+              opacity: installing ? 0.7 : 1,
+              fontFamily: "inherit",
+            }}
+          >
+            {installing ? "Redirecting to Slack…" : "Install ConfigTrace Slack App"}
+          </button>
+        </div>
+      ) : (
+        /* ── Installed ── */
+        <div>
+          {/* Installation info */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              marginBottom: "14px",
+            }}
+          >
+            <span
+              style={{
+                width: "8px",
+                height: "8px",
+                borderRadius: "50%",
+                background: hasChannel && isEnabled ? "#4ade80" : "#f59e0b",
+                display: "inline-block",
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ fontSize: "13px", color: "#c4c8d4" }}>
+              Connected to{" "}
+              <strong style={{ color: "#e2e5ef" }}>
+                {settings?.slack_team_name ?? "Slack workspace"}
+              </strong>
+              {settings?.slack_channel_name && (
+                <>
+                  {" "}
+                  · delivering to{" "}
+                  <strong style={{ color: "#4ade80" }}>
+                    #{settings.slack_channel_name}
+                  </strong>
+                </>
+              )}
+            </span>
+          </div>
+
+          {/* Last error */}
+          {settings?.slack_app_last_error && (
+            <div
+              style={{
+                background: "#2a1a1a",
+                border: "1px solid #5a2a2a",
+                borderRadius: "5px",
+                padding: "8px 12px",
+                fontSize: "12px",
+                color: "#f87171",
+                marginBottom: "14px",
+              }}
+            >
+              Last error: {settings.slack_app_last_error}
+            </div>
+          )}
+
+          {/* Channel selection */}
+          <div style={{ marginBottom: "14px" }}>
+            {channels.length === 0 ? (
+              <button
+                type="button"
+                onClick={handleLoadChannels}
+                disabled={loadingChannels}
+                style={{
+                  background: "none",
+                  color: "#4a9eff",
+                  border: "1px solid #2a4a7a",
+                  borderRadius: "5px",
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  cursor: loadingChannels ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {loadingChannels ? "Loading channels…" : "Select channel"}
+              </button>
+            ) : (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <select
+                  value={selectedChannel}
+                  onChange={(e) => setSelectedChannel(e.target.value)}
+                  aria-label="Select Slack channel"
+                  style={{
+                    background: "#1a1d28",
+                    border: "1px solid #3a3d4a",
+                    borderRadius: "5px",
+                    padding: "6px 10px",
+                    fontSize: "13px",
+                    color: "#e2e5ef",
+                    fontFamily: "inherit",
+                    flex: 1,
+                    maxWidth: "280px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {channels.map((ch) => (
+                    <option key={ch.id} value={ch.id}>
+                      #{ch.name}
+                      {ch.is_private ? " 🔒" : ""}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleSaveChannel}
+                  disabled={savingChannel || !selectedChannel}
+                  style={{
+                    background: "#8b5cf6",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "5px",
+                    padding: "6px 14px",
+                    fontSize: "12px",
+                    cursor: savingChannel ? "not-allowed" : "pointer",
+                    opacity: savingChannel ? 0.7 : 1,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  {savingChannel ? "Saving…" : "Save channel"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {hasChannel && (
+              <button
+                type="button"
+                onClick={handleTest}
+                disabled={testing}
+                style={{
+                  background: "none",
+                  color: "#8b90a0",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "5px",
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  cursor: testing ? "not-allowed" : "pointer",
+                  opacity: testing ? 0.7 : 1,
+                  fontFamily: "inherit",
+                }}
+              >
+                {testing ? "Sending test…" : "Send test message"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              disabled={disconnecting}
+              style={{
+                background: "none",
+                color: "#f87171",
+                border: "none",
+                padding: "6px 0",
+                fontSize: "12px",
+                cursor: disconnecting ? "not-allowed" : "pointer",
+                fontFamily: "inherit",
+              }}
+            >
+              {disconnecting ? "Disconnecting…" : "Disconnect"}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -263,7 +654,7 @@ export default function NotificationsSettingsPage() {
     }
   }
 
-  // ── Test ───────────────────────────────────────────────────────────────────
+  // ── Test (legacy channels) ─────────────────────────────────────────────────
   async function handleTest() {
     if (!selectedWorkspace) return;
     setTesting(true);
@@ -292,6 +683,13 @@ export default function NotificationsSettingsPage() {
     } finally {
       setTesting(false);
     }
+  }
+
+  // ── Slack App update callback ──────────────────────────────────────────────
+  async function handleSlackAppUpdate(msg: string) {
+    setSuccess(msg);
+    // Reload settings to pick up the new Slack App status.
+    await loadSettings();
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -332,11 +730,35 @@ export default function NotificationsSettingsPage() {
         description="Email alerts are sent automatically for high and critical changes. Configure Slack and webhook channels here as additional delivery options."
       />
 
-      <form onSubmit={handleSave}>
-        <div className="px-6 pb-8" style={{ maxWidth: "680px" }}>
-          {error && <ErrorBanner message={error} />}
-          {success && <SuccessBanner message={success} />}
+      <div className="px-6 pb-8" style={{ maxWidth: "680px" }}>
+        {error && <ErrorBanner message={error} />}
+        {success && <SuccessBanner message={success} />}
 
+        {/* ── Email (always-on) ──────────────────────────────────────── */}
+        <SectionCard title="Email" accentColor="#f59e0b">
+          <p
+            style={{
+              fontSize: "13px",
+              color: "#8b90a0",
+              margin: 0,
+              lineHeight: 1.6,
+            }}
+          >
+            Email alerts are sent automatically to all workspace members for
+            high and critical changes. No configuration needed.
+          </p>
+        </SectionCard>
+
+        {/* ── Slack App (recommended) ───────────────────────────────── */}
+        <SectionCard title="Slack App" accentColor="#4a9eff" badge="Recommended">
+          <SlackAppCard
+            settings={settings}
+            workspaceId={selectedWorkspace.id}
+            onUpdate={handleSlackAppUpdate}
+          />
+        </SectionCard>
+
+        <form onSubmit={handleSave}>
           {/* ── Risk level filter ──────────────────────────────────────── */}
           <SectionCard title="Alert threshold" accentColor="#8b5cf6">
             <p
@@ -347,8 +769,8 @@ export default function NotificationsSettingsPage() {
                 lineHeight: 1.6,
               }}
             >
-              Choose which risk levels trigger a notification. This applies to
-              both Slack and webhook channels.
+              Choose which risk levels trigger a notification. Applies to both
+              Slack and webhook channels.
             </p>
             <select
               value={riskLevel}
@@ -373,13 +795,24 @@ export default function NotificationsSettingsPage() {
             </select>
           </SectionCard>
 
-          {/* ── Slack ──────────────────────────────────────────────────── */}
-          <SectionCard title="Slack" accentColor="#4a9eff">
+          {/* ── Slack incoming webhook (fallback) ─────────────────────── */}
+          <SectionCard title="Slack — Incoming Webhook" accentColor="#6b7280">
+            <p
+              style={{
+                fontSize: "12px",
+                color: "#565b6e",
+                margin: "0 0 14px",
+                lineHeight: 1.5,
+              }}
+            >
+              Fallback option. Use this only if the Slack App above is not
+              suitable. The Slack App is recommended for better reliability.
+            </p>
             <div style={{ marginBottom: "14px" }}>
               <Toggle
                 checked={slackEnabled}
                 onChange={setSlackEnabled}
-                label="Send Slack notifications"
+                label="Send Slack notifications via incoming webhook"
                 disabled={
                   !slackEnabled && !settings?.slack_webhook_url_masked && slackUrl === ""
                 }
@@ -647,7 +1080,7 @@ export default function NotificationsSettingsPage() {
                       },
                     ],
                     app_url: "https://app.configtrace.org",
-                    timestamp: "2026-05-25T12:00:00Z",
+                    timestamp: "2026-05-26T12:00:00Z",
                   },
                   null,
                   2,
@@ -704,13 +1137,14 @@ export default function NotificationsSettingsPage() {
               lineHeight: 1.5,
             }}
           >
-            Email alerts are always sent to workspace members for high and critical changes —
-            regardless of Slack or webhook settings. Slack and webhook channels
-            use the risk-level filter you set above. ConfigTrace monitors
-            configuration metadata only — no customer data is included in any notification.
+            Email alerts are always sent to workspace members for high and critical
+            changes — regardless of Slack or webhook settings. Slack and webhook
+            channels use the risk-level filter above. ConfigTrace monitors
+            configuration metadata only — no customer data is included in any
+            notification.
           </p>
-        </div>
-      </form>
+        </form>
+      </div>
     </>
   );
 }

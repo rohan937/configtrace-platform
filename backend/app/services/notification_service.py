@@ -328,6 +328,12 @@ def build_settings_response(row: WorkspaceNotificationSettings) -> dict:
         except Exception:
             webhook_masked = "https://****"
 
+    # ── Slack App status (M58.5) — no token returned ─────────────────────────
+    slack_app_installed = bool(
+        getattr(row, "slack_bot_token_encrypted", None)
+        and getattr(row, "slack_bot_iv", None)
+    )
+
     return {
         "workspace_id": row.workspace_id,
         "slack_enabled": row.slack_enabled,
@@ -335,6 +341,16 @@ def build_settings_response(row: WorkspaceNotificationSettings) -> dict:
         "webhook_enabled": row.webhook_enabled,
         "webhook_url_masked": webhook_masked,
         "notify_on_risk_level": row.notify_on_risk_level,
+        # Slack App fields — never include bot_token_encrypted.
+        "slack_app_enabled": bool(getattr(row, "slack_app_enabled", False)),
+        "slack_app_installed": slack_app_installed,
+        "slack_team_id": getattr(row, "slack_team_id", None),
+        "slack_team_name": getattr(row, "slack_team_name", None),
+        "slack_channel_id": getattr(row, "slack_channel_id", None),
+        "slack_channel_name": getattr(row, "slack_channel_name", None),
+        "slack_installed_at": getattr(row, "slack_installed_at", None),
+        "slack_app_last_test_at": getattr(row, "slack_app_last_test_at", None),
+        "slack_app_last_error": getattr(row, "slack_app_last_error", None),
     }
 
 
@@ -453,7 +469,40 @@ def dispatch_notifications_for_sync(
         return result
 
     # ── Slack dispatch ─────────────────────────────────────────────────────────
-    if settings_row.slack_enabled and settings_row.slack_webhook_url_encrypted:
+    # M58.5: Prefer Slack App (bot token) over legacy incoming webhook.
+    _slack_app_enabled = bool(getattr(settings_row, "slack_app_enabled", False))
+    _slack_app_token = getattr(settings_row, "slack_bot_token_encrypted", None)
+    _slack_app_iv = getattr(settings_row, "slack_bot_iv", None)
+    _slack_app_channel = getattr(settings_row, "slack_channel_id", None)
+
+    if _slack_app_enabled and _slack_app_token and _slack_app_iv and _slack_app_channel:
+        # ── Slack App path (M58.5) ─────────────────────────────────────────
+        try:
+            from app.services.slack_service import _decrypt_token, send_message
+            bot_token = _decrypt_token(_slack_app_token, _slack_app_iv)
+            send_message(bot_token, _slack_app_channel, slack_text)
+            result["slack_sent"] = 1
+            logger.info(
+                "notifications: Slack App sent  workspace=%s  sync_run=%s  "
+                "changes=%d  channel=%s",
+                workspace_id, sync_run_id, len(qualifying), _slack_app_channel,
+            )
+        except Exception as exc:
+            result["failed"] += 1
+            # Record error on settings row (best-effort — don't fail the sync).
+            try:
+                settings_row.slack_app_last_error = str(exc)[:500]
+                db.add(settings_row)
+                db.flush()
+            except Exception:
+                pass
+            logger.error(
+                "notifications: Slack App delivery failed  workspace=%s  "
+                "sync_run=%s  error=%r",
+                workspace_id, sync_run_id, type(exc).__name__,
+            )
+    elif settings_row.slack_enabled and settings_row.slack_webhook_url_encrypted:
+        # ── Legacy incoming webhook fallback ───────────────────────────────
         try:
             url = _decrypt_url(
                 settings_row.slack_webhook_url_encrypted,
@@ -462,15 +511,15 @@ def dispatch_notifications_for_sync(
             _post_json(url, {"text": slack_text})
             result["slack_sent"] = 1
             logger.info(
-                "notifications: Slack sent  workspace=%s  sync_run=%s  "
+                "notifications: Slack webhook sent  workspace=%s  sync_run=%s  "
                 "changes=%d  url=%s",
                 workspace_id, sync_run_id, len(qualifying), _mask_url(url),
             )
         except Exception as exc:
             result["failed"] += 1
             logger.error(
-                "notifications: Slack delivery failed  workspace=%s  sync_run=%s  "
-                "error=%r",
+                "notifications: Slack webhook delivery failed  workspace=%s  "
+                "sync_run=%s  error=%r",
                 workspace_id, sync_run_id, type(exc).__name__,
             )
 
@@ -529,7 +578,25 @@ def send_test_notification(
     }
 
     # ── Slack ──────────────────────────────────────────────────────────────────
-    if settings_row.slack_enabled and settings_row.slack_webhook_url_encrypted:
+    # M58.5: Prefer Slack App over legacy webhook for test delivery.
+    _t_app_enabled = bool(getattr(settings_row, "slack_app_enabled", False))
+    _t_app_token = getattr(settings_row, "slack_bot_token_encrypted", None)
+    _t_app_iv = getattr(settings_row, "slack_bot_iv", None)
+    _t_app_channel = getattr(settings_row, "slack_channel_id", None)
+
+    if _t_app_enabled and _t_app_token and _t_app_iv and _t_app_channel:
+        try:
+            from app.services.slack_service import _decrypt_token, send_message
+            bot_token = _decrypt_token(_t_app_token, _t_app_iv)
+            send_message(bot_token, _t_app_channel, test_slack_text)
+            result["slack_sent"] = True
+        except Exception as exc:
+            errors.append(f"Slack App: {type(exc).__name__}")
+            logger.warning(
+                "notifications: test Slack App delivery failed  workspace=%s  error=%r",
+                workspace_id, type(exc).__name__,
+            )
+    elif settings_row.slack_enabled and settings_row.slack_webhook_url_encrypted:
         try:
             url = _decrypt_url(
                 settings_row.slack_webhook_url_encrypted,
@@ -544,10 +611,10 @@ def send_test_notification(
                 "notifications: test Slack delivery failed  workspace=%s  error=%r",
                 workspace_id, type(exc).__name__,
             )
-    elif not settings_row.slack_enabled:
+    elif not settings_row.slack_enabled and not _t_app_enabled:
         pass  # Not enabled — skip silently
     else:
-        errors.append("Slack: no URL configured")
+        errors.append("Slack: no URL or channel configured")
 
     # ── Webhook ────────────────────────────────────────────────────────────────
     if settings_row.webhook_enabled and settings_row.webhook_url_encrypted:

@@ -291,6 +291,94 @@ export async function sendTestNotification(
   });
 }
 
+// ── Slack App install flow (M58.5) ────────────────────────────────────────────
+
+/**
+ * Generate a Slack App OAuth install URL with an HMAC-signed state token.
+ *
+ * Returns HTTP 503 if the server is not configured with Slack App credentials.
+ */
+export async function getSlackInstallUrl(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").SlackInstallUrlResponse> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/notifications/slack/install-url`,
+    { token },
+  );
+}
+
+/**
+ * List Slack channels accessible to the installed bot.
+ *
+ * Returns HTTP 422 if no Slack App installation exists for this workspace.
+ */
+export async function listSlackChannels(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").SlackChannelsListResponse> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/notifications/slack/channels`,
+    { token },
+  );
+}
+
+/**
+ * Select a Slack channel for alert delivery.
+ *
+ * Returns the updated notification settings.
+ */
+export async function updateSlackChannel(
+  workspaceId: string,
+  channelId: string,
+  channelName: string,
+  token?: string | null,
+): Promise<import("@/types").WorkspaceNotificationSettings> {
+  return apiFetch(`/workspaces/${workspaceId}/notifications/slack/channel`, {
+    method: "PUT",
+    body: JSON.stringify({ channel_id: channelId, channel_name: channelName }),
+    token,
+  });
+}
+
+/**
+ * Send a test message via the installed Slack App bot.
+ */
+export async function sendSlackAppTest(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").TestNotificationResponse> {
+  return apiFetch(`/workspaces/${workspaceId}/notifications/slack/test`, {
+    method: "POST",
+    token,
+  });
+}
+
+/**
+ * Remove the Slack App installation from a workspace.
+ *
+ * Clears the bot token and all Slack App configuration.
+ * The legacy incoming-webhook configuration is unaffected.
+ */
+export async function disconnectSlackApp(
+  workspaceId: string,
+  token?: string | null,
+): Promise<void> {
+  const url = `${BASE_URL}/workspaces/${workspaceId}/notifications/slack`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: buildHeaders(token),
+  });
+  if (!res.ok && res.status !== 204) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+}
+
 // ── Workspace audit log (M51) ─────────────────────────────────────────────────
 
 export async function getWorkspaceAuditLogs(

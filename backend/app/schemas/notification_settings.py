@@ -1,8 +1,9 @@
-"""Pydantic schemas for workspace notification settings — M57.1."""
+"""Pydantic schemas for workspace notification settings — M57.1 + M58.5."""
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from datetime import datetime
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -16,15 +17,15 @@ _VALID_RISK_LEVELS = frozenset({"critical_only", "high_and_critical", "medium_an
 class NotificationSettingsResponse(BaseModel):
     """Returned by GET and PUT /workspaces/{id}/notification-settings.
 
-    Security: webhook URLs are NEVER returned in full.  Only a masked
-    representation (first 12 chars + "****") is exposed to the caller.
+    Security: webhook URLs and bot tokens are NEVER returned in full.
+    Only masked forms are exposed.
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     workspace_id: UUID
 
-    # Slack
+    # Slack incoming webhook (legacy / fallback)
     slack_enabled: bool
     # Masked URL — None when no URL is configured.
     slack_webhook_url_masked: Optional[str] = None
@@ -35,6 +36,22 @@ class NotificationSettingsResponse(BaseModel):
     webhook_url_masked: Optional[str] = None
 
     notify_on_risk_level: str
+
+    # ── Slack App (M58.5) ─────────────────────────────────────────────────────
+    slack_app_enabled: bool = False
+    # True when a bot token is stored (i.e. installation completed).
+    slack_app_installed: bool = False
+    # Slack workspace name — safe to return.
+    slack_team_name: Optional[str] = None
+    slack_team_id: Optional[str] = None
+    # Selected delivery channel.
+    slack_channel_id: Optional[str] = None
+    slack_channel_name: Optional[str] = None
+    # Audit timestamps.
+    slack_installed_at: Optional[datetime] = None
+    slack_app_last_test_at: Optional[datetime] = None
+    # Last delivery error (None when no error).
+    slack_app_last_error: Optional[str] = None
 
 
 class NotificationSettingsUpdateRequest(BaseModel):
@@ -95,3 +112,35 @@ class TestNotificationResponse(BaseModel):
     webhook_sent: bool
     # Human-readable error string if any channel failed, else None.
     error: Optional[str] = None
+
+
+# ── Slack App schemas (M58.5) ─────────────────────────────────────────────────
+
+
+class SlackInstallUrlResponse(BaseModel):
+    """Returned by GET /workspaces/{id}/notifications/slack/install-url."""
+
+    install_url: str
+    state: str
+
+
+class SlackChannelResponse(BaseModel):
+    """A single Slack channel returned by the channels list endpoint."""
+
+    id: str
+    name: str
+    is_private: bool
+    is_member: bool
+
+
+class SlackChannelsListResponse(BaseModel):
+    """Returned by GET /workspaces/{id}/notifications/slack/channels."""
+
+    channels: List[SlackChannelResponse]
+
+
+class SlackChannelUpdateRequest(BaseModel):
+    """Body for PUT /workspaces/{id}/notifications/slack/channel."""
+
+    channel_id: str = Field(..., description="Slack channel ID (e.g. C01234567).")
+    channel_name: str = Field(..., description="Display name of the channel.")

@@ -113,6 +113,21 @@ class Settings(BaseSettings):
     # NEVER log or expose this value.
     GITHUB_APP_OAUTH_STATE_SECRET: Optional[str] = None
 
+    # ── Required for Milestone 58.5 (Slack App installation) ────────────────
+    # Slack App OAuth credentials.  Obtain from api.slack.com → Your Apps.
+    # NEVER log or expose these values.
+    SLACK_CLIENT_ID: Optional[str] = None
+    SLACK_CLIENT_SECRET: Optional[str] = None
+
+    # OAuth redirect URI — must match the "Redirect URLs" list in Slack App config.
+    # Example: https://api.configtrace.org/slack/oauth/callback
+    SLACK_REDIRECT_URI: Optional[str] = None
+
+    # Random secret for HMAC-signing OAuth state tokens (CSRF protection).
+    # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+    # NEVER log or expose this value.
+    SLACK_APP_STATE_SECRET: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         # Ignore extra env vars passed by Docker Compose (POSTGRES_*, etc.)
@@ -189,6 +204,22 @@ class Settings(BaseSettings):
         placeholders = ("replace-with", "CHANGE_ME", "your-resend")
         return not any(
             p in (self.RESEND_API_KEY or "") or p in (self.ALERTS_FROM_EMAIL or "")
+            for p in placeholders
+        )
+
+    @property
+    def is_slack_app_configured(self) -> bool:
+        """Return True when Slack App OAuth credentials are set.
+
+        Treats placeholder values from the example .env files as "not
+        configured" so copying .env.example never accidentally triggers
+        Slack OAuth in a dev environment.
+        """
+        if not self.SLACK_CLIENT_ID or not self.SLACK_CLIENT_SECRET:
+            return False
+        placeholders = ("replace-with", "CHANGE_ME", "your-slack")
+        return not any(
+            p in (self.SLACK_CLIENT_ID or "") or p in (self.SLACK_CLIENT_SECRET or "")
             for p in placeholders
         )
 

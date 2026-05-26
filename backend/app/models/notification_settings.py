@@ -23,9 +23,10 @@ with both channels disabled and no URLs set.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, ForeignKey, LargeBinary, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, LargeBinary, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -114,6 +115,50 @@ class WorkspaceNotificationSettings(BaseMixin, Base):
         default="high_and_critical",
         server_default="high_and_critical",
     )
+
+    # ── Slack App installation (M58.5) ─────────────────────────────────────────
+    # When True, alerts are delivered via the installed Slack App bot.
+    # Takes precedence over the legacy incoming-webhook flow (slack_enabled).
+    slack_app_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
+    # Slack workspace info — safe to return in API responses.
+    slack_team_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    slack_team_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # AES-256-GCM encrypted Slack bot token.  NEVER return in API responses.
+    # NEVER log in full.
+    slack_bot_token_encrypted: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    # 12-byte nonce for AES-GCM decryption of the bot token.
+    slack_bot_iv: Mapped[Optional[bytes]] = mapped_column(
+        LargeBinary, nullable=True
+    )
+    # Slack bot user ID (e.g. UABC123) — safe to store and display.
+    slack_bot_user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Chosen Slack channel for alert delivery.
+    slack_channel_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    slack_channel_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Installation audit fields.
+    slack_installed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    slack_installed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    slack_app_last_test_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Last delivery error message (if any).  Safe to return to admins.
+    slack_app_last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:
         return (

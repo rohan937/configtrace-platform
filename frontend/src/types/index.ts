@@ -583,7 +583,7 @@ export type NotifyRiskLevel =
 
 export interface WorkspaceNotificationSettings {
   workspace_id: string;
-  /** Slack incoming-webhook channel enabled. */
+  /** Slack incoming-webhook channel enabled (legacy fallback). */
   slack_enabled: boolean;
   /**
    * Masked Slack webhook URL — first 12 chars + "****".
@@ -599,6 +599,39 @@ export interface WorkspaceNotificationSettings {
    */
   webhook_url_masked: string | null;
   notify_on_risk_level: NotifyRiskLevel;
+
+  // ── Slack App (M58.5) ─────────────────────────────────────────────────────
+  /** True when the Slack App is enabled for delivery. */
+  slack_app_enabled: boolean;
+  /** True when a bot token is stored (OAuth installation completed). */
+  slack_app_installed: boolean;
+  /** Slack workspace name — safe to display. */
+  slack_team_name: string | null;
+  slack_team_id: string | null;
+  /** Selected delivery channel. */
+  slack_channel_id: string | null;
+  slack_channel_name: string | null;
+  slack_installed_at: string | null;
+  slack_app_last_test_at: string | null;
+  /** Last delivery error message, or null when healthy. */
+  slack_app_last_error: string | null;
+}
+
+/** A single Slack channel returned by the channels list API. */
+export interface SlackChannel {
+  id: string;
+  name: string;
+  is_private: boolean;
+  is_member: boolean;
+}
+
+export interface SlackChannelsListResponse {
+  channels: SlackChannel[];
+}
+
+export interface SlackInstallUrlResponse {
+  install_url: string;
+  state: string;
 }
 
 export interface NotificationSettingsUpdateRequest {

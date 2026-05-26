@@ -1,4 +1,4 @@
-"""Workspace and member management routes — M50/M51/M57.1.
+"""Workspace and member management routes — M50/M51/M57.1/M58.5.
 
 Routes
 ------
@@ -16,6 +16,11 @@ GET    /workspaces/{workspace_id}/audit-logs                   — workspace aud
 GET    /workspaces/{workspace_id}/notification-settings        — get notification settings (M57.1)
 PUT    /workspaces/{workspace_id}/notification-settings        — update notification settings (M57.1)
 POST   /workspaces/{workspace_id}/notification-settings/test   — send test notification (M57.1)
+GET    /workspaces/{workspace_id}/notifications/slack/install-url  — Slack App install URL (M58.5)
+GET    /workspaces/{workspace_id}/notifications/slack/channels     — list Slack channels (M58.5)
+PUT    /workspaces/{workspace_id}/notifications/slack/channel      — select Slack channel (M58.5)
+POST   /workspaces/{workspace_id}/notifications/slack/test         — test Slack App delivery (M58.5)
+DELETE /workspaces/{workspace_id}/notifications/slack              — disconnect Slack App (M58.5)
 """
 
 from __future__ import annotations
@@ -51,6 +56,10 @@ from app.schemas.workspace import (
 from app.schemas.notification_settings import (
     NotificationSettingsResponse,
     NotificationSettingsUpdateRequest,
+    SlackChannelUpdateRequest,
+    SlackChannelsListResponse,
+    SlackChannelResponse,
+    SlackInstallUrlResponse,
     TestNotificationResponse,
 )
 from app.services import workspace_service
@@ -555,3 +564,246 @@ def test_notification(
         webhook_sent=result["webhook_sent"],
         error=result.get("error"),
     )
+
+
+# ── Slack App install flow (M58.5) ────────────────────────────────────────────
+
+
+@router.get(
+    "/{workspace_id}/notifications/slack/install-url",
+    response_model=SlackInstallUrlResponse,
+)
+def get_slack_install_url(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SlackInstallUrlResponse:
+    """Return a signed Slack OAuth install URL.
+
+    Requires owner or admin role.  Returns HTTP 503 if the server is not
+    configured with Slack App credentials (SLACK_CLIENT_ID / SLACK_CLIENT_SECRET).
+
+    The returned ``state`` token is HMAC-signed and expires in 10 minutes.
+    The frontend must store it for CSRF verification in the callback flow.
+    """
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "admin", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.config import settings as _settings
+    if not _settings.is_slack_app_configured:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Slack App is not configured on this server. "
+                "Set SLACK_CLIENT_ID, SLACK_CLIENT_SECRET, and SLACK_APP_STATE_SECRET."
+            ),
+        )
+
+    try:
+        from app.services.slack_service import build_install_url
+        result = build_install_url(
+            user_id=str(current_user.id),
+            workspace_id=str(workspace_id),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return SlackInstallUrlResponse(
+        install_url=result["install_url"],
+        state=result["state"],
+    )
+
+
+@router.get(
+    "/{workspace_id}/notifications/slack/channels",
+    response_model=SlackChannelsListResponse,
+)
+def list_slack_channels(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SlackChannelsListResponse:
+    """List Slack channels accessible to the installed bot.
+
+    Requires owner or admin role.  Returns HTTP 422 if no Slack App
+    installation is found for this workspace.
+    """
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "admin", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        from app.services.slack_service import list_channels
+        channels = list_channels(workspace_id, db)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to reach Slack API: {type(exc).__name__}",
+        ) from exc
+
+    return SlackChannelsListResponse(
+        channels=[
+            SlackChannelResponse(
+                id=ch["id"],
+                name=ch["name"],
+                is_private=ch["is_private"],
+                is_member=ch["is_member"],
+            )
+            for ch in channels
+        ]
+    )
+
+
+@router.put(
+    "/{workspace_id}/notifications/slack/channel",
+    response_model=NotificationSettingsResponse,
+)
+def update_slack_channel(
+    workspace_id: UUID4,
+    body: SlackChannelUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NotificationSettingsResponse:
+    """Select a Slack channel for alert delivery.
+
+    Requires owner or admin role.  Returns HTTP 422 if no Slack App
+    installation is found.
+
+    Audit note: channel ID and name are recorded in the audit log.
+    """
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "admin", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        from app.services.slack_service import update_channel
+        row = update_channel(
+            workspace_id=workspace_id,
+            channel_id=body.channel_id,
+            channel_name=body.channel_name,
+            db=db,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    workspace_service.log_audit_event(
+        workspace_id=workspace_id,
+        actor_user_id=current_user.id,
+        event_type="slack_app_channel_updated",
+        db=db,
+        target_type="notification_settings",
+        target_id=str(row.id),
+        metadata={
+            "slack_channel_id": body.channel_id,
+            "slack_channel_name": body.channel_name,
+        },
+    )
+    db.commit()
+
+    data = notification_service.build_settings_response(row)
+    return NotificationSettingsResponse(**data)
+
+
+@router.post(
+    "/{workspace_id}/notifications/slack/test",
+    response_model=TestNotificationResponse,
+)
+def test_slack_app(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TestNotificationResponse:
+    """Send a test message via the installed Slack App bot.
+
+    Requires owner or admin role.  Returns HTTP 422 if no installation or
+    channel is configured.
+    """
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "admin", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        from app.services.slack_service import send_test
+        send_test(workspace_id, db)
+        db.commit()
+        return TestNotificationResponse(slack_sent=True, webhook_sent=False, error=None)
+    except RuntimeError as exc:
+        db.rollback()
+        return TestNotificationResponse(
+            slack_sent=False,
+            webhook_sent=False,
+            error=str(exc),
+        )
+    except Exception as exc:
+        db.rollback()
+        return TestNotificationResponse(
+            slack_sent=False,
+            webhook_sent=False,
+            error=f"Unexpected error: {type(exc).__name__}",
+        )
+
+
+@router.delete(
+    "/{workspace_id}/notifications/slack",
+    status_code=204,
+    response_class=Response,
+)
+def disconnect_slack_app(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Remove the Slack App installation from a workspace.
+
+    Requires owner or admin role.  Clears all Slack App columns and
+    disables the channel.  Does NOT revoke the bot token at Slack.
+
+    The existing Slack incoming-webhook configuration (if any) is
+    unaffected — it remains as a fallback.
+    """
+    try:
+        workspace_service.require_role(
+            workspace_id, current_user.id, "admin", db
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.services.slack_service import disconnect
+    row = disconnect(workspace_id, db)
+
+    workspace_service.log_audit_event(
+        workspace_id=workspace_id,
+        actor_user_id=current_user.id,
+        event_type="slack_app_disconnected",
+        db=db,
+        target_type="notification_settings",
+        target_id=str(row.id),
+        metadata={},
+    )
+    db.commit()
+    return Response(status_code=204)

@@ -11,6 +11,7 @@ from app.routers.integrations_github_app import router as github_app_router
 from app.routers.invites import router as invites_router
 from app.routers.resources import router as resources_router
 from app.routers.settings import router as settings_router
+from app.routers.slack_oauth import router as slack_oauth_router
 from app.routers.stripe_webhook import router as stripe_webhook_router
 from app.routers.syncs import router as syncs_router
 from app.routers.workspaces import router as workspaces_router
@@ -51,6 +52,7 @@ app.include_router(syncs_router)          # prefix="/syncs"
 app.include_router(changes_router)        # prefix="/changes"
 app.include_router(resources_router)      # prefix="/resources"
 app.include_router(stripe_webhook_router) # prefix="/stripe"              (M52)
+app.include_router(slack_oauth_router)    # prefix="/slack"               (M58.5)
 
 
 # ── Root ──────────────────────────────────────────────────────────────────────
