@@ -301,6 +301,16 @@ class SupabaseConnector(BaseConnector):
                     "config_fetch_warnings": warnings[:],
                 })
 
+        # ── M57.8: additional security depth fields ───────────────────────────
+        # All fields come from the same /config/auth endpoint already called above.
+        # Raw redirect URLs are NEVER stored — only the count is recorded.
+        additional_redirect_urls = data.get("additional_redirect_urls") or []
+        additional_redirect_urls_count = (
+            len(additional_redirect_urls)
+            if isinstance(additional_redirect_urls, list)
+            else 0
+        )
+
         auth_record = {
             "record_type": SUPABASE_AUTH_CONFIG,
             "record_id": f"supabase_auth_config:{project_ref}",
@@ -319,6 +329,25 @@ class SupabaseConnector(BaseConnector):
             "site_url": str(data.get("site_url") or ""),
             # Rate limits
             "max_request_users_per_day": data.get("rate_limit_anonymous_users"),
+            # M57.8: additional security fields (same API endpoint)
+            # Leaked password protection (Have I Been Pwned integration)
+            "leaked_password_protection_enabled": bool(
+                data.get("password_hibp_enabled", False)
+            ),
+            # Bot / captcha protection
+            "captcha_enabled": bool(data.get("security_captcha_enabled", False)),
+            # Require reauthentication on password update
+            "require_reauthentication_for_password_update": bool(
+                data.get("security_update_password_require_reauthentication", False)
+            ),
+            # Refresh token rotation — defends against token theft
+            "refresh_token_rotation_enabled": bool(
+                data.get("refresh_token_rotation_enabled", False)
+            ),
+            # JWT access token expiry in seconds (NOT the JWT secret)
+            "jwt_exp": data.get("jwt_exp"),
+            # Count of additional redirect URLs — raw URLs NEVER stored
+            "additional_redirect_urls_count": additional_redirect_urls_count,
             "config_fetch_warnings": warnings,
         }
         return auth_record, oauth_records

@@ -532,6 +532,222 @@ def _classify_function_metadata_change(change: object) -> tuple[str, str]:
 
 # ── Main dispatcher ────────────────────────────────────────────────────────────
 
+# ── M57.8: firebase_remote_config_template ────────────────────────────────────
+
+def _classify_remote_config_change(change: object) -> tuple[str, str]:
+    """Classify risk for ``firebase_remote_config_template`` changes (M57.8).
+
+    Remote Config controls which feature flags, parameters, and conditions are
+    served to clients.  Structural changes (parameter removals, condition drops)
+    may unexpectedly affect app behaviour.
+
+    Priority order:
+    1. Removed template record → high (unexpected; RC may be misconfigured)
+    2. Added template record → low (baseline captured)
+    3. parameter_count drops → medium (parameters removed)
+    4. condition_count drops → medium (conditions removed)
+    5. parameter_keys_hash / condition_names_hash changed → medium (structural)
+    6. update_type changed to FORCED_UPDATE / ROLLBACK → medium (operational)
+    7. version_number / update_origin → low (routine increments)
+    8. parameter_group_count changes → low
+    """
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    old_v = _get(change, "old_value")
+    new_v = _get(change, "new_value")
+
+    if ct == "removed":
+        return (
+            "high",
+            "The Firebase Remote Config template record was removed. "
+            "This may indicate the template was deleted or the connector lost access. "
+            "Verify the project's Remote Config is still active.",
+        )
+    if ct == "added":
+        return (
+            "low",
+            "Firebase Remote Config template baseline captured. "
+            "Future structural changes will generate change events.",
+        )
+
+    def _int(v: object) -> int:
+        try:
+            return int(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+
+    if fp == "parameter_count":
+        old_n, new_n = _int(old_v), _int(new_v)
+        if new_n < old_n:
+            return (
+                "medium",
+                f"Firebase Remote Config parameter count decreased from {old_n} to {new_n}. "
+                "Parameters may have been removed — verify this is intentional and that "
+                "client apps handle missing parameters gracefully.",
+            )
+        return (
+            "low",
+            f"Firebase Remote Config parameter count changed from {old_n} to {new_n}.",
+        )
+
+    if fp == "condition_count":
+        old_n, new_n = _int(old_v), _int(new_v)
+        if new_n < old_n:
+            return (
+                "medium",
+                f"Firebase Remote Config condition count decreased from {old_n} to {new_n}. "
+                "Conditions may have been removed; targeted parameter values may no longer apply.",
+            )
+        return (
+            "low",
+            f"Firebase Remote Config condition count changed from {old_n} to {new_n}.",
+        )
+
+    if fp == "parameter_keys_hash":
+        return (
+            "medium",
+            "The set of Firebase Remote Config parameter keys may have changed. "
+            "Review the template to confirm additions or removals are intentional.",
+        )
+
+    if fp == "condition_names_hash":
+        return (
+            "medium",
+            "The set of Firebase Remote Config condition names may have changed. "
+            "Review the template to confirm the targeting logic is correct.",
+        )
+
+    if fp == "update_type":
+        update_type_str = str(new_v or "").upper()
+        if update_type_str in ("FORCED_UPDATE", "ROLLBACK"):
+            return (
+                "medium",
+                f"Firebase Remote Config was updated with type {update_type_str!r}. "
+                "Forced updates and rollbacks may affect all clients immediately.",
+            )
+        return (
+            "low",
+            f"Firebase Remote Config update type changed to {new_v!r}.",
+        )
+
+    if fp == "version_number":
+        return (
+            "low",
+            f"Firebase Remote Config version incremented to {new_v!r}. "
+            "This is recorded on every template publish.",
+        )
+
+    if fp == "update_origin":
+        return (
+            "low",
+            f"Firebase Remote Config was published from {new_v!r} (previously {old_v!r}).",
+        )
+
+    if fp == "parameter_group_count":
+        return (
+            "low",
+            f"Firebase Remote Config parameter group count changed from {old_v} to {new_v}.",
+        )
+
+    return ("low", "A Firebase Remote Config template metadata field changed.")
+
+
+# ── M57.8: firebase_app_check_config ─────────────────────────────────────────
+
+def _classify_app_check_change(change: object) -> tuple[str, str]:
+    """Classify risk for ``firebase_app_check_config`` changes (M57.8).
+
+    Firebase App Check reduces unauthorized API access.  Removing enforcement
+    from services could allow unattested clients to call Firebase APIs.
+
+    Priority order:
+    1. Removed record → high (App Check monitoring lost)
+    2. Added record → low (baseline captured)
+    3. enforced_service_count decreases → high (protection reduced)
+    4. unenforced_service_count increases → high (more services unprotected)
+    5. service_count changes → medium (services added/removed from monitoring)
+    6. enforced_service_names changes → medium (which services are covered)
+    """
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    old_v = _get(change, "old_value")
+    new_v = _get(change, "new_value")
+
+    if ct == "removed":
+        return (
+            "high",
+            "The Firebase App Check configuration record was removed. "
+            "This may indicate App Check is no longer enabled or the connector "
+            "lost access to the App Check API.",
+        )
+    if ct == "added":
+        return (
+            "low",
+            "Firebase App Check configuration baseline captured. "
+            "Future enforcement changes will generate change events.",
+        )
+
+    def _int(v: object) -> int:
+        try:
+            return int(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0
+
+    if fp == "enforced_service_count":
+        old_n, new_n = _int(old_v), _int(new_v)
+        if new_n < old_n:
+            return (
+                "high",
+                f"Firebase App Check enforcement was removed from {old_n - new_n} service(s) "
+                f"(enforced: {old_n} → {new_n}). "
+                "Unenforced services may accept requests from unattested clients.",
+            )
+        return (
+            "low",
+            f"Firebase App Check enforcement was added to {new_n - old_n} service(s) "
+            f"(enforced: {old_n} → {new_n}). "
+            "This may improve protection against unauthorized clients.",
+        )
+
+    if fp == "unenforced_service_count":
+        old_n, new_n = _int(old_v), _int(new_v)
+        if new_n > old_n:
+            return (
+                "high",
+                f"The number of Firebase services without App Check enforcement "
+                f"increased from {old_n} to {new_n}. "
+                "Additional services may now accept requests from unattested clients.",
+            )
+        return (
+            "low",
+            f"The number of unenforced Firebase App Check services decreased "
+            f"from {old_n} to {new_n}.",
+        )
+
+    if fp == "service_count":
+        old_n, new_n = _int(old_v), _int(new_v)
+        if new_n < old_n:
+            return (
+                "medium",
+                f"The number of Firebase services monitored by App Check decreased "
+                f"from {old_n} to {new_n}. Verify no service was removed unintentionally.",
+            )
+        return (
+            "medium",
+            f"The number of Firebase services monitored by App Check changed "
+            f"from {old_n} to {new_n}.",
+        )
+
+    if fp == "enforced_service_names":
+        return (
+            "medium",
+            "The set of Firebase App Check–enforced services changed. "
+            "Review which services now have enforcement active.",
+        )
+
+    return ("low", "A Firebase App Check configuration field changed.")
+
+
 def classify_firebase_change(change: object) -> tuple[str, str]:
     """Return (risk_level, risk_reason) for a Firebase change.
 
@@ -561,5 +777,10 @@ def classify_firebase_change(change: object) -> tuple[str, str]:
         return _classify_hosting_domain_change(change)
     if record_type == "firebase_function_metadata":
         return _classify_function_metadata_change(change)
+    # M57.8
+    if record_type == "firebase_remote_config_template":
+        return _classify_remote_config_change(change)
+    if record_type == "firebase_app_check_config":
+        return _classify_app_check_change(change)
 
     return ("low", f"A Firebase configuration record changed ({record_type}).")

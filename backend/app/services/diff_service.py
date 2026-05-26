@@ -1725,6 +1725,31 @@ _FIREBASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "env_var_key_count",
         "config_fetch_warnings",
     ),
+    # ── M57.8: Remote Config + App Check ─────────────────────────────────────
+    # firebase_remote_config_template — one per Firebase project.
+    # Tracks structural drift (parameter/condition counts, version, hash changes).
+    # Parameter values and condition expressions are NEVER stored.
+    "firebase_remote_config_template": (
+        "version_number",
+        "update_origin",
+        "update_type",
+        "parameter_count",
+        "condition_count",
+        "parameter_group_count",
+        "parameter_keys_hash",
+        "condition_names_hash",
+        "config_fetch_warnings",
+    ),
+    # firebase_app_check_config — one per Firebase project.
+    # Tracks App Check enforcement posture changes across protected services.
+    # Debug tokens and attestation data are NEVER stored.
+    "firebase_app_check_config": (
+        "service_count",
+        "enforced_service_count",
+        "unenforced_service_count",
+        "enforced_service_names",
+        "config_fetch_warnings",
+    ),
 }
 
 
@@ -1751,6 +1776,13 @@ _SUPABASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "password_min_length",
         "site_url",
         "max_request_users_per_day",
+        # M57.8: additional security depth fields
+        "leaked_password_protection_enabled",
+        "captcha_enabled",
+        "require_reauthentication_for_password_update",
+        "refresh_token_rotation_enabled",
+        "jwt_exp",
+        "additional_redirect_urls_count",
         "config_fetch_warnings",
     ),
     "supabase_database_config": (

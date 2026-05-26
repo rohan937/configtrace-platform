@@ -89,6 +89,8 @@ export function getResourceCategory(resourceType: string): string | null {
   if (t.startsWith("aws_elb") || t.startsWith("aws_elbv2")) return "Network";
 
   // ── Firebase — more specific checks first ─────────────────────────────────
+  if (t === "firebase_remote_config_template") return "App Config";
+  if (t === "firebase_app_check_config")       return "App Security";
   if (t.includes("firestore"))         return "Database";
   if (t.includes("auth"))              return "Auth";
   if (t.includes("storage"))           return "Storage";
@@ -212,6 +214,8 @@ const TYPE_LABELS: Record<string, string> = {
   firebase_hosting_site:         "Hosting site",
   firebase_hosting_domain:       "Hosting domain",
   firebase_cloud_function:       "Cloud Function",
+  firebase_remote_config_template: "Remote Config template",
+  firebase_app_check_config:     "App Check config",
 
   // ── Supabase ──────────────────────────────────────────────────────────
   supabase_project:              "Project",

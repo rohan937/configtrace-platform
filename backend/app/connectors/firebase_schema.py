@@ -65,16 +65,26 @@ from typing import Optional, TypedDict
 
 # ── Record type constants ──────────────────────────────────────────────────────
 
-FIREBASE_PROJECT            = "firebase_project"
-FIREBASE_AUTH_CONFIG        = "firebase_auth_config"
-FIREBASE_AUTH_PROVIDER      = "firebase_auth_provider"
-FIREBASE_AUTHORIZED_DOMAIN  = "firebase_authorized_domain"
-FIREBASE_FIRESTORE_RULESET  = "firebase_firestore_ruleset"
-FIREBASE_STORAGE_BUCKET     = "firebase_storage_bucket"
-FIREBASE_STORAGE_RULESET    = "firebase_storage_ruleset"
-FIREBASE_HOSTING_SITE       = "firebase_hosting_site"
-FIREBASE_HOSTING_DOMAIN     = "firebase_hosting_domain"
-FIREBASE_FUNCTION_METADATA  = "firebase_function_metadata"
+FIREBASE_PROJECT                 = "firebase_project"
+FIREBASE_AUTH_CONFIG             = "firebase_auth_config"
+FIREBASE_AUTH_PROVIDER           = "firebase_auth_provider"
+FIREBASE_AUTHORIZED_DOMAIN       = "firebase_authorized_domain"
+FIREBASE_FIRESTORE_RULESET       = "firebase_firestore_ruleset"
+FIREBASE_STORAGE_BUCKET          = "firebase_storage_bucket"
+FIREBASE_STORAGE_RULESET         = "firebase_storage_ruleset"
+FIREBASE_HOSTING_SITE            = "firebase_hosting_site"
+FIREBASE_HOSTING_DOMAIN          = "firebase_hosting_domain"
+FIREBASE_FUNCTION_METADATA       = "firebase_function_metadata"
+
+# ── M57.8 record types ────────────────────────────────────────────────────────
+
+# One per Firebase project — Remote Config template structural metadata.
+# Parameter values, condition expressions, and user info are NEVER stored.
+FIREBASE_REMOTE_CONFIG_TEMPLATE  = "firebase_remote_config_template"
+
+# One per Firebase project — App Check service enforcement aggregate.
+# Debug tokens, attestation data, and device/user data are NEVER stored.
+FIREBASE_APP_CHECK_CONFIG        = "firebase_app_check_config"
 
 FIREBASE_RECORD_TYPES: frozenset[str] = frozenset(
     {
@@ -88,6 +98,9 @@ FIREBASE_RECORD_TYPES: frozenset[str] = frozenset(
         FIREBASE_HOSTING_SITE,
         FIREBASE_HOSTING_DOMAIN,
         FIREBASE_FUNCTION_METADATA,
+        # M57.8
+        FIREBASE_REMOTE_CONFIG_TEMPLATE,
+        FIREBASE_APP_CHECK_CONFIG,
     }
 )
 
@@ -290,4 +303,68 @@ class FirebaseFunctionMetadataRecord(TypedDict, total=False):
     trigger_type: str       # "HTTP" | "EVENT" | "SCHEDULED" | "OTHER"
     status: Optional[str]
     env_var_key_count: int              # count of env var KEYS only, no values
+    config_fetch_warnings: list[str]
+
+
+# ── M57.8 TypedDicts ──────────────────────────────────────────────────────────
+
+
+class FirebaseRemoteConfigTemplateRecord(TypedDict, total=False):
+    """Normalised firebase_remote_config_template record — M57.8.
+
+    Tracks Firebase Remote Config template structural metadata.
+
+    SECURITY / DATA MINIMISATION:
+    - Parameter VALUES are NEVER stored (default or conditional).
+    - Condition expressions are NEVER stored.
+    - ``updateUser`` (email/display name) is NEVER stored.
+    - ``parameterGroups`` descriptions are NEVER stored.
+    - Only counts, hashes, and version metadata are kept.
+
+    ``parameter_keys_hash`` and ``condition_names_hash`` change when
+    parameters/conditions are added or removed; they are SHA-256[:16]
+    digests of the sorted key/name lists.
+    """
+
+    record_type: str        # "firebase_remote_config_template"
+    record_id: str          # "{project_id}/remote_config"
+    name: str               # "{project_id}/remote_config"
+
+    project_id: str
+    version_number: Optional[str]       # template version as a string (e.g. "42")
+    update_origin: Optional[str]        # "CONSOLE", "REST_API", "ADMIN_SDK_NODE", etc.
+    update_type: Optional[str]          # "INCREMENTAL_UPDATE", "FORCED_UPDATE", "ROLLBACK"
+    parameter_count: int                # number of top-level parameters
+    condition_count: int                # number of conditions
+    parameter_group_count: int          # number of parameter groups
+    parameter_keys_hash: Optional[str]  # SHA-256[:16] of sorted parameter key names
+    condition_names_hash: Optional[str] # SHA-256[:16] of sorted condition names
+    config_fetch_warnings: list[str]
+
+
+class FirebaseAppCheckConfigRecord(TypedDict, total=False):
+    """Normalised firebase_app_check_config record — M57.8.
+
+    Tracks Firebase App Check enforcement posture across protected services.
+
+    SECURITY / DATA MINIMISATION:
+    - Debug tokens are NEVER stored.
+    - App attestation data, device data, and user data are NEVER stored.
+    - Raw app IDs are NOT stored; only aggregate counts and service names
+      (which are Google API endpoint strings, not secrets) are kept.
+
+    ``enforced_service_names`` holds the list of Firebase service API names
+    (e.g. "firestore.googleapis.com") for which enforcement is active.
+    These are infrastructure identifiers, not customer data.
+    """
+
+    record_type: str        # "firebase_app_check_config"
+    record_id: str          # "{project_id}/app_check"
+    name: str               # "{project_id}/app_check"
+
+    project_id: str
+    service_count: int              # total services monitored by App Check
+    enforced_service_count: int     # services with enforcement active
+    unenforced_service_count: int   # services with enforcement off/unspecified
+    enforced_service_names: Optional[list[str]]  # service API names (not secrets)
     config_fetch_warnings: list[str]

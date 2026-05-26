@@ -206,6 +206,93 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
     if fp == "max_request_users_per_day":
         return ("low", "The Supabase Auth anonymous user rate limit changed.")
 
+    # ── M57.8: additional security depth fields ───────────────────────────────
+
+    if fp == "leaked_password_protection_enabled":
+        if new_v is False or new_v == "false":
+            return (
+                "high",
+                "Leaked password protection (Have I Been Pwned integration) was disabled "
+                "in Supabase Auth. Users may be permitted to set passwords that have appeared "
+                "in known data breaches. Verify this is intentional.",
+            )
+        return (
+            "low",
+            "Leaked password protection was enabled in Supabase Auth. "
+            "Users will be warned or blocked when choosing compromised passwords.",
+        )
+
+    if fp == "captcha_enabled":
+        if new_v is False or new_v == "false":
+            return (
+                "medium",
+                "CAPTCHA bot protection was disabled in Supabase Auth. "
+                "Sign-in and sign-up endpoints may become more susceptible to automated attacks.",
+            )
+        return (
+            "low",
+            "CAPTCHA bot protection was enabled in Supabase Auth.",
+        )
+
+    if fp == "require_reauthentication_for_password_update":
+        if new_v is False or new_v == "false":
+            return (
+                "medium",
+                "Reauthentication requirement for password updates was disabled in Supabase Auth. "
+                "Users may be able to change their password without recent authentication.",
+            )
+        return (
+            "low",
+            "Reauthentication is now required before users can update their password.",
+        )
+
+    if fp == "refresh_token_rotation_enabled":
+        if new_v is False or new_v == "false":
+            return (
+                "medium",
+                "Refresh token rotation was disabled in Supabase Auth. "
+                "Token theft may go undetected if stolen tokens are reused.",
+            )
+        return (
+            "low",
+            "Refresh token rotation was enabled. "
+            "Each refresh produces a new token pair, reducing the window for token reuse.",
+        )
+
+    if fp == "jwt_exp":
+        prev_v = _get(change, "prev_value")
+        try:
+            old_exp = int(prev_v) if prev_v is not None else None
+            new_exp = int(new_v) if new_v is not None else None
+            if old_exp is not None and new_exp is not None and new_exp > old_exp:
+                return (
+                    "medium",
+                    f"Supabase JWT access token expiry increased from {old_exp}s to {new_exp}s. "
+                    "Longer-lived tokens may increase the window of exposure if a token is compromised.",
+                )
+        except (TypeError, ValueError):
+            pass
+        return (
+            "low",
+            f"Supabase JWT access token expiry changed to {new_v}s.",
+        )
+
+    if fp == "additional_redirect_urls_count":
+        prev_v = _get(change, "prev_value")
+        try:
+            if int(new_v) > int(prev_v):
+                return (
+                    "medium",
+                    "The number of additional redirect URLs in Supabase Auth increased. "
+                    "Verify that new redirect targets are legitimate and expected.",
+                )
+        except (TypeError, ValueError):
+            pass
+        return (
+            "low",
+            "The number of additional redirect URLs in Supabase Auth changed.",
+        )
+
     return ("medium", "A Supabase Auth configuration setting changed.")
 
 

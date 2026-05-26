@@ -83,6 +83,7 @@ from app.connectors.exceptions import (
     RateLimitError,
 )
 from app.connectors.firebase_schema import (
+    FIREBASE_APP_CHECK_CONFIG,
     FIREBASE_AUTH_CONFIG,
     FIREBASE_AUTH_PROVIDER,
     FIREBASE_AUTHORIZED_DOMAIN,
@@ -91,6 +92,7 @@ from app.connectors.firebase_schema import (
     FIREBASE_HOSTING_DOMAIN,
     FIREBASE_HOSTING_SITE,
     FIREBASE_PROJECT,
+    FIREBASE_REMOTE_CONFIG_TEMPLATE,
     FIREBASE_STORAGE_BUCKET,
     FIREBASE_STORAGE_RULESET,
     REQUIRED_SA_FIELDS,
@@ -957,6 +959,220 @@ class FirebaseConnector(BaseConnector):
                 return raw
         return credentials
 
+    # ── M57.8: Remote Config + App Check ─────────────────────────────────────
+
+    def _fetch_remote_config(
+        self,
+        access_token: str,
+        project_id: str,
+        warnings: list[str],
+    ) -> list[dict]:
+        """Fetch Firebase Remote Config template structural metadata.
+
+        API: GET firebaseremoteconfig.googleapis.com/v1/projects/{project_id}/remoteConfig
+
+        Returns a single ``firebase_remote_config_template`` record, or an
+        empty list if the API is unavailable or permission is denied.
+
+        SECURITY / DATA MINIMISATION:
+        - Parameter VALUES (default or conditional) are NEVER stored.
+        - Condition expressions are NEVER stored.
+        - ``updateUser`` email/display name is NEVER stored.
+        - Only counts, hashes of key/name lists, and version metadata are kept.
+        - ``parameterKeys_hash`` is SHA-256[:16] of sorted parameter key names.
+        - ``conditionNames_hash`` is SHA-256[:16] of sorted condition names.
+        """
+        url = (
+            f"https://firebaseremoteconfig.googleapis.com/v1"
+            f"/projects/{project_id}/remoteConfig"
+        )
+        try:
+            data = self._get(access_token, url)
+        except ConnectorError as exc:
+            if exc.status_code == 403:
+                warnings.append(
+                    "Remote Config API returned 403 — the service account may lack "
+                    "roles/firebaseremoteconfig.viewer or equivalent read permission."
+                )
+                logger.warning(
+                    "firebase: Remote Config 403 for project=%s — skipping",
+                    project_id,
+                )
+                return []
+            if exc.status_code == 404:
+                # Remote Config not enabled for this project
+                logger.debug(
+                    "firebase: Remote Config 404 for project=%s — not enabled",
+                    project_id,
+                )
+                return []
+            warnings.append(
+                f"Remote Config fetch error (HTTP {exc.status_code}): "
+                f"{str(exc)[:120]}"
+            )
+            logger.warning(
+                "firebase: Remote Config fetch failed project=%s code=%s",
+                project_id, exc.status_code,
+            )
+            return []
+        except Exception as exc:
+            warnings.append(f"Remote Config fetch failed unexpectedly: {type(exc).__name__}")
+            logger.warning(
+                "firebase: Remote Config unexpected error project=%s %s",
+                project_id, type(exc).__name__,
+            )
+            return []
+
+        if not isinstance(data, dict):
+            return []
+
+        # ── Extract counts — parameter/condition/group dicts; no values stored ──
+        parameters = data.get("parameters") or {}
+        conditions = data.get("conditions") or []
+        parameter_groups = data.get("parameterGroups") or {}
+
+        parameter_count = len(parameters) if isinstance(parameters, dict) else 0
+        condition_count = len(conditions) if isinstance(conditions, list) else 0
+        parameter_group_count = (
+            len(parameter_groups) if isinstance(parameter_groups, dict) else 0
+        )
+
+        # Hash parameter key names (sorted, deterministic) — values NOT included.
+        param_keys_sorted = sorted(parameters.keys()) if isinstance(parameters, dict) else []
+        parameter_keys_hash: Optional[str] = (
+            _sha256_prefix(",".join(param_keys_sorted)) if param_keys_sorted else None
+        )
+
+        # Hash condition names (sorted) — expressions NOT included.
+        cond_names_sorted = sorted(
+            c.get("name") or "" for c in conditions if isinstance(c, dict)
+        )
+        condition_names_hash: Optional[str] = (
+            _sha256_prefix(",".join(cond_names_sorted)) if cond_names_sorted else None
+        )
+
+        # ── Version metadata — no updateUser info stored ──────────────────────
+        version = data.get("version") or {}
+        version_number = str(version.get("versionNumber") or "") or None
+        update_origin = str(version.get("updateOrigin") or "") or None
+        update_type = str(version.get("updateType") or "") or None
+        # updateUser, description are explicitly NOT extracted.
+
+        record: dict = {
+            "record_type":           FIREBASE_REMOTE_CONFIG_TEMPLATE,
+            "record_id":             f"{project_id}/remote_config",
+            "name":                  f"{project_id}/remote_config",
+            "project_id":            project_id,
+            "version_number":        version_number,
+            "update_origin":         update_origin,
+            "update_type":           update_type,
+            "parameter_count":       parameter_count,
+            "condition_count":       condition_count,
+            "parameter_group_count": parameter_group_count,
+            "parameter_keys_hash":   parameter_keys_hash,
+            "condition_names_hash":  condition_names_hash,
+            "config_fetch_warnings": [],
+        }
+        return [record]
+
+    def _fetch_app_check(
+        self,
+        access_token: str,
+        project_id: str,
+        warnings: list[str],
+    ) -> list[dict]:
+        """Fetch Firebase App Check service enforcement metadata.
+
+        API: GET firebaseappcheck.googleapis.com/v1beta/projects/{project_id}/services
+
+        Returns a single ``firebase_app_check_config`` aggregate record, or an
+        empty list if the API is unavailable or permission is denied.
+
+        SECURITY / DATA MINIMISATION:
+        - Debug tokens are NEVER read or stored.
+        - App attestation data and device/user data are NEVER accessed.
+        - Raw app IDs are NOT stored.
+        - ``enforced_service_names`` holds Google API endpoint strings (e.g.
+          "storage.googleapis.com") — infrastructure identifiers, not secrets.
+        """
+        url = (
+            f"https://firebaseappcheck.googleapis.com/v1beta"
+            f"/projects/{project_id}/services"
+        )
+        try:
+            data = self._get(access_token, url)
+        except ConnectorError as exc:
+            if exc.status_code == 403:
+                warnings.append(
+                    "App Check API returned 403 — the service account may lack "
+                    "roles/firebaseappcheck.viewer or equivalent read permission."
+                )
+                logger.warning(
+                    "firebase: App Check 403 for project=%s — skipping",
+                    project_id,
+                )
+                return []
+            if exc.status_code == 404:
+                logger.debug(
+                    "firebase: App Check 404 for project=%s — not enabled",
+                    project_id,
+                )
+                return []
+            warnings.append(
+                f"App Check fetch error (HTTP {exc.status_code}): {str(exc)[:120]}"
+            )
+            logger.warning(
+                "firebase: App Check fetch failed project=%s code=%s",
+                project_id, exc.status_code,
+            )
+            return []
+        except Exception as exc:
+            warnings.append(f"App Check fetch failed unexpectedly: {type(exc).__name__}")
+            logger.warning(
+                "firebase: App Check unexpected error project=%s %s",
+                project_id, type(exc).__name__,
+            )
+            return []
+
+        if not isinstance(data, dict):
+            return []
+
+        # ``services`` is the list of App Check–monitored services.
+        services: list[dict] = data.get("services") or []
+        if not isinstance(services, list):
+            services = []
+
+        # Extract short service name from the full resource name
+        # e.g. "projects/123/services/storage.googleapis.com" → "storage.googleapis.com"
+        def _service_short_name(svc: dict) -> str:
+            full_name = str(svc.get("name") or "")
+            return full_name.split("/services/", 1)[-1] if "/services/" in full_name else full_name
+
+        enforced: list[str] = []
+        unenforced: list[str] = []
+        for svc in services:
+            if not isinstance(svc, dict):
+                continue
+            mode = (svc.get("enforcementMode") or "").upper()
+            short_name = _service_short_name(svc)
+            if mode == "ENFORCED":
+                enforced.append(short_name)
+            else:
+                unenforced.append(short_name)
+
+        record: dict = {
+            "record_type":              FIREBASE_APP_CHECK_CONFIG,
+            "record_id":                f"{project_id}/app_check",
+            "name":                     f"{project_id}/app_check",
+            "project_id":               project_id,
+            "service_count":            len(services),
+            "enforced_service_count":   len(enforced),
+            "unenforced_service_count": len(unenforced),
+            "enforced_service_names":   sorted(enforced) or None,
+            "config_fetch_warnings":    [],
+        }
+        return [record]
+
     # ── Public interface ───────────────────────────────────────────────────────
 
     def validate_credentials(self, credentials: dict) -> bool:
@@ -1081,6 +1297,20 @@ class FirebaseConnector(BaseConnector):
         except Exception as exc:
             logger.warning("firebase: cloud_functions fetch error %s", type(exc).__name__)
             warnings.append(f"cloud_functions fetch error: {type(exc).__name__}")
+
+        # 7. Remote Config template metadata (optional — M57.8)
+        rc_records = self._fetch_remote_config(access_token, project_id, warnings)
+        records.extend(rc_records)
+        logger.info(
+            "FirebaseConnector.fetch: remote_config_records count=%d", len(rc_records)
+        )
+
+        # 8. App Check service enforcement metadata (optional — M57.8)
+        ac_records = self._fetch_app_check(access_token, project_id, warnings)
+        records.extend(ac_records)
+        logger.info(
+            "FirebaseConnector.fetch: app_check_records count=%d", len(ac_records)
+        )
 
         # Attach accumulated warnings to the project record.
         if warnings:

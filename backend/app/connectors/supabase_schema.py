@@ -96,6 +96,19 @@ try:
         max_request_users_per_day: Any
         # Site URL (public)
         site_url: str
+        # M57.8: additional security depth fields
+        # Leaked password protection (Have I Been Pwned — password_hibp_enabled)
+        leaked_password_protection_enabled: bool
+        # Bot / captcha protection (security_captcha_enabled)
+        captcha_enabled: bool
+        # Require reauthentication on password update
+        require_reauthentication_for_password_update: bool
+        # Refresh token rotation (defends against token theft)
+        refresh_token_rotation_enabled: bool
+        # JWT access token expiry in seconds — NOT the JWT secret
+        jwt_exp: Any
+        # Count of additional redirect URLs — raw URLs NEVER stored
+        additional_redirect_urls_count: int
         config_fetch_warnings: list[str]
 
     class SupabaseDatabaseConfigRecord(TypedDict, total=False):
