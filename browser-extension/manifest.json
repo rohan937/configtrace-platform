@@ -3,19 +3,16 @@
   "name": "ConfigTrace Provider Console Helper",
   "short_name": "ConfigTrace",
   "version": "0.1.0",
-  "description": "Read-only helper that recognizes provider console pages and links them to ConfigTrace guidance. It does not modify provider settings or read secrets.",
-
+  "description": "Read-only ConfigTrace helper for cloud and SaaS consoles. Links to guidance without changing provider settings.",
   "icons": {
-    "16":  "icons/icon16.png",
-    "32":  "icons/icon32.png",
-    "48":  "icons/icon48.png",
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-
   "permissions": [
     "storage"
   ],
-
   "host_permissions": [
     "https://console.aws.amazon.com/*",
     "https://*.console.aws.amazon.com/*",
@@ -28,11 +25,9 @@
     "https://console.firebase.google.com/*",
     "https://admin.shopify.com/*"
   ],
-
   "background": {
     "service_worker": "src/background.js"
   },
-
   "action": {
     "default_popup": "src/popup.html",
     "default_title": "ConfigTrace",
@@ -43,7 +38,6 @@
       "128": "icons/icon128.png"
     }
   },
-
   "content_scripts": [
     {
       "matches": [
@@ -58,11 +52,13 @@
         "https://console.firebase.google.com/*",
         "https://admin.shopify.com/*"
       ],
-      "js": ["src/guidance.js", "src/contentScript.js"],
+      "js": [
+        "src/guidance.js",
+        "src/contentScript.js"
+      ],
       "run_at": "document_idle"
     }
   ],
-
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   }
