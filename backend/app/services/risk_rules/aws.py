@@ -7336,7 +7336,12 @@ def classify_aws_change(change: object) -> tuple[str, str]:
     Returns:
         (risk_level, risk_reason) — level is one of critical/high/medium/low.
     """
-    pm: dict = _get(change, "provider_metadata") or {}
+    # Defence in depth: tolerate provider_metadata that is missing, None,
+    # or a non-dict value (e.g. an upstream bug delivering a list/string).
+    # Never raise out of risk classification — the caller treats an
+    # uncategorised change as low-risk by default.
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
     record_type: str = (pm.get("record_type") or "").lower()
 
     if record_type == AWS_ACCOUNT_IDENTITY:
