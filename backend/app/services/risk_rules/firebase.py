@@ -173,8 +173,11 @@ def _classify_auth_provider_change(change: object) -> tuple[str, str]:
             "Verify the provider configuration is correct.",
         )
     if ct == "removed":
+        # Per audit policy: OAuth provider add/remove is medium unless
+        # additional risky details are present. Removal is an availability
+        # / login issue, not a security weakening — bump down from high.
         return (
-            "high",
+            "medium",
             f"A Firebase Authentication provider was removed ({provider_id}). "
             "Users who signed in through this provider may lose access.",
         )
@@ -246,7 +249,17 @@ def _classify_firestore_ruleset_change(change: object) -> tuple[str, str]:
     if ct == "added":
         return ("low", "Firestore Security Rules baseline captured.")
     if ct == "removed":
-        return ("medium", "Firestore Security Rules record removed — unexpected.")
+        # Either the connector lost access to the project's rules OR the
+        # rules document was deleted. Both states mean ConfigTrace can no
+        # longer detect public read/write changes here. Treat as high so
+        # operators investigate before the next sync.
+        return (
+            "high",
+            "Firestore Security Rules record was removed. Either the rules "
+            "document was deleted (rules may now be empty / default-allow) "
+            "or ConfigTrace lost access to the project. Investigate before "
+            "the next sync.",
+        )
 
     # Highest-signal fields: public access detection
     if fp == "public_write_detected":
@@ -365,7 +378,15 @@ def _classify_storage_ruleset_change(change: object) -> tuple[str, str]:
     if ct == "added":
         return ("low", "Firebase Storage Security Rules baseline captured.")
     if ct == "removed":
-        return ("medium", "Firebase Storage Security Rules record removed — unexpected.")
+        # Same rationale as the Firestore ruleset removal: loss of monitoring
+        # or rules deletion (which would default to public-deny on first
+        # deploy, but the *next* deploy of empty rules could go either way).
+        return (
+            "high",
+            "Firebase Storage Security Rules record was removed. Either the "
+            "rules document was deleted or ConfigTrace lost access to the "
+            "bucket. Investigate before the next sync.",
+        )
 
     if fp == "public_write_detected":
         if new_v is True or new_v == "true":
