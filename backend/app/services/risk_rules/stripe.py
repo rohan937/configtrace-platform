@@ -4,16 +4,19 @@ Entry point: ``classify_stripe_change(change)``
 
 Risk levels
 -----------
-critical  — Webhook deleted, charges_enabled turned off, payouts_enabled
+critical  — Webhook deleted, webhook URL downgraded to plain HTTP,
+            critical billing/payment event dropped from a webhook's
+            enabled_events, charges_enabled turned off, payouts_enabled
             turned off, Apple/Google Pay domain removed.
-high      — Webhook URL changed (events redirected to new destination),
-            webhook added, webhook disabled, enabled_events changed,
-            payment method domain disabled/domain_name changed,
-            payment method enabled/disabled in a config, is_default unset,
-            payout schedule interval changed, controller type changed.
-medium    — Account settings changed (capabilities, currency, support contact,
-            business name), PM domain status changed, is_default set to True,
-            payment method re-enabled, API version changed.
+high      — Webhook URL changed over HTTPS, webhook added, webhook
+            disabled, enabled_events otherwise changed, payment method
+            domain disabled/domain_name changed, payment method
+            enabled/disabled in a config, is_default unset, payout
+            schedule interval changed, controller type changed.
+medium    — Account settings changed (capabilities, currency, support
+            contact, business name), PM domain status changed,
+            is_default set to True, payment method re-enabled,
+            API version changed.
 low       — Protection-strengthening changes (charges/payouts re-enabled,
             webhook re-enabled), cosmetic changes (branding, display name,
             descriptions), routine additions (PM config added).
@@ -24,11 +27,43 @@ Every classification distinguishes:
   * new_value → False / "disabled" / removed  — weakening or loss of capability
   * new_value → True  / "enabled"  / added    — strengthening or new capability
 Unknown / unavailable data never escalates to critical.
+
+Secret safety
+-------------
+Risk reasons NEVER include:
+  - Stripe secret keys (sk_live_…, sk_test_…, rk_*)
+  - Webhook signing secrets (whsec_…)
+  - Raw Authorization / Bearer headers
+  - Full webhook URLs (could carry embedded query-string secrets)
 """
 
 from __future__ import annotations
 
 from app.models.change import Change
+
+
+# ── Critical webhook events ────────────────────────────────────────────────────
+# Events whose removal from a webhook's enabled_events list materially
+# breaks revenue automation (checkout fulfilment, subscription lifecycle,
+# invoice reconciliation, charge / refund handling). Used by
+# `_classify_webhook_endpoint_change` to escalate enabled_events drops.
+_CRITICAL_STRIPE_EVENTS: frozenset[str] = frozenset({
+    "checkout.session.completed",
+    "checkout.session.async_payment_succeeded",
+    "checkout.session.async_payment_failed",
+    "invoice.payment_succeeded",
+    "invoice.payment_failed",
+    "invoice.paid",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "payment_intent.succeeded",
+    "payment_intent.payment_failed",
+    "charge.succeeded",
+    "charge.failed",
+    "charge.refunded",
+    "charge.dispute.created",
+})
 
 
 def _get(obj: object, field: str) -> object:
@@ -181,6 +216,19 @@ def _classify_webhook_endpoint_change(change: Change) -> tuple[str, str]:
 
     # Modified
     if fp == "url":
+        # Escalate to critical when the new URL is plain HTTP — Stripe API
+        # normally enforces HTTPS, but if the connector ever surfaces a
+        # non-HTTPS URL, event payloads (which carry customer + payment
+        # data) would be transmitted in cleartext.
+        new_url = str(new_v or "").lower()
+        if new_url.startswith("http://"):
+            return (
+                "critical",
+                "A Stripe webhook endpoint URL was changed to plain HTTP "
+                "(not HTTPS). Event payloads — which include customer and "
+                "payment metadata — may now be transmitted unencrypted. "
+                "Restore an HTTPS endpoint immediately.",
+            )
         return (
             "high",
             "A Stripe webhook endpoint URL changed. "
@@ -202,6 +250,27 @@ def _classify_webhook_endpoint_change(change: Change) -> tuple[str, str]:
             "Event delivery to this URL has been restored.",
         )
     if fp == "enabled_events":
+        # Escalate to critical if a critical billing/payment/subscription
+        # event was dropped from the subscribed set — downstream
+        # fulfilment, invoice reconciliation, or subscription lifecycle
+        # automation may break.
+        prev_v = _get(change, "prev_value")
+        prev_set = set(prev_v) if isinstance(prev_v, (list, tuple, set)) else set()
+        new_set  = set(new_v)  if isinstance(new_v,  (list, tuple, set)) else set()
+        dropped_critical = (prev_set - new_set) & _CRITICAL_STRIPE_EVENTS
+        if dropped_critical:
+            # We mention how many critical events were dropped, but not
+            # the event names verbatim if the list is very long — typical
+            # Stripe webhooks subscribe to ≤ 30 events, so the names are
+            # always safe to surface and informative for triage.
+            names = ", ".join(sorted(dropped_critical))
+            return (
+                "critical",
+                f"A Stripe webhook is no longer subscribed to critical "
+                f"billing/payment events: {names}. Checkout fulfilment, "
+                "invoice reconciliation, or subscription lifecycle "
+                "automation may break.",
+            )
         return (
             "high",
             "The set of event types subscribed to by a Stripe webhook changed. "
