@@ -131,7 +131,7 @@ Notably **not requested**: `<all_urls>`, `activeTab`, `tabs`, `scripting`,
 
 ## Install locally (developer mode)
 
-This prototype is **not** published to the Chrome Web Store. To use it:
+To run the extension without publishing it:
 
 1. Open Chrome → `chrome://extensions/`.
 2. Toggle **Developer mode** (top-right).
@@ -160,6 +160,18 @@ To reset dismissed contexts: open `chrome://extensions/` → ConfigTrace →
 browser-extension/
 ├── manifest.json              MV3 manifest
 ├── README.md                  this file
+├── store-listing.md           Chrome Web Store listing copy + justifications
+├── privacy-disclosure.md      technical privacy disclosure
+├── package-extension.sh       builds dist/ ZIP for Chrome Web Store upload
+├── icons/
+│   ├── icon.svg               source-of-truth design
+│   ├── icon16.png             16×16 toolbar icon
+│   ├── icon32.png             32×32 toolbar icon
+│   ├── icon48.png             48×48 management page icon
+│   ├── icon128.png            128×128 Web Store icon
+│   └── generate_icons.py      regenerates the PNGs (stdlib only)
+├── screenshots/
+│   └── README.md              capture checklist + safety rules
 └── src/
     ├── background.js          service worker — seeds default prefs only
     ├── guidance.js            shared catalog + URL-based context detection
@@ -169,7 +181,7 @@ browser-extension/
     └── popup.css              toolbar popup styles
 ```
 
-- **Manifest V3**, service worker, no inline scripts, default CSP.
+- **Manifest V3**, service worker, no inline scripts, explicit CSP.
 - `guidance.js` is loaded both into the content-script isolated world and
   the popup page. It exposes `CT_GUIDANCE`, `CT_PROVIDERS`, `CT_LINKS`,
   `CT_APP_DEFAULT_BASE`, `CT_DOCS_BASE`, and `ctDetectProviderContext`.
@@ -178,8 +190,83 @@ browser-extension/
   reach it, and panel CSS cannot leak into the host page.
 - The popup uses `chrome.tabs.query({active: true, currentWindow: true})`
   with no `tabs` permission — relying on host permissions for URL access.
-- No icons are bundled in this prototype; Chrome will use the default
-  puzzle-piece icon.
+- PNG icons are bundled in `icons/`. The 128 px master is drawn from pure
+  Python stdlib (see `icons/generate_icons.py`); 48/32/16 are downsampled
+  via `sips`.
+
+---
+
+## Chrome Web Store publishing preparation
+
+This extension is prepared for Chrome Web Store submission but is **not
+auto-submitted**. The maintainer uploads the ZIP manually via the
+Developer Dashboard.
+
+### Build the upload ZIP
+
+```bash
+cd browser-extension
+./package-extension.sh
+```
+
+The script:
+
+- Re-creates `dist/` from scratch on every run.
+- Reads the version from `manifest.json` so script + manifest never drift.
+- Uses an **allow-list** of files to ship (safer than a deny-list).
+- Excludes `.git`, `node_modules`, `dist`, `.DS_Store`, `screenshots/`,
+  `store-listing.md`, `privacy-disclosure.md`, `package-extension.sh`,
+  `icons/generate_icons.py`, and any `.env*` files.
+- Performs a *forbidden-path audit* on the resulting ZIP and aborts if
+  anything dangerous slips in.
+- Writes `dist/configtrace-provider-console-helper-<VERSION>.zip` and
+  prints the path, size, and contents manifest.
+
+### Manual Chrome Web Store upload steps
+
+1. Open the **Chrome Web Store Developer Dashboard**:
+   <https://chrome.google.com/webstore/devconsole>.
+2. Click **Add new item**.
+3. Upload `dist/configtrace-provider-console-helper-<VERSION>.zip`.
+4. **Store listing** → paste fields from
+   [`store-listing.md`](store-listing.md) (name, short description,
+   detailed description, category, language).
+5. **Privacy practices** → paste permission justifications and answer
+   the privacy practices form using
+   [`store-listing.md`](store-listing.md) and
+   [`privacy-disclosure.md`](privacy-disclosure.md).
+6. **Distribution** → choose *Public* (or *Unlisted* for soft launch).
+7. Add screenshots from `screenshots/` (see the
+   [shot-list and safety rules](screenshots/README.md)).
+8. **Submit for review.** Google review typically takes a few business
+   days; respond to any feedback via the Dashboard.
+
+### Required prerequisites before *public* submission
+
+These are **outside** the scope of this milestone — the maintainer
+resolves them manually:
+
+- [ ] **Chrome Web Store developer account.** One-time **$5 USD**
+      registration fee, two-factor auth recommended.
+- [ ] **Privacy policy URL.** Chrome requires a publicly accessible
+      privacy policy. Either add `privacy.html` to the marketing site or
+      link to `docs/data-access.html`. See *Outstanding work* in
+      [`privacy-disclosure.md`](privacy-disclosure.md).
+- [ ] **Support email.** Replace the placeholder in
+      [`store-listing.md`](store-listing.md) with a real address.
+- [ ] **Screenshots captured** per `screenshots/README.md` — using only
+      sandbox/demo accounts.
+- [ ] **Verified domain / publisher**, if displaying a verified-publisher
+      badge is desired (optional).
+
+Review-time gotchas (worth knowing in advance):
+
+- Google reviewers ask about each host permission individually. The
+  per-host justifications in [`store-listing.md`](store-listing.md) are
+  written to answer those prompts directly.
+- The reviewer may request a working test account showing the in-page
+  panel on at least one provider; have a sandbox AWS or test-mode Stripe
+  ready.
 
 ---
 
@@ -204,7 +291,7 @@ on the public site for the full ConfigTrace data-access policy.
 
 ---
 
-## Future work (intentionally **not** in M58.23)
+## Future work (intentionally **not** in this milestone)
 
 These are tracked for follow-up milestones. They are **not** implemented
 here and the prototype contains no scaffolding for them yet:
@@ -214,11 +301,22 @@ here and the prototype contains no scaffolding for them yet:
 - Matching a resource visible on the provider page (e.g. a specific
   security-group ID in the URL hash) to a ConfigTrace resource.
 - Pre-aggregated, anonymized signal back to ConfigTrace for triage.
-- Browser-extension marketplace packaging (Chrome Web Store, Firefox,
-  Edge).
 - Provider-page contextual warnings driven by live ConfigTrace state.
-- Bundled icon set.
-- Cross-browser packaging (Firefox MV3, Safari Web Extension).
+- Firefox MV3 and Safari Web Extension packaging (Chrome Web Store
+  upload preparation is included in M58.24; cross-browser is deferred).
+
+Completed in M58.23 — prototype:
+
+- ✓ Manifest V3 skeleton, popup, in-page panel, guidance catalog.
+
+Completed in M58.24 — Chrome Web Store readiness:
+
+- ✓ Polished manifest (name, short_name, icons, action.default_icon).
+- ✓ Bundled icon set (16/32/48/128 PNG + source SVG).
+- ✓ Store-listing copy and per-permission justifications.
+- ✓ Technical privacy disclosure.
+- ✓ Repeatable packaging script with allow-list and forbidden-path audit.
+- ✓ Screenshot capture checklist with safety rules.
 
 Any future work that would change the data-access posture of this
 extension must explicitly update this README's **Data & security

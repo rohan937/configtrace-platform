@@ -1,8 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "ConfigTrace — Provider Console Helper (Prototype)",
+  "name": "ConfigTrace Provider Console Helper",
+  "short_name": "ConfigTrace",
   "version": "0.1.0",
-  "description": "Read-only browser helper that recognizes AWS, GitHub, Stripe, Cloudflare, Vercel, Supabase, Firebase, and Shopify console pages and links them to ConfigTrace. Does not modify provider settings or read secrets.",
+  "description": "Read-only helper that recognizes provider console pages and links them to ConfigTrace guidance. It does not modify provider settings or read secrets.",
+
+  "icons": {
+    "16":  "icons/icon16.png",
+    "32":  "icons/icon32.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
 
   "permissions": [
     "storage"
@@ -27,7 +35,13 @@
 
   "action": {
     "default_popup": "src/popup.html",
-    "default_title": "ConfigTrace"
+    "default_title": "ConfigTrace",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
 
   "content_scripts": [
