@@ -197,10 +197,16 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
         return ("low", "A Supabase Auth session duration setting changed.")
 
     if fp == "site_url":
+        # site_url is the base for OAuth redirect/callback URLs and for
+        # password-reset / email-confirm links. An unexpected change here
+        # can hijack OAuth callbacks or steer users to a phishing endpoint
+        # → high.
         return (
-            "medium",
-            "The Supabase Auth site URL changed. "
-            "Verify redirect and callback URL configurations are still correct.",
+            "high",
+            "The Supabase Auth site URL changed. OAuth callbacks, password "
+            "reset links, and email confirmation links resolve against this "
+            "URL — verify the new value is controlled by your team and "
+            "remove any unknown additional redirect URLs.",
         )
 
     if fp == "max_request_users_per_day":
@@ -248,10 +254,14 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
 
     if fp == "refresh_token_rotation_enabled":
         if new_v is False or new_v == "false":
+            # Disabling rotation widens the window in which a stolen refresh
+            # token can be reused without detection, and removes Supabase's
+            # built-in defence against token theft → high.
             return (
-                "medium",
+                "high",
                 "Refresh token rotation was disabled in Supabase Auth. "
-                "Token theft may go undetected if stolen tokens are reused.",
+                "Without rotation, a stolen refresh token can be reused "
+                "indefinitely without detection. Verify this is intentional.",
             )
         return (
             "low",
@@ -265,6 +275,17 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
             old_exp = int(prev_v) if prev_v is not None else None
             new_exp = int(new_v) if new_v is not None else None
             if old_exp is not None and new_exp is not None and new_exp > old_exp:
+                # A ≥2× extension of the JWT lifetime materially widens
+                # the exposure window for a stolen access token, so we
+                # treat it as high rather than medium.
+                if old_exp > 0 and new_exp >= old_exp * 2:
+                    return (
+                        "high",
+                        f"Supabase JWT access token expiry increased significantly "
+                        f"(from {old_exp}s to {new_exp}s, ≥2×). Longer-lived tokens "
+                        "materially widen the exposure window if a token is "
+                        "compromised — confirm this is intentional.",
+                    )
                 return (
                     "medium",
                     f"Supabase JWT access token expiry increased from {old_exp}s to {new_exp}s. "
@@ -364,11 +385,14 @@ def _classify_storage_config_change(change: object) -> tuple[str, str]:
 
     if fp == "allowed_mime_types":
         if new_v is None or new_v == []:
+            # An empty MIME allow-list means any file type can be uploaded
+            # — executables, HTML, malware, etc. This materially widens
+            # the attack surface for user-supplied content → high.
             return (
-                "medium",
+                "high",
                 "The Supabase Storage allowed MIME types restriction was removed. "
-                "Any file type may now be uploaded. "
-                "Verify this is intentional.",
+                "Any file type — including executables, HTML, and unverified "
+                "content — may now be uploaded. Restore an explicit allow-list.",
             )
         return ("medium", "The Supabase Storage allowed MIME types list changed.")
 
@@ -661,8 +685,11 @@ def _classify_oauth_provider_change(change: object) -> tuple[str, str]:
             "Verify the provider configuration is correct and intentional.",
         )
     if ct == "removed":
+        # Per audit policy (Supabase brief): OAuth provider add/remove is
+        # medium unless additional risky details are present. A removal is
+        # an availability/login issue, not a security weakening.
         return (
-            "high",
+            "medium",
             f"An OAuth provider was removed from Supabase Auth ({provider_name}). "
             "Users who signed in through this provider may lose access.",
         )

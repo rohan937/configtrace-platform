@@ -835,13 +835,15 @@ class TestSupabaseAuthSecurityRiskM578:
         )
         assert level == "low"
 
-    def test_refresh_token_rotation_disabled_is_medium(self):
+    def test_refresh_token_rotation_disabled_is_high(self):
+        # Policy update (audit): without rotation, a stolen refresh token
+        # can be reused indefinitely without detection → high.
         level, reason = self._classify(
             change_type="modified",
             field_path="refresh_token_rotation_enabled",
             new_value=False,
         )
-        assert level == "medium"
+        assert level == "high"
         assert "token" in reason.lower() or "refresh" in reason.lower()
 
     def test_refresh_token_rotation_enabled_is_low(self):
@@ -852,14 +854,17 @@ class TestSupabaseAuthSecurityRiskM578:
         )
         assert level == "low"
 
-    def test_jwt_exp_increase_is_medium(self):
+    def test_jwt_exp_significant_increase_is_high(self):
+        # Policy update (audit): a ≥2× extension of JWT lifetime materially
+        # widens the exposure window for a stolen token. 3600s → 86400s is
+        # 24× so this case is now high (was medium).
         level, reason = self._classify(
             change_type="modified",
             field_path="jwt_exp",
             old_value=3600,
             new_value=86400,
         )
-        assert level == "medium"
+        assert level == "high"
         assert "jwt" in reason.lower() or "expiry" in reason.lower() or "expir" in reason.lower()
 
     def test_jwt_exp_decrease_is_low(self):

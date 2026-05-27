@@ -962,14 +962,16 @@ class TestSupabaseRiskRules:
         level, reason = self.classify(change)
         assert level == "high"
 
-    def test_storage_allowed_mime_types_removed_is_medium(self):
+    def test_storage_allowed_mime_types_removed_is_high(self):
+        # Policy update (audit): removing the MIME allow-list permits
+        # executables, HTML, and unverified content to be uploaded → high.
         change = _make_change(
             "supabase_storage_config", field_path="allowed_mime_types",
             change_type="modified", prev_value=["image/png"], new_value=None,
             provider_metadata={"record_type": "supabase_storage_config"},
         )
         level, reason = self.classify(change)
-        assert level == "medium"
+        assert level == "high"
 
     def test_s3_protocol_enabled_is_medium(self):
         change = _make_change(
@@ -990,13 +992,16 @@ class TestSupabaseRiskRules:
         level, reason = self.classify(change)
         assert level == "medium"
 
-    def test_oauth_provider_removed_is_high(self):
+    def test_oauth_provider_removed_is_medium(self):
+        # Policy update (audit): OAuth provider add/remove is medium unless
+        # additional risky details are present (e.g. unexpected client_id).
+        # Removal is an availability/login issue, not a security weakening.
         change = _make_change(
             "supabase_oauth_provider", change_type="removed",
             provider_metadata={"record_type": "supabase_oauth_provider", "provider_name": "github"},
         )
         level, reason = self.classify(change)
-        assert level == "high"
+        assert level == "medium"
 
     def test_oauth_provider_enabled_is_medium(self):
         change = _make_change(
