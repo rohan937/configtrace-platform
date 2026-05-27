@@ -1651,6 +1651,59 @@ function _cfDnsPlaybooks(
     });
   }
 
+  // Removed CNAME / generic DNS record removal — wording is different from
+  // change/add (no "new record value" to verify). Falls through the more
+  // specific branches above (NS, MX, email-auth, wildcard, proxy) so this
+  // catches the everyday case of a removed CNAME or A record.
+  if (ct === "removed") {
+    const isCname = rt === "cname" || rrl.includes("cname");
+    return _guidance({
+      confidence: "medium",
+      title: isCname
+        ? "Verify Cloudflare CNAME record removal"
+        : "Verify Cloudflare DNS record removal",
+      summary:
+        isCname
+          ? "Confirm the CNAME removal was intentional. If unintentional, restore the previous " +
+            "CNAME target and verify affected hostnames still resolve."
+          : "Confirm the DNS record removal was intentional. If unintentional, restore the " +
+            "previous value and verify affected hostnames still resolve.",
+      why_this_helps:
+        "Removing a DNS record stops resolution for the affected hostname. Depending on TTL, " +
+        "downstream resolvers may still serve the old value briefly, but new lookups will fail " +
+        "as soon as caches expire — silently breaking any service, redirect, or integration that " +
+        "depended on that hostname.",
+      verify_first: [
+        "Confirm the record removal was intentional.",
+        "Check Cloudflare audit logs to identify who removed the record and when.",
+        "If unintentional, identify the previous CNAME target from Cloudflare audit logs or your infrastructure documentation.",
+        "Verify affected hostnames still resolve as expected (using dig / nslookup or your own monitoring).",
+      ],
+      manual_steps: [
+        "Log into the Cloudflare dashboard → select the affected zone → DNS → Records.",
+        "Click 'Add record' → select the original record type (CNAME, A, AAAA, etc.).",
+        "Enter the previous record value from audit logs or infrastructure docs.",
+        "Set an appropriate TTL — a short TTL (e.g. 300s) speeds recovery for downstream resolvers.",
+        "Save the record and allow DNS propagation.",
+      ],
+      validation_steps: [
+        ...STANDARD_VALIDATION,
+        "Verify DNS resolution for the affected hostname using a DNS lookup tool (dig, nslookup).",
+        "Confirm any service that depended on the hostname (apps, redirects, integrations) is reachable again.",
+      ],
+      caveats: [
+        "DNS removals propagate based on the previous record's TTL — downstream caches may continue serving the old value until the TTL expires.",
+        "If the record was removed as part of a planned cutover or domain migration, restoring it may interfere with that process.",
+      ],
+      docs_links: [
+        { label: "Cloudflare DNS records", url: "https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/" },
+        { label: "Cloudflare audit logs",  url: "https://developers.cloudflare.com/fundamentals/account-and-billing/account-security/review-audit-logs/" },
+      ],
+      provider_console_hint:
+        "Cloudflare Dashboard → [zone] → DNS → Records → Add record.",
+    });
+  }
+
   // Generic Cloudflare DNS high/critical fallback
   return _guidance({
     confidence: "medium",

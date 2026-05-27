@@ -434,10 +434,33 @@ def dispatch_notifications_for_sync(
         result["skipped_no_settings"] = True
         return result
 
-    # ── Check whether any traditional channel is active ───────────────────────
-    if not settings_row.slack_enabled and not settings_row.webhook_enabled:
-        # Traditional channels inactive.  Push (M58.7) may still be active —
-        # attempt push dispatch with its own qualifying filter, then return.
+    # ── Determine whether the Slack App channel is fully configured ───────────
+    # The Slack App path (bot token + selected channel) is independent of the
+    # legacy `slack_enabled` flag, which only governs the incoming-webhook
+    # flow. Without this check, a workspace that has installed the Slack App
+    # but never set up the legacy webhook would be early-returned below before
+    # the Slack App dispatch at the bottom of this function ever ran — which
+    # is exactly the bug reported in real-alert traffic where
+    # `slack_sent=0 webhook_sent=0` while push delivery succeeded.
+    _slack_app_active = bool(
+        getattr(settings_row, "slack_app_enabled", False)
+        and getattr(settings_row, "slack_bot_token_encrypted", None)
+        and getattr(settings_row, "slack_bot_iv", None)
+        and getattr(settings_row, "slack_channel_id", None)
+    )
+
+    # ── Check whether ANY non-push channel is active ──────────────────────────
+    # If none of: legacy Slack webhook, generic webhook, or Slack App — then
+    # we fall through to the push-only branch and return. Otherwise we
+    # continue into the main dispatch path so the Slack App branch gets a
+    # chance to fire.
+    if (
+        not settings_row.slack_enabled
+        and not settings_row.webhook_enabled
+        and not _slack_app_active
+    ):
+        # Push (M58.7) may still be active — attempt push dispatch with its
+        # own qualifying filter, then return.
         try:
             alertable_set_push = _alertable_levels(settings_row.notify_on_risk_level)
             push_qualifying = [c for c in changes if c.risk_level in alertable_set_push]
@@ -456,6 +479,18 @@ def dispatch_notifications_for_sync(
                 workspace_id, sync_run_id,
             )
         return result
+
+    # Diagnostic: helps operators confirm which channels were eligible BEFORE
+    # the per-channel dispatch logic runs. We log booleans only — no tokens,
+    # URLs, channel IDs, or push endpoints are emitted here.
+    logger.info(
+        "notifications: dispatch eligible  workspace=%s  sync_run=%s  "
+        "slack_app=%s  slack_webhook=%s  webhook=%s",
+        workspace_id, sync_run_id,
+        _slack_app_active,
+        bool(settings_row.slack_enabled and settings_row.slack_webhook_url_encrypted),
+        bool(settings_row.webhook_enabled and settings_row.webhook_url_encrypted),
+    )
 
     # ── Filter changes to alertable risk levels ────────────────────────────────
     alertable_set = _alertable_levels(settings_row.notify_on_risk_level)
@@ -512,6 +547,11 @@ def dispatch_notifications_for_sync(
 
     if _slack_app_enabled and _slack_app_token and _slack_app_iv and _slack_app_channel:
         # ── Slack App path (M58.5/M58.6 interactive) ──────────────────────
+        logger.info(
+            "notifications: Slack App dispatch attempt  workspace=%s  "
+            "sync_run=%s  changes=%d",
+            workspace_id, sync_run_id, len(qualifying),
+        )
         try:
             from app.services.slack_service import _decrypt_token, dispatch_alert_message
             from app.config import settings as _settings
@@ -526,6 +566,8 @@ def dispatch_notifications_for_sync(
                 base_url=_settings.APP_BASE_URL.rstrip("/"),
             )
             result["slack_sent"] = 1
+            # Channel ID is safe to log — it's a Slack-side identifier like
+            # CABC123, not a secret. We never log the bot token.
             logger.info(
                 "notifications: Slack App sent  workspace=%s  sync_run=%s  "
                 "changes=%d  channel=%s",
@@ -542,7 +584,7 @@ def dispatch_notifications_for_sync(
                 pass
             logger.error(
                 "notifications: Slack App delivery failed  workspace=%s  "
-                "sync_run=%s  error=%r",
+                "sync_run=%s  error_type=%r",
                 workspace_id, sync_run_id, type(exc).__name__,
             )
     elif settings_row.slack_enabled and settings_row.slack_webhook_url_encrypted:
