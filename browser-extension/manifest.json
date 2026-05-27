@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "ConfigTrace — Provider Console Helper (Prototype)",
+  "version": "0.1.0",
+  "description": "Read-only browser helper that recognizes AWS, GitHub, Stripe, Cloudflare, Vercel, Supabase, Firebase, and Shopify console pages and links them to ConfigTrace. Does not modify provider settings or read secrets.",
+
+  "permissions": [
+    "storage"
+  ],
+
+  "host_permissions": [
+    "https://console.aws.amazon.com/*",
+    "https://*.console.aws.amazon.com/*",
+    "https://github.com/*",
+    "https://dashboard.stripe.com/*",
+    "https://dash.cloudflare.com/*",
+    "https://vercel.com/*",
+    "https://*.vercel.com/*",
+    "https://supabase.com/dashboard/*",
+    "https://console.firebase.google.com/*",
+    "https://admin.shopify.com/*"
+  ],
+
+  "background": {
+    "service_worker": "src/background.js"
+  },
+
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "ConfigTrace"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://console.aws.amazon.com/*",
+        "https://*.console.aws.amazon.com/*",
+        "https://github.com/*",
+        "https://dashboard.stripe.com/*",
+        "https://dash.cloudflare.com/*",
+        "https://vercel.com/*",
+        "https://*.vercel.com/*",
+        "https://supabase.com/dashboard/*",
+        "https://console.firebase.google.com/*",
+        "https://admin.shopify.com/*"
+      ],
+      "js": ["src/guidance.js", "src/contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

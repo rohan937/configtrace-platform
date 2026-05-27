@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ConfigTrace</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="pop">
+
+    <header class="pop-hdr">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">CT</div>
+        <div>
+          <div class="brand-name">ConfigTrace</div>
+          <div class="brand-sub">Provider console helper · v0.1</div>
+        </div>
+      </div>
+    </header>
+
+    <section class="ctx" id="ctxSection" hidden>
+      <div class="ctx-row">
+        <span class="ctx-dot" aria-hidden="true"></span>
+        <span class="ctx-label">Detected context</span>
+      </div>
+      <div class="ctx-title-row">
+        <span class="prov-chip" id="ctxProv"></span>
+        <span class="ctx-title" id="ctxTitle"></span>
+      </div>
+      <p class="ctx-guidance" id="ctxGuidance"></p>
+      <div class="ctx-monitors" id="ctxMonitors"></div>
+    </section>
+
+    <section class="no-ctx" id="noCtxSection" hidden>
+      <div class="ctx-row">
+        <span class="ctx-dot dim" aria-hidden="true"></span>
+        <span class="ctx-label">No supported provider page detected</span>
+      </div>
+      <p class="no-ctx-text">
+        Open AWS, GitHub, Stripe, Cloudflare, Vercel, Supabase, Firebase,
+        or Shopify in another tab — the helper will recognize the context.
+      </p>
+    </section>
+
+    <section class="links">
+      <a class="link" id="linkApp"     href="#" target="_blank" rel="noopener noreferrer">Open ConfigTrace<span class="arrow">→</span></a>
+      <a class="link" id="linkTimeline" href="#" target="_blank" rel="noopener noreferrer">Open Timeline<span class="arrow">→</span></a>
+      <a class="link" id="linkNeeds"    href="#" target="_blank" rel="noopener noreferrer">Open Needs Review<span class="arrow">→</span></a>
+      <a class="link" id="linkDemo"     href="#" target="_blank" rel="noopener noreferrer">Public demo<span class="arrow">→</span></a>
+      <a class="link" id="linkDocs"     href="#" target="_blank" rel="noopener noreferrer">Documentation<span class="arrow">→</span></a>
+      <a class="link" id="linkTrust"    href="#" target="_blank" rel="noopener noreferrer">Trust &amp; data access<span class="arrow">→</span></a>
+    </section>
+
+    <section class="settings">
+      <div class="settings-label">Settings</div>
+      <label class="toggle">
+        <input type="checkbox" id="panelEnabled" checked>
+        <span>Show panel on supported provider consoles</span>
+      </label>
+      <label class="field">
+        <span class="field-label">App base URL</span>
+        <input type="url" id="appBase" placeholder="https://app.configtrace.org">
+      </label>
+      <button class="save-btn" type="button" id="saveBtn">Save settings</button>
+      <span class="save-state" id="saveState" aria-live="polite"></span>
+    </section>
+
+    <footer class="pop-foot">
+      Read-only · URL-only context detection · no DOM scraping · no provider mutations.
+    </footer>
+
+  </div>
+
+  <script src="guidance.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
