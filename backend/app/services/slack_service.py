@@ -30,9 +30,13 @@ Security constraints
 
 Slack OAuth scopes required
 ---------------------------
-  chat:write        — post messages as the bot
-  channels:read     — list public channels
-  groups:read       — list private channels the bot has been added to
+  chat:write          — post messages as the bot in channels it is a member of
+  chat:write.public   — post messages to any public channel without first being
+                        invited (required because users select an alert channel
+                        in our UI without `/invite @ConfigTrace`); without this
+                        scope Slack returns `not_in_channel` on chat.postMessage
+  channels:read       — list public channels so the channel picker can populate
+  groups:read         — list private channels the bot has been added to
 """
 
 from __future__ import annotations
@@ -252,7 +256,11 @@ def build_install_url(user_id: str, workspace_id: str) -> dict:
             "Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET in your environment."
         )
 
-    scopes = "chat:write,channels:read,groups:read"
+    # Order matters only for readability — Slack treats this as an unordered
+    # comma-separated set. `chat:write.public` is what fixes the
+    # `not_in_channel` error when posting to a channel the bot has not been
+    # explicitly invited to.
+    scopes = "chat:write,chat:write.public,channels:read,groups:read"
     state = generate_state_token(user_id, workspace_id)
 
     redirect_uri = settings.SLACK_REDIRECT_URI or ""

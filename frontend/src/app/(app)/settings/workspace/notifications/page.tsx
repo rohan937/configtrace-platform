@@ -356,15 +356,32 @@ function SlackAppCard({
             }}
           >
             Install the ConfigTrace Slack App to deliver alerts directly to any
-            channel in your Slack workspace. The app requires{" "}
+            channel in your Slack workspace. The app requests four read/post
+            scopes:{" "}
             <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
               chat:write
-            </code>{" "}
-            and{" "}
+            </code>
+            ,{" "}
+            <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
+              chat:write.public
+            </code>
+            ,{" "}
             <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
               channels:read
+            </code>
+            , and{" "}
+            <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
+              groups:read
+            </code>
+            .{" "}
+            <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
+              chat:write.public
             </code>{" "}
-            scopes.
+            lets ConfigTrace post to a public channel without needing{" "}
+            <code style={{ fontFamily: "monospace", fontSize: "12px" }}>
+              /invite @ConfigTrace
+            </code>{" "}
+            first.
           </p>
           <button
             type="button"
