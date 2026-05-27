@@ -125,7 +125,8 @@ def classify_github_change(change: Any) -> tuple[str, str]:
     field_path = _get(change, "field_path") or ""
     prev_value = _get(change, "prev_value")
     new_value = _get(change, "new_value")
-    pm: dict[str, Any] = _get(change, "provider_metadata") or {}
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict[str, Any] = raw_pm if isinstance(raw_pm, dict) else {}
     record_type = (pm.get("record_type") or "").lower()
     record_name = pm.get("record_name") or ""
 
@@ -390,6 +391,21 @@ def _classify_branch_protection(
             "a pull request before it can be merged.",
         )
 
+    # Stale review dismissal disabled — old approvals survive new commits,
+    # which lets a previously-approved PR be amended with new code that no
+    # reviewer has seen and merged on the strength of the stale approval.
+    if (
+        change_type == "modified"
+        and field_path == "dismiss_stale_reviews"
+        and new_value is False
+    ):
+        return (
+            "high",
+            "Dismissal of stale reviews was disabled. Approvals granted before "
+            "new commits are pushed will no longer be automatically revoked, "
+            "which may allow unreviewed code to be merged under a prior approval.",
+        )
+
     # ── MEDIUM (notable changes, mostly strengthening or count increases) ─────
 
     # Required review count increased — more approvals now required (safer).
@@ -406,17 +422,7 @@ def _classify_branch_protection(
             f"to {int(new_value)}. More reviewers are now needed before merging.",
         )
 
-    # Stale review dismissal disabled — old approvals survive new commits.
-    if (
-        change_type == "modified"
-        and field_path == "dismiss_stale_reviews"
-        and new_value is False
-    ):
-        return (
-            "medium",
-            "Dismissal of stale reviews was disabled. Approvals granted before "
-            "new commits are pushed will no longer be automatically revoked.",
-        )
+    # NOTE: dismiss_stale_reviews disabled handled in HIGH section above.
 
     # ── LOW (protection added or explicitly strengthened) ─────────────────────
 
@@ -647,8 +653,19 @@ def _classify_webhook(
             "webhook will stop receiving GitHub events immediately.",
         )
 
-    # Delivery URL changed — per policy: any URL change is High.
+    # Delivery URL changed — escalate to Critical if the new scheme is plain
+    # HTTP (events including payloads and HMAC headers would traverse the
+    # network in cleartext); otherwise High.
     if change_type == "modified" and field_path == "url":
+        new_url_lower = str(new_value or "").lower()
+        if new_url_lower.startswith("http://"):
+            return (
+                "critical",
+                "The webhook delivery URL changed to a plain http:// endpoint. "
+                "GitHub event payloads and signature headers would be sent in "
+                "cleartext, which may allow interception or tampering. Use "
+                "https:// and verify the destination is under your control.",
+            )
         return (
             "high",
             "The webhook delivery URL changed. GitHub events will now be sent "
