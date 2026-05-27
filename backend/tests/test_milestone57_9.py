@@ -931,14 +931,18 @@ class TestShopifyAppScopeRisk:
         )
         assert level == "high"
 
-    def test_payment_scope_newly_present_is_high(self):
+    def test_payment_scope_newly_present_is_critical(self):
+        # Policy update (audit): payment scopes give an app the ability to
+        # read or act on payment-method / charge data — a newly granted
+        # payment scope is a top-severity event. customer/order scopes
+        # remain "high".
         level, _ = self._classify(
             change_type="modified",
             field_path="payment_scope_present",
             prev_value=False,
             new_value=True,
         )
-        assert level == "high"
+        assert level == "critical"
 
     def test_scope_count_increased_is_medium(self):
         level, _ = self._classify(

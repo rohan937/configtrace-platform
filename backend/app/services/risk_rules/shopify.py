@@ -50,13 +50,16 @@ def _classify_shop_metadata_change(change: Change) -> tuple[str, str]:
             "Shopify shop metadata record was added or removed during sync.",
         )
 
-    # Storefront password protection — directional
+    # Storefront password protection — directional. Disabling the password
+    # materially changes public storefront exposure: a previously private /
+    # pre-launch storefront becomes reachable by any visitor.
     if fp == "password_enabled":
         if new_v is False or new_v == "false":
             return (
-                "medium",
+                "high",
                 "Shopify storefront password protection was disabled. "
-                "The store is now publicly accessible without a password.",
+                "The store is now publicly accessible without a password — "
+                "confirm this was an intentional launch event.",
             )
         return (
             "low",
@@ -111,13 +114,16 @@ def _classify_shop_metadata_change(change: Change) -> tuple[str, str]:
             "Shopify storefront was enabled.",
         )
 
-    # Extra payments agreement required
+    # Extra payments agreement required — payment processing may stall until
+    # the operator accepts the new agreement, so this is high-impact for
+    # commerce flow.
     if fp == "requires_extra_payments_agreement":
         if new_v is True or new_v == "true":
             return (
-                "medium",
+                "high",
                 "Shopify now requires an extra payments provider agreement. "
-                "Payment processing may be suspended until the agreement is accepted.",
+                "Payment processing may be suspended until the agreement is "
+                "accepted in Shopify Admin.",
             )
         return (
             "low",
@@ -149,11 +155,15 @@ def _classify_shop_metadata_change(change: Change) -> tuple[str, str]:
             "Shopify store country code changed.",
         )
 
-    # Tax settings
+    # Tax settings — these change checkout totals the customer sees and the
+    # taxes the operator remits. Treat as medium so they show up in the
+    # high-and-critical alert path's "see also" tail.
     if fp in ("taxes_included", "tax_shipping"):
         return (
-            "low",
-            "Shopify tax configuration changed.",
+            "medium",
+            "Shopify tax configuration changed. This affects checkout totals "
+            "shown to customers and the taxes collected at sale time — verify "
+            "the change is intentional.",
         )
 
     # Shop name
@@ -192,21 +202,54 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
     pm = _get(change, "provider_metadata") or {}
     if isinstance(pm, dict):
         topic = pm.get("topic") or ""
+        # is_https / endpoint_scheme can also live in provider_metadata for
+        # "added" events (no field_path) — capture them once here.
+        add_is_https = pm.get("is_https")
+        add_scheme = (pm.get("endpoint_scheme") or "").lower()
     else:
         topic = ""
+        add_is_https = None
+        add_scheme = ""
 
-    # Structural: webhook added
+    is_critical_topic = topic in _CRITICAL_TOPICS
+
+    # Structural: webhook added — severity depends on (a) HTTPS posture and
+    # (b) topic sensitivity. Adding an HTTP webhook for orders/payments
+    # leaks customer & payment data in transit → critical. Adding an HTTPS
+    # webhook for a non-critical topic is a normal, low-impact integration
+    # change → medium.
     if ct == "added":
+        is_http = (add_is_https is False) or (add_scheme in ("http",))
+        if is_http and is_critical_topic:
+            return (
+                "critical",
+                f"A new Shopify webhook for a critical topic ({topic}) was added "
+                "with a plain HTTP endpoint. Order, customer, or payment event "
+                "payloads will be transmitted unencrypted.",
+            )
+        if is_http:
+            return (
+                "high",
+                f"A new Shopify webhook subscription was added with a plain HTTP "
+                f"endpoint (topic: {topic or 'unknown'}). Event payloads will be "
+                "transmitted unencrypted.",
+            )
+        if is_critical_topic:
+            return (
+                "high",
+                f"A new Shopify webhook for a critical topic ({topic}) was added. "
+                "Verify the endpoint is legitimate and HMAC verification is in place.",
+            )
         return (
-            "high",
-            "A new Shopify webhook subscription was added. "
-            f"Topic: {topic or 'unknown'}. "
-            "Verify the endpoint is legitimate and the topic is expected.",
+            "medium",
+            f"A new Shopify webhook subscription was added over HTTPS "
+            f"(topic: {topic or 'unknown'}). Verify the endpoint is legitimate "
+            "and the topic is expected.",
         )
 
     # Structural: webhook removed
     if ct == "removed":
-        if topic in _CRITICAL_TOPICS:
+        if is_critical_topic:
             return (
                 "high",
                 f"A Shopify webhook for a critical topic ({topic}) was removed. "
@@ -218,9 +261,18 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
             "Event delivery to the registered endpoint has stopped.",
         )
 
-    # HTTPS enforcement — always high when downgraded
+    # HTTPS enforcement — critical when downgraded on a sensitive topic,
+    # high otherwise. (HTTP delivery of orders/payments is a customer-data
+    # exposure event.)
     if fp == "is_https":
         if new_v is False or new_v == "false":
+            if is_critical_topic:
+                return (
+                    "critical",
+                    f"A Shopify webhook for a critical topic ({topic}) was "
+                    "downgraded to plain HTTP (not HTTPS). Order, customer, or "
+                    "payment event payloads will be transmitted unencrypted.",
+                )
             return (
                 "high",
                 "A Shopify webhook endpoint was changed to use plain HTTP (not HTTPS). "
@@ -231,18 +283,36 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
             "A Shopify webhook endpoint was upgraded to HTTPS.",
         )
 
-    # Endpoint domain change — events now delivered to a different server
+    # Endpoint domain change — events now delivered to a different server.
+    # Severity tracks topic sensitivity: a critical-topic domain change
+    # could redirect order or payment events to an unintended endpoint;
+    # a non-critical topic change is operational and worth a closer look,
+    # but not "drop everything" high.
     if fp == "endpoint_domain":
+        if is_critical_topic:
+            return (
+                "high",
+                f"A Shopify webhook endpoint domain changed for a critical topic "
+                f"({topic}). Order, customer, or payment events are now being "
+                "delivered to a different server. Verify this change is intentional.",
+            )
         return (
-            "high",
-            "A Shopify webhook endpoint domain changed. "
-            "Events are now being delivered to a different server. "
-            "Verify this change is intentional.",
+            "medium",
+            f"A Shopify webhook endpoint domain changed (topic: {topic or 'unknown'}). "
+            "Events are now being delivered to a different server. Verify this "
+            "change is intentional.",
         )
 
     # Endpoint scheme change
     if fp == "endpoint_scheme":
         if str(new_v).lower() in ("http", ""):
+            if is_critical_topic:
+                return (
+                    "critical",
+                    f"A Shopify webhook endpoint for a critical topic ({topic}) was "
+                    "downgraded from HTTPS to HTTP. Order, customer, or payment event "
+                    "payloads will be transmitted unencrypted.",
+                )
             return (
                 "high",
                 "A Shopify webhook endpoint scheme was downgraded from HTTPS to HTTP. "
@@ -299,6 +369,19 @@ def _classify_store_policy_change(change: Change) -> tuple[str, str]:
     else:
         policy_type = ""
 
+    # Privacy / refund / terms-of-service are legally / compliance-critical
+    # policies — their removal materially affects what the storefront shows
+    # at checkout and how the merchant is required to behave by regulators
+    # (GDPR / CCPA / consumer-rights law). Shipping policy removal is
+    # operational, not legally critical.
+    pt_lower = policy_type.lower()
+    is_legal_policy = (
+        "privacy" in pt_lower
+        or "refund"  in pt_lower
+        or "terms_of_service" in pt_lower or "terms-of-service" in pt_lower
+        or "terms"   in pt_lower
+    )
+
     # Structural: policy added
     if ct == "added":
         return (
@@ -306,17 +389,33 @@ def _classify_store_policy_change(change: Change) -> tuple[str, str]:
             f"A Shopify store policy was added: {policy_type or 'unknown type'}.",
         )
 
-    # Structural: policy removed
+    # Structural: policy removed — legal/compliance policies are HIGH;
+    # operational policies (e.g. shipping) stay MEDIUM.
     if ct == "removed":
+        if is_legal_policy:
+            return (
+                "high",
+                f"A Shopify legal/compliance policy was removed: "
+                f"{policy_type or 'unknown type'}. The storefront may no "
+                "longer display the required policy at checkout — restore "
+                "from Shopify Admin or your policy archive.",
+            )
         return (
             "medium",
             f"A Shopify store policy record was removed: {policy_type or 'unknown type'}. "
             "Verify this policy is still configured in the Shopify admin.",
         )
 
-    # Policy presence flag
+    # Policy presence flag — same legal-policy vs operational-policy split.
     if fp == "present":
         if new_v is False or new_v == "false":
+            if is_legal_policy:
+                return (
+                    "high",
+                    f"A Shopify legal/compliance policy was cleared or removed: "
+                    f"{policy_type or 'unknown type'}. Legal / regulatory "
+                    "compliance may be affected — restore the policy text.",
+                )
             return (
                 "medium",
                 f"A Shopify store policy was cleared or removed: {policy_type or 'unknown type'}. "
@@ -421,10 +520,21 @@ def _classify_app_scope_summary_change(change: Change) -> tuple[str, str]:
                 "The app can now modify more store data — confirm this is intended.",
             )
 
-    # Customer/order/payment scope newly present
+    # Customer/order/payment scope newly present. Payment scopes give the
+    # app the ability to read or act on payment-method / charge data — a
+    # newly granted payment scope is a top-severity event because it
+    # directly opens a financial-data exposure surface.
     if field_path in ("customer_scope_present", "order_scope_present", "payment_scope_present"):
         if new_value is True and prev_value is not True:
             scope_label = field_path.replace("_scope_present", "")
+            if field_path == "payment_scope_present":
+                return (
+                    "critical",
+                    "The Shopify app may now access payment data "
+                    "(payment scope category newly granted). "
+                    "Confirm this permission is required and rotate the app's "
+                    "credentials immediately if the grant was unexpected.",
+                )
             return (
                 "high",
                 f"The Shopify app may now access {scope_label} data "

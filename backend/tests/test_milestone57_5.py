@@ -688,12 +688,14 @@ class TestShopifyRiskRulesShopMetadata:
         from app.services.risk_rules.shopify import classify_shopify_change
         return classify_shopify_change(_change(**kw))
 
-    def test_password_disabled_is_medium(self):
+    def test_password_disabled_is_high(self):
+        # Policy: disabling storefront password is a material public-exposure
+        # change (private/pre-launch store becomes reachable) → high.
         level, reason = self._classify(
             field_path="password_enabled", new_value=False,
             record_type="shopify_shop_metadata",
         )
-        assert level == "medium"
+        assert level == "high"
         assert "password" in reason.lower() or "storefront" in reason.lower()
 
     def test_password_enabled_is_low(self):
@@ -762,10 +764,14 @@ class TestShopifyRiskRulesWebhook:
         from app.services.risk_rules.shopify import classify_shopify_change
         return classify_shopify_change(_change(**kw))
 
-    def test_webhook_added_is_high(self):
+    def test_webhook_added_for_critical_topic_is_high(self):
+        # Policy: a webhook added for a critical commerce topic
+        # (orders/payments/customers) is high even when HTTPS. Non-critical
+        # HTTPS adds are medium — covered separately in the audit suite.
         level, reason = self._classify(
             change_type="added",
             record_type="shopify_webhook_subscription",
+            extra_pm={"topic": "orders/create", "is_https": True},
         )
         assert level == "high"
 
@@ -799,10 +805,13 @@ class TestShopifyRiskRulesWebhook:
         )
         assert level == "low"
 
-    def test_endpoint_domain_changed_is_high(self):
+    def test_endpoint_domain_changed_for_critical_topic_is_high(self):
+        # Policy: domain change tracks topic sensitivity — critical topic
+        # redirect → high; non-critical → medium (covered in audit suite).
         level, reason = self._classify(
             field_path="endpoint_domain", new_value="other.example.com",
             record_type="shopify_webhook_subscription",
+            extra_pm={"topic": "orders/create"},
         )
         assert level == "high"
 
@@ -897,10 +906,14 @@ class TestRiskServiceDispatch:
         assert isinstance(reason, str)
 
     def test_shopify_webhook_dispatched(self):
+        # Same shape as the audit suite — confirms dispatch + a concrete
+        # severity floor. Uses a critical topic so the assertion stays
+        # meaningful under the new topic-aware policy.
         from app.services.risk_service import classify_change
         ch = _change(
             change_type="added",
             record_type="shopify_webhook_subscription",
+            extra_pm={"topic": "orders/create", "is_https": True},
         )
         level, reason = classify_change(ch)
         assert level == "high"

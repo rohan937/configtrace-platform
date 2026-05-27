@@ -5549,7 +5549,7 @@ function _shopifyWebhookPlaybooks(
       validation_steps: STANDARD_VALIDATION,
       caveats: [
         "Re-creating a webhook assigns a new webhook ID and a new shared secret — update your HMAC verification code.",
-        "Webhook payloads contain order and customer data — ensure the endpoint verifies Stripe HMAC signatures.",
+        "Webhook payloads contain order and customer data — ensure the endpoint verifies Shopify HMAC signatures using the X-Shopify-Hmac-Sha256 header.",
       ],
       docs_links: [
         { label: "Shopify webhooks", url: "https://shopify.dev/docs/apps/build/webhooks" },
@@ -5559,7 +5559,7 @@ function _shopifyWebhookPlaybooks(
     });
   }
 
-  if (fp === "is_https" && rl === "high") {
+  if (fp === "is_https" && (rl === "high" || rl === "critical")) {
     return _guidance({
       confidence: "high",
       title: "Restore HTTPS for Shopify webhook endpoint",
