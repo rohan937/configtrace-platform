@@ -585,10 +585,17 @@ def _classify_deploy_hook_metadata(
         )
 
     if field_path == "hook_ref":
+        # Changing a deploy hook's target ref redirects what gets deployed
+        # whenever any external CI/CD system calls the hook URL. If the new
+        # ref points at an unintended branch, the next hook invocation can
+        # ship the wrong code to production → high.
         return (
-            "low",
+            "high",
             f"{hook_label} target branch changed from '{prev_value}' to "
-            f"'{new_value}'.",
+            f"'{new_value}'. External CI/CD systems calling this hook will "
+            "now trigger deploys from the new branch — verify the change "
+            "was intentional and that the new branch holds the code you "
+            "want to ship.",
         )
 
     return (
@@ -619,7 +626,13 @@ def classify_vercel_change(change: Any) -> tuple[str, str]:
     field_path:        Any  = _get(change, "field_path")
     prev_value:        Any  = _get(change, "prev_value")
     new_value:         Any  = _get(change, "new_value")
-    provider_metadata: dict = _get(change, "provider_metadata") or {}
+    # Defence in depth: tolerate provider_metadata that is missing, None,
+    # or a non-dict value (str / int / list / etc. from a malformed payload).
+    # `or {}` alone only handles falsy values; non-dict truthy inputs would
+    # otherwise crash on .get(...). Never raise out of risk classification —
+    # the caller treats an uncategorised change as low-risk by default.
+    raw_pm = _get(change, "provider_metadata")
+    provider_metadata: dict = raw_pm if isinstance(raw_pm, dict) else {}
 
     record_type: str = provider_metadata.get("record_type", "")
     record_name: str = provider_metadata.get("record_name") or ""

@@ -848,14 +848,17 @@ class TestVercelDeployHookRisk:
         level, _ = self._classify(change_type="added")
         assert level == "medium"
 
-    def test_hook_ref_changed_is_low(self):
+    def test_hook_ref_changed_is_high(self):
+        # Policy update (Vercel audit): changing a deploy hook's target ref
+        # redirects what gets deployed whenever any external CI/CD system
+        # calls the hook URL — that's a high-impact change, not cosmetic.
         level, _ = self._classify(
             change_type="modified",
             field_path="hook_ref",
             prev_value="main",
             new_value="develop",
         )
-        assert level == "low"
+        assert level == "high"
 
     def test_hook_name_changed_is_low(self):
         level, _ = self._classify(
