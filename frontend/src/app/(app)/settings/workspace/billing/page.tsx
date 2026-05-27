@@ -13,11 +13,26 @@ import type { WorkspaceBilling, BillingPlan } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
 
 // ── Plan metadata ─────────────────────────────────────────────────────────────
-// Limits must stay in sync with backend/app/services/billing_service.py PLAN_LIMITS.
+//
+// M58.25: early-access pricing.
+//   Pro  → $10/month, 14-day trial
+//   Team → $40/month, 14-day trial
+//
+// Prices, trial length, and limits must stay aligned with
+// `backend/app/services/billing_service.py` PLAN_LIMITS. The backend is the
+// source of truth; the tests in `backend/tests/test_milestone58_25.py`
+// enforce equality.
+//
+// `priceId` is the Stripe price ID for each plan. It comes from
+// `NEXT_PUBLIC_STRIPE_PRICE_*_MONTHLY` env vars at build time — never
+// hardcoded in source. The same value is sent server-side via
+// `STRIPE_PRICE_*_MONTHLY` for allowlist enforcement.
 
 interface PlanMeta {
   name: string;
-  monthlyPriceUsd: string;
+  monthlyPriceUsd: string;       // e.g. "$10"
+  monthlyPriceLabel: string;     // e.g. "Then $10/month" (shown under CTA)
+  trialDays: number;             // 0 → no trial; >0 → "Start N-day trial" CTA
   features: string[];
   priceId: string | null;
 }
@@ -26,6 +41,8 @@ const PLAN_META: Record<BillingPlan, PlanMeta> = {
   free: {
     name: "Free",
     monthlyPriceUsd: "$0",
+    monthlyPriceLabel: "Always free",
+    trialDays: 0,
     features: [
       "3 integrations",
       "1 member (owner only)",
@@ -36,7 +53,9 @@ const PLAN_META: Record<BillingPlan, PlanMeta> = {
   },
   pro: {
     name: "Pro",
-    monthlyPriceUsd: "$29",
+    monthlyPriceUsd: "$10",
+    monthlyPriceLabel: "Then $10/month",
+    trialDays: 14,
     features: [
       "20 integrations",
       "5 members",
@@ -47,7 +66,9 @@ const PLAN_META: Record<BillingPlan, PlanMeta> = {
   },
   team: {
     name: "Team",
-    monthlyPriceUsd: "$79",
+    monthlyPriceUsd: "$40",
+    monthlyPriceLabel: "Then $40/month",
+    trialDays: 14,
     features: [
       "100 integrations",
       "25 members",
@@ -134,8 +155,11 @@ function getStatusBodyText(billing: WorkspaceBilling): string {
   if (plan === "free") {
     return "Upgrade when you need more integrations, team members, or a faster monitoring cadence.";
   }
-  if (status === "trialing" && trial_end) {
-    return `Trial ends on ${formatDate(trial_end)}.`;
+  if (status === "trialing") {
+    // M58.26 — explicit cancellation cue. The Stripe Customer Portal is
+    // the only cancellation path; "Manage billing" below opens it.
+    const ending = trial_end ? ` Trial ends on ${formatDate(trial_end)}.` : "";
+    return `Your trial is active. You can manage or cancel your subscription in Stripe before the trial ends.${ending}`;
   }
   if (status === "past_due") {
     return "Update your billing information to avoid losing access to paid plan limits.";
@@ -434,26 +458,50 @@ function PlanCard({
       )}
 
       {action === "upgrade" && (
-        <button
-          onClick={() => onUpgrade(planKey)}
-          disabled={actionBusy}
-          aria-label={`Upgrade to ${plan.name} plan`}
-          style={{
-            width: "100%",
-            background: "#4f80f7",
-            color: "#fff",
-            border: "none",
-            borderRadius: "5px",
-            padding: "7px 0",
-            fontSize: "12px",
-            fontWeight: 500,
-            cursor: actionBusy ? "not-allowed" : "pointer",
-            opacity: actionBusy ? 0.6 : 1,
-            fontFamily: "inherit",
-          }}
-        >
-          {actionBusy ? "Creating checkout…" : `Upgrade to ${plan.name}`}
-        </button>
+        <>
+          <button
+            onClick={() => onUpgrade(planKey)}
+            disabled={actionBusy}
+            aria-label={
+              plan.trialDays > 0
+                ? `Start ${plan.trialDays}-day trial of ${plan.name}`
+                : `Upgrade to ${plan.name} plan`
+            }
+            style={{
+              width: "100%",
+              background: "#4f80f7",
+              color: "#fff",
+              border: "none",
+              borderRadius: "5px",
+              padding: "7px 0",
+              fontSize: "12px",
+              fontWeight: 500,
+              cursor: actionBusy ? "not-allowed" : "pointer",
+              opacity: actionBusy ? 0.6 : 1,
+              fontFamily: "inherit",
+            }}
+          >
+            {actionBusy
+              ? "Creating checkout…"
+              : plan.trialDays > 0
+                ? `Start ${plan.trialDays}-day trial`
+                : `Upgrade to ${plan.name}`}
+          </button>
+          {/* Show the post-trial price right under the CTA so users know
+              what the trial converts to. */}
+          {plan.trialDays > 0 && (
+            <div
+              style={{
+                marginTop: "6px",
+                fontSize: "11px",
+                color: "#8b90a0",
+                textAlign: "center",
+              }}
+            >
+              {plan.monthlyPriceLabel}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -894,6 +942,28 @@ export default function BillingPage() {
                   />
                 ))}
               </div>
+
+              {/* M58.26: trial disclosure — explicit "$0 today" + cancel path.
+                  Shown to free-plan workspaces with at least one trial-bearing
+                  plan configured. The Stripe Customer Portal (reached via
+                  "Manage billing") is the only cancellation path. */}
+              {billing.plan === "free" &&
+                (PLAN_META.pro.trialDays > 0 || PLAN_META.team.trialDays > 0) &&
+                (PLAN_META.pro.priceId || PLAN_META.team.priceId) && (
+                  <p
+                    style={{
+                      fontSize: "12px",
+                      color: "#8b90a0",
+                      margin: "0 0 12px",
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    Trials require a payment method. You pay $0 today and
+                    your subscription converts to paid unless cancelled
+                    before the trial ends. Cancel anytime through the Stripe
+                    Customer Portal (Manage billing).
+                  </p>
+                )}
 
               {/* Stripe not configured note */}
               {!PLAN_META.pro.priceId && !PLAN_META.team.priceId && (

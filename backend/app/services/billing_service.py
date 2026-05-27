@@ -48,25 +48,48 @@ from app.models.workspace import WorkspaceMember
 logger = logging.getLogger(__name__)
 
 # ── Plan configuration ────────────────────────────────────────────────────────
-
+#
+# This dict is the **single source of truth** for plan pricing, limits, and
+# trial length on the server. The frontend mirrors the price + trial values
+# in `frontend/src/app/(app)/settings/workspace/billing/page.tsx`
+# (PLAN_META); the tests in `test_milestone58_25.py` enforce that the two
+# stay aligned.
+#
+# Pricing (M58.25 — early-access)
+# -------------------------------
+# free : $0 / month, no trial
+# pro  : $10 / month, 14-day trial
+# team : $40 / month, 14-day trial
+#
+# Stripe is configured with **simple monthly recurring prices**. We do NOT
+# rely on Stripe product-level trial configuration — instead, the checkout
+# session adds `subscription_data[trial_period_days]` for plans whose
+# `trial_days` value is > 0 (see `_trial_days_for_price` and
+# `create_checkout_session`).
 PLAN_LIMITS: Dict[str, Dict[str, Any]] = {
     "free": {
         "max_integrations": 3,
         "max_members": 1,
         "min_sync_interval_minutes": 60,
         "history_retention_days": 30,
+        "monthly_price_usd": 0,
+        "trial_days": 0,
     },
     "pro": {
         "max_integrations": 20,
         "max_members": 5,
         "min_sync_interval_minutes": 15,
         "history_retention_days": 180,
+        "monthly_price_usd": 10,   # M58.25 early-access price
+        "trial_days": 14,          # M58.25 early-access trial
     },
     "team": {
         "max_integrations": 100,
         "max_members": 25,
         "min_sync_interval_minutes": 5,
         "history_retention_days": 365,
+        "monthly_price_usd": 40,   # M58.25 early-access price
+        "trial_days": 14,          # M58.25 early-access trial
     },
 }
 
@@ -78,6 +101,11 @@ _STRIPE_API = "https://api.stripe.com/v1"
 
 # Allowlist of price IDs that may be sent by the frontend.
 # Populated lazily from settings so tests can override via monkeypatch.
+#
+# Required env vars (read via app.config.settings):
+#   STRIPE_PRICE_PRO_MONTHLY  → Stripe price ID for ConfigTrace Pro $10/mo
+#   STRIPE_PRICE_TEAM_MONTHLY → Stripe price ID for ConfigTrace Team $40/mo
+# Price IDs are NEVER hardcoded in this file or anywhere else in the repo.
 def _allowed_price_ids() -> set[str]:
     ids = set()
     if settings.STRIPE_PRICE_PRO_MONTHLY:
@@ -94,6 +122,17 @@ def _plan_for_price(price_id: str) -> str:
     if price_id == settings.STRIPE_PRICE_TEAM_MONTHLY:
         return "team"
     return "free"
+
+
+def _trial_days_for_price(price_id: str) -> int:
+    """Return the configured trial length (days) for a given Stripe price ID.
+
+    Used by `create_checkout_session` to inject `subscription_data
+    [trial_period_days]` into the Stripe Checkout request. Returns 0 if the
+    price maps to a plan with no trial (e.g. free, or an unknown price).
+    """
+    plan = _plan_for_price(price_id)
+    return int(PLAN_LIMITS.get(plan, {}).get("trial_days", 0) or 0)
 
 
 # ── Core helpers ──────────────────────────────────────────────────────────────
@@ -285,22 +324,46 @@ def create_checkout_session(
         billing, workspace_name, owner_email, db
     )
 
-    session = _stripe_post(
-        "/checkout/sessions",
-        {
-            "mode": "subscription",
-            "customer": customer_id,
-            "line_items[0][price]": price_id,
-            "line_items[0][quantity]": "1",
-            "success_url": (
-                f"{frontend_url}/settings/workspace/billing"
-                "?checkout=success&session_id={CHECKOUT_SESSION_ID}"
-            ),
-            "cancel_url": f"{frontend_url}/settings/workspace/billing?checkout=canceled",
-            "allow_promotion_codes": "true",
-            "metadata[workspace_id]": str(billing.workspace_id),
-        },
-    )
+    # M58.25: build the Checkout request, then conditionally attach the trial
+    # period. We do not configure trials at the Stripe product level — the
+    # server is the source of truth for `trial_days` (see PLAN_LIMITS).
+    #
+    # M58.26 — card-required trial policy
+    # ------------------------------------
+    # `payment_method_collection` is *intentionally* left unset so Stripe
+    # uses its default value of "always". With `subscription_data
+    # [trial_period_days]` set, that default means:
+    #
+    #   • Checkout requires a card on file even though today's charge is $0.
+    #   • The subscription begins in `status="trialing"`.
+    #   • After 14 days the saved card is charged $10 (Pro) or $40 (Team)
+    #     unless the user cancels through the Stripe Customer Portal.
+    #
+    # We deliberately do NOT pass `payment_method_collection="if_required"`,
+    # which would allow a no-card trial — that mode requires extra logic to
+    # handle missing payment methods at trial-end and is out of scope.
+    checkout_data: dict[str, Any] = {
+        "mode": "subscription",
+        "customer": customer_id,
+        "line_items[0][price]": price_id,
+        "line_items[0][quantity]": "1",
+        "success_url": (
+            f"{frontend_url}/settings/workspace/billing"
+            "?checkout=success&session_id={CHECKOUT_SESSION_ID}"
+        ),
+        "cancel_url": f"{frontend_url}/settings/workspace/billing?checkout=canceled",
+        "allow_promotion_codes": "true",
+        "metadata[workspace_id]": str(billing.workspace_id),
+    }
+
+    # Inject 14-day trial for Pro / Team via Stripe's nested-form syntax.
+    # `subscription_data[trial_period_days]` is documented at
+    # https://stripe.com/docs/api/checkout/sessions/create#create_checkout_session-subscription_data
+    trial_days = _trial_days_for_price(price_id)
+    if trial_days > 0:
+        checkout_data["subscription_data[trial_period_days]"] = str(trial_days)
+
+    session = _stripe_post("/checkout/sessions", checkout_data)
     return session["url"]
 
 
@@ -308,7 +371,28 @@ def create_portal_session(
     billing: WorkspaceBilling,
     db: Session,
 ) -> str:
-    """Create a Stripe Billing Portal session and return the URL."""
+    """Create a Stripe Billing Portal session and return the URL.
+
+    M58.26 — this is the **single cancellation path**.
+
+    The Stripe-hosted Customer Portal is the only place where ConfigTrace
+    users can cancel a subscription, update a card, or download invoices.
+    The app does not implement a custom "Cancel plan" UI; trialing and
+    active subscribers both reach cancellation by clicking *Manage billing*
+    in the app, which redirects here.
+
+    Trialing subscribers (status="trialing") can open the portal — the
+    Stripe customer ID is created at first checkout and persists for the
+    lifetime of the subscription. Workspaces on the free plan that have
+    never subscribed have no `stripe_customer_id`, so the route returns
+    400 with a clear "Please subscribe first" message; the frontend
+    interprets that as a hint to start a trial instead.
+
+    Permissions required in the Stripe Dashboard (Settings → Billing →
+    Customer portal): allow customers to cancel subscriptions, update
+    payment methods, and view invoices. Return URL should be the app's
+    billing page.
+    """
     if not billing.stripe_customer_id:
         raise HTTPException(
             status_code=400,
