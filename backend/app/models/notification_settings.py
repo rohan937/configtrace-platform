@@ -190,6 +190,15 @@ class WorkspaceNotificationSettings(BaseMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # ── M59.4 — Test-notification cooldown ─────────────────────────────────────
+    # Workspace-wide cooldown for the "send test" endpoints so an admin
+    # cannot spam test Slack/push/webhook/digest messages.
+    # Refreshed every time any of the test endpoints fires; checked at the
+    # start of each one to return 429 if within ``_TEST_NOTIFICATION_COOLDOWN``.
+    last_test_notification_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     def __repr__(self) -> str:
         return (
             f"<WorkspaceNotificationSettings workspace={self.workspace_id} "

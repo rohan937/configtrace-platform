@@ -62,6 +62,19 @@ def create_sync(
             ),
         )
 
+    # M59.4: Manual sync dedupe.  If a SyncRun is already pending or running
+    # for this integration, refuse to enqueue another — Sync Now spam would
+    # otherwise stack identical jobs and trigger redundant provider calls.
+    # The same helper is used by the scheduler to skip overlapping ticks.
+    if sync_service.has_in_flight_sync(body.integration_id, db):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A sync is already in progress for this integration. "
+                "Wait for it to complete before triggering another."
+            ),
+        )
+
     sync_run = sync_service.create_sync_run(
         user_id=current_user.id,
         integration_id=body.integration_id,

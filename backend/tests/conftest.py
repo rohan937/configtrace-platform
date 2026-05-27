@@ -48,6 +48,38 @@ def patch_encryption_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(config.settings, "ENCRYPTION_KEY", TEST_ENCRYPTION_KEY)
 
 
+# Hostnames that the deterministic DNS stub treats as *private* — used by
+# M59.4 SSRF/DNS-rebinding tests to simulate hostnames resolving to private IPs.
+# Tests opt in by adding to this set within a fixture or by patching directly.
+_TEST_PRIVATE_HOSTS: dict[str, str] = {}
+
+
+@pytest.fixture(autouse=True)
+def deterministic_dns_stub(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace ``socket.getaddrinfo`` with a deterministic stub.
+
+    M59.4 added DNS-rebinding protection to ``notification_service._validate_url``
+    which calls ``socket.getaddrinfo``.  To keep tests independent of real DNS:
+
+    * Hostnames in ``_TEST_PRIVATE_HOSTS`` resolve to the IP recorded there
+      (use to exercise the private-IP rejection path).
+    * All other hostnames resolve to ``93.184.216.34`` (a known stable public
+      IP — example.com's documentation address).
+
+    Tests that need a specific private resolution may mutate
+    ``_TEST_PRIVATE_HOSTS`` directly or use ``monkeypatch.setattr`` to install
+    their own ``socket.getaddrinfo`` stub.
+    """
+    import socket as _socket
+
+    def _fake_getaddrinfo(host, port, *args, **kwargs):  # type: ignore[no-untyped-def]
+        ip = _TEST_PRIVATE_HOSTS.get(host, "93.184.216.34")
+        # Return a single AF_INET tuple matching the real API shape.
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port or 0))]
+
+    monkeypatch.setattr(_socket, "getaddrinfo", _fake_getaddrinfo)
+
+
 @pytest.fixture
 def db_session():
     """Yield a real SQLAlchemy session; always closed after the test."""

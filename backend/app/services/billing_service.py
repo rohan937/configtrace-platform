@@ -475,9 +475,35 @@ def handle_webhook_event(event: dict, db: Session) -> None:
     customer.subscription.deleted   — subscription ended; revert to free
     invoice.payment_failed          — mark past_due
     invoice.payment_succeeded       — mark active (clears past_due)
+
+    M59.4 idempotency
+    ------------------
+    The event_id is checked against ``stripe_webhook_events`` at the start
+    and a row is added at the end.  A duplicate event short-circuits to
+    a safe no-op.  Concurrent races are resolved by the unique constraint
+    on ``stripe_webhook_events.event_id``: the loser of the race surfaces
+    ``IntegrityError`` at commit time, which the router catches and treats
+    as a duplicate.
     """
+    from app.models.billing import StripeWebhookEvent
+
+    event_id = event.get("id")
     event_type = event.get("type", "")
     data_obj = event.get("data", {}).get("object", {})
+
+    # ── Idempotency check ────────────────────────────────────────────────────
+    if event_id:
+        existing = (
+            db.query(StripeWebhookEvent)
+            .filter(StripeWebhookEvent.event_id == event_id)
+            .first()
+        )
+        if existing is not None:
+            logger.info(
+                "Stripe webhook duplicate event_id=%s type=%s — skipping",
+                event_id, event_type,
+            )
+            return
 
     if event_type == "checkout.session.completed":
         _handle_checkout_completed(data_obj, db)
@@ -494,6 +520,26 @@ def handle_webhook_event(event: dict, db: Session) -> None:
         _handle_payment_succeeded(data_obj, db)
     else:
         logger.debug("Unhandled Stripe event type: %s", event_type)
+
+    # ── Record event id for future-replay dedupe (M59.4) ─────────────────────
+    # Done at the END so a processing exception rolls back this row too;
+    # a subsequent Stripe retry will then process the event cleanly.
+    if event_id:
+        db.add(StripeWebhookEvent(event_id=event_id, event_type=event_type))
+        # flush surfaces unique-constraint violations now rather than at commit
+        try:
+            db.flush()
+        except Exception:
+            # Concurrent webhook for the same event_id committed first —
+            # we lost the race.  Roll back our row and let the caller commit
+            # any other work that succeeded (in practice this branch is rare).
+            logger.info(
+                "Stripe webhook race on event_id=%s — duplicate detected at flush",
+                event_id,
+            )
+            # We must not re-raise here, otherwise the caller's outer try
+            # will treat the whole webhook as failed.  Just expunge our row.
+            db.rollback()
 
 
 def _billing_by_customer(customer_id: str, db: Session) -> Optional[WorkspaceBilling]:

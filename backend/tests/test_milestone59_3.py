@@ -750,55 +750,47 @@ class TestDangerousActionWiring:
 
 
 class TestDocumentedGaps:
+    """M59.3 originally pinned four gaps as 'current behaviour'.  M59.4 fixed
+    them; this section now asserts the protections exist.  See M59.4 report
+    for the full deltas."""
 
-    def test_I1_manual_sync_has_no_in_flight_check(self):
-        """KNOWN GAP: POST /syncs does not call has_in_flight_sync, so a user
-        can enqueue multiple manual syncs back-to-back.  The infrastructure
-        exists (has_in_flight_sync is used by the scheduler) but is not
-        wired into the manual endpoint.  This test asserts the *current*
-        behaviour so any future fix is intentional, not silent.
-        """
+    def test_I1_manual_sync_now_uses_in_flight_dedupe(self):
+        """M59.4 wired ``has_in_flight_sync`` into POST /syncs."""
         src = Path("app/routers/syncs.py").read_text()
-        # has_in_flight_sync is NOT yet referenced from the route.
-        assert "has_in_flight_sync" not in src
+        assert "has_in_flight_sync" in src
+        # Returns 409 when a sync is already running for the integration.
+        assert "already in progress" in src.lower() or "in_flight" in src.lower()
 
-    def test_I2_test_notification_endpoints_have_no_rate_limit(self):
-        """KNOWN GAP: test-notification endpoints (Slack/push/weekly) have no
-        cooldown.  Admin-gated so abuse is bounded to workspace admins.
-
-        Documenting via a test so future infrastructure work doesn't silently
-        change this without removing the gap from the report.
-        """
+    def test_I2_test_notification_endpoints_have_cooldown(self):
+        """M59.4 added a workspace-wide cooldown via
+        ``notification_service.assert_test_notification_cooldown``."""
         src = Path("app/routers/workspaces.py").read_text()
-        # No code-level rate limiter currently on test endpoints.
-        for marker in ("rate_limit", "cooldown", "throttle"):
-            assert marker not in src.lower() or "weekly_digest" not in src.split(marker)[0][-200:]
+        # Each of the four test endpoints calls the cooldown helper.
+        assert src.count("assert_test_notification_cooldown") >= 4
+        assert src.count("mark_test_notification_sent") >= 4
 
-    def test_I3_stripe_webhook_has_no_event_id_idempotency_dedupe(self):
-        """KNOWN GAP: handle_webhook_event does not dedupe by event['id'].
-        Operations are idempotent in practice (set-fields-from-event), so
-        Stripe retries are harmless, but explicit dedupe would be safer.
-        Documenting current behaviour so future state-mutation events don't
-        regress.
-        """
+    def test_I3_stripe_webhook_has_event_id_idempotency_dedupe(self):
+        """M59.4 added StripeWebhookEvent + event_id dedupe in
+        ``handle_webhook_event``."""
         import inspect
         from app.services import billing_service
 
         src = inspect.getsource(billing_service.handle_webhook_event)
-        assert "event_id" not in src
-        assert 'event.get("id")' not in src
+        assert "event_id" in src
+        assert "StripeWebhookEvent" in src
+        assert 'event.get("id")' in src
 
-    def test_I4_url_validator_skips_dns_resolution(self):
-        """KNOWN TRADEOFF: _validate_url checks literal IPs but does not
-        resolve hostnames.  This avoids flaky tests but leaves a DNS-rebinding
-        gap.  Documenting so future hardening is explicit.
-        """
+    def test_I4_url_validator_resolves_dns(self):
+        """M59.4 added DNS-rebinding protection via
+        ``_assert_hostname_resolves_public``."""
         import inspect
         from app.services import notification_service
 
         src = inspect.getsource(notification_service._validate_url)
-        # The function explicitly skips DNS resolution and says why.
-        assert "don't resolve" in src or "no DNS" in src.lower() or "DNS resolution" in src
+        # The function now calls the resolver for non-Slack hostname URLs.
+        assert "_assert_hostname_resolves_public" in src
+        # And the helper itself exists.
+        assert hasattr(notification_service, "_assert_hostname_resolves_public")
 
 
 # ═════════════════════════════════════════════════════════════════════════════

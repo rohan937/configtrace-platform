@@ -618,7 +618,19 @@ def test_notification(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    # M59.4 — Cooldown so admins cannot spam test notifications.
+    try:
+        notification_service.assert_test_notification_cooldown(workspace_id, db)
+    except notification_service.TestNotificationCooldownError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
     result = notification_service.send_test_notification(workspace_id, db)
+    notification_service.mark_test_notification_sent(workspace_id, db)
+    db.commit()
     return TestNotificationResponse(
         slack_sent=result["slack_sent"],
         webhook_sent=result["webhook_sent"],
@@ -805,9 +817,20 @@ def test_slack_app(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    # M59.4 — Cooldown.
+    try:
+        notification_service.assert_test_notification_cooldown(workspace_id, db)
+    except notification_service.TestNotificationCooldownError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
     try:
         from app.services.slack_service import send_test
         send_test(workspace_id, db)
+        notification_service.mark_test_notification_sent(workspace_id, db)
         db.commit()
         return TestNotificationResponse(slack_sent=True, webhook_sent=False, error=None)
     except RuntimeError as exc:
@@ -1029,8 +1052,19 @@ def test_push_notification(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    # M59.4 — Cooldown.
+    try:
+        notification_service.assert_test_notification_cooldown(workspace_id, db)
+    except notification_service.TestNotificationCooldownError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
     from app.services.push_notification_service import send_test_push
     result = send_test_push(workspace_id, db)
+    notification_service.mark_test_notification_sent(workspace_id, db)
     db.commit()
     return PushTestResponse(
         sent=result["sent"],
@@ -1195,7 +1229,20 @@ def test_weekly_digest(
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
-    return weekly_digest_service.test_send_digest(workspace_id, current_user.id, db)
+    # M59.4 — Cooldown.
+    try:
+        notification_service.assert_test_notification_cooldown(workspace_id, db)
+    except notification_service.TestNotificationCooldownError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=str(exc),
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
+    result = weekly_digest_service.test_send_digest(workspace_id, current_user.id, db)
+    notification_service.mark_test_notification_sent(workspace_id, db)
+    db.commit()
+    return result
 
 
 # ── Expected Change Windows (M58.16) ──────────────────────────────────────────

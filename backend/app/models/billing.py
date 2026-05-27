@@ -92,3 +92,40 @@ class WorkspaceBilling(BaseMixin, Base):
             f"<WorkspaceBilling workspace={self.workspace_id} "
             f"plan={self.plan!r} status={self.status!r}>"
         )
+
+
+class StripeWebhookEvent(Base):
+    """Processed Stripe webhook event log — M59.4 idempotency.
+
+    Stripe occasionally re-delivers webhooks on transient network errors;
+    this table records the ``event_id`` of every successfully-processed
+    event so duplicates can be detected and short-circuited.
+
+    Security invariants
+    -------------------
+    * ``event_id`` is Stripe-generated (``evt_*``) — safe to store.
+    * No customer or subscription PII is stored here; lookup is by event id only.
+    * Row is inserted at the END of successful processing (same transaction as
+      any billing-row writes).  If processing rolls back, the row rolls back
+      too — a subsequent retry will re-process cleanly.
+    """
+
+    __tablename__ = "stripe_webhook_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    event_id: Mapped[str] = mapped_column(
+        Text, nullable=False, unique=True, index=True
+    )
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    processed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("now()"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<StripeWebhookEvent {self.event_id!r} type={self.event_type!r}>"

@@ -33,6 +33,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import socket
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional, Sequence
@@ -51,6 +52,81 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _HTTP_TIMEOUT: float = 8.0  # seconds — must not block the sync worker
+
+# M59.4 — Workspace-wide cooldown (seconds) between "send test notification"
+# calls.  Applied to the legacy webhook test, Slack-App test, push test, and
+# weekly-digest test endpoints.  Per-channel cooldown is intentionally NOT
+# implemented in this milestone: a single shared timer is simpler and admin-gating
+# keeps the abuse surface bounded.
+_TEST_NOTIFICATION_COOLDOWN: int = 60
+
+
+class TestNotificationCooldownError(RuntimeError):
+    """Raised when a test-notification endpoint is called within the cooldown.
+
+    Carries ``retry_after`` (seconds) so the router can populate the
+    HTTP ``Retry-After`` header.
+    """
+
+    def __init__(self, retry_after: int) -> None:
+        super().__init__(
+            f"Test notification cooldown active; retry in {retry_after}s."
+        )
+        self.retry_after = retry_after
+
+
+def assert_test_notification_cooldown(
+    workspace_id: uuid.UUID,
+    db: Session,
+) -> None:
+    """Raise :class:`TestNotificationCooldownError` if within the cooldown.
+
+    Reads ``WorkspaceNotificationSettings.last_test_notification_at`` and
+    compares to ``now()``.  Idempotent — does NOT update the timestamp; that
+    is done by ``mark_test_notification_sent`` after the test fires.
+
+    Args:
+        workspace_id: Workspace to check.
+        db:           Active SQLAlchemy session.
+
+    Raises:
+        TestNotificationCooldownError: When ``now - last_test_notification_at``
+            is less than ``_TEST_NOTIFICATION_COOLDOWN``.
+    """
+    row = (
+        db.query(WorkspaceNotificationSettings)
+        .filter(WorkspaceNotificationSettings.workspace_id == workspace_id)
+        .first()
+    )
+    if row is None:
+        return
+    last = getattr(row, "last_test_notification_at", None)
+    # Defensive: a non-datetime value (e.g. an unset MagicMock under tests, or
+    # a freshly-created row whose column default is NULL) means "no prior test".
+    if not isinstance(last, datetime):
+        return
+    elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+    if elapsed < _TEST_NOTIFICATION_COOLDOWN:
+        retry_after = max(1, int(_TEST_NOTIFICATION_COOLDOWN - elapsed))
+        raise TestNotificationCooldownError(retry_after=retry_after)
+
+
+def mark_test_notification_sent(
+    workspace_id: uuid.UUID,
+    db: Session,
+) -> None:
+    """Update ``last_test_notification_at`` to now.  Caller commits."""
+    row = (
+        db.query(WorkspaceNotificationSettings)
+        .filter(WorkspaceNotificationSettings.workspace_id == workspace_id)
+        .first()
+    )
+    if row is None:
+        # Lazy-create so the cooldown takes effect even on the first test.
+        row = WorkspaceNotificationSettings(workspace_id=workspace_id)
+        db.add(row)
+    row.last_test_notification_at = datetime.now(timezone.utc)
+    db.flush()
 
 # Slack webhooks must always start with this prefix.
 _SLACK_URL_PREFIX = "https://hooks.slack.com/services/"
@@ -155,12 +231,12 @@ def _validate_url(url: str, *, slack: bool = False) -> None:
     # is a ValueError subclass, so putting the range check inside the try
     # block would swallow the error).
     _addr = None
+    _is_literal_ip = False
     try:
         _addr = ipaddress.ip_address(hostname)
+        _is_literal_ip = True
     except ValueError:
-        # Not a literal IP address — hostname is a domain name.  We don't
-        # resolve it (DNS resolution adds latency and fails in test
-        # environments); the private-hostname check above covers literal IPs.
+        # Not a literal IP — hostname is a DNS name.  Resolve below (M59.4).
         pass
 
     if _addr is not None:
@@ -170,6 +246,73 @@ def _validate_url(url: str, *, slack: bool = False) -> None:
                     f"Webhook URL points to a private IP address ({hostname}). "
                     "Only public HTTPS endpoints are allowed."
                 )
+
+    # M59.4 — DNS-rebinding protection for hostname-form generic webhook URLs.
+    # We resolve the hostname via socket.getaddrinfo and reject if ANY resolved
+    # address is private/loopback/link-local/multicast/unspecified/reserved.
+    # Applied only to generic webhooks; Slack URLs are already pinned to
+    # ``hooks.slack.com`` by the prefix check above so their hostname is trusted.
+    # DNS failures fail closed: a hostname we cannot resolve is rejected rather
+    # than allowed.  Tests monkeypatch ``socket.getaddrinfo`` for determinism.
+    if not slack and not _is_literal_ip:
+        _assert_hostname_resolves_public(hostname)
+
+
+def _assert_hostname_resolves_public(hostname: str) -> None:
+    """Resolve *hostname* and raise WebhookURLError if any A/AAAA record is
+    private/loopback/link-local/multicast/unspecified/reserved.
+
+    Fails closed on DNS errors and empty result sets.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise WebhookURLError(
+            f"Webhook URL hostname {hostname!r} could not be resolved: {exc}. "
+            "Only resolvable public HTTPS endpoints are allowed."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001
+        # Any unexpected resolver error → fail closed.
+        raise WebhookURLError(
+            f"Webhook URL hostname {hostname!r} could not be resolved."
+        ) from exc
+
+    if not infos:
+        raise WebhookURLError(
+            f"Webhook URL hostname {hostname!r} did not resolve to any address."
+        )
+
+    for _family, _type, _proto, _canon, sockaddr in infos:
+        ip_str = sockaddr[0] if sockaddr else ""
+        try:
+            addr = ipaddress.ip_address(ip_str)
+        except ValueError:
+            # getaddrinfo gave us something we can't parse — fail closed.
+            raise WebhookURLError(
+                f"Webhook URL hostname {hostname!r} resolved to an "
+                "unparseable address."
+            )
+        # 1. Block app's curated private-network set (covers IPv4 + IPv6 ULA + metadata).
+        for network in _PRIVATE_NETWORKS:
+            if addr in network:
+                raise WebhookURLError(
+                    f"Webhook URL hostname {hostname!r} resolves to a private "
+                    f"or metadata IP ({addr}). Only public HTTPS endpoints are allowed."
+                )
+        # 2. Belt-and-braces: ipaddress.is_* flags cover anything missed
+        # by the curated list (link-local, multicast, unspecified, reserved).
+        if (
+            addr.is_loopback
+            or addr.is_link_local
+            or addr.is_multicast
+            or addr.is_unspecified
+            or addr.is_reserved
+            or addr.is_private
+        ):
+            raise WebhookURLError(
+                f"Webhook URL hostname {hostname!r} resolves to a "
+                f"non-public IP ({addr})."
+            )
 
 
 # ── Encryption helpers ────────────────────────────────────────────────────────
