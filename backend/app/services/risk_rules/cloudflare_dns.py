@@ -287,7 +287,8 @@ def classify_dns_change(change: Any) -> tuple[str, str]:
     field_path = _get(change, "field_path")
     prev_value = _get(change, "prev_value")
     new_value = _get(change, "new_value")
-    provider_metadata: dict[str, Any] = _get(change, "provider_metadata") or {}
+    raw_pm = _get(change, "provider_metadata")
+    provider_metadata: dict[str, Any] = raw_pm if isinstance(raw_pm, dict) else {}
 
     record_type = (provider_metadata.get("record_type") or "").upper()
     record_name = provider_metadata.get("record_name") or ""
@@ -349,6 +350,19 @@ def classify_dns_change(change: Any) -> tuple[str, str]:
                 f"Modification of a wildcard {record_type} record redirects DNS "
                 "resolution for all unmatched subdomains simultaneously.",
             )
+
+    # 3b. Wildcard A / AAAA / CNAME added — introduces a catch-all DNS entry
+    #     that resolves every previously-unmatched subdomain.  Per policy this
+    #     is High because it broadens the routing surface and can shadow new
+    #     subdomains added later.
+    if is_wc and record_type in ("A", "AAAA", "CNAME") and change_type == "added":
+        return (
+            "high",
+            f"Addition of a wildcard {record_type} record creates a catch-all "
+            "DNS entry that resolves every previously-unmatched subdomain. "
+            "Verify the destination is intentional, as this may broaden the "
+            "routing surface for the zone.",
+        )
 
     # 4. DMARC TXT removed — eliminates email authentication policy, exposing
     #    the domain to email spoofing.
@@ -713,10 +727,20 @@ def classify_cloudflare_ruleset_change(change: object) -> tuple[str, str]:
     10. enabled_rule_count ↑ → low   (hardening: more rules enabled)
     11. version / phase / kind changes → low (administrative / metadata change)
     """
-    pm: dict = _get(change, "provider_metadata") or {}
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
     change_type: str = (_get(change, "change_type") or "").lower()
     field_path: str = (_get(change, "field_path") or "").lower()
-    old_value = _get(change, "old_value")
+    # The canonical Change model field is ``prev_value`` (see
+    # app/models/change.py).  Older code paths in this classifier read
+    # ``old_value``; keep that as a fallback for plain-dict callers that still
+    # use the legacy key, but prefer ``prev_value`` so real ORM rows classify
+    # correctly.
+    old_value = _get(change, "prev_value")
+    if old_value is None:
+        legacy = _get(change, "old_value")
+        if legacy is not None:
+            old_value = legacy
     new_value = _get(change, "new_value")
 
     # 1. Ruleset removed — WAF protection gap
