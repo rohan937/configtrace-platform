@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
@@ -69,6 +70,25 @@ interface KebabMenuProps {
   busy: boolean;
 }
 
+/**
+ * Approximate menu height used for the initial flip decision before the
+ * actual height can be measured.  Real measurement runs in a layout effect
+ * and corrects the position on the same frame, so this is only a fallback
+ * for the very first render.  4 items × ~38px + borders + margins.
+ */
+const MENU_ESTIMATED_HEIGHT = 168;
+const MENU_VIEWPORT_MARGIN = 8;
+
+interface MenuPosition {
+  /** Anchor mode: ``below`` pins ``top`` to the button's bottom edge;
+   *  ``above`` pins ``bottom`` to the button's top edge (flip-up). */
+  anchor: "below" | "above";
+  /** Viewport-relative coordinate (px). */
+  topOrBottom: number;
+  /** Right offset from the viewport edge (px). */
+  right: number;
+}
+
 function KebabMenu({
   integration,
   onRename,
@@ -79,18 +99,9 @@ function KebabMenu({
   busy,
 }: KebabMenuProps) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  // Close on outside click
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    if (open) document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [open]);
+  const [position, setPosition] = useState<MenuPosition | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   const isPaused = integration.status === "paused";
   const isGitHubApp = integration.connection_method === "github_app";
@@ -107,12 +118,121 @@ function KebabMenu({
     { label: "Remove integration", action: onDelete, danger: true },
   ];
 
+  /**
+   * Compute the menu position from the kebab button's viewport rect.
+   *
+   * Rationale (M59.17):
+   *   * The integrations table card has ``overflow: hidden`` (needed for the
+   *     rounded-corner clipping on the rows), so an absolutely-positioned
+   *     dropdown inside that card gets visually clipped when its content
+   *     extends past the card's bottom edge — and ``z-index`` does not
+   *     escape ``overflow: hidden`` ancestors.  The menu is therefore
+   *     portalled to ``document.body`` and pinned with ``position: fixed``
+   *     using viewport coordinates from ``getBoundingClientRect()``.
+   *   * We flip the menu *above* the kebab button when the space below the
+   *     button is too small to fit the menu, so rows near the bottom of the
+   *     viewport still expose every item — most importantly the destructive
+   *     "Remove integration" action that previously fell off-screen.
+   */
+  function computePosition(menuHeight: number): MenuPosition {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return { anchor: "below", topOrBottom: 0, right: 0 };
+    }
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    // Prefer below if there's room.  If not, flip — but only if above has
+    // strictly more room than below (otherwise stay below and let the menu
+    // be partially scrollable/cut, which is rarer than the bottom-of-page
+    // case we are solving).
+    const fitsBelow = spaceBelow >= menuHeight + MENU_VIEWPORT_MARGIN;
+    const useAbove = !fitsBelow && spaceAbove > spaceBelow;
+
+    return {
+      anchor: useAbove ? "above" : "below",
+      topOrBottom: useAbove
+        ? window.innerHeight - rect.top + 4
+        : rect.bottom + 4,
+      right: Math.max(window.innerWidth - rect.right, MENU_VIEWPORT_MARGIN),
+    };
+  }
+
+  // Initial position on open — uses the estimated height before the real
+  // menu has rendered.  ``useLayoutEffect`` below then corrects to the
+  // measured height in the same frame so users never see a flash.
+  useEffect(() => {
+    if (!open) {
+      setPosition(null);
+      return;
+    }
+    setPosition(computePosition(MENU_ESTIMATED_HEIGHT));
+
+    // Re-position on scroll / resize while the menu is open so it tracks
+    // the kebab button.  Use the rendered menu height when we have it.
+    function reposition() {
+      const measured = menuRef.current?.offsetHeight ?? MENU_ESTIMATED_HEIGHT;
+      setPosition(computePosition(measured));
+    }
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // After the menu renders, correct the position using its real height.
+  useLayoutEffect(() => {
+    if (!open || !menuRef.current) return;
+    const measured = menuRef.current.offsetHeight;
+    setPosition((prev) => {
+      const next = computePosition(measured);
+      // Avoid an infinite update loop — only commit when something changed.
+      if (
+        prev &&
+        prev.anchor === next.anchor &&
+        prev.topOrBottom === next.topOrBottom &&
+        prev.right === next.right
+      ) {
+        return prev;
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Close on outside click — covers both the trigger button area and the
+  // portalled menu DOM (which lives outside the trigger's subtree).
+  useEffect(() => {
+    if (!open) return;
+    function handle(e: MouseEvent) {
+      const target = e.target as Node | null;
+      if (!target) return;
+      const insideButton = buttonRef.current?.contains(target) ?? false;
+      const insideMenu = menuRef.current?.contains(target) ?? false;
+      if (!insideButton && !insideMenu) setOpen(false);
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handle);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handle);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <>
       <button
+        ref={buttonRef}
         onClick={() => setOpen((o) => !o)}
         disabled={busy}
         title="Integration options"
+        aria-haspopup="menu"
+        aria-expanded={open}
         style={{
           background: "transparent",
           border: "1px solid transparent",
@@ -131,47 +251,56 @@ function KebabMenu({
       >
         ⋮
       </button>
-      {open && (
-        <div
-          style={{
-            position: "absolute",
-            right: 0,
-            top: "100%",
-            marginTop: "4px",
-            background: "#1a1d26",
-            border: "1px solid #2a2d38",
-            borderRadius: "6px",
-            zIndex: 100,
-            minWidth: "160px",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
-            overflow: "hidden",
-          }}
-        >
-          {menuItems.map((item) => (
-            <button
-              key={item.label}
-              onClick={() => { setOpen(false); item.action(); }}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                background: "transparent",
-                border: "none",
-                padding: "9px 14px",
-                fontSize: "13px",
-                color: item.danger ? "#e84040" : "#b0b5c4",
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-              onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#22252f"; }}
-              onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      {open && position && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{
+              position: "fixed",
+              right: position.right,
+              ...(position.anchor === "below"
+                ? { top: position.topOrBottom }
+                : { bottom: position.topOrBottom }),
+              background: "#1a1d26",
+              border: "1px solid #2a2d38",
+              borderRadius: "6px",
+              // Portal escapes the integrations-table card's overflow:hidden,
+              // but we still want this menu above any other floating UI
+              // (modals are higher; 1000 is plenty for in-page chrome).
+              zIndex: 1000,
+              minWidth: "180px",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.4)",
+              overflow: "hidden",
+            }}
+          >
+            {menuItems.map((item) => (
+              <button
+                key={item.label}
+                role="menuitem"
+                onClick={() => { setOpen(false); item.action(); }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  border: "none",
+                  padding: "9px 14px",
+                  fontSize: "13px",
+                  color: item.danger ? "#e84040" : "#b0b5c4",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+                onMouseOver={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "#22252f"; }}
+                onMouseOut={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
