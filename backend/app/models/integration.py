@@ -22,7 +22,19 @@ class Integration(BaseMixin, Base):
     Stores encrypted API credentials, provider identifier, connection status,
     and timestamps. Every resource, snapshot, and change traces back here.
 
-    Valid status values: 'active', 'paused', 'error'
+    Valid status values:
+      * ``active``           — credentials valid, scheduler will run syncs
+      * ``paused``           — user-paused; manual + scheduled syncs blocked
+      * ``needs_reconnect``  — provider auth revoked / installation removed /
+                                token rotated externally.  Set automatically by
+                                the sync exception handler when the failure
+                                classifier returns ``failure_category=='authentication'``.
+                                Scheduler skips these (it filters ``status=='active'``);
+                                manual Sync Now returns 409; reconnect clears it.
+      * ``error``            — legacy, retained for backwards-compat; new
+                                authentication failures use ``needs_reconnect``.
+      * ``deleted``          — soft-deleted by the user via DELETE /integrations/{id}.
+
     Valid provider values (MVP): 'cloudflare'
     """
 
@@ -49,7 +61,7 @@ class Integration(BaseMixin, Base):
     # Initialisation vector stored alongside ciphertext for AES-GCM decryption.
     credential_iv: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
-    # Valid values: 'active', 'paused', 'error'
+    # Valid values: 'active', 'paused', 'needs_reconnect', 'error', 'deleted'
     status: Mapped[str] = mapped_column(
         Text, nullable=False, default="active", server_default="active"
     )

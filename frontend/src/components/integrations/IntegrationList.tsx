@@ -471,6 +471,11 @@ export default function IntegrationList({
         {localIntegrations.map((integration) => {
           const state = syncStates[integration.id] ?? { polling: false, result: null, error: null };
           const isPaused = integration.status === "paused";
+          // M59.14: upstream credentials revoked / app uninstalled / token rotated.
+          // Sync Now is structurally blocked by the backend (HTTP 409); the UI
+          // surfaces a Reconnect affordance in its place so users have a clear
+          // path forward instead of hitting a dead button.
+          const needsReconnect = integration.status === "needs_reconnect";
           const isBusy = pauseInProgress[integration.id] ?? false;
 
           return (
@@ -500,11 +505,24 @@ export default function IntegrationList({
                 {/* Last synced */}
                 <span
                   className="shrink-0 tabular-nums"
-                  style={{ fontSize: "12px", color: "#8b90a0", width: "150px" }}
+                  style={{
+                    fontSize: "12px",
+                    color: needsReconnect ? "#f5a623" : "#8b90a0",
+                    width: "150px",
+                  }}
+                  title={
+                    needsReconnect && integration.last_synced_at
+                      ? `Last successful sync: ${formatRelativeTime(integration.last_synced_at)}`
+                      : undefined
+                  }
                 >
-                  {integration.last_synced_at
-                    ? formatRelativeTime(integration.last_synced_at)
-                    : "Never synced"}
+                  {/* M59.14: don't imply healthy "recently synced" state when
+                      the upstream credentials are already revoked. */}
+                  {needsReconnect
+                    ? "Connection lost"
+                    : integration.last_synced_at
+                      ? formatRelativeTime(integration.last_synced_at)
+                      : "Never synced"}
                 </span>
 
                 {/* Status badge */}
@@ -512,9 +530,31 @@ export default function IntegrationList({
                   <StatusBadge status={integration.status} />
                 </div>
 
-                {/* Sync Now / paused button */}
+                {/* Sync Now / paused / Reconnect button */}
                 <div className="shrink-0" style={{ width: "96px" }}>
-                  {isPaused ? (
+                  {needsReconnect ? (
+                    // M59.14: upstream credentials gone — direct to reconnect.
+                    <button
+                      onClick={() => openModal("reconnect", integration)}
+                      disabled={isBusy}
+                      title="Upstream credentials are no longer valid — provide fresh credentials"
+                      style={{
+                        width: "100%",
+                        textAlign: "center",
+                        padding: "5px 8px",
+                        borderRadius: "6px",
+                        background: "#2a2114",
+                        border: "1px solid #f5a623",
+                        color: "#f5a623",
+                        cursor: isBusy ? "not-allowed" : "pointer",
+                        fontSize: "12px",
+                        fontFamily: "inherit",
+                        fontWeight: 500,
+                      }}
+                    >
+                      Reconnect
+                    </button>
+                  ) : isPaused ? (
                     <span
                       style={{
                         display: "block",

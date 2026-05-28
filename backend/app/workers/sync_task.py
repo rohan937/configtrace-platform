@@ -487,6 +487,51 @@ def sync_integration(
                 sync_run_id,
             )
 
+        # ── M59.14: Mark integration as ``needs_reconnect`` when the upstream
+        # credentials/installation have been revoked or removed ──────────────
+        # The failure classifier already detects every credential-revocation
+        # case across providers (github_app_uninstalled, cloudflare_token_revoked,
+        # vercel_token_revoked, stripe_key_revoked, aws_credentials_invalid,
+        # aws_access_denied, supabase_token_revoked, plus generic 401/403 →
+        # ``authentication``).  Until M59.14, the classifier's result was only
+        # written to the SyncRun row — the Integration itself stayed ``active``,
+        # so the scheduler kept queuing futile syncs and the UI kept showing
+        # "Sync Now".  Now we propagate the result: any ``authentication``
+        # failure flips ``Integration.status`` to ``needs_reconnect``.
+        #
+        # Effects this single flip produces (no further wiring needed):
+        #   * scheduler skips it — ``create_scheduled_syncs_for_active_integrations``
+        #     filters ``status == 'active'``;
+        #   * ``POST /syncs`` rejects manual Sync Now with HTTP 409
+        #     (see app/routers/syncs.py);
+        #   * UI renders a Reconnect affordance instead of Sync Now
+        #     (see frontend IntegrationList).
+        #
+        # The reconnect endpoint clears ``needs_reconnect`` after a successful
+        # credential update.  We do NOT downgrade ``paused`` or ``deleted``
+        # integrations — a paused integration whose creds were also revoked
+        # stays paused (the more restrictive state wins).
+        if (
+            integration is not None
+            and _classification.category == "authentication"
+            and integration.status == "active"
+        ):
+            try:
+                integration.status = "needs_reconnect"
+                db.commit()
+                logger.info(
+                    "sync_integration: integration marked needs_reconnect  "
+                    "integration_id=%s  error_code=%s",
+                    integration_id,
+                    _classification.error_code,
+                )
+            except Exception:
+                logger.exception(
+                    "sync_integration: failed to mark integration "
+                    "needs_reconnect  integration_id=%s",
+                    integration_id,
+                )
+
         # ── M33 QA: Mark resources inactive when the resource no longer exists ─
         # When a sync fails because the remote resource is missing (deleted
         # repo, deleted Vercel project, removed zone, etc.), flip is_active=False

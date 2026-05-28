@@ -552,10 +552,17 @@ export default function IntegrationsPage() {
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
-  /** Connected integration count per provider (from loaded list). */
+  /** Connected integration count per provider (from loaded list).
+   *
+   * M59.14: excludes ``needs_reconnect`` so the provider-card headline
+   * reflects integrations that are actually usable.  A disconnected
+   * integration still appears in the table below (with a Reconnect chip),
+   * but the "✓ N connected" claim on the card would otherwise be a lie.
+   */
   const integrationCountByProvider = useMemo(() => {
     const map = new Map<string, number>();
     for (const i of integrations) {
+      if (i.status === "needs_reconnect") continue;
       map.set(i.provider, (map.get(i.provider) ?? 0) + 1);
     }
     return map;

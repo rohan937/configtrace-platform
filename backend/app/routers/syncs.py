@@ -62,6 +62,20 @@ def create_sync(
             ),
         )
 
+    # M59.14: Block manual Sync Now for integrations whose upstream credentials
+    # have been revoked (GitHub App uninstalled, token rotated externally,
+    # AWS keys deleted, etc.).  Running a sync would just fail again with the
+    # same auth error — the only forward path is a reconnect.
+    if integration.status == "needs_reconnect":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Integration needs to be reconnected — the upstream "
+                "credentials or installation are no longer valid. "
+                "Use the Reconnect action to provide fresh credentials."
+            ),
+        )
+
     # M59.4: Manual sync dedupe.  If a SyncRun is already pending or running
     # for this integration, refuse to enqueue another — Sync Now spam would
     # otherwise stack identical jobs and trigger redundant provider calls.

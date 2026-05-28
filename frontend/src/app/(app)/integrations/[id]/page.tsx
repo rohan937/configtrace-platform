@@ -922,6 +922,9 @@ export default function IntegrationDetailPage() {
   if (!integration) return null;
 
   const isPaused = integration.status === "paused";
+  // M59.14: upstream credentials revoked.  Sync Now is structurally blocked
+  // by the backend (HTTP 409); surface a Reconnect button in its place.
+  const needsReconnect = integration.status === "needs_reconnect";
   const providerLabel =
     integration.provider === "cloudflare"
       ? "Cloudflare DNS"
@@ -1022,23 +1025,44 @@ export default function IntegrationDetailPage() {
 
           {/* Action buttons */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => { void handleSyncNow(); }}
-              disabled={syncing || isPaused || pauseInProgress}
-              style={{
-                padding: "6px 12px",
-                borderRadius: "6px",
-                border: "1px solid #3a3d4a",
-                background: syncing ? "#1c1e26" : "#1e2030",
-                color: syncing || isPaused ? "#565b6e" : "#b0b5c4",
-                fontSize: "12px",
-                cursor: syncing || isPaused || pauseInProgress ? "not-allowed" : "pointer",
-                fontFamily: "inherit",
-              }}
-              title={isPaused ? "Resume the integration to sync" : undefined}
-            >
-              {syncing ? "Syncing…" : isPaused ? "Sync paused" : "Sync Now"}
-            </button>
+            {needsReconnect ? (
+              // M59.14: route the primary action to Reconnect, not Sync Now.
+              <button
+                onClick={() => setActiveModal("reconnect")}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #f5a623",
+                  background: "#2a2114",
+                  color: "#f5a623",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+                title="Upstream credentials are no longer valid — provide fresh credentials"
+              >
+                Reconnect
+              </button>
+            ) : (
+              <button
+                onClick={() => { void handleSyncNow(); }}
+                disabled={syncing || isPaused || pauseInProgress}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid #3a3d4a",
+                  background: syncing ? "#1c1e26" : "#1e2030",
+                  color: syncing || isPaused ? "#565b6e" : "#b0b5c4",
+                  fontSize: "12px",
+                  cursor: syncing || isPaused || pauseInProgress ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                }}
+                title={isPaused ? "Resume the integration to sync" : undefined}
+              >
+                {syncing ? "Syncing…" : isPaused ? "Sync paused" : "Sync Now"}
+              </button>
+            )}
 
             <button
               onClick={() => setActiveModal("rename")}

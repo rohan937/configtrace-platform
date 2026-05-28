@@ -922,7 +922,9 @@ def reconnect_credentials(
     integration.credential_iv = iv
 
     # Clear error status if the credential update resolves a previous failure.
-    if integration.status == "error":
+    # M59.14: clear both the legacy ``error`` status and the new
+    # ``needs_reconnect`` status when a valid set of credentials lands.
+    if integration.status in ("error", "needs_reconnect"):
         integration.status = "active"
 
     db.commit()
@@ -989,7 +991,9 @@ def reconnect_credentials_aws(
     integration.encrypted_credentials = ciphertext
     integration.credential_iv = iv
 
-    if integration.status == "error":
+    # M59.14: clear both the legacy ``error`` status and the new
+    # ``needs_reconnect`` status when a valid set of credentials lands.
+    if integration.status in ("error", "needs_reconnect"):
         integration.status = "active"
 
     db.commit()
@@ -1045,7 +1049,9 @@ def reconnect_credentials_firebase(
     integration.encrypted_credentials = ciphertext
     integration.credential_iv = iv
 
-    if integration.status == "error":
+    # M59.14: clear both the legacy ``error`` status and the new
+    # ``needs_reconnect`` status when a valid set of credentials lands.
+    if integration.status in ("error", "needs_reconnect"):
         integration.status = "active"
 
     db.commit()
@@ -1191,7 +1197,9 @@ def reconnect_credentials_supabase(
     integration.encrypted_credentials = ciphertext
     integration.credential_iv = iv
 
-    if integration.status == "error":
+    # M59.14: clear both the legacy ``error`` status and the new
+    # ``needs_reconnect`` status when a valid set of credentials lands.
+    if integration.status in ("error", "needs_reconnect"):
         integration.status = "active"
 
     db.commit()
@@ -1246,7 +1254,9 @@ def reconnect_credentials_shopify(
     integration.encrypted_credentials = ciphertext
     integration.credential_iv = iv
 
-    if integration.status == "error":
+    # M59.14: clear both the legacy ``error`` status and the new
+    # ``needs_reconnect`` status when a valid set of credentials lands.
+    if integration.status in ("error", "needs_reconnect"):
         integration.status = "active"
 
     db.commit()

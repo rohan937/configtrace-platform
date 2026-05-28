@@ -139,7 +139,15 @@ export interface SnapshotListItem {
 
 // ── Integrations ──────────────────────────────────────────────────────────────
 
-export type IntegrationStatus = "active" | "error" | "paused" | "unknown";
+// ``needs_reconnect`` (M59.14) — set automatically when the upstream provider
+// credentials are revoked / installation uninstalled / token rotated.  UI shows
+// a Reconnect affordance instead of Sync Now.
+export type IntegrationStatus =
+  | "active"
+  | "error"
+  | "paused"
+  | "needs_reconnect"
+  | "unknown";
 
 /** Request body for POST /integrations.
  *
