@@ -158,6 +158,17 @@ AWS_CLOUDWATCH_METRIC_STREAM = "aws_cloudwatch_metric_stream"
 # One per CloudWatch anomaly detector per namespace/metric — config posture; anomaly results NEVER read.
 AWS_CLOUDWATCH_ANOMALY_DETECTOR = "aws_cloudwatch_anomaly_detector"
 
+# ── M59.8 — AWS Part 1 expansion: EC2 exposure + VPC Flow Logs ────────────────
+# One per EC2 instance — metadata only; no instance memory, EBS, or userdata.
+# SECURITY: tags + metadata-options + network-interface summary only.  We
+# never store user-data, EBS contents, or IAM-instance-profile credentials.
+AWS_EC2_INSTANCE = "aws_ec2_instance"
+
+# One per VPC Flow Log configuration — metadata only.  We never store
+# captured flow-log records (which contain IP traffic data).
+AWS_VPC_FLOW_LOG = "aws_vpc_flow_log"
+
+
 # ── M44 record types — Load Balancers + WAF Config ───────────────────────────
 # One per ELBv2 load balancer (Application, Network, Gateway) — metadata only.
 AWS_ELBV2_LOAD_BALANCER = "aws_elbv2_load_balancer"
@@ -293,4 +304,7 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     AWS_CLOUDWATCH_SUBSCRIPTION_FILTER,
     AWS_CLOUDWATCH_METRIC_STREAM,
     AWS_CLOUDWATCH_ANOMALY_DETECTOR,
+    # M59.8 — Part 1 expansion
+    AWS_EC2_INSTANCE,
+    AWS_VPC_FLOW_LOG,
 })

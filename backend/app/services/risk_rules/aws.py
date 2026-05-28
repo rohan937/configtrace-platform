@@ -126,6 +126,9 @@ from app.connectors.aws_schema import (
     AWS_CLOUDWATCH_SUBSCRIPTION_FILTER,
     AWS_CLOUDWATCH_METRIC_STREAM,
     AWS_CLOUDWATCH_ANOMALY_DETECTOR,
+    # M59.8 Part 1
+    AWS_EC2_INSTANCE,
+    AWS_VPC_FLOW_LOG,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -7536,6 +7539,12 @@ def classify_aws_change(change: object) -> tuple[str, str]:
     if record_type == AWS_CLOUDWATCH_ANOMALY_DETECTOR:
         return _classify_cloudwatch_anomaly_detector_change(change)
 
+    # ── M59.8 Part 1 — EC2 instance + VPC Flow Logs ──────────────────────────
+    if record_type == AWS_EC2_INSTANCE:
+        return _classify_ec2_instance_change(change)
+    if record_type == AWS_VPC_FLOW_LOG:
+        return _classify_vpc_flow_log_change(change)
+
     # Unknown AWS record type — conservative default
     return (
         "low",
@@ -8727,4 +8736,357 @@ def _classify_cloudwatch_anomaly_detector_change(change: object) -> tuple[str, s
 
     return "low", (
         f"CloudWatch anomaly detector '{name}' configuration changed (field: {fp or 'unknown'})."
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.8 Part 1 — EC2 instance exposure context
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Safe stored fields (one record per EC2 instance):
+#   record_id                 — i-xxxxxxxx
+#   instance_type             — e.g. "t3.medium"
+#   state                     — "running" / "stopped" / etc.
+#   vpc_id, subnet_id
+#   public_ip_address         — string or None  (presence is the signal)
+#   public_dns_name           — string or None
+#   in_public_subnet          — bool (heuristic from subnet's map_public_ip)
+#   imds_v2_required          — bool  (false = IMDSv1 still allowed)
+#   imds_http_tokens          — "required" / "optional" / "disabled"
+#   imds_http_endpoint        — "enabled" / "disabled"
+#   source_dest_check         — bool
+#   tags                      — small dict (we only look at keys/values for
+#                               sensitivity flags; full tag map is safe text)
+#   sensitive_tag_match       — bool — heuristic from tag matching prod/db/admin
+#
+# SECURITY: user-data, EBS contents, EIP allocation history, IAM-instance-
+# profile credentials, and SSM-Session data are NEVER fetched or stored.
+
+
+# Tag-key/value substrings that indicate an instance is production / sensitive.
+_EC2_SENSITIVE_TAG_PATTERNS: tuple[str, ...] = (
+    "prod", "production", "live",
+    "db", "database",
+    "admin", "internal",
+    "bastion", "jumphost", "jump-host",
+)
+
+
+def _ec2_is_sensitive(pm: dict, new_value: object = None, prev_value: object = None) -> bool:
+    """Detect whether the EC2 instance is production / sensitive.
+
+    Looks first at ``sensitive_tag_match`` (the connector's pre-computed
+    flag), then falls back to scanning ``tags`` / record_id / instance name
+    for known patterns.  Safe on missing fields.
+    """
+    if bool(pm.get("sensitive_tag_match", False)):
+        return True
+    haystack_parts: list[str] = []
+    tags = pm.get("tags")
+    if isinstance(tags, dict):
+        for k, v in tags.items():
+            haystack_parts.append(str(k))
+            haystack_parts.append(str(v))
+    elif isinstance(tags, list):
+        for t in tags:
+            if isinstance(t, dict):
+                haystack_parts.append(str(t.get("Key") or t.get("key") or ""))
+                haystack_parts.append(str(t.get("Value") or t.get("value") or ""))
+    name = pm.get("name") or pm.get("record_id") or ""
+    haystack_parts.append(str(name))
+    haystack = " ".join(haystack_parts).lower()
+    return any(p in haystack for p in _EC2_SENSITIVE_TAG_PATTERNS)
+
+
+def _classify_ec2_instance_change(change: object) -> tuple[str, str]:
+    """Risk classifier for aws_ec2_instance records.
+
+    Wording policy: "may expose" / "could affect" — never "definitely
+    reachable", because publicly-reachable status truly requires the
+    combination of:
+      * a public IP address
+      * a public subnet (route to IGW)
+      * a security group rule that allows the relevant port from 0.0.0.0/0
+    The instance record alone proves only the first two.  Confirming
+    reachability requires correlating with the SG and route-table records
+    already monitored separately.
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    instance_id = str(pm.get("record_id") or pm.get("instance_id") or "unknown")
+
+    is_sensitive = _ec2_is_sensitive(pm)
+    in_public_subnet = bool(pm.get("in_public_subnet", False))
+
+    # ── Public IP toggled ────────────────────────────────────────────────────
+    if fp == "public_ip_address":
+        # None → assigned
+        if (pv in (None, "", "null")) and nv:
+            if is_sensitive and in_public_subnet:
+                return (
+                    "critical",
+                    f"EC2 instance {instance_id} was assigned a public IP and "
+                    "is in a public subnet.  Combined with its sensitive tags, "
+                    "this may expose a production resource to the internet — "
+                    "verify the security group and that the exposure is "
+                    "intentional.",
+                )
+            if is_sensitive:
+                return (
+                    "high",
+                    f"EC2 instance {instance_id} (sensitive tags) was assigned "
+                    "a public IP.  This may broaden the exposure surface; "
+                    "verify the security group and subnet routing.",
+                )
+            if in_public_subnet:
+                return (
+                    "high",
+                    f"EC2 instance {instance_id} was assigned a public IP in a "
+                    "public subnet.  This may expose the instance to the "
+                    "internet — verify the security group.",
+                )
+            return (
+                "medium",
+                f"EC2 instance {instance_id} was assigned a public IP. "
+                "Verify whether internet exposure is intentional.",
+            )
+        # assigned → None  (exposure reducing)
+        if pv and (nv in (None, "", "null")):
+            return (
+                "low",
+                f"EC2 instance {instance_id} no longer has a public IP. "
+                "Internet exposure of this instance is reduced.",
+            )
+        # changed
+        return (
+            "medium",
+            f"EC2 instance {instance_id} public IP changed.  Verify the "
+            "new address is intentional.",
+        )
+
+    # ── IMDSv2 / metadata-options ────────────────────────────────────────────
+    if fp == "imds_v2_required":
+        if pv is True and nv is False:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"EC2 instance {instance_id} no longer requires IMDSv2.  "
+                "Workloads can request instance metadata without the session-"
+                "token handshake, which may allow SSRF-style metadata exfil "
+                "if a vulnerable application is co-located.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"EC2 instance {instance_id} now requires IMDSv2 — instance-"
+                "metadata posture improved.",
+            )
+
+    if fp == "imds_http_tokens":
+        prev_s = str(pv or "").lower()
+        new_s = str(nv or "").lower()
+        if prev_s == "required" and new_s in ("optional", "disabled"):
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"EC2 instance {instance_id} IMDS http_tokens lowered from "
+                f"'required' to '{new_s}'.  IMDSv1 may now be used.",
+            )
+        if new_s == "required":
+            return (
+                "low",
+                f"EC2 instance {instance_id} IMDS http_tokens raised to "
+                "'required' — IMDSv2-only enforcement on.",
+            )
+
+    if fp == "imds_http_endpoint":
+        if str(nv or "").lower() == "disabled":
+            return (
+                "medium",
+                f"EC2 instance {instance_id} IMDS endpoint was disabled — "
+                "workloads on this instance can no longer read instance "
+                "metadata.",
+            )
+
+    # ── source/dest check (NAT-like behaviour signal) ───────────────────────
+    if fp == "source_dest_check":
+        if pv is True and nv is False:
+            return (
+                "medium",
+                f"EC2 instance {instance_id} source/destination check was "
+                "disabled.  The instance may now forward traffic for other "
+                "hosts (typical for NAT/firewall appliances).  Verify the "
+                "change is intentional.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"EC2 instance {instance_id} source/destination check was "
+                "re-enabled.",
+            )
+
+    # ── In-public-subnet flag flipped ───────────────────────────────────────
+    if fp == "in_public_subnet":
+        if pv is False and nv is True:
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"EC2 instance {instance_id} moved to a public subnet.  "
+                "Combined with a security group that allows inbound traffic, "
+                "the instance may now be reachable from the internet.",
+            )
+        if nv is False:
+            return (
+                "low",
+                f"EC2 instance {instance_id} moved to a private subnet.",
+            )
+
+    # ── Removed / added ─────────────────────────────────────────────────────
+    if ct == "removed":
+        return (
+            "low",
+            f"EC2 instance {instance_id} is no longer visible to monitoring "
+            "(terminated or filtered).",
+        )
+    if ct == "added":
+        nv_dict = nv if isinstance(nv, dict) else {}
+        if nv_dict.get("public_ip_address"):
+            sev = "high" if is_sensitive else "medium"
+            return (
+                sev,
+                f"EC2 instance {instance_id} appeared with a public IP "
+                f"({'sensitive tags' if is_sensitive else 'standard tags'}). "
+                "Verify exposure is intentional.",
+            )
+        return (
+            "low",
+            f"EC2 instance {instance_id} appeared in monitoring.",
+        )
+
+    # ── Tag changes (sensitivity escalation) ────────────────────────────────
+    if fp == "tags":
+        return (
+            "medium" if is_sensitive else "low",
+            f"EC2 instance {instance_id} tags changed.",
+        )
+
+    return (
+        "low",
+        f"EC2 instance {instance_id} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.8 Part 1 — VPC Flow Logs visibility
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Safe stored fields (one record per Flow Log configuration):
+#   record_id                — fl-xxxx
+#   resource_id              — vpc-* | subnet-* | eni-*
+#   resource_type            — "VPC" | "Subnet" | "NetworkInterface"
+#   log_destination_type     — "cloud-watch-logs" | "s3" | "kinesis-data-firehose"
+#   log_group_name_or_bucket — opaque destination string (we never read
+#                              the actual log contents)
+#   traffic_type             — "ALL" | "ACCEPT" | "REJECT"
+#   flow_log_status          — "ACTIVE" | "INACTIVE"
+#   max_aggregation_interval — int
+#   targets_production       — bool (heuristic from VPC tags)
+#
+# SECURITY: actual flow-log RECORDS (the captured IP-traffic data itself)
+# are NEVER fetched or stored.
+
+
+def _flow_log_resource_label(pm: dict) -> str:
+    rid = pm.get("record_id") or pm.get("flow_log_id") or "unknown"
+    res = pm.get("resource_id") or ""
+    if res:
+        return f"flow log {rid} (on {res})"
+    return f"flow log {rid}"
+
+
+def _classify_vpc_flow_log_change(change: object) -> tuple[str, str]:
+    """Risk classifier for aws_vpc_flow_log records."""
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    label = _flow_log_resource_label(pm)
+    targets_prod = bool(pm.get("targets_production", False))
+
+    # ── Removed entirely ─────────────────────────────────────────────────────
+    if ct == "removed":
+        sev = "high" if targets_prod else "medium"
+        return (
+            sev,
+            f"VPC {label} was removed.  Network traffic to this VPC/subnet/ENI "
+            "is no longer captured — incident response and forensic visibility "
+            "may be reduced.",
+        )
+
+    if ct == "added":
+        return (
+            "low",
+            f"A new VPC {label} was configured — network visibility expanded.",
+        )
+
+    # ── Status toggled ───────────────────────────────────────────────────────
+    if fp == "flow_log_status":
+        new_s = str(nv or "").upper()
+        if new_s == "INACTIVE":
+            sev = "high" if targets_prod else "medium"
+            return (
+                sev,
+                f"VPC {label} status changed to INACTIVE.  Traffic capture has "
+                "stopped — verify the change is intentional.",
+            )
+        if new_s == "ACTIVE":
+            return (
+                "low",
+                f"VPC {label} status changed to ACTIVE — capture resumed.",
+            )
+
+    # ── Traffic-type narrowing ──────────────────────────────────────────────
+    if fp == "traffic_type":
+        prev_s = str(pv or "").upper()
+        new_s = str(nv or "").upper()
+        if prev_s == "ALL" and new_s in ("ACCEPT", "REJECT"):
+            sev = "medium"
+            return (
+                sev,
+                f"VPC {label} traffic_type was narrowed from ALL to {new_s}. "
+                "The other side of the traffic flow is no longer captured.",
+            )
+        if prev_s in ("ACCEPT", "REJECT") and new_s == "ALL":
+            return (
+                "low",
+                f"VPC {label} traffic_type was broadened to ALL — "
+                "capture coverage improved.",
+            )
+
+    # ── Destination changed ─────────────────────────────────────────────────
+    if fp in ("log_destination_type", "log_group_name_or_bucket",
+              "log_destination"):
+        return (
+            "medium",
+            f"VPC {label} log destination changed.  Verify the new destination "
+            "is owned by your team and that retention/access policies are "
+            "configured appropriately.",
+        )
+
+    if fp == "max_aggregation_interval":
+        return (
+            "low",
+            f"VPC {label} aggregation interval changed; capture continues.",
+        )
+
+    return (
+        "low",
+        f"VPC {label} configuration changed ({fp or 'unknown field'}).",
     )
