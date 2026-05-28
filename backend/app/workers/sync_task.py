@@ -396,13 +396,22 @@ def sync_integration(
                     db=db,
                 )
                 db.commit()
+                # M59.18: log push_sent and skipped_no_settings explicitly.
+                # Before M59.18 the line read "slack_sent=0 webhook_sent=0
+                # failed=0" with no way to tell whether push had fired or
+                # whether the whole fanout had silently skipped because the
+                # integration had no workspace_id.  That made the underlying
+                # workspace_id=NULL bug invisible in operator logs.
                 logger.info(
                     "sync_integration: notification dispatch  sync_run_id=%s  "
-                    "slack_sent=%d webhook_sent=%d failed=%d",
+                    "slack_sent=%d webhook_sent=%d push_sent=%d "
+                    "skipped_no_settings=%s failed=%d",
                     sync_run_id,
-                    notif_result["slack_sent"],
-                    notif_result["webhook_sent"],
-                    notif_result["failed"],
+                    notif_result.get("slack_sent", 0),
+                    notif_result.get("webhook_sent", 0),
+                    notif_result.get("push_sent", 0),
+                    notif_result.get("skipped_no_settings", False),
+                    notif_result.get("failed", 0),
                 )
             except Exception:
                 # Defence in depth: notification dispatch must never fail sync.

@@ -553,11 +553,50 @@ def dispatch_notifications_for_sync(
     }
 
     # ── Resolve workspace_id ───────────────────────────────────────────────────
+    # M59.18: GitHub App integrations created before M59.18 have
+    # ``workspace_id = NULL`` because the App-creator was the one provider
+    # path that didn't pass it through.  Fall back to the user's default
+    # workspace so production fanout works for those legacy rows without
+    # requiring a manual backfill, and best-effort persist the discovered
+    # workspace_id so subsequent syncs don't have to redo the lookup.
     workspace_id = integration.workspace_id
     if workspace_id is None:
-        # Integration not yet attached to a workspace — skip silently.
-        result["skipped_no_settings"] = True
-        return result
+        try:
+            from app.services.workspace_service import get_default_workspace_for_user
+            _fallback_ws = get_default_workspace_for_user(integration.user_id, db)
+        except Exception:
+            logger.exception(
+                "notifications: workspace fallback lookup failed  user=%s  "
+                "sync_run=%s",
+                integration.user_id, sync_run_id,
+            )
+            _fallback_ws = None
+        if _fallback_ws is None:
+            logger.info(
+                "notifications: dispatch skipped — integration has no "
+                "workspace_id and user has no workspace  integration=%s  "
+                "user=%s  sync_run=%s",
+                integration.id, integration.user_id, sync_run_id,
+            )
+            result["skipped_no_settings"] = True
+            return result
+        workspace_id = _fallback_ws.id
+        logger.info(
+            "notifications: backfilled workspace_id on integration "
+            "(was NULL)  integration=%s  workspace=%s  sync_run=%s",
+            integration.id, workspace_id, sync_run_id,
+        )
+        try:
+            integration.workspace_id = workspace_id
+            db.add(integration)
+            db.flush()
+        except Exception:
+            # Backfill is best-effort — never let it abort dispatch.
+            logger.exception(
+                "notifications: persisting backfilled workspace_id failed — "
+                "continuing with in-memory value  integration=%s",
+                integration.id,
+            )
 
     # ── Load settings ──────────────────────────────────────────────────────────
     try:
@@ -574,6 +613,12 @@ def dispatch_notifications_for_sync(
         return result
 
     if settings_row is None:
+        # M59.18: surface this skip in logs — previously silent.
+        logger.info(
+            "notifications: dispatch skipped — workspace has no notification "
+            "settings row  workspace=%s  sync_run=%s",
+            workspace_id, sync_run_id,
+        )
         result["skipped_no_settings"] = True
         return result
 

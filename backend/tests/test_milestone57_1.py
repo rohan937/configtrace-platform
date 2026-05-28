@@ -637,20 +637,31 @@ class TestBuildSettingsResponse:
 
 
 class TestDispatchNotificationsForSync:
-    def test_skips_when_workspace_id_none(self):
-        """Returns skipped_no_settings=True when integration.workspace_id is None."""
+    def test_skips_when_workspace_id_none_and_no_fallback(self):
+        """M59.18: when integration.workspace_id is None, the dispatcher
+        falls back to the user's default workspace.  If that lookup ALSO
+        returns None (no workspace exists for the user), we still skip
+        cleanly with ``skipped_no_settings=True`` — but we log the reason
+        at INFO instead of doing a silent no-op (the old behaviour).
+
+        This test pins the no-fallback branch.  The positive fallback case
+        is covered by ``test_milestone59_18_alert_fanout.py``."""
         from app.services.notification_service import dispatch_notifications_for_sync
 
         integration = _make_mock_integration()
         integration.workspace_id = None
         db = MagicMock()
 
-        result = dispatch_notifications_for_sync(
-            changes=[_make_mock_change()],
-            integration=integration,
-            sync_run_id=uuid.uuid4(),
-            db=db,
-        )
+        with patch(
+            "app.services.workspace_service.get_default_workspace_for_user",
+            return_value=None,
+        ):
+            result = dispatch_notifications_for_sync(
+                changes=[_make_mock_change()],
+                integration=integration,
+                sync_run_id=uuid.uuid4(),
+                db=db,
+            )
         assert result["skipped_no_settings"] is True
         assert result["slack_sent"] == 0
 

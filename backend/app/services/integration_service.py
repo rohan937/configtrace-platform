@@ -1267,6 +1267,7 @@ def reconnect_credentials_shopify(
 def create_github_app_integration(
     *,
     user_id: uuid.UUID,
+    workspace_id: uuid.UUID | None = None,
     display_name: str,
     credentials: dict,
     scheduled_sync_enabled: bool = False,
@@ -1339,6 +1340,13 @@ def create_github_app_integration(
             existing_integration.credential_iv = iv
             existing_integration.status = "active"
             existing_integration.consecutive_failure_count = 0
+            # M59.18: backfill workspace_id on legacy rows that pre-date the
+            # workspace_id fix.  Without this, reconnecting a row that was
+            # created during the broken window keeps Slack/push silently
+            # skipped on every future sync.  Never overwrite an existing
+            # workspace assignment.
+            if existing_integration.workspace_id is None and workspace_id is not None:
+                existing_integration.workspace_id = workspace_id
 
             # Make sure the resource metadata is correct for App-based auth so
             # ``get_connection_method()`` keeps returning ``"github_app"``.
@@ -1367,8 +1375,16 @@ def create_github_app_integration(
     ciphertext, iv = encrypt_credentials(credentials)
 
     # ── Create Integration row ────────────────────────────────────────────────
+    # M59.18: persist workspace_id on the integration row so the production
+    # notification fanout (``dispatch_notifications_for_sync``) can resolve
+    # the workspace's Slack / webhook / push settings.  Every other provider
+    # creator in this module already sets this column; before M59.18 the
+    # GitHub App path was the only one that didn't, which silently disabled
+    # Slack and browser-push for any GitHub App integration even when the
+    # workspace had those channels configured.
     integration = Integration(
         user_id=user_id,
+        workspace_id=workspace_id,
         provider="github",
         display_name=display_name,
         encrypted_credentials=ciphertext,

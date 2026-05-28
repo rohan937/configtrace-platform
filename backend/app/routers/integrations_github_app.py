@@ -369,9 +369,21 @@ def complete_github_app_install(
         "repo_name":       body.repo_name,
     }
     user_settings = get_or_create_settings(current_user.id, db)
+
+    # M59.18: pass the user's default workspace through to the service so the
+    # new Integration row has a workspace_id and the production Slack/push
+    # fanout can find this workspace's notification settings.  Before M59.18
+    # this argument was omitted and every GitHub App integration was created
+    # with workspace_id=NULL, silently disabling Slack and browser-push on
+    # every subsequent sync.
+    from app.services.workspace_service import get_default_workspace_for_user
+    _default_ws = get_default_workspace_for_user(current_user.id, db)
+    _workspace_id = _default_ws.id if _default_ws is not None else None
+
     try:
         integration = integration_service.create_github_app_integration(
             user_id=current_user.id,
+            workspace_id=_workspace_id,
             display_name=body.display_name,
             credentials=credentials,
             scheduled_sync_enabled=user_settings.default_sync_enabled,
