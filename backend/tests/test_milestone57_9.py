@@ -59,9 +59,24 @@ class TestGitHubSchemaM579:
         from app.connectors.github_schema import GITHUB_RECORD_TYPES
         assert "github_environment_protection" in GITHUB_RECORD_TYPES
 
-    def test_frozenset_has_eight_types(self):
+    def test_frozenset_has_expected_types(self):
+        # M59.6 expanded GITHUB_RECORD_TYPES from 8 → 15 by adding the
+        # extras surfaces (ruleset, codeowners, workflow_file, oidc_trust,
+        # collaborator, app_installation, security_features).  The original
+        # eight must still be present; the new seven are additive.
         from app.connectors.github_schema import GITHUB_RECORD_TYPES
-        assert len(GITHUB_RECORD_TYPES) == 8
+        assert len(GITHUB_RECORD_TYPES) == 15
+        for legacy in (
+            "github_repo_settings",
+            "github_branch_protection",
+            "github_actions_secret",
+            "github_actions_variable",
+            "github_webhook",
+            "github_actions_permissions",
+            "github_deploy_key",
+            "github_environment_protection",
+        ):
+            assert legacy in GITHUB_RECORD_TYPES
 
 
 class TestVercelSchemaM579:

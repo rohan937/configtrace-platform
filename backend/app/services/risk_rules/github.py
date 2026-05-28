@@ -156,6 +156,22 @@ def classify_github_change(change: Any) -> tuple[str, str]:
             change_type, field_path, prev_value, new_value, record_name
         )
 
+    # ── M59.6 — Additional GitHub surfaces ────────────────────────────────────
+    if record_type == "github_ruleset":
+        return _classify_ruleset(pm, change_type, field_path, prev_value, new_value)
+    if record_type == "github_codeowners":
+        return _classify_codeowners(pm, change_type, field_path, prev_value, new_value)
+    if record_type == "github_workflow_file":
+        return _classify_workflow_file(pm, change_type, field_path, prev_value, new_value)
+    if record_type == "github_oidc_trust":
+        return _classify_oidc_trust(pm, change_type, field_path, prev_value, new_value)
+    if record_type == "github_collaborator":
+        return _classify_collaborator(pm, change_type, field_path, prev_value, new_value)
+    if record_type == "github_app_installation":
+        return _classify_app_installation(pm, change_type, field_path, prev_value, new_value)
+    if record_type == "github_security_features":
+        return _classify_security_features(pm, change_type, field_path, prev_value, new_value)
+
     # Unknown GitHub record type — safe low-severity fallback.
     return (
         "low",
@@ -938,4 +954,803 @@ def _classify_environment_protection(
     return (
         "low",
         f"{env_label} protection setting '{field_path}' changed.",
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.6 — Sub-classifiers for new GitHub surfaces
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def _str(v: Any) -> str:
+    return str(v) if v is not None else ""
+
+
+def _to_int(v: Any) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _to_bool(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    s = _str(v).strip().lower()
+    return s in ("true", "1", "on", "yes")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A. github_ruleset
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_ruleset(
+    pm: dict, change_type: str, field_path: str, prev_value: Any, new_value: Any
+) -> tuple[str, str]:
+    name = _str(pm.get("name") or pm.get("record_id"))
+    targets_prot = bool(pm.get("targets_protected_branch", False))
+
+    # Removed / added.
+    if change_type == "removed":
+        sev = "critical" if targets_prot else "high"
+        return (
+            sev,
+            f"Ruleset '{name}' was removed.  Branches/tags that were covered "
+            "by this ruleset are no longer enforced — this may weaken "
+            "production release gates and code-review controls.",
+        )
+
+    if change_type == "added":
+        return (
+            "low",
+            f"A new ruleset '{name}' was added.  Verify the branch/tag "
+            "patterns and bypass actors match your team's policy.",
+        )
+
+    # Enforcement toggled.
+    if change_type == "modified" and field_path == "enforcement":
+        prev_s = _str(prev_value).lower()
+        new_s = _str(new_value).lower()
+        if prev_s == "active" and new_s == "disabled":
+            sev = "critical" if targets_prot else "high"
+            return (
+                sev,
+                f"Ruleset '{name}' was disabled.  Branch/tag protections that "
+                "were previously enforced no longer apply.",
+            )
+        if prev_s == "active" and new_s == "evaluate":
+            return (
+                "high",
+                f"Ruleset '{name}' was moved to 'evaluate' mode — violations "
+                "are logged but no longer block merges/pushes.",
+            )
+        if new_s == "active":
+            return (
+                "low",
+                f"Ruleset '{name}' enforcement was enabled.",
+            )
+
+    # Bypass actors.
+    if change_type == "modified" and field_path == "bypass_actor_count":
+        prev_n = _to_int(prev_value)
+        new_n = _to_int(new_value)
+        if new_n > prev_n:
+            sev = "critical" if targets_prot else "high"
+            return (
+                sev,
+                f"Ruleset '{name}' bypass-actor count increased from {prev_n} "
+                f"to {new_n}.  More actors can now bypass branch/tag "
+                "protections — verify each bypass actor is intentional.",
+            )
+        if new_n < prev_n:
+            return (
+                "low",
+                f"Ruleset '{name}' bypass-actor count decreased from {prev_n} "
+                f"to {new_n}.",
+            )
+
+    # Required status checks.
+    if change_type == "modified" and field_path == "required_status_checks_count":
+        prev_n = _to_int(prev_value)
+        new_n = _to_int(new_value)
+        if new_n < prev_n:
+            return (
+                "high",
+                f"Ruleset '{name}' required-status-check count was lowered "
+                f"from {prev_n} to {new_n}.  Fewer CI checks must pass before "
+                "merge, which may weaken release gates.",
+            )
+        return (
+            "low",
+            f"Ruleset '{name}' required-status-check count increased from "
+            f"{prev_n} to {new_n}.",
+        )
+
+    # Required PR reviews toggled.
+    if change_type == "modified" and field_path == "required_pr_reviews_required":
+        if _to_bool(new_value) is False:
+            return (
+                "high",
+                f"Ruleset '{name}' no longer requires pull request reviews. "
+                "Changes can be merged without peer approval.",
+            )
+        return (
+            "low",
+            f"Ruleset '{name}' now requires pull request reviews.",
+        )
+
+    # Force pushes / deletions allowed.
+    if change_type == "modified" and field_path == "restrict_force_pushes":
+        if _to_bool(new_value) is False:
+            sev = "critical" if targets_prot else "high"
+            return (
+                sev,
+                f"Ruleset '{name}' no longer restricts force-pushes.  History "
+                "rewrites are now permitted on covered branches.",
+            )
+        return (
+            "low",
+            f"Ruleset '{name}' now restricts force-pushes.",
+        )
+
+    if change_type == "modified" and field_path == "restrict_deletions":
+        if _to_bool(new_value) is False:
+            sev = "critical" if targets_prot else "high"
+            return (
+                sev,
+                f"Ruleset '{name}' no longer restricts deletions.  Covered "
+                "branches/tags can now be deleted.",
+            )
+        return (
+            "low",
+            f"Ruleset '{name}' now restricts deletions.",
+        )
+
+    # Branch patterns broadened.
+    if change_type == "modified" and field_path == "branch_patterns_count":
+        prev_n = _to_int(prev_value)
+        new_n = _to_int(new_value)
+        if new_n > prev_n:
+            return (
+                "medium",
+                f"Ruleset '{name}' branch-pattern count increased from "
+                f"{prev_n} to {new_n}.  Verify the new patterns are intentional.",
+            )
+
+    # Signed commits.
+    if change_type == "modified" and field_path == "require_signed_commits":
+        if _to_bool(new_value) is False:
+            return (
+                "high",
+                f"Ruleset '{name}' no longer requires signed commits.",
+            )
+        return ("low", f"Ruleset '{name}' now requires signed commits.")
+
+    return (
+        "low",
+        f"Ruleset '{name}' configuration changed; no specific risk pattern "
+        "matched.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B. github_codeowners
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# Critical-path labels we expect to see covered by CODEOWNERS rules.
+_CRITICAL_CODEOWNER_PATHS: tuple[str, ...] = (
+    "workflows", "infra", "terraform", "auth", "billing", "security", "config",
+)
+
+
+def _classify_codeowners(
+    pm: dict, change_type: str, field_path: str, prev_value: Any, new_value: Any
+) -> tuple[str, str]:
+    if change_type == "removed":
+        return (
+            "high",
+            "The CODEOWNERS file was removed.  Pull requests that touched "
+            "sensitive paths no longer require designated reviewers — this "
+            "may weaken security and production review gates.",
+        )
+
+    if change_type == "added":
+        return (
+            "low",
+            "A CODEOWNERS file was added.  Designated reviewers now apply to "
+            "matching paths.",
+        )
+
+    # exists toggled.
+    if change_type == "modified" and field_path == "exists":
+        if _to_bool(new_value) is False:
+            return (
+                "high",
+                "CODEOWNERS was effectively removed (exists=False).  Critical "
+                "paths may no longer have designated reviewers.",
+            )
+        return (
+            "low",
+            "CODEOWNERS is now present.  Designated reviewers apply.",
+        )
+
+    # critical_paths_with_owners — most security-relevant signal.
+    if change_type == "modified" and field_path == "critical_paths_with_owners":
+        prev_d = prev_value if isinstance(prev_value, dict) else {}
+        new_d = new_value if isinstance(new_value, dict) else {}
+        lost: list[str] = []
+        for path in _CRITICAL_CODEOWNER_PATHS:
+            if bool(prev_d.get(path, False)) and not bool(new_d.get(path, False)):
+                lost.append(path)
+        if lost:
+            return (
+                "high",
+                "CODEOWNERS lost coverage for critical paths "
+                f"({', '.join(sorted(lost))}).  Changes to those paths may "
+                "merge without the previously-designated reviewers.",
+            )
+        # Coverage added?
+        gained: list[str] = []
+        for path in _CRITICAL_CODEOWNER_PATHS:
+            if not bool(prev_d.get(path, False)) and bool(new_d.get(path, False)):
+                gained.append(path)
+        if gained:
+            return (
+                "low",
+                "CODEOWNERS now covers additional critical paths "
+                f"({', '.join(sorted(gained))}).",
+            )
+        return ("medium", "CODEOWNERS critical-path coverage map was modified.")
+
+    if change_type == "modified" and field_path == "wildcard_owner_present":
+        if _to_bool(new_value) is False:
+            return (
+                "medium",
+                "CODEOWNERS no longer has a wildcard owner.  PRs that don't "
+                "match any specific rule will fall through to the default "
+                "review process.",
+            )
+        return (
+            "low",
+            "CODEOWNERS now has a wildcard owner.",
+        )
+
+    if change_type == "modified" and field_path == "content_hash":
+        return (
+            "medium",
+            "CODEOWNERS content changed.  Review the diff to confirm "
+            "designated reviewers for sensitive paths are still correct.",
+        )
+
+    if change_type == "modified" and field_path == "rule_count":
+        prev_n = _to_int(prev_value)
+        new_n = _to_int(new_value)
+        if new_n < prev_n:
+            return (
+                "medium",
+                f"CODEOWNERS rule count decreased from {prev_n} to {new_n} — "
+                "some path patterns may no longer have designated reviewers.",
+            )
+        return (
+            "low",
+            f"CODEOWNERS rule count increased from {prev_n} to {new_n}.",
+        )
+
+    return ("low", "CODEOWNERS metadata changed; no specific risk pattern matched.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. github_workflow_file
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_workflow_file(
+    pm: dict, change_type: str, field_path: str, prev_value: Any, new_value: Any
+) -> tuple[str, str]:
+    path = _str(pm.get("path") or pm.get("record_id"))
+    is_deploy = bool(pm.get("is_deploy_workflow", False))
+
+    if change_type == "added":
+        # New workflow — review pull_request_target / permissions.
+        if bool(pm.get("has_pull_request_target")):
+            return (
+                "high",
+                f"A new workflow '{path}' was added that uses "
+                "'pull_request_target'.  This trigger runs with secrets in "
+                "the context of the base repository — verify it does not "
+                "check out untrusted code from forks.",
+            )
+        return (
+            "medium",
+            f"A new workflow '{path}' was added.  Review its permissions "
+            "and triggers.",
+        )
+
+    if change_type == "removed":
+        sev = "high" if is_deploy else "medium"
+        return (
+            sev,
+            f"Workflow '{path}' was removed.  Any automation it provided "
+            "(including deploy or required-check jobs) no longer runs.",
+        )
+
+    if change_type == "modified" and field_path == "permissions_summary":
+        new_s = _str(new_value).lower()
+        prev_s = _str(prev_value).lower()
+        if "write-all" in new_s and "write-all" not in prev_s:
+            sev = "critical" if is_deploy else "high"
+            return (
+                sev,
+                f"Workflow '{path}' permissions were broadened to 'write-all'. "
+                "Jobs in this workflow can now modify any repository resource — "
+                "this may allow privilege escalation.",
+            )
+        # contents/write or actions/write newly added.
+        if ("contents:write" in new_s and "contents:write" not in prev_s) or \
+           ("actions:write" in new_s and "actions:write" not in prev_s):
+            sev = "critical" if is_deploy else "high"
+            return (
+                sev,
+                f"Workflow '{path}' gained write access "
+                "(contents:write or actions:write).  Verify the new permission "
+                "is required and not exposed to untrusted triggers.",
+            )
+        # Tightened.
+        if "write-all" in prev_s and "write-all" not in new_s:
+            return (
+                "low",
+                f"Workflow '{path}' permissions tightened away from 'write-all'.",
+            )
+        return (
+            "medium",
+            f"Workflow '{path}' permissions changed.  Review the new scope.",
+        )
+
+    if change_type == "modified" and field_path == "has_pull_request_target":
+        if _to_bool(new_value) and not _to_bool(prev_value):
+            return (
+                "high",
+                f"Workflow '{path}' now uses 'pull_request_target'.  This "
+                "trigger runs with secrets in the context of the base "
+                "repository — verify it does not check out untrusted code.",
+            )
+        return (
+            "low",
+            f"Workflow '{path}' no longer uses 'pull_request_target'.",
+        )
+
+    if change_type == "modified" and field_path == "enabled":
+        if _to_bool(new_value) is False:
+            sev = "high" if is_deploy else "medium"
+            return (
+                sev,
+                f"Workflow '{path}' was disabled.  The jobs it defines no "
+                "longer run.",
+            )
+        return (
+            "low",
+            f"Workflow '{path}' was re-enabled.",
+        )
+
+    if change_type == "modified" and field_path == "content_hash":
+        sev = "high" if is_deploy else "medium"
+        return (
+            sev,
+            f"Workflow '{path}' content changed.  Review the diff to verify "
+            "no risky steps (write permissions, untrusted checkout, broadened "
+            "triggers) were introduced.",
+        )
+
+    if change_type == "modified" and field_path == "triggers_summary":
+        new_s = _str(new_value).lower()
+        if "pull_request_target" in new_s:
+            return (
+                "high",
+                f"Workflow '{path}' triggers now include 'pull_request_target'. "
+                "Verify the workflow does not check out untrusted code.",
+            )
+        if "schedule" in new_s and "schedule" not in _str(prev_value).lower():
+            return (
+                "medium",
+                f"Workflow '{path}' now runs on a schedule.  Verify the cron "
+                "expression and permission scope.",
+            )
+        return (
+            "medium",
+            f"Workflow '{path}' trigger summary changed.",
+        )
+
+    if change_type == "modified" and field_path == "secret_reference_count":
+        prev_n = _to_int(prev_value)
+        new_n = _to_int(new_value)
+        if new_n > prev_n:
+            return (
+                "medium",
+                f"Workflow '{path}' references {new_n} secrets (was {prev_n}). "
+                "Verify each new secret reference is restricted to trusted "
+                "branches/environments.",
+            )
+
+    return (
+        "low",
+        f"Workflow '{path}' metadata changed; no specific risk pattern matched.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. github_oidc_trust
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_oidc_trust(
+    pm: dict, change_type: str, field_path: str, prev_value: Any, new_value: Any
+) -> tuple[str, str]:
+    cloud = _str(pm.get("cloud_provider", "cloud")).lower() or "cloud"
+    aud = _str(pm.get("audience"))
+
+    if change_type == "removed":
+        return (
+            "medium",
+            f"An OIDC trust binding for {cloud} was removed.  Workflows that "
+            "relied on it will no longer be able to assume the bound role.",
+        )
+
+    if change_type == "added":
+        return (
+            "medium",
+            f"A new OIDC trust binding for {cloud} was added (audience "
+            f"'{aud or 'unknown'}').  Verify the subject pattern restricts "
+            "to the exact repo/branch/environment.",
+        )
+
+    # Wildcards broaden trust.
+    if change_type == "modified" and field_path == "repo_wildcard":
+        if _to_bool(new_value):
+            return (
+                "critical",
+                f"OIDC trust for {cloud} was broadened to a repository "
+                "wildcard.  Any workflow run in matching repos can now "
+                "assume the bound role — restrict the sub claim to an "
+                "exact repository.",
+            )
+        return (
+            "low",
+            f"OIDC trust for {cloud} repository pattern was narrowed.",
+        )
+
+    if change_type == "modified" and field_path == "branch_wildcard":
+        if _to_bool(new_value):
+            return (
+                "high",
+                f"OIDC trust for {cloud} was broadened to a branch wildcard. "
+                "Workflows on any branch can now assume the role — restrict "
+                "the sub claim to specific branches or environments.",
+            )
+        return ("low", f"OIDC trust for {cloud} branch pattern was narrowed.")
+
+    if change_type == "modified" and field_path == "org_wildcard":
+        if _to_bool(new_value):
+            return (
+                "critical",
+                f"OIDC trust for {cloud} was broadened to an organisation "
+                "wildcard.  Any repo in the org can now assume the role.",
+            )
+
+    if change_type == "modified" and field_path == "environment_restricted":
+        if _to_bool(new_value) is False:
+            return (
+                "high",
+                f"OIDC trust for {cloud} no longer restricts to a deploy "
+                "environment.  Workflows outside protected environments "
+                "may now assume the role.",
+            )
+        return (
+            "low",
+            f"OIDC trust for {cloud} is now restricted to an environment.",
+        )
+
+    if change_type == "modified" and field_path == "audience":
+        return (
+            "medium",
+            f"OIDC audience for {cloud} changed.  Verify the new audience "
+            "matches the cloud-side configuration.",
+        )
+
+    if change_type == "modified" and field_path == "repo_pattern":
+        return (
+            "medium",
+            f"OIDC subject pattern for {cloud} changed.  Verify the new "
+            "pattern still pins to the intended repo/branch/environment.",
+        )
+
+    return (
+        "low",
+        f"OIDC trust binding for {cloud} changed; no specific risk pattern "
+        "matched.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. github_collaborator
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+_PERMISSION_RANK: dict[str, int] = {
+    "read": 1, "triage": 2, "write": 3, "maintain": 4, "admin": 5,
+}
+
+
+def _classify_collaborator(
+    pm: dict, change_type: str, field_path: str, prev_value: Any, new_value: Any
+) -> tuple[str, str]:
+    actor = _str(pm.get("actor_login") or pm.get("record_id"))
+    actor_type = _str(pm.get("actor_type", "user"))
+    outside = bool(pm.get("is_outside_collaborator", False))
+    actor_label = f"{actor_type} '{actor}'"
+
+    if change_type == "added":
+        perm = _str(pm.get("permission") or new_value).lower()
+        if perm == "admin":
+            sev = "critical" if outside else "high"
+            return (
+                sev,
+                f"Outside-collaborator {actor_label} was added with 'admin' "
+                "permission." if outside else
+                f"{actor_label} was added with 'admin' permission.  Verify "
+                "the grant was approved and remove if unnecessary.",
+            )
+        if perm in ("write", "maintain"):
+            sev = "high" if outside else "medium"
+            return (
+                sev,
+                f"{actor_label} was added with '{perm}' permission"
+                f"{' (outside collaborator)' if outside else ''}. "
+                "Verify the grant was approved.",
+            )
+        return (
+            "low",
+            f"{actor_label} was added with '{perm}' permission.",
+        )
+
+    if change_type == "removed":
+        return (
+            "medium",
+            f"{actor_label} was removed.  Verify the change was intentional — "
+            "removing a code-owning team can affect availability and review.",
+        )
+
+    if change_type == "modified" and field_path == "permission":
+        prev_s = _str(prev_value).lower()
+        new_s = _str(new_value).lower()
+        prev_r = _PERMISSION_RANK.get(prev_s, 0)
+        new_r = _PERMISSION_RANK.get(new_s, 0)
+        if new_r > prev_r and new_s == "admin":
+            sev = "critical" if outside else "high"
+            return (
+                sev,
+                f"{actor_label} permission was raised from '{prev_s}' to "
+                f"'admin'{' (outside collaborator)' if outside else ''}. "
+                "This grants full repository control — verify the grant "
+                "was approved.",
+            )
+        if new_r > prev_r and new_s in ("write", "maintain"):
+            sev = "high" if outside else "medium"
+            return (
+                sev,
+                f"{actor_label} permission was raised from '{prev_s}' to "
+                f"'{new_s}'.  Verify the grant was approved.",
+            )
+        if new_r < prev_r:
+            return (
+                "low",
+                f"{actor_label} permission was lowered from '{prev_s}' to "
+                f"'{new_s}'.",
+            )
+
+    if change_type == "modified" and field_path == "is_outside_collaborator":
+        if _to_bool(new_value):
+            return (
+                "high",
+                f"{actor_label} was reclassified as an outside collaborator.  "
+                "Review whether their current permission level is still "
+                "appropriate.",
+            )
+
+    return (
+        "low",
+        f"{actor_label} metadata changed; no specific risk pattern matched.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F. github_app_installation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_app_installation(
+    pm: dict, change_type: str, field_path: str, prev_value: Any, new_value: Any
+) -> tuple[str, str]:
+    slug = _str(pm.get("app_slug") or pm.get("record_id"))
+
+    if change_type == "added":
+        # Installation just landed — review permissions.
+        if bool(pm.get("has_admin_access")):
+            return (
+                "critical",
+                f"GitHub App '{slug}' was installed with administration "
+                "access.  Verify the app is trusted and reduce to least "
+                "privilege if appropriate.",
+            )
+        if bool(pm.get("has_secrets_access")) or bool(pm.get("has_contents_write")):
+            return (
+                "high",
+                f"GitHub App '{slug}' was installed with elevated permissions "
+                "(secrets / contents:write).  Verify the app is trusted.",
+            )
+        return (
+            "medium",
+            f"GitHub App '{slug}' was installed.  Review its permissions and "
+            "repository selection.",
+        )
+
+    if change_type == "removed":
+        return (
+            "medium",
+            f"GitHub App '{slug}' was removed.  Any automation it provided "
+            "no longer runs.",
+        )
+
+    if change_type == "modified" and field_path == "has_admin_access":
+        if _to_bool(new_value) and not _to_bool(prev_value):
+            return (
+                "critical",
+                f"GitHub App '{slug}' was granted administration access. "
+                "Verify the grant was approved and reduce permissions if "
+                "unnecessary.",
+            )
+        return (
+            "low",
+            f"GitHub App '{slug}' administration access was removed.",
+        )
+
+    if change_type == "modified" and field_path == "has_secrets_access":
+        if _to_bool(new_value) and not _to_bool(prev_value):
+            return (
+                "high",
+                f"GitHub App '{slug}' was granted access to repository secrets. "
+                "Verify the grant was approved.",
+            )
+        return (
+            "low",
+            f"GitHub App '{slug}' lost access to repository secrets.",
+        )
+
+    if change_type == "modified" and field_path == "has_contents_write":
+        if _to_bool(new_value) and not _to_bool(prev_value):
+            return (
+                "high",
+                f"GitHub App '{slug}' was granted contents:write.  The app "
+                "can now modify repository code.",
+            )
+
+    if change_type == "modified" and field_path == "has_workflows_write":
+        if _to_bool(new_value) and not _to_bool(prev_value):
+            return (
+                "high",
+                f"GitHub App '{slug}' was granted workflows:write.  The app "
+                "can now modify workflow files.",
+            )
+
+    if change_type == "modified" and field_path == "repository_selection":
+        prev_s = _str(prev_value).lower()
+        new_s = _str(new_value).lower()
+        if prev_s == "selected" and new_s == "all":
+            return (
+                "high",
+                f"GitHub App '{slug}' repository selection was broadened from "
+                "'selected' to 'all'.  The app now has access to every "
+                "repository in the account.",
+            )
+        if prev_s == "all" and new_s == "selected":
+            return (
+                "low",
+                f"GitHub App '{slug}' repository selection was narrowed to "
+                "'selected'.",
+            )
+
+    if change_type == "modified" and field_path == "repositories_count":
+        prev_n = _to_int(prev_value)
+        new_n = _to_int(new_value)
+        if new_n > prev_n:
+            return (
+                "medium",
+                f"GitHub App '{slug}' repository count increased from "
+                f"{prev_n} to {new_n}.  Verify the new repositories were "
+                "added intentionally.",
+            )
+
+    return (
+        "low",
+        f"GitHub App '{slug}' metadata changed; no specific risk pattern "
+        "matched.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G. github_security_features
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_security_features(
+    pm: dict, change_type: str, field_path: str, prev_value: Any, new_value: Any
+) -> tuple[str, str]:
+    if change_type != "modified":
+        return (
+            "low",
+            "Security-features record changed; no specific risk pattern matched.",
+        )
+
+    new_b = _to_bool(new_value)
+    private = bool(pm.get("private_repo", True))
+
+    # High-severity disablements.
+    if field_path == "secret_scanning_enabled" and not new_b:
+        return (
+            "high",
+            "Secret scanning was disabled.  Newly-leaked secrets in commits "
+            "will no longer be surfaced automatically.",
+        )
+    if field_path == "secret_scanning_push_protection" and not new_b:
+        return (
+            "high",
+            "Secret-scanning push protection was disabled.  Commits "
+            "containing secrets can now be pushed without being blocked.",
+        )
+    if field_path == "code_scanning_enabled" and not new_b:
+        return (
+            "high",
+            "Code scanning was disabled.  Static-analysis alerts on new code "
+            "will no longer be produced.",
+        )
+
+    # Medium-severity disablements.
+    if field_path == "dependabot_alerts_enabled" and not new_b:
+        return (
+            "medium",
+            "Dependabot alerts were disabled.  Known-vulnerable dependencies "
+            "will no longer be surfaced.",
+        )
+    if field_path == "dependabot_security_updates_enabled" and not new_b:
+        return (
+            "medium",
+            "Dependabot security updates were disabled.  Vulnerable "
+            "dependencies will no longer be auto-updated.",
+        )
+    if field_path == "vulnerability_alerts_enabled" and not new_b:
+        return (
+            "medium",
+            "Vulnerability alerts were disabled.  Repository-level vulnerability "
+            "notifications will no longer be delivered.",
+        )
+
+    # Enablements → low (positive change).
+    if new_b and field_path in (
+        "secret_scanning_enabled",
+        "secret_scanning_push_protection",
+        "code_scanning_enabled",
+        "dependabot_alerts_enabled",
+        "dependabot_security_updates_enabled",
+        "vulnerability_alerts_enabled",
+    ):
+        return (
+            "low",
+            f"Security feature '{field_path}' was enabled — posture improved.",
+        )
+
+    return (
+        "low",
+        f"Security feature '{field_path}' changed; no specific risk pattern "
+        "matched.",
     )
