@@ -33,6 +33,8 @@ private, secrets, config, terraform, tfstate.
 """
 from __future__ import annotations
 
+import re
+
 from app.connectors.aws import (
     _cidr_is_public,
     _has_port_in_range,
@@ -129,6 +131,13 @@ from app.connectors.aws_schema import (
     # M59.8 Part 1
     AWS_EC2_INSTANCE,
     AWS_VPC_FLOW_LOG,
+    # M59.9 Part 2
+    AWS_CONFIG_RECORDER,
+    AWS_CONFIG_DELIVERY_CHANNEL,
+    AWS_ACCESS_ANALYZER,
+    AWS_ACCESS_ANALYZER_FINDING,
+    AWS_SECURITYHUB_FINDING,
+    AWS_ACM_CERTIFICATE,
 )
 
 # ── Sensitive bucket pattern detection ───────────────────────────────────────
@@ -7545,6 +7554,20 @@ def classify_aws_change(change: object) -> tuple[str, str]:
     if record_type == AWS_VPC_FLOW_LOG:
         return _classify_vpc_flow_log_change(change)
 
+    # ── M59.9 Part 2 — governance / identity / supply-chain / data ───────────
+    if record_type == AWS_CONFIG_RECORDER:
+        return _classify_config_recorder_change(change)
+    if record_type == AWS_CONFIG_DELIVERY_CHANNEL:
+        return _classify_config_delivery_channel_change(change)
+    if record_type == AWS_ACCESS_ANALYZER:
+        return _classify_access_analyzer_change(change)
+    if record_type == AWS_ACCESS_ANALYZER_FINDING:
+        return _classify_access_analyzer_finding_change(change)
+    if record_type == AWS_SECURITYHUB_FINDING:
+        return _classify_securityhub_finding_change(change)
+    if record_type == AWS_ACM_CERTIFICATE:
+        return _classify_acm_certificate_change(change)
+
     # Unknown AWS record type — conservative default
     return (
         "low",
@@ -9089,4 +9112,620 @@ def _classify_vpc_flow_log_change(change: object) -> tuple[str, str]:
     return (
         "low",
         f"VPC {label} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.9 Part 2 — Governance / Identity / Supply-chain / Data classifiers
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Wording policy (shared by every classifier below)
+# -------------------------------------------------
+# * "may weaken", "could affect", "may reduce visibility" — never
+#   "compromised", "definitely", or "guaranteed".
+# * Raw IAM policy documents, secret values, AWS session tokens, and the
+#   bodies of Access-Analyzer/Security-Hub finding fields are NEVER stored.
+#   Reasons echo only the safe metadata fields (severity, status, finding
+#   type, hashed resource ARN, region).
+# * `provider_metadata` is `isinstance`-guarded — non-dict pm degrades to
+#   an empty dict and the classifier still returns a (level, reason) tuple.
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A1. aws_config_recorder
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_config_recorder_change(change: object) -> tuple[str, str]:
+    """Risk classifier for aws_config_recorder records.
+
+    Safe fields expected in ``provider_metadata``:
+      record_id (name), region, recording (bool), recording_role_arn (hash
+      ok), resource_types_count (int), records_global_resources (bool).
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    name = str(pm.get("record_id") or pm.get("name") or "default")
+    region = str(pm.get("region") or "unknown-region")
+
+    if ct == "removed":
+        return (
+            "critical",
+            f"AWS Config recorder '{name}' in {region} was removed.  "
+            "Configuration-history coverage has been lost for this region — "
+            "this may reduce auditability and incident-response visibility.",
+        )
+
+    if ct == "added":
+        return (
+            "low",
+            f"A new AWS Config recorder '{name}' was created in {region}.",
+        )
+
+    if fp == "recording":
+        if pv is True and nv is False:
+            return (
+                "critical",
+                f"AWS Config recorder '{name}' in {region} was paused.  "
+                "Configuration changes will not be captured until recording "
+                "resumes — this may reduce auditability for the duration.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"AWS Config recorder '{name}' in {region} resumed recording.",
+            )
+
+    if fp == "records_global_resources":
+        if pv is True and nv is False:
+            return (
+                "high",
+                f"AWS Config recorder '{name}' no longer records global "
+                "resources (IAM, etc.).  Account-wide identity-config changes "
+                "may not be captured.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"AWS Config recorder '{name}' now records global resources.",
+            )
+
+    if fp == "resource_types_count":
+        try:
+            prev_n = int(pv or 0)
+            new_n = int(nv or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n < prev_n:
+            return (
+                "high",
+                f"AWS Config recorder '{name}' resource-type coverage was "
+                f"narrowed from {prev_n} to {new_n} types.  Configuration "
+                "history for the excluded types may no longer be captured.",
+            )
+        return (
+            "low",
+            f"AWS Config recorder '{name}' resource-type coverage broadened.",
+        )
+
+    return (
+        "low",
+        f"AWS Config recorder '{name}' configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A2. aws_config_delivery_channel
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_config_delivery_channel_change(change: object) -> tuple[str, str]:
+    """Safe fields: record_id (name), region, s3_bucket_name, s3_kms_key_id
+    (hash), sns_topic_arn (hash), delivery_frequency.
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    name = str(pm.get("record_id") or pm.get("name") or "default")
+    region = str(pm.get("region") or "unknown-region")
+
+    if ct == "removed":
+        return (
+            "high",
+            f"AWS Config delivery channel '{name}' in {region} was removed.  "
+            "Configuration snapshots no longer reach a durable destination.",
+        )
+
+    if ct == "added":
+        return (
+            "low",
+            f"A new AWS Config delivery channel '{name}' was added in {region}.",
+        )
+
+    if fp in ("s3_bucket_name", "sns_topic_arn"):
+        # We deliberately do NOT echo the new destination value into the
+        # reason; only the field name is surfaced.  The destination may be
+        # operator-supplied text and could contain an unexpected shape.
+        return (
+            "medium",
+            f"AWS Config delivery channel '{name}' destination changed "
+            f"({fp}).  Verify the new destination is owned by your team.",
+        )
+
+    if fp == "s3_kms_key_id":
+        return (
+            "medium",
+            f"AWS Config delivery channel '{name}' encryption key changed. "
+            "Verify the new KMS key is intended.",
+        )
+
+    return (
+        "low",
+        f"AWS Config delivery channel '{name}' configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B1. aws_access_analyzer
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_access_analyzer_change(change: object) -> tuple[str, str]:
+    """Safe fields: record_id (name), region, status, type, scope_count."""
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    name = str(pm.get("record_id") or pm.get("name") or "unknown")
+    region = str(pm.get("region") or "unknown-region")
+    az_type = str(pm.get("type") or "")
+
+    if ct == "removed":
+        return (
+            "high",
+            f"IAM Access Analyzer '{name}' in {region} was removed.  "
+            "Cross-account / public-access findings for resources covered by "
+            "this analyzer will no longer be produced.",
+        )
+
+    if ct == "added":
+        return (
+            "low",
+            f"A new IAM Access Analyzer '{name}' ({az_type or 'account'}) "
+            f"was created in {region}.",
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").lower()
+        if new_s == "disabled":
+            return (
+                "high",
+                f"IAM Access Analyzer '{name}' was disabled.  External-access "
+                "findings will no longer be produced for this analyzer's scope.",
+            )
+        if new_s == "active":
+            return (
+                "low",
+                f"IAM Access Analyzer '{name}' was re-enabled.",
+            )
+
+    if fp == "type":
+        prev_s = str(pv or "").lower()
+        new_s = str(nv or "").lower()
+        if "account" in prev_s and "organization" in new_s:
+            return (
+                "low",
+                f"IAM Access Analyzer '{name}' scope broadened to organization "
+                "level — coverage improved.",
+            )
+        if "organization" in prev_s and "account" in new_s:
+            return (
+                "medium",
+                f"IAM Access Analyzer '{name}' scope narrowed from "
+                "organization to account.  Cross-account findings in sibling "
+                "accounts will no longer be surfaced here.",
+            )
+
+    return (
+        "low",
+        f"IAM Access Analyzer '{name}' configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B2. aws_access_analyzer_finding
+# ─────────────────────────────────────────────────────────────────────────────
+
+_AA_SENSITIVE_RESOURCE_TYPE_PATTERNS: tuple[str, ...] = (
+    "::S3::Bucket", "::KMS::Key", "::IAM::Role", "::Secrets",
+    "::Lambda::Function", "::RDS::", "::SQS::Queue", "::SNS::Topic",
+)
+
+
+def _aa_resource_is_sensitive(pm: dict) -> bool:
+    rt = str(pm.get("resource_type") or "")
+    return any(p in rt for p in _AA_SENSITIVE_RESOURCE_TYPE_PATTERNS)
+
+
+def _classify_access_analyzer_finding_change(change: object) -> tuple[str, str]:
+    """Safe fields:
+      record_id (finding id), region, finding_type ("ExternalAccess" etc.),
+      status ("ACTIVE"|"ARCHIVED"|"RESOLVED"), resource_type, is_public (bool),
+      resource_arn_hash (hashed ARN — never raw), action_count.
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    fid = str(pm.get("record_id") or pm.get("finding_id") or "unknown")
+    rtype = _safe_resource_type_label(pm.get("resource_type"))
+    is_public = bool(pm.get("is_public", False))
+    sensitive = _aa_resource_is_sensitive(pm)
+
+    if ct == "added":
+        # A new finding appeared.
+        if is_public and sensitive:
+            return (
+                "critical",
+                f"IAM Access Analyzer reported a NEW PUBLIC-access finding "
+                f"on a sensitive resource type ({rtype}).  Verify whether the "
+                "exposure is intentional — this may indicate public "
+                "reachability of an S3 bucket, KMS key, IAM role, or secret.",
+            )
+        if is_public:
+            return (
+                "high",
+                f"IAM Access Analyzer reported a new public-access finding "
+                f"on {rtype}.  Verify the exposure is intentional.",
+            )
+        if sensitive:
+            return (
+                "high",
+                f"IAM Access Analyzer reported a new cross-account-access "
+                f"finding on a sensitive resource type ({rtype}).  Verify "
+                "the trust is intentional.",
+            )
+        return (
+            "medium",
+            f"IAM Access Analyzer reported a new finding on {rtype}.  "
+            "Review the finding in the AWS console.",
+        )
+
+    if ct == "removed":
+        return (
+            "low",
+            f"IAM Access Analyzer finding {fid} ({rtype}) is no longer "
+            "surfaced — resolved or aged out.",
+        )
+
+    if fp == "status":
+        prev_s = str(pv or "").upper()
+        new_s = str(nv or "").upper()
+        if prev_s == "ACTIVE" and new_s == "ARCHIVED":
+            sev = "high" if (is_public and sensitive) else "medium"
+            return (
+                sev,
+                f"IAM Access Analyzer finding {fid} was archived without "
+                "resolution.  Public/cross-account access may still exist on "
+                f"{rtype}.  Verify the archive was intentional.",
+            )
+        if new_s == "RESOLVED":
+            return (
+                "low",
+                f"IAM Access Analyzer finding {fid} was marked resolved — "
+                "exposure mitigated.",
+            )
+
+    return (
+        "low",
+        f"IAM Access Analyzer finding {fid} metadata changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. aws_securityhub_finding
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_securityhub_finding_change(change: object) -> tuple[str, str]:
+    """Safe fields:
+      record_id (finding id), severity ("CRITICAL"|"HIGH"|"MEDIUM"|"LOW"|"INFORMATIONAL"),
+      workflow_status ("NEW"|"NOTIFIED"|"SUPPRESSED"|"RESOLVED"),
+      compliance_status, record_state ("ACTIVE"|"ARCHIVED"),
+      resource_type, resource_arn_hash (NEVER raw ARN),
+      finding_type (string label).
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    fid = str(pm.get("record_id") or pm.get("finding_id") or "unknown")
+    sev_label = str(pm.get("severity") or "").upper()
+    rtype = _safe_resource_type_label(pm.get("resource_type"))
+
+    if ct == "added":
+        if sev_label == "CRITICAL":
+            return (
+                "critical",
+                f"Security Hub reported a NEW Critical-severity finding on "
+                f"{rtype}.  Review in the Security Hub console.",
+            )
+        if sev_label == "HIGH":
+            return (
+                "high",
+                f"Security Hub reported a new High-severity finding on "
+                f"{rtype}.",
+            )
+        if sev_label == "MEDIUM":
+            return (
+                "medium",
+                f"Security Hub reported a new Medium-severity finding on "
+                f"{rtype}.",
+            )
+        return (
+            "low",
+            f"Security Hub reported a new {sev_label or 'unknown-severity'} "
+            f"finding on {rtype}.",
+        )
+
+    if ct == "removed":
+        return (
+            "low",
+            f"Security Hub finding {fid} on {rtype} is no longer visible.",
+        )
+
+    # Workflow status changes — most important: suppression of high/critical.
+    if fp == "workflow_status":
+        prev_s = str(pv or "").upper()
+        new_s = str(nv or "").upper()
+        if new_s == "SUPPRESSED" and sev_label in ("CRITICAL", "HIGH"):
+            sev = "high" if sev_label == "CRITICAL" else "medium"
+            # We escalate Critical-suppressed to High (not Critical) so the
+            # signal is "an admin chose to silence this" — important but
+            # actionable, not an outage event.
+            return (
+                sev,
+                f"Security Hub {sev_label}-severity finding {fid} on {rtype} "
+                "was suppressed.  Verify the suppression is intentional and "
+                "tracked — the underlying issue may still be present.",
+            )
+        if new_s == "RESOLVED":
+            return (
+                "low",
+                f"Security Hub finding {fid} ({sev_label}) on {rtype} was "
+                "marked resolved.",
+            )
+        return (
+            "medium",
+            f"Security Hub finding {fid} workflow_status changed from "
+            f"{prev_s or 'unknown'} to {new_s or 'unknown'}.",
+        )
+
+    if fp == "record_state":
+        new_s = str(nv or "").upper()
+        if new_s == "ARCHIVED" and sev_label in ("CRITICAL", "HIGH"):
+            return (
+                "high",
+                f"Security Hub {sev_label}-severity finding {fid} on {rtype} "
+                "was archived.  Verify the underlying issue was addressed "
+                "before archival.",
+            )
+        return (
+            "medium",
+            f"Security Hub finding {fid} record_state changed to {new_s}.",
+        )
+
+    if fp == "severity":
+        prev_s = str(pv or "").upper()
+        new_s = str(nv or "").upper()
+        order = ["INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        if prev_s in order and new_s in order and order.index(new_s) > order.index(prev_s):
+            return (
+                "high" if new_s == "CRITICAL" else "medium",
+                f"Security Hub finding {fid} severity was raised from "
+                f"{prev_s} to {new_s} on {rtype}.",
+            )
+
+    return (
+        "low",
+        f"Security Hub finding {fid} metadata changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. aws_acm_certificate
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Sanitisers used by the new classifiers so a malformed input field cannot
+# echo a credential-shaped value into a risk reason.  Each helper returns a
+# safe placeholder when the input does not match the expected shape.
+
+# Require at least one dot (so a single 40-char ALL-UPPER label like an AWS
+# access key shape cannot pass).  Hostname labels still permit 1-63 chars.
+_VALID_DOMAIN_RE = re.compile(
+    r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?"
+    r"(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
+)
+_VALID_RESOURCE_TYPE_RE = re.compile(r"^AWS::[A-Za-z0-9]+::[A-Za-z0-9]+$")
+
+
+def _safe_domain_label(value: object) -> str:
+    s = str(value or "")
+    if not s or len(s) > 253:
+        return "the configured domain"
+    return s if _VALID_DOMAIN_RE.match(s) else "the configured domain"
+
+
+def _safe_resource_type_label(value: object) -> str:
+    s = str(value or "")
+    if not s or len(s) > 80:
+        return "the resource"
+    return s if _VALID_RESOURCE_TYPE_RE.match(s) else "the resource"
+
+
+def _safe_bucket_or_topic_label(value: object) -> str:
+    s = str(value or "")
+    if not s or len(s) > 256:
+        return "the configured destination"
+    if re.match(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$", s):
+        return s
+    if re.match(r"^arn:aws[a-z\-]*:sns:[a-z0-9\-]+:[0-9]+:[A-Za-z0-9_\-]+$", s):
+        return s
+    return "the configured destination"
+
+
+#: Domain-name substrings that escalate the severity of cert expiry/removal.
+_ACM_PROD_DOMAIN_HINTS: tuple[str, ...] = (
+    "api.", "www.", "app.", "auth.", "login.", "admin.", "dashboard.",
+    "checkout.", "payment.", "payments.", "billing.",
+)
+
+
+def _acm_is_prod_domain(pm: dict) -> bool:
+    if bool(pm.get("targets_production", False)):
+        return True
+    domain = str(pm.get("domain_name") or pm.get("name") or "").lower()
+    if any(h in domain for h in _ACM_PROD_DOMAIN_HINTS):
+        return True
+    # apex heuristic — fewer than 3 dot-separated labels = looks like apex.
+    if domain and "." in domain and len(domain.rstrip(".").split(".")) <= 2:
+        return True
+    return False
+
+
+def _classify_acm_certificate_change(change: object) -> tuple[str, str]:
+    """Safe fields:
+      record_id (cert id / ARN suffix), region, domain_name, status,
+      days_to_expiry (int), key_algorithm, signature_algorithm,
+      subject_alternative_names_count (int), in_use (bool),
+      targets_production (bool, heuristic).
+    """
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
+    cid = str(pm.get("record_id") or pm.get("certificate_id") or "unknown")
+    domain = _safe_domain_label(pm.get("domain_name") or "unknown")
+    is_prod = _acm_is_prod_domain(pm)
+
+    if ct == "removed":
+        sev = "high" if is_prod else "medium"
+        return (
+            sev,
+            f"ACM certificate {cid} for {domain!r} was removed.  Endpoints "
+            "that referenced this cert may stop serving HTTPS.",
+        )
+
+    if ct == "added":
+        return (
+            "low",
+            f"A new ACM certificate {cid} was issued for {domain!r}.",
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").upper()
+        if new_s == "EXPIRED":
+            sev = "critical" if is_prod else "high"
+            return (
+                sev,
+                f"ACM certificate {cid} for {domain!r} has expired.  "
+                "Endpoints using this cert may fail TLS handshakes.",
+            )
+        if new_s == "VALIDATION_TIMED_OUT" or new_s == "FAILED":
+            return (
+                "high",
+                f"ACM certificate {cid} for {domain!r} validation failed "
+                f"({new_s}).  HTTPS for this domain may not be available.",
+            )
+        if new_s == "PENDING_VALIDATION":
+            return (
+                "medium",
+                f"ACM certificate {cid} for {domain!r} is awaiting DNS / "
+                "email validation.",
+            )
+        if new_s == "ISSUED":
+            return (
+                "low",
+                f"ACM certificate {cid} for {domain!r} was issued successfully.",
+            )
+
+    if fp == "days_to_expiry":
+        try:
+            new_n = int(nv or 0)
+        except (TypeError, ValueError):
+            new_n = 0
+        if new_n <= 0:
+            sev = "critical" if is_prod else "high"
+            return (
+                sev,
+                f"ACM certificate {cid} for {domain!r} has expired (or expiry "
+                "passed).",
+            )
+        if new_n <= 14:
+            sev = "high" if is_prod else "medium"
+            return (
+                sev,
+                f"ACM certificate {cid} for {domain!r} expires in {new_n} "
+                "day(s).  Renewal may be needed soon.",
+            )
+        return (
+            "low",
+            f"ACM certificate {cid} for {domain!r} days_to_expiry updated "
+            f"to {new_n}.",
+        )
+
+    if fp == "domain_name":
+        return (
+            "high",
+            f"ACM certificate {cid} domain name changed from {pv!r} to {nv!r}. "
+            "Verify the new domain is intended.",
+        )
+
+    if fp == "subject_alternative_names_count":
+        try:
+            prev_n = int(pv or 0)
+            new_n = int(nv or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n > prev_n:
+            return (
+                "medium",
+                f"ACM certificate {cid} now covers {new_n} alternative "
+                f"name(s) (was {prev_n}).  Verify the additions are "
+                "intentional.",
+            )
+        return (
+            "low",
+            f"ACM certificate {cid} alternative-name count decreased to "
+            f"{new_n}.",
+        )
+
+    if fp == "key_algorithm":
+        new_s = str(nv or "").upper()
+        # RSA-1024 / RSA-2048 are deprecated; RSA-4096 / EC are modern.
+        if "1024" in new_s:
+            return (
+                "high",
+                f"ACM certificate {cid} now uses a 1024-bit key — modern "
+                "browsers may distrust it.",
+            )
+
+    return (
+        "low",
+        f"ACM certificate {cid} configuration changed "
+        f"({fp or 'unknown field'}).",
     )

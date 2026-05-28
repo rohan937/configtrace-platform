@@ -158,6 +158,31 @@ AWS_CLOUDWATCH_METRIC_STREAM = "aws_cloudwatch_metric_stream"
 # One per CloudWatch anomaly detector per namespace/metric — config posture; anomaly results NEVER read.
 AWS_CLOUDWATCH_ANOMALY_DETECTOR = "aws_cloudwatch_anomaly_detector"
 
+# ── M59.9 — AWS Part 2 expansion: governance / identity / supply-chain ───────
+# One per AWS Config configuration recorder per region.  Metadata only —
+# we never store recorded configuration history items.
+AWS_CONFIG_RECORDER = "aws_config_recorder"
+
+# One per AWS Config delivery channel per region.  Metadata only.
+AWS_CONFIG_DELIVERY_CHANNEL = "aws_config_delivery_channel"
+
+# One per IAM Access Analyzer.  Metadata only.
+AWS_ACCESS_ANALYZER = "aws_access_analyzer"
+
+# One per IAM Access Analyzer finding.  Stores the resource ARN HASH plus
+# severity/status/finding-type.  Raw policy statements are NEVER persisted.
+AWS_ACCESS_ANALYZER_FINDING = "aws_access_analyzer_finding"
+
+# One per Security Hub finding.  Stores severity/standard/status/finding-type
+# only — Investigator field bodies are NEVER persisted, and resource ARNs
+# are HASHED to avoid leaking customer infrastructure paths.
+AWS_SECURITYHUB_FINDING = "aws_securityhub_finding"
+
+# One per ACM certificate.  Metadata only — private-key material is NEVER
+# accessible from the ACM API and is therefore impossible to leak here.
+AWS_ACM_CERTIFICATE = "aws_acm_certificate"
+
+
 # ── M59.8 — AWS Part 1 expansion: EC2 exposure + VPC Flow Logs ────────────────
 # One per EC2 instance — metadata only; no instance memory, EBS, or userdata.
 # SECURITY: tags + metadata-options + network-interface summary only.  We
@@ -307,4 +332,11 @@ AWS_RECORD_TYPES: frozenset[str] = frozenset({
     # M59.8 — Part 1 expansion
     AWS_EC2_INSTANCE,
     AWS_VPC_FLOW_LOG,
+    # M59.9 — Part 2 expansion
+    AWS_CONFIG_RECORDER,
+    AWS_CONFIG_DELIVERY_CHANNEL,
+    AWS_ACCESS_ANALYZER,
+    AWS_ACCESS_ANALYZER_FINDING,
+    AWS_SECURITYHUB_FINDING,
+    AWS_ACM_CERTIFICATE,
 })
