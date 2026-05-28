@@ -45,9 +45,20 @@ class TestStripeSchemaM579:
         from app.connectors.stripe_schema import STRIPE_RECORD_TYPES
         assert "stripe_billing_portal_config" in STRIPE_RECORD_TYPES
 
-    def test_frozenset_has_five_types(self):
+    def test_frozenset_has_expected_types(self):
+        # M59.10 expanded STRIPE_RECORD_TYPES from 5 → 10 by adding the
+        # catalog + checkout + tax surfaces.  The original five must still
+        # be present; the new five are additive.
         from app.connectors.stripe_schema import STRIPE_RECORD_TYPES
-        assert len(STRIPE_RECORD_TYPES) == 5
+        assert len(STRIPE_RECORD_TYPES) == 10
+        for legacy in (
+            "stripe_account_settings",
+            "stripe_webhook_endpoint",
+            "stripe_payment_method_configuration",
+            "stripe_payment_method_domain",
+            "stripe_billing_portal_config",
+        ):
+            assert legacy in STRIPE_RECORD_TYPES
 
 
 class TestGitHubSchemaM579:

@@ -567,4 +567,481 @@ def classify_stripe_change(change: Change) -> tuple[str, str]:
     if record_type == "stripe_billing_portal_config":
         return _classify_billing_portal_config_change(change)
 
+    # ── M59.10 Part 1 expansion ─────────────────────────────────────────────
+    if record_type == "stripe_product":
+        return _classify_product_change(change)
+    if record_type == "stripe_price":
+        return _classify_price_change(change)
+    if record_type == "stripe_payment_link":
+        return _classify_payment_link_change(change)
+    if record_type == "stripe_checkout_configuration":
+        return _classify_checkout_configuration_change(change)
+    if record_type == "stripe_tax_settings":
+        return _classify_tax_settings_change(change)
+
     return ("low", f"A Stripe configuration record changed ({record_type}).")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.10 Part 1 — Stripe catalog / checkout / tax classifiers
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Wording policy
+# --------------
+# Every reason uses hedged language: "may disrupt checkout / revenue
+# operations", "could affect billing".  We never claim "payments are broken"
+# or "revenue is lost" — those phrases imply outage we cannot prove from
+# a configuration delta alone.
+#
+# Defensive metadata
+# ------------------
+# All five classifiers `isinstance`-guard ``provider_metadata`` exactly like
+# the existing Stripe classifiers.  None of the new classifiers ever
+# interpolate ``new_value`` or ``prev_value`` into a reason without going
+# through a safe-shape helper — Stripe URL fields (success_url, cancel_url,
+# redirect URLs) carry query-string tokens that the connector reduces to
+# scheme+host before persistence.
+
+
+import re as _re_stripe_part1
+
+# Stripe URL shape allow-list — only ``https?://host[:port]`` form.  The
+# connector strips paths/query strings before storage; this regex is a
+# defence-in-depth check before interpolating into a reason.
+_STRIPE_URL_ORIGIN_RE = _re_stripe_part1.compile(
+    r"^https?://[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?"
+    r"(\.[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+"
+    r"(:[0-9]{1,5})?$"
+)
+
+
+def _safe_url_origin(value: object) -> str:
+    """Return *value* when it matches a clean URL origin (scheme+host[:port]),
+    else 'the configured URL'.  Used to redact destination strings before
+    they appear in risk reasons.
+    """
+    s = str(value or "")
+    if not s or len(s) > 300:
+        return "the configured URL"
+    return s if _STRIPE_URL_ORIGIN_RE.match(s) else "the configured URL"
+
+
+def _stripe_meta(change: Change) -> dict:
+    raw = _get(change, "provider_metadata")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _is_production_payment_link(pm: dict) -> bool:
+    """Hint: a Payment Link is production if ``livemode`` is True or the
+    record name looks production-y.  Conservative: defaults to True if
+    livemode is missing (the safer assumption is production)."""
+    if "livemode" in pm:
+        return bool(pm.get("livemode"))
+    return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A. stripe_product
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_product_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    pid = str(pm.get("record_id") or "unknown")
+    is_live = bool(pm.get("livemode", True))
+
+    if ct == "removed":
+        sev = "high" if is_live else "medium"
+        return (
+            sev,
+            f"Stripe product {pid} was removed/archived.  Checkout flows that "
+            "referenced this product may stop functioning — verify the change "
+            "is intentional.",
+        )
+
+    if ct == "added":
+        return (
+            "low",
+            f"A new Stripe product {pid} was created.",
+        )
+
+    if fp == "active":
+        if pv is True and nv is False:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe product {pid} was deactivated.  Checkout flows "
+                "referencing this product may stop functioning until it is "
+                "reactivated or replaced.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"Stripe product {pid} was reactivated.",
+            )
+
+    if fp == "default_price":
+        return (
+            "medium",
+            f"Stripe product {pid} default_price was changed.  Checkout flows "
+            "that rely on the default may begin charging the new price — "
+            "verify the change is intentional.",
+        )
+
+    if fp == "metadata_key_count":
+        return (
+            "medium",
+            f"Stripe product {pid} metadata key count changed.  Verify any "
+            "downstream consumers of product metadata still operate as "
+            "expected.",
+        )
+
+    if fp in ("name", "description_present"):
+        return (
+            "low",
+            f"Stripe product {pid} cosmetic field '{fp}' changed.",
+        )
+
+    return (
+        "low",
+        f"Stripe product {pid} configuration changed ({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B. stripe_price
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Tier-1 fields whose change implies a NEW price object replaced the old one.
+# Stripe prices are largely immutable; we phrase the reason accordingly.
+_PRICE_IMMUTABLE_FIELDS: frozenset[str] = frozenset({
+    "unit_amount", "currency", "recurring_interval",
+    "recurring_interval_count", "billing_scheme", "type",
+})
+
+
+def _classify_price_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    pid = str(pm.get("record_id") or "unknown")
+    is_active = bool(pm.get("active", True))
+    is_live = bool(pm.get("livemode", True))
+
+    if ct == "removed":
+        sev = "high" if (is_active and is_live) else "medium"
+        return (
+            sev,
+            f"Stripe price record {pid} was deactivated / removed.  Checkout "
+            "flows that referenced this price may stop functioning until "
+            "they switch to a replacement price.",
+        )
+
+    if ct == "added":
+        return (
+            "low",
+            f"A new Stripe price record {pid} was created.",
+        )
+
+    if fp == "active":
+        if pv is True and nv is False:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe price record {pid} was deactivated.  Existing "
+                "subscriptions are unaffected, but new checkouts referencing "
+                "this price may fail.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"Stripe price record {pid} was reactivated.",
+            )
+
+    if fp in _PRICE_IMMUTABLE_FIELDS:
+        # Stripe prices are immutable for amount/currency/interval — a delta
+        # means a NEW price replaced the prior one (or the snapshot was
+        # cross-mapped).  Phrase carefully.
+        sev = ("critical" if (is_live and is_active and fp == "unit_amount")
+               else "high" if (is_live and is_active)
+               else "medium")
+        return (
+            sev,
+            f"Stripe price record {pid} field '{fp}' changed.  Stripe prices "
+            "are immutable in this dimension, so this most likely indicates "
+            "a NEW price record replaced the previous one.  Verify checkout "
+            "flows reference the intended price — billing may be affected.",
+        )
+
+    if fp == "tax_behavior":
+        return (
+            "medium",
+            f"Stripe price record {pid} tax_behavior changed.  Verify that "
+            "the new tax behaviour is intended for the configured customers.",
+        )
+
+    if fp == "recurring_trial_period_days":
+        return (
+            "medium",
+            f"Stripe price record {pid} trial period changed.  Customers "
+            "subscribing to this price may experience a different trial "
+            "than before.",
+        )
+
+    if fp == "lookup_key":
+        return (
+            "medium",
+            f"Stripe price record {pid} lookup_key changed.  Application code "
+            "that selects this price by lookup_key may now resolve to a "
+            "different price — verify the integration still works.",
+        )
+
+    return (
+        "low",
+        f"Stripe price record {pid} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. stripe_payment_link
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_payment_link_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    plid = str(pm.get("record_id") or "unknown")
+    is_live = _is_production_payment_link(pm)
+
+    if ct == "removed":
+        sev = "high" if is_live else "medium"
+        return (
+            sev,
+            f"Stripe payment link {plid} was removed.  Any external link to "
+            "this URL will stop accepting payments — verify the change is "
+            "intentional.",
+        )
+
+    if ct == "added":
+        return (
+            "medium",
+            f"A new Stripe payment link {plid} was created.  Verify the "
+            "configured price, URLs, and payment method types match policy.",
+        )
+
+    if fp == "active":
+        if pv is True and nv is False:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe payment link {plid} was disabled.  External links "
+                "to this URL may stop accepting payments — verify the change "
+                "is intentional.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"Stripe payment link {plid} was re-enabled.",
+            )
+
+    if fp in ("line_item_price_ids", "line_item_count"):
+        sev = "high" if is_live else "medium"
+        return (
+            sev,
+            f"Stripe payment link {plid} line items changed.  The price or "
+            "product the link sells may now be different — verify against "
+            "your team's catalog policy.",
+        )
+
+    if fp in ("success_url_origin", "after_completion_redirect_origin"):
+        safe_new = _safe_url_origin(nv)
+        # Did the destination shift to a different (registrable) origin?
+        prev_origin = str(pv or "")
+        new_origin = str(nv or "")
+        # The two are stored as scheme+host only by the connector, so a
+        # direct comparison is meaningful.
+        if prev_origin and new_origin and prev_origin != new_origin:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe payment link {plid} redirect destination changed to "
+                f"{safe_new}.  Confirm the new destination is owned by your "
+                "team — an unintended redirect may route customers off-site "
+                "after checkout.",
+            )
+        return (
+            "medium",
+            f"Stripe payment link {plid} redirect field '{fp}' changed.",
+        )
+
+    if fp in ("allow_promotion_codes", "automatic_tax_enabled",
+              "subscription_data_trial_period_days"):
+        return (
+            "medium",
+            f"Stripe payment link {plid} field '{fp}' changed.  Verify "
+            "discount, tax, and trial behaviour match policy.",
+        )
+
+    if fp == "application_fee_amount" or fp == "application_fee_percent":
+        return (
+            "medium",
+            f"Stripe payment link {plid} application fee changed.  Verify "
+            "platform revenue share against current policy.",
+        )
+
+    if fp == "transfer_destination_present":
+        if pv is True and nv is False:
+            return (
+                "high",
+                f"Stripe payment link {plid} no longer has a transfer "
+                "destination configured.  Verify any expected Connect "
+                "transfers will still occur.",
+            )
+
+    return (
+        "low",
+        f"Stripe payment link {plid} configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. stripe_checkout_configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_checkout_configuration_change(change: Change) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    cid = str(pm.get("record_id") or "checkout-defaults")
+    is_live = bool(pm.get("livemode", True))
+
+    if fp == "allowed_payment_method_types_count":
+        try:
+            prev_n = int(pv or 0)
+            new_n = int(nv or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n < prev_n:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe checkout configuration {cid} allowed payment-method "
+                f"count was reduced from {prev_n} to {new_n}.  Customers may "
+                "be unable to pay with previously-accepted methods.",
+            )
+        return (
+            "low",
+            f"Stripe checkout configuration {cid} now allows {new_n} "
+            "payment method types.",
+        )
+
+    if fp == "default_mode":
+        sev = "high" if is_live else "medium"
+        return (
+            sev,
+            f"Stripe checkout configuration {cid} default mode changed from "
+            f"'{pv}' to '{nv}'.  Verify checkout flows still match the "
+            "expected payment / subscription / setup intent.",
+        )
+
+    if fp in ("default_customer_creation", "billing_address_collection",
+              "phone_collection_enabled", "consent_collection_terms_of_service",
+              "consent_collection_promotions", "invoice_creation_enabled"):
+        return (
+            "medium",
+            f"Stripe checkout configuration {cid} setting '{fp}' changed.  "
+            "Verify customer-data collection behaviour matches policy.",
+        )
+
+    return (
+        "low",
+        f"Stripe checkout configuration {cid} field '{fp or 'unknown'}' "
+        "changed.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. stripe_tax_settings
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_tax_settings_change(change: Change) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    tid = str(pm.get("record_id") or "tax-settings")
+    is_live = bool(pm.get("livemode", True))
+
+    if fp == "automatic_tax_status":
+        new_s = str(nv or "").lower()
+        if new_s in ("inactive", "disabled"):
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe automatic tax was disabled for {tid}.  Customers may "
+                "be charged without applicable tax — this could affect "
+                "compliance and revenue reporting.",
+            )
+        if new_s == "active":
+            return (
+                "low",
+                f"Stripe automatic tax was enabled for {tid}.",
+            )
+
+    if fp == "tax_registrations_active_count":
+        try:
+            prev_n = int(pv or 0)
+            new_n = int(nv or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n < prev_n:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe tax registrations active count was reduced from "
+                f"{prev_n} to {new_n}.  Sales into the de-registered "
+                "jurisdictions may no longer collect tax correctly.",
+            )
+        return (
+            "low",
+            f"Stripe tax registrations active count increased from "
+            f"{prev_n} to {new_n}.",
+        )
+
+    if fp == "default_tax_behavior":
+        return (
+            "medium",
+            f"Stripe default tax_behavior changed from '{pv}' to '{nv}'.  "
+            "Verify product/price configuration matches the new behaviour.",
+        )
+
+    if fp == "default_tax_code":
+        return (
+            "medium",
+            f"Stripe default tax_code changed.  Verify the new category "
+            "matches the goods/services being sold.",
+        )
+
+    if fp == "head_office_address_present":
+        if pv is True and nv is False:
+            return (
+                "high",
+                f"Stripe tax settings {tid} no longer have a head-office "
+                "address configured.  Tax calculation may be incomplete "
+                "until the address is restored.",
+            )
+
+    return (
+        "low",
+        f"Stripe tax settings {tid} field '{fp or 'unknown'}' changed.",
+    )

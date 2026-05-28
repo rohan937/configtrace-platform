@@ -40,6 +40,35 @@ STRIPE_PAYMENT_METHOD_CONFIGURATION = "stripe_payment_method_configuration"
 STRIPE_PAYMENT_METHOD_DOMAIN = "stripe_payment_method_domain"
 STRIPE_BILLING_PORTAL_CONFIG = "stripe_billing_portal_config"   # M57.9
 
+# ── M59.10 — Stripe Part 1 expansion: catalog + checkout + tax ───────────────
+# One per Stripe Product.  SECURITY: customer PII / card data are never
+# fetched.  Only the safe catalog fields below are persisted.
+STRIPE_PRODUCT = "stripe_product"
+
+# One per Stripe Price.  Stripe prices are typically *immutable* once
+# created — a "change" usually means the price object was deactivated and a
+# new one took its place.  Risk reasons phrase this as "price record changed
+# / was deactivated" rather than implying in-place mutation.
+STRIPE_PRICE = "stripe_price"
+
+# One per Stripe Payment Link.  The success/cancel URLs are stored AS-IS
+# only if they look like clean URLs without embedded query tokens; otherwise
+# the connector should pass the scheme+host form via _safe_redirect_target
+# (see the Cloudflare page-rule helper).  In the snapshot we further enforce
+# this by storing a separate ``redirect_url_safe`` flag and the scheme+host
+# only — see the schema docstring.
+STRIPE_PAYMENT_LINK = "stripe_payment_link"
+
+# Account-level Checkout configuration defaults.  Singleton-per-account in
+# Stripe (no separate API object — connector synthesizes this from
+# ``Account.controller``, the Customer Portal config, and any account-default
+# Payment Method Configuration).  SECURITY: no client_secret / publishable
+# key / customer info stored.
+STRIPE_CHECKOUT_CONFIGURATION = "stripe_checkout_configuration"
+
+# Stripe Tax settings (singleton per account).
+STRIPE_TAX_SETTINGS = "stripe_tax_settings"
+
 STRIPE_RECORD_TYPES: frozenset[str] = frozenset(
     {
         STRIPE_ACCOUNT_SETTINGS,
@@ -47,6 +76,12 @@ STRIPE_RECORD_TYPES: frozenset[str] = frozenset(
         STRIPE_PAYMENT_METHOD_CONFIGURATION,
         STRIPE_PAYMENT_METHOD_DOMAIN,
         STRIPE_BILLING_PORTAL_CONFIG,
+        # M59.10 Part 1 expansion
+        STRIPE_PRODUCT,
+        STRIPE_PRICE,
+        STRIPE_PAYMENT_LINK,
+        STRIPE_CHECKOUT_CONFIGURATION,
+        STRIPE_TAX_SETTINGS,
     }
 )
 
@@ -191,3 +226,130 @@ class StripeBillingPortalConfigRecord(TypedDict, total=False):
 
     # Subscription pause
     subscription_pause_enabled: bool
+
+
+# ── M59.10 Stripe Part 1 expansion — TypedDicts ──────────────────────────────
+
+
+class StripeProductRecord(TypedDict, total=False):
+    """Normalised stripe_product record.
+
+    SECURITY: only catalog metadata is stored — no card data, customer info,
+    payment-method details, or API keys.  Product images URLs and statement
+    descriptors are short user-supplied strings — safe to retain.
+    """
+
+    record_type: str             # always "stripe_product"
+    record_id: str               # Stripe product id, e.g. "prod_xxx"
+    name: str                    # short display name (user-supplied)
+    active: bool
+    description_present: bool    # we store ONLY the presence flag, not the
+                                  # body — descriptions can be long and may
+                                  # contain customer-facing copy we do not
+                                  # need to retain.
+    default_price: Optional[str] # price id reference, e.g. "price_xxx"
+    metadata_key_count: int      # number of metadata keys (values not stored)
+    statement_descriptor: Optional[str]
+    unit_label: Optional[str]
+    livemode: bool
+    updated: Optional[int]       # Stripe epoch timestamp
+
+
+class StripePriceRecord(TypedDict, total=False):
+    """Normalised stripe_price record.
+
+    Stripe prices are typically immutable.  ``active`` toggles whether a
+    price can be referenced on new checkouts; ``unit_amount`` / ``currency`` /
+    ``recurring`` values are recorded but a change in any of them
+    in practice means a NEW price object was attached and the old one
+    deactivated — the classifier phrases this accordingly.
+    """
+
+    record_type: str             # always "stripe_price"
+    record_id: str               # Stripe price id, e.g. "price_xxx"
+    nickname: Optional[str]
+    product_id: str
+    active: bool
+    currency: str
+    unit_amount: Optional[int]   # in the smallest currency unit (e.g. cents)
+    billing_scheme: str          # "per_unit" | "tiered"
+    type: str                    # "one_time" | "recurring"
+    recurring_interval: Optional[str]      # "day"|"week"|"month"|"year"|None
+    recurring_interval_count: Optional[int]
+    recurring_trial_period_days: Optional[int]
+    tax_behavior: Optional[str]            # "inclusive"|"exclusive"|"unspecified"
+    lookup_key: Optional[str]              # short safe label, user-supplied
+    livemode: bool
+    metadata_key_count: int
+    updated: Optional[int]
+
+
+class StripePaymentLinkRecord(TypedDict, total=False):
+    """Normalised stripe_payment_link record.
+
+    SECURITY: ``success_url`` / ``cancel_url`` etc. are stored ONLY as their
+    scheme+host form (the connector reduces any URL to scheme+host before
+    persistence).  Query strings (which may contain `?session_id={CHECKOUT_SESSION_ID}`
+    or customer-supplied tokens) are never persisted.
+    """
+
+    record_type: str             # always "stripe_payment_link"
+    record_id: str               # Stripe payment link id, "plink_xxx"
+    active: bool
+    line_item_count: int
+    line_item_price_ids: list[str]
+    allow_promotion_codes: bool
+    automatic_tax_enabled: bool
+    customer_creation: str       # "always" | "if_required"
+    payment_method_collection: str  # "always" | "if_required"
+    payment_method_types_count: int
+    application_fee_amount: Optional[int]
+    application_fee_percent: Optional[float]
+    transfer_destination_present: bool
+    # Scheme+host only — query strings are stripped at the connector layer.
+    success_url_origin: Optional[str]   # e.g. "https://example.com"
+    after_completion_type: Optional[str]  # "redirect" | "hosted_confirmation"
+    after_completion_redirect_origin: Optional[str]
+    subscription_data_trial_period_days: Optional[int]
+    livemode: bool
+    metadata_key_count: int
+
+
+class StripeCheckoutConfigurationRecord(TypedDict, total=False):
+    """Account-level Checkout configuration defaults.
+
+    This is a synthesised record (Stripe does not expose a single object) —
+    the connector composes it from account-default Payment Method
+    Configuration + per-account Tax settings + Customer Portal default.
+    """
+
+    record_type: str             # always "stripe_checkout_configuration"
+    record_id: str               # account id ("acct_xxx") since this is
+                                  # account-singleton
+    allowed_payment_method_types_count: int
+    default_mode: str            # "payment" | "subscription" | "setup"
+    default_customer_creation: str
+    consent_collection_terms_of_service: Optional[str]
+    consent_collection_promotions: Optional[str]
+    phone_collection_enabled: bool
+    billing_address_collection: str   # "auto" | "required"
+    invoice_creation_enabled: bool
+    livemode: bool
+
+
+class StripeTaxSettingsRecord(TypedDict, total=False):
+    """Stripe Tax settings (singleton per account).
+
+    SECURITY: jurisdiction lists are stored as COUNTS only (we do not
+    persist customer-region lists which may carry market-strategy data).
+    """
+
+    record_type: str             # always "stripe_tax_settings"
+    record_id: str               # account id
+    automatic_tax_status: str    # "active" | "pending" | "inactive"
+    head_office_address_present: bool
+    default_tax_behavior: str    # "inclusive" | "exclusive" | "unspecified"
+    default_tax_code: Optional[str]
+    tax_registrations_active_count: int
+    tax_registrations_total_count: int
+    livemode: bool

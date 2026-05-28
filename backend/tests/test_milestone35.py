@@ -468,10 +468,22 @@ class TestStripeConnectorFetch:
 
     @patch("httpx.get")
     def test_fetch_returns_all_record_types(self, mock_get):
+        # M59.10: STRIPE_RECORD_TYPES expanded with catalog + checkout + tax
+        # surfaces whose connector live-fetch is deferred.  The mocked-fetch
+        # path still emits all five LEGACY record types — assert that as a
+        # subset rather than equality with the (now-larger) registry.
         mock_get.side_effect = self._mock_all_responses()
         records = StripeConnector().fetch(CREDS)
         record_types = {r["record_type"] for r in records}
-        assert record_types == STRIPE_RECORD_TYPES
+        legacy_types = {
+            "stripe_account_settings",
+            "stripe_webhook_endpoint",
+            "stripe_payment_method_configuration",
+            "stripe_payment_method_domain",
+            "stripe_billing_portal_config",
+        }
+        assert legacy_types.issubset(STRIPE_RECORD_TYPES)
+        assert record_types == legacy_types
 
     @patch("httpx.get")
     def test_fetch_total_count(self, mock_get):
