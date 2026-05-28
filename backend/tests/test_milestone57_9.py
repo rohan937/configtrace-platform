@@ -46,11 +46,12 @@ class TestStripeSchemaM579:
         assert "stripe_billing_portal_config" in STRIPE_RECORD_TYPES
 
     def test_frozenset_has_expected_types(self):
-        # M59.10 expanded STRIPE_RECORD_TYPES from 5 → 10 by adding the
-        # catalog + checkout + tax surfaces.  The original five must still
-        # be present; the new five are additive.
+        # M59.10 + M59.11 expanded STRIPE_RECORD_TYPES from 5 → 17 by adding
+        # the catalog/checkout/tax surfaces (Part 1) and the fraud/keys/
+        # billing/payouts/coupons surfaces (Part 2).  The original five must
+        # still be present; the new twelve are additive.
         from app.connectors.stripe_schema import STRIPE_RECORD_TYPES
-        assert len(STRIPE_RECORD_TYPES) == 10
+        assert len(STRIPE_RECORD_TYPES) == 17
         for legacy in (
             "stripe_account_settings",
             "stripe_webhook_endpoint",

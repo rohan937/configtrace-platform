@@ -579,6 +579,22 @@ def classify_stripe_change(change: Change) -> tuple[str, str]:
     if record_type == "stripe_tax_settings":
         return _classify_tax_settings_change(change)
 
+    # ── M59.11 Part 2 expansion ─────────────────────────────────────────────
+    if record_type == "stripe_radar_rule":
+        return _classify_radar_rule_change(change)
+    if record_type == "stripe_restricted_api_key":
+        return _classify_restricted_api_key_change(change)
+    if record_type == "stripe_subscription_invoice_settings":
+        return _classify_subscription_invoice_settings_change(change)
+    if record_type == "stripe_dunning_settings":
+        return _classify_dunning_settings_change(change)
+    if record_type == "stripe_external_account":
+        return _classify_external_account_change(change)
+    if record_type == "stripe_coupon":
+        return _classify_coupon_change(change)
+    if record_type == "stripe_promotion_code":
+        return _classify_promotion_code_change(change)
+
     return ("low", f"A Stripe configuration record changed ({record_type}).")
 
 
@@ -1044,4 +1060,693 @@ def _classify_tax_settings_change(change: Change) -> tuple[str, str]:
     return (
         "low",
         f"Stripe tax settings {tid} field '{fp or 'unknown'}' changed.",
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.11 Part 2 — fraud / keys / billing / payouts / coupons classifiers
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Wording policy (shared by every classifier below)
+# -------------------------------------------------
+# * Hedged language: "may weaken", "could affect", "may allow", "verify".
+# * Never overclaim outage: not "payments are down", not "fraud exposure
+#   confirmed".  We classify CONFIGURATION DELTAS — actual fraud / payment
+#   outcomes come from Stripe events, which we do not consume here.
+#
+# Defensive metadata
+# ------------------
+# All seven classifiers reuse the existing ``_stripe_meta`` helper (which
+# `isinstance`-guards ``provider_metadata``), so a non-dict pm degrades
+# safely.
+#
+# Secret safety
+# -------------
+# No classifier interpolates ``new_value`` for fields that can carry
+# operator-supplied credential-shaped strings.  Radar rule expressions are
+# referenced only by their pre-computed hash; restricted API key VALUES are
+# never read or stored; bank account / routing numbers never enter
+# ``provider_metadata`` (only ``last4`` + ``routing_fingerprint``).
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A. stripe_radar_rule
+# ─────────────────────────────────────────────────────────────────────────────
+
+_RADAR_PROTECTIVE_ACTIONS: frozenset[str] = frozenset(
+    {"block", "request_three_d_secure", "review"}
+)
+_RADAR_PERMISSIVE_ACTIONS: frozenset[str] = frozenset(
+    {"allow"}
+)
+
+
+def _classify_radar_rule_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    rid = str(pm.get("record_id") or "unknown")
+    name = str(pm.get("name") or rid)
+    is_live = bool(pm.get("livemode", True))
+    prev_action = str(pm.get("action") or "").lower()
+
+    if ct == "removed":
+        sev = "high" if is_live and prev_action in _RADAR_PROTECTIVE_ACTIONS else "medium"
+        return (
+            sev,
+            f"Stripe Radar rule '{name}' was deleted.  Whatever fraud "
+            "pattern this rule covered is no longer evaluated — verify the "
+            "removal was intentional.",
+        )
+
+    if ct == "added":
+        return (
+            "medium",
+            f"A new Stripe Radar rule '{name}' was created.  Review the "
+            "rule to ensure it matches the intended traffic.",
+        )
+
+    if fp == "enabled":
+        if pv is True and nv is False:
+            sev = "high" if (is_live and prev_action in _RADAR_PROTECTIVE_ACTIONS) else "medium"
+            return (
+                sev,
+                f"Stripe Radar rule '{name}' was disabled.  The fraud "
+                "pattern it covered is no longer evaluated.",
+            )
+        if nv is True:
+            return (
+                "low",
+                f"Stripe Radar rule '{name}' was re-enabled.",
+            )
+
+    if fp == "action":
+        prev_s = str(pv or "").lower()
+        new_s = str(nv or "").lower()
+        if prev_s == "block" and new_s in _RADAR_PERMISSIVE_ACTIONS:
+            sev = "critical" if is_live else "high"
+            return (
+                sev,
+                f"Stripe Radar rule '{name}' action was lowered from "
+                f"'block' to '{new_s}'.  Transactions previously blocked may "
+                "now go through — this may weaken fraud filtering.",
+            )
+        if prev_s in _RADAR_PROTECTIVE_ACTIONS and new_s in _RADAR_PERMISSIVE_ACTIONS:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe Radar rule '{name}' action was lowered from "
+                f"'{prev_s}' to '{new_s}'.  Verify the change is intentional.",
+            )
+        if prev_s in _RADAR_PERMISSIVE_ACTIONS and new_s in _RADAR_PROTECTIVE_ACTIONS:
+            return (
+                "low",
+                f"Stripe Radar rule '{name}' action was strengthened from "
+                f"'{prev_s}' to '{new_s}'.",
+            )
+        return (
+            "medium",
+            f"Stripe Radar rule '{name}' action changed from '{prev_s}' to "
+            f"'{new_s}'.",
+        )
+
+    if fp == "expression_hash":
+        return (
+            "medium",
+            f"Stripe Radar rule '{name}' expression was modified.  Review "
+            "the rule in the Stripe Dashboard to confirm the new matching "
+            "logic is intentional.",
+        )
+
+    return (
+        "low",
+        f"Stripe Radar rule '{name}' configuration changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B. stripe_restricted_api_key
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_restricted_api_key_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    kid = str(pm.get("record_id") or "unknown")
+    name = str(pm.get("name") or kid)
+    prefix = str(pm.get("key_id_prefix") or "").lower()
+    # Derive is_live from the key-id prefix first (rk_live vs rk_test).  Only
+    # fall back to the livemode flag when the prefix doesn't disambiguate.
+    if prefix.endswith("live"):
+        is_live = True
+    elif prefix.endswith("test"):
+        is_live = False
+    else:
+        is_live = bool(pm.get("livemode", True))
+    has_write = bool(pm.get("has_write_permission", False))
+    has_secret = bool(pm.get("has_secret_permission", False))
+
+    if ct == "added":
+        if has_secret and is_live:
+            return (
+                "critical",
+                f"A new Stripe restricted API key '{name}' was created with "
+                "access to Stripe-secret-management endpoints in livemode. "
+                "Verify the key is owned by your team and stored securely.",
+            )
+        if has_write and is_live:
+            return (
+                "high",
+                f"A new Stripe restricted API key '{name}' was created with "
+                "write permission in livemode.  Verify the key is owned by "
+                "your team.",
+            )
+        return (
+            "medium",
+            f"A new Stripe restricted API key '{name}' was created.",
+        )
+
+    if ct == "removed":
+        sev = "medium" if is_live else "low"
+        return (
+            sev,
+            f"Stripe restricted API key '{name}' was deleted.  Application "
+            "code that referenced this key will lose access until it is "
+            "rotated.",
+        )
+
+    if fp == "has_write_permission":
+        if pv is False and nv is True:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe restricted API key '{name}' gained write permission. "
+                "Verify the grant was approved.",
+            )
+        return (
+            "low",
+            f"Stripe restricted API key '{name}' write permission was "
+            "removed.",
+        )
+
+    if fp == "has_secret_permission":
+        if pv is False and nv is True:
+            sev = "critical" if is_live else "high"
+            return (
+                sev,
+                f"Stripe restricted API key '{name}' gained access to Stripe-"
+                "secret-management endpoints.  Verify the grant was "
+                "approved and reduce permissions if unnecessary.",
+            )
+        return (
+            "low",
+            f"Stripe restricted API key '{name}' lost access to Stripe-"
+            "secret-management endpoints.",
+        )
+
+    if fp == "permissions_count":
+        try:
+            prev_n = int(pv or 0)
+            new_n = int(nv or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n > prev_n:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe restricted API key '{name}' permission scope was "
+                f"broadened from {prev_n} to {new_n} permissions.  Verify "
+                "the grant was approved.",
+            )
+        return (
+            "low",
+            f"Stripe restricted API key '{name}' permission scope narrowed "
+            f"from {prev_n} to {new_n}.",
+        )
+
+    if fp == "name":
+        return (
+            "low",
+            f"Stripe restricted API key '{kid}' display name changed.",
+        )
+
+    return (
+        "low",
+        f"Stripe restricted API key '{name}' metadata changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. stripe_subscription_invoice_settings
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_subscription_invoice_settings_change(change: Change) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    sid = str(pm.get("record_id") or "subscription-invoice-defaults")
+    is_live = bool(pm.get("livemode", True))
+
+    if fp == "default_collection_method":
+        sev = "high" if is_live else "medium"
+        return (
+            sev,
+            f"Stripe default collection_method changed from '{pv}' to '{nv}' "
+            f"({sid}).  New subscriptions may now bill via a different "
+            "mechanism — verify integration code and customer expectations.",
+        )
+
+    if fp == "default_proration_behavior":
+        return (
+            "medium",
+            f"Stripe default proration_behavior changed from '{pv}' to "
+            f"'{nv}'.  Subscription upgrades/downgrades may produce "
+            "different invoice line items.",
+        )
+
+    if fp == "auto_advance_default":
+        if pv is True and nv is False:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                "Stripe default auto_advance was disabled.  New invoices "
+                "will no longer auto-finalize and may sit as drafts.",
+            )
+        return (
+            "low",
+            "Stripe default auto_advance was enabled.",
+        )
+
+    if fp == "default_days_until_due":
+        return (
+            "medium",
+            f"Stripe default days_until_due changed from '{pv}' to '{nv}'.  "
+            "Payment terms on send-invoice subscriptions are affected.",
+        )
+
+    if fp == "cancel_at_period_end_default":
+        if pv is False and nv is True:
+            return (
+                "high",
+                "Stripe default cancel_at_period_end was enabled — new "
+                "subscriptions may auto-cancel at the end of their period.  "
+                "Verify the change is intentional.",
+            )
+        return (
+            "low",
+            "Stripe default cancel_at_period_end was disabled.",
+        )
+
+    if fp == "customer_balance_enabled":
+        return (
+            "medium",
+            f"Stripe customer_balance setting changed to {nv}.  Verify the "
+            "billing flow for customers with non-zero balance.",
+        )
+
+    return (
+        "low",
+        f"Stripe subscription/invoice default '{fp or 'unknown'}' changed.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. stripe_dunning_settings
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_dunning_settings_change(change: Change) -> tuple[str, str]:
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    sid = str(pm.get("record_id") or "dunning-defaults")
+    is_live = bool(pm.get("livemode", True))
+
+    if fp == "retry_schedule_enabled":
+        if pv is True and nv is False:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe payment retry schedule was disabled for {sid}.  "
+                "Failed payments will no longer be retried automatically — "
+                "this may reduce successful recovery and increase churn.",
+            )
+        return (
+            "low",
+            f"Stripe payment retry schedule was enabled for {sid}.",
+        )
+
+    if fp == "smart_retries_enabled":
+        if pv is True and nv is False:
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe smart retries was disabled for {sid}.  Failed "
+                "payments will fall back to the fixed retry schedule — this "
+                "may reduce successful recovery.",
+            )
+        return (
+            "low",
+            f"Stripe smart retries was enabled for {sid}.",
+        )
+
+    if fp == "past_due_action":
+        new_s = str(nv or "").lower()
+        if new_s == "cancel":
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe past-due action changed to 'cancel'.  Subscriptions "
+                "with failed payments may now be cancelled automatically — "
+                "verify this matches your retention policy.",
+            )
+        if new_s == "leave_as_is":
+            return (
+                "medium",
+                f"Stripe past-due action changed to 'leave_as_is'.  Failed "
+                "subscriptions will continue indefinitely without "
+                "auto-cancellation.",
+            )
+        return (
+            "medium",
+            f"Stripe past-due action changed from '{pv}' to '{nv}'.",
+        )
+
+    if fp == "retry_schedule_max_attempts":
+        try:
+            prev_n = int(pv or 0)
+            new_n = int(nv or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n < prev_n:
+            return (
+                "medium",
+                f"Stripe retry max_attempts lowered from {prev_n} to {new_n}. "
+                "Fewer retries may reduce successful recovery.",
+            )
+        return (
+            "low",
+            f"Stripe retry max_attempts raised from {prev_n} to {new_n}.",
+        )
+
+    if fp == "email_failed_payment_enabled":
+        if pv is True and nv is False:
+            return (
+                "medium",
+                f"Stripe payment-failure emails disabled for {sid}.  "
+                "Customers may not be notified of failed renewals.",
+            )
+        return (
+            "low",
+            f"Stripe payment-failure emails enabled for {sid}.",
+        )
+
+    return (
+        "low",
+        f"Stripe dunning setting '{fp or 'unknown'}' changed.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. stripe_external_account
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_external_account_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    eid = str(pm.get("record_id") or "unknown")
+    acct_type = str(pm.get("account_type") or "external account")
+    is_live = bool(pm.get("livemode", True))
+    is_default = bool(pm.get("default_for_currency", False))
+
+    if ct == "added":
+        sev = "high" if (is_default and is_live) else "medium"
+        return (
+            sev,
+            f"A new Stripe {acct_type} {eid} was attached to the account.  "
+            "Verify the destination is owned by your team — payouts may now "
+            "route to this account.",
+        )
+
+    if ct == "removed":
+        sev = "high" if (is_default and is_live) else "medium"
+        return (
+            sev,
+            f"Stripe {acct_type} {eid} was removed from the account.  If "
+            "this was the default payout destination, payouts may fail "
+            "until a replacement is configured.",
+        )
+
+    if fp == "routing_fingerprint":
+        # The fingerprint is hash-derived; a change means the underlying
+        # routing number was changed even though we never saw the raw value.
+        sev = "critical" if (is_default and is_live) else "high"
+        return (
+            sev,
+            f"Stripe {acct_type} {eid} routing fingerprint changed — the "
+            "underlying bank routing target was modified.  Verify the "
+            "change was authorised and that the new bank account is owned "
+            "by your team.",
+        )
+
+    if fp == "last4":
+        sev = "high" if (is_default and is_live) else "medium"
+        return (
+            sev,
+            f"Stripe {acct_type} {eid} last4 changed.  Verify the new "
+            "destination is owned by your team.",
+        )
+
+    if fp == "default_for_currency":
+        if pv is False and nv is True:
+            return (
+                "high",
+                f"Stripe {acct_type} {eid} was promoted to the default "
+                "payout destination.  Verify the change is intentional.",
+            )
+        return (
+            "low",
+            f"Stripe {acct_type} {eid} is no longer the default payout "
+            "destination.",
+        )
+
+    if fp == "status":
+        new_s = str(nv or "").lower()
+        if new_s == "errored":
+            sev = "high" if (is_default and is_live) else "medium"
+            return (
+                sev,
+                f"Stripe {acct_type} {eid} status changed to 'errored'.  "
+                "Payouts to this destination may fail until the issue is "
+                "resolved.",
+            )
+        if new_s in ("verified", "validated"):
+            return (
+                "low",
+                f"Stripe {acct_type} {eid} was verified.",
+            )
+
+    return (
+        "low",
+        f"Stripe {acct_type} {eid} metadata changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F. stripe_coupon
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Discount magnitude thresholds for severity escalation.  We treat
+# 50%+ off forever / 50%+ amount_off as high-value.
+_COUPON_HIGH_VALUE_PERCENT: float = 50.0
+_COUPON_HIGH_VALUE_AMOUNT_USD_CENTS: int = 5000  # $50
+
+
+def _classify_coupon_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    cid = str(pm.get("record_id") or "unknown")
+    name = str(pm.get("name") or cid)
+    duration = str(pm.get("duration") or "").lower()
+    is_live = bool(pm.get("livemode", True))
+
+    # Pre-compute discount magnitude flags.
+    try:
+        percent_off = float(pm.get("percent_off") or 0)
+    except (TypeError, ValueError):
+        percent_off = 0.0
+    try:
+        amount_off = int(pm.get("amount_off") or 0)
+    except (TypeError, ValueError):
+        amount_off = 0
+    is_high_value = (
+        percent_off >= _COUPON_HIGH_VALUE_PERCENT
+        or amount_off >= _COUPON_HIGH_VALUE_AMOUNT_USD_CENTS
+        or duration == "forever"
+    )
+
+    if ct == "added":
+        sev = "high" if (is_high_value and is_live) else "medium"
+        return (
+            sev,
+            f"A new Stripe coupon '{name}' was created (duration={duration}, "
+            f"percent_off={percent_off or '-'}, amount_off={amount_off or '-'}). "
+            "Verify the discount magnitude and applicability are "
+            "intentional.",
+        )
+
+    if ct == "removed":
+        return (
+            "medium",
+            f"Stripe coupon '{name}' was deleted.  Active redemptions "
+            "still apply per Stripe's lifecycle, but no new customers can "
+            "redeem this coupon.",
+        )
+
+    if fp == "valid":
+        if pv is True and nv is False:
+            return (
+                "low",
+                f"Stripe coupon '{name}' is no longer valid (expired or "
+                "redemption limit reached).",
+            )
+        if nv is True:
+            sev = "high" if (is_high_value and is_live) else "medium"
+            return (
+                sev,
+                f"Stripe coupon '{name}' became valid for redemption again. "
+                "Verify the change is intentional given the discount size.",
+            )
+
+    if fp in ("percent_off", "amount_off"):
+        sev = "medium"
+        return (
+            sev,
+            f"Stripe coupon '{name}' discount field '{fp}' changed.  Verify "
+            "the new discount magnitude is intentional.",
+        )
+
+    if fp == "duration":
+        new_s = str(nv or "").lower()
+        if new_s == "forever":
+            sev = "high" if is_live else "medium"
+            return (
+                sev,
+                f"Stripe coupon '{name}' duration changed to 'forever'.  "
+                "Customers who redeem will receive the discount on every "
+                "billing cycle — verify the change is intentional.",
+            )
+        return (
+            "medium",
+            f"Stripe coupon '{name}' duration changed from '{pv}' to '{nv}'.",
+        )
+
+    if fp == "max_redemptions":
+        return (
+            "medium",
+            f"Stripe coupon '{name}' max_redemptions changed from '{pv}' to "
+            f"'{nv}'.",
+        )
+
+    if fp == "applies_to_count":
+        return (
+            "medium",
+            f"Stripe coupon '{name}' product applicability changed.  "
+            "Different products may now be discounted.",
+        )
+
+    return (
+        "low",
+        f"Stripe coupon '{name}' metadata changed "
+        f"({fp or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G. stripe_promotion_code
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_promotion_code_change(change: Change) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    fp = (_get(change, "field_path") or "").lower()
+    pv = _get(change, "prev_value")
+    nv = _get(change, "new_value")
+    pm = _stripe_meta(change)
+    pid = str(pm.get("record_id") or "unknown")
+    is_live = bool(pm.get("livemode", True))
+    customer_restricted = bool(pm.get("customer_restricted", False))
+
+    if ct == "added":
+        sev = "medium" if (is_live and not customer_restricted) else "low"
+        return (
+            sev,
+            f"A new Stripe promotion code {pid} was created.  Verify the "
+            "associated coupon and redemption limits are intentional.",
+        )
+
+    if ct == "removed":
+        return (
+            "low",
+            f"Stripe promotion code {pid} was deleted.",
+        )
+
+    if fp == "active":
+        if pv is False and nv is True:
+            sev = "medium" if (is_live and not customer_restricted) else "low"
+            return (
+                sev,
+                f"Stripe promotion code {pid} was activated.  Verify the "
+                "associated coupon is the intended one.",
+            )
+        if nv is False:
+            return (
+                "low",
+                f"Stripe promotion code {pid} was deactivated.",
+            )
+
+    if fp == "max_redemptions":
+        return (
+            "medium",
+            f"Stripe promotion code {pid} max_redemptions changed from "
+            f"'{pv}' to '{nv}'.",
+        )
+
+    if fp == "expires_at":
+        return (
+            "low",
+            f"Stripe promotion code {pid} expiry changed.",
+        )
+
+    if fp == "customer_restricted":
+        if pv is True and nv is False:
+            return (
+                "medium",
+                f"Stripe promotion code {pid} is no longer tied to a "
+                "specific customer.  Broader audience may now redeem it — "
+                "verify the change is intentional.",
+            )
+        return (
+            "low",
+            f"Stripe promotion code {pid} was restricted to a specific "
+            "customer.",
+        )
+
+    return (
+        "low",
+        f"Stripe promotion code {pid} metadata changed "
+        f"({fp or 'unknown field'}).",
     )

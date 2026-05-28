@@ -69,6 +69,34 @@ STRIPE_CHECKOUT_CONFIGURATION = "stripe_checkout_configuration"
 # Stripe Tax settings (singleton per account).
 STRIPE_TAX_SETTINGS = "stripe_tax_settings"
 
+# ── M59.11 — Stripe Part 2 expansion: fraud / keys / billing / payouts ───────
+
+# One per Radar (fraud) rule.  SECURITY: raw rule expressions are NEVER
+# persisted — only their sha256 hash, alongside the action + enabled state.
+STRIPE_RADAR_RULE = "stripe_radar_rule"
+
+# One per Stripe restricted API key (rk_*).  SECURITY: the key secret value
+# is NEVER fetched or stored — only id-prefix, name, last-used timestamp,
+# permission-resource summary, and capability flags.
+STRIPE_RESTRICTED_API_KEY = "stripe_restricted_api_key"
+
+# Account-level subscription / invoice default behaviour (singleton).
+STRIPE_SUBSCRIPTION_INVOICE_SETTINGS = "stripe_subscription_invoice_settings"
+
+# Account-level dunning / retry behaviour (singleton).
+STRIPE_DUNNING_SETTINGS = "stripe_dunning_settings"
+
+# One per attached external account (bank or card used for payouts).
+# SECURITY: full bank account numbers / routing numbers are NEVER stored —
+# only last4, country, currency, status, and a routing-fingerprint hash.
+STRIPE_EXTERNAL_ACCOUNT = "stripe_external_account"
+
+# One per Stripe coupon.
+STRIPE_COUPON = "stripe_coupon"
+
+# One per Stripe promotion code (the user-facing redemption code).
+STRIPE_PROMOTION_CODE = "stripe_promotion_code"
+
 STRIPE_RECORD_TYPES: frozenset[str] = frozenset(
     {
         STRIPE_ACCOUNT_SETTINGS,
@@ -82,6 +110,14 @@ STRIPE_RECORD_TYPES: frozenset[str] = frozenset(
         STRIPE_PAYMENT_LINK,
         STRIPE_CHECKOUT_CONFIGURATION,
         STRIPE_TAX_SETTINGS,
+        # M59.11 Part 2 expansion
+        STRIPE_RADAR_RULE,
+        STRIPE_RESTRICTED_API_KEY,
+        STRIPE_SUBSCRIPTION_INVOICE_SETTINGS,
+        STRIPE_DUNNING_SETTINGS,
+        STRIPE_EXTERNAL_ACCOUNT,
+        STRIPE_COUPON,
+        STRIPE_PROMOTION_CODE,
     }
 )
 
@@ -352,4 +388,133 @@ class StripeTaxSettingsRecord(TypedDict, total=False):
     default_tax_code: Optional[str]
     tax_registrations_active_count: int
     tax_registrations_total_count: int
+    livemode: bool
+
+
+# ── M59.11 Stripe Part 2 expansion — TypedDicts ──────────────────────────────
+
+
+class StripeRadarRuleRecord(TypedDict, total=False):
+    """Normalised stripe_radar_rule record.
+
+    SECURITY: the raw Radar rule expression is NEVER stored — only its
+    sha256 hash.  Expressions can encode sensitive thresholds, customer
+    segmentation logic, and merchant security strategy.
+    """
+
+    record_type: str             # always "stripe_radar_rule"
+    record_id: str               # Stripe Radar rule id
+    name: str                    # short label, user-supplied
+    enabled: bool
+    action: str                  # "block" | "review" | "allow" | "request_three_d_secure"
+    expression_hash: str         # sha256 of the raw expression
+    livemode: bool
+
+
+class StripeRestrictedAPIKeyRecord(TypedDict, total=False):
+    """Normalised stripe_restricted_api_key record.
+
+    SECURITY: the secret key value is NEVER fetched or stored — only the
+    id-prefix (``rk_live`` / ``rk_test``), display name, permission
+    summary, and timestamps.
+    """
+
+    record_type: str             # always "stripe_restricted_api_key"
+    record_id: str               # Stripe key id (NOT the secret)
+    name: str
+    key_id_prefix: str           # "rk_live" | "rk_test"
+    permissions_count: int
+    has_write_permission: bool
+    has_secret_permission: bool  # access to Stripe-secret-management endpoints
+    last_used_at: int | None     # epoch seconds
+    created: int                 # epoch seconds
+    livemode: bool
+
+
+class StripeSubscriptionInvoiceSettingsRecord(TypedDict, total=False):
+    """Account-level subscription / invoice default behaviour."""
+
+    record_type: str             # always "stripe_subscription_invoice_settings"
+    record_id: str               # account id (singleton)
+    default_collection_method: str   # "charge_automatically" | "send_invoice"
+    default_days_until_due: int | None
+    default_proration_behavior: str  # "create_prorations"|"none"|"always_invoice"
+    auto_advance_default: bool
+    cancel_at_period_end_default: bool
+    customer_balance_enabled: bool
+    livemode: bool
+
+
+class StripeDunningSettingsRecord(TypedDict, total=False):
+    """Account-level dunning / retry behaviour."""
+
+    record_type: str             # always "stripe_dunning_settings"
+    record_id: str               # account id (singleton)
+    retry_schedule_enabled: bool
+    retry_schedule_max_attempts: int
+    smart_retries_enabled: bool
+    past_due_action: str         # "cancel"|"mark_uncollectible"|"leave_as_is"
+    email_failed_payment_enabled: bool
+    livemode: bool
+
+
+class StripeExternalAccountRecord(TypedDict, total=False):
+    """Normalised stripe_external_account record — payout/bank destination.
+
+    SECURITY: full bank account numbers and routing numbers are NEVER
+    fetched or stored.  Only ``last4``, ``country``, ``currency``,
+    ``status``, and a ``routing_fingerprint`` (Stripe-provided hash of the
+    routing number) are persisted.
+    """
+
+    record_type: str             # always "stripe_external_account"
+    record_id: str               # external account id (ba_* or card_*)
+    account_type: str            # "bank_account" | "card"
+    last4: str                   # last 4 digits — safe per Stripe convention
+    country: str | None
+    currency: str | None
+    routing_fingerprint: str | None
+    status: str                  # "new" | "validated" | "verified" | "errored"
+    default_for_currency: bool
+    livemode: bool
+
+
+class StripeCouponRecord(TypedDict, total=False):
+    """Normalised stripe_coupon record."""
+
+    record_type: str             # always "stripe_coupon"
+    record_id: str               # coupon id (user-defined or auto)
+    name: str | None
+    duration: str                # "forever" | "repeating" | "once"
+    duration_in_months: int | None
+    percent_off: float | None
+    amount_off: int | None       # smallest currency unit
+    currency: str | None
+    max_redemptions: int | None
+    times_redeemed: int
+    redeem_by: int | None        # epoch seconds
+    valid: bool                  # current usability flag
+    applies_to_count: int        # number of products this coupon applies to
+    metadata_key_count: int
+    livemode: bool
+
+
+class StripePromotionCodeRecord(TypedDict, total=False):
+    """Normalised stripe_promotion_code record.
+
+    Note: ``code`` is the user-facing redemption string (e.g. "SUMMER20").
+    Stripe treats this as a public identifier; it is intentionally safe to
+    store.  We still surface ``customer_restricted`` separately so a
+    classifier can distinguish broad-audience codes from per-customer codes.
+    """
+
+    record_type: str             # always "stripe_promotion_code"
+    record_id: str               # promo code id (promo_*)
+    coupon_id: str
+    active: bool
+    code: str                    # user-facing redemption string
+    expires_at: int | None
+    max_redemptions: int | None
+    times_redeemed: int
+    customer_restricted: bool
     livemode: bool
