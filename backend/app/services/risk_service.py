@@ -107,6 +107,13 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change
         return classify_cloudflare_ruleset_change(change)
 
+    # M59.5 — Non-DNS Cloudflare surfaces (SSL/TLS, page rules, workers,
+    # Access, granular WAF rules).  Anything prefixed ``cloudflare_`` other
+    # than the DNS-record and ruleset paths above routes here.
+    if record_type.startswith("cloudflare_") and record_type != "cloudflare_dns_record":
+        from app.services.risk_rules.cloudflare import classify_cloudflare_change
+        return classify_cloudflare_change(change)
+
     return classify_dns_change(change)
 
 
