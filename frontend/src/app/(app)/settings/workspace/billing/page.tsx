@@ -12,6 +12,23 @@ import {
 import type { WorkspaceBilling, BillingPlan } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
 
+// ── Beta gate ─────────────────────────────────────────────────────────────────
+//
+// During the beta/demo period, Stripe checkout is paused. The full Stripe
+// integration (backend routes, env vars, plan IDs, webhooks, portal flow) is
+// intact — we only hide the upgrade CTAs and surface explanatory copy.
+//
+// To re-enable real billing later, EITHER flip ``BETA_BILLING_DISABLED`` to
+// ``false`` below, OR set the env var ``NEXT_PUBLIC_BILLING_CHECKOUT_DISABLED=false``
+// at build time (no code change needed).
+const BETA_BILLING_DISABLED =
+  (process.env.NEXT_PUBLIC_BILLING_CHECKOUT_DISABLED ?? "true").toLowerCase() !==
+  "false";
+
+const BETA_DISABLED_CTA_LABEL = "Unavailable during beta";
+const BETA_DISABLED_HELPER_TEXT =
+  "Checkout is disabled during the beta period. Early users currently receive temporary Team access.";
+
 // ── Plan metadata ─────────────────────────────────────────────────────────────
 //
 // M58.25: early-access pricing.
@@ -457,7 +474,44 @@ function PlanCard({
         </button>
       )}
 
-      {action === "upgrade" && (
+      {action === "upgrade" && BETA_BILLING_DISABLED && (
+        <>
+          <button
+            type="button"
+            disabled
+            aria-disabled="true"
+            aria-label={`Checkout for ${plan.name} is disabled during the beta period`}
+            title={BETA_DISABLED_HELPER_TEXT}
+            style={{
+              width: "100%",
+              background: "#1e2030",
+              color: "#565b6e",
+              border: "1px solid #2a2d38",
+              borderRadius: "5px",
+              padding: "7px 0",
+              fontSize: "12px",
+              fontWeight: 500,
+              cursor: "not-allowed",
+              fontFamily: "inherit",
+            }}
+          >
+            {BETA_DISABLED_CTA_LABEL}
+          </button>
+          <div
+            style={{
+              marginTop: "6px",
+              fontSize: "11px",
+              color: "#565b6e",
+              textAlign: "center",
+              lineHeight: 1.4,
+            }}
+          >
+            {BETA_DISABLED_HELPER_TEXT}
+          </div>
+        </>
+      )}
+
+      {action === "upgrade" && !BETA_BILLING_DISABLED && (
         <>
           <button
             onClick={() => onUpgrade(planKey)}
@@ -554,6 +608,13 @@ export default function BillingPage() {
 
   async function handleUpgrade(plan: BillingPlan) {
     if (!selectedWorkspace) return;
+    // Defense-in-depth: even if the disabled button is somehow triggered
+    // (keyboard, tests, devtools), do not call the Stripe checkout endpoint
+    // while the beta gate is on.
+    if (BETA_BILLING_DISABLED) {
+      setActionError(BETA_DISABLED_HELPER_TEXT);
+      return;
+    }
     const meta = PLAN_META[plan];
     if (!meta.priceId) {
       setActionError("Billing is not fully configured yet. Contact support or try again later.");
@@ -729,6 +790,75 @@ export default function BillingPage() {
 
         {!loading && !error && billing && (
           <>
+            {/* ── Beta access banner ─────────────────────────────────── */}
+            {BETA_BILLING_DISABLED && (
+              <section
+                role="status"
+                aria-label="Temporary Team access during beta"
+                style={{
+                  background: "rgba(96,165,250,0.06)",
+                  border: "1px solid rgba(96,165,250,0.30)",
+                  borderRadius: "8px",
+                  padding: "16px 18px",
+                  marginBottom: "20px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    marginBottom: "8px",
+                  }}
+                >
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: "14px",
+                      fontWeight: 600,
+                      color: "#e8eaf0",
+                    }}
+                  >
+                    Temporary Team access
+                  </h2>
+                  <span
+                    style={{
+                      fontSize: "10px",
+                      fontWeight: 600,
+                      color: "#60a5fa",
+                      background: "rgba(96,165,250,0.12)",
+                      border: "1px solid rgba(96,165,250,0.30)",
+                      borderRadius: "3px",
+                      padding: "1px 6px",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    BETA
+                  </span>
+                </div>
+                <ul
+                  style={{
+                    margin: 0,
+                    padding: 0,
+                    listStyle: "none",
+                    fontSize: "12px",
+                    color: "#c4c8d4",
+                    lineHeight: 1.7,
+                  }}
+                >
+                  <li>
+                    During beta, your workspace has full Team access for 14 days
+                    while we collect feedback.
+                  </li>
+                  <li>Billing is not applicable during this demo/beta period.</li>
+                  <li>
+                    After the beta period, you can continue on Free or upgrade to
+                    Pro or Team.
+                  </li>
+                </ul>
+              </section>
+            )}
+
             {/* ── Over-limit banner ──────────────────────────────────── */}
             <OverLimitBanner
               billing={billing}
@@ -947,7 +1077,8 @@ export default function BillingPage() {
                   Shown to free-plan workspaces with at least one trial-bearing
                   plan configured. The Stripe Customer Portal (reached via
                   "Manage billing") is the only cancellation path. */}
-              {billing.plan === "free" &&
+              {!BETA_BILLING_DISABLED &&
+                billing.plan === "free" &&
                 (PLAN_META.pro.trialDays > 0 || PLAN_META.team.trialDays > 0) &&
                 (PLAN_META.pro.priceId || PLAN_META.team.priceId) && (
                   <p
