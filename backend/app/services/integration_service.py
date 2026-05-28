@@ -1273,7 +1273,7 @@ def create_github_app_integration(
     sync_interval_minutes: int | None = None,
     db: Session,
 ) -> Integration:
-    """Create a GitHub App integration + repository resource.
+    """Create or auto-reconnect a GitHub App integration + repository resource.
 
     The *credentials* dict must contain::
         {
@@ -1287,21 +1287,41 @@ def create_github_app_integration(
     calling route before this function is invoked.  This function only
     handles the DB writes.
 
-    Uniqueness enforcement: a given user cannot connect the same
-    ``"{owner}/{repo}"`` twice regardless of auth method.
+    Uniqueness enforcement: a given user cannot have two *active* GitHub
+    integrations pointing at the same ``"{owner}/{repo}"`` regardless of
+    auth method.
+
+    M59.16 — reconnect-on-broken behaviour
+    ---------------------------------------
+    If the user already has a GitHub integration for this repo whose status
+    is ``needs_reconnect`` or ``error`` (i.e. the upstream credentials had
+    been revoked or were failing), the function does *not* raise.  Instead
+    it treats the install as a **reconnect** of the existing row:
+      * the row's encrypted credentials are replaced with the new ones;
+      * the resource metadata is updated to mark it as ``github_app``;
+      * ``status`` flips back to ``"active"`` and
+        ``consecutive_failure_count`` is reset to 0;
+      * the same row is returned.
+    This means a user who re-installs the GitHub App after uninstalling it
+    upstream lands back on their original integration — same UUID, same
+    history, same snapshots — without having to delete it first.
+
+    Soft-deleted rows (``status='deleted'``) continue to be ignored by the
+    duplicate check, so a fresh install of a previously-deleted repo
+    succeeds as before (a brand new row is created).
 
     Raises:
-        ValueError:         Duplicate repo.
+        ValueError:         Duplicate of an active/paused row.
         EncryptionKeyError: ENCRYPTION_KEY not configured.
     """
     owner: str = credentials["repo_owner"]
     repo_name: str = credentials["repo_name"]
     slug = f"{owner}/{repo_name}"
 
-    # ── Duplicate-repo check (same user, same repo, non-deleted, any auth) ──────
-    existing = (
-        db.query(Resource)
-        .join(Integration, Integration.id == Resource.integration_id)
+    # ── Look up any non-deleted existing integration for this repo ─────────────
+    existing_integration: Integration | None = (
+        db.query(Integration)
+        .join(Resource, Resource.integration_id == Integration.id)
         .filter(
             Resource.user_id == user_id,
             Resource.provider_resource_type == "github_repo",
@@ -1310,7 +1330,37 @@ def create_github_app_integration(
         )
         .first()
     )
-    if existing is not None:
+
+    if existing_integration is not None:
+        # M59.16: auto-reconnect when the existing row is broken.
+        if existing_integration.status in ("needs_reconnect", "error"):
+            ciphertext, iv = encrypt_credentials(credentials)
+            existing_integration.encrypted_credentials = ciphertext
+            existing_integration.credential_iv = iv
+            existing_integration.status = "active"
+            existing_integration.consecutive_failure_count = 0
+
+            # Make sure the resource metadata is correct for App-based auth so
+            # ``get_connection_method()`` keeps returning ``"github_app"``.
+            # If we are reconnecting a row that was previously a PAT, this
+            # also migrates the metadata in place.
+            for r in existing_integration.resources:
+                if (
+                    r.provider_resource_type == "github_repo"
+                    and r.provider_resource_id == slug
+                ):
+                    new_meta = dict(r.resource_metadata or {})
+                    new_meta["repo_owner"] = owner
+                    new_meta["repo_name"] = repo_name
+                    new_meta["connection_method"] = "github_app"
+                    r.resource_metadata = new_meta
+                    r.is_active = True
+
+            db.commit()
+            db.refresh(existing_integration)
+            return existing_integration
+
+        # Active / paused → genuine duplicate; preserve the existing error.
         raise ValueError("This GitHub repository is already connected.")
 
     # ── Encrypt credentials ───────────────────────────────────────────────────

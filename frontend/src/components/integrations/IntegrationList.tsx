@@ -102,7 +102,9 @@ function KebabMenu({
     isGitHubApp
       ? { label: "Re-install GitHub App", action: onReinstallApp }
       : { label: "Update token", action: onUpdateToken },
-    { label: "Delete", action: onDelete, danger: true },
+    // M59.16: rename "Delete" → "Remove integration" for discoverability.
+    // The action itself is unchanged (soft-delete via DELETE /integrations/{id}).
+    { label: "Remove integration", action: onDelete, danger: true },
   ];
 
   return (
@@ -541,10 +543,31 @@ export default function IntegrationList({
                 <div className="shrink-0" style={{ width: "96px" }}>
                   {needsReconnect ? (
                     // M59.14: upstream credentials gone — direct to reconnect.
+                    // M59.16: route GitHub App integrations to the GitHub App
+                    // install/reconnect flow; token-based integrations
+                    // (Cloudflare/Vercel/Stripe + GitHub PAT) open the
+                    // ReconnectIntegrationModal as before.  PAT users would
+                    // have been wrongly asked for a token previously — that
+                    // never works for an App-based row whose credentials are
+                    // an installation_id, not a token.
                     <button
-                      onClick={() => openModal("reconnect", integration)}
+                      onClick={() => {
+                        if (
+                          integration.provider === "github" &&
+                          integration.connection_method === "github_app"
+                        ) {
+                          void handleReinstallApp();
+                        } else {
+                          openModal("reconnect", integration);
+                        }
+                      }}
                       disabled={isBusy}
-                      title="Upstream credentials are no longer valid — provide fresh credentials"
+                      title={
+                        integration.provider === "github" &&
+                        integration.connection_method === "github_app"
+                          ? "Re-install the GitHub App to restore this integration"
+                          : "Upstream credentials are no longer valid — provide fresh credentials"
+                      }
                       style={{
                         width: "100%",
                         textAlign: "center",

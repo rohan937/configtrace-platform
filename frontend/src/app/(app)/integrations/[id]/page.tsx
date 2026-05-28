@@ -1028,8 +1028,20 @@ export default function IntegrationDetailPage() {
           <div className="flex items-center gap-2">
             {needsReconnect ? (
               // M59.14: route the primary action to Reconnect, not Sync Now.
+              // M59.16: GitHub App integrations bypass the token modal and go
+              // straight to the GitHub App install/reconnect flow; everything
+              // else opens ReconnectIntegrationModal as before.
               <button
-                onClick={() => setActiveModal("reconnect")}
+                onClick={() => {
+                  if (
+                    integration.provider === "github" &&
+                    integration.connection_method === "github_app"
+                  ) {
+                    void handleReinstallApp();
+                  } else {
+                    setActiveModal("reconnect");
+                  }
+                }}
                 style={{
                   padding: "6px 12px",
                   borderRadius: "6px",
@@ -1041,7 +1053,12 @@ export default function IntegrationDetailPage() {
                   cursor: "pointer",
                   fontFamily: "inherit",
                 }}
-                title="Upstream credentials are no longer valid — provide fresh credentials"
+                title={
+                  integration.provider === "github" &&
+                  integration.connection_method === "github_app"
+                    ? "Re-install the GitHub App to restore this integration"
+                    : "Upstream credentials are no longer valid — provide fresh credentials"
+                }
               >
                 Reconnect
               </button>
@@ -1099,9 +1116,10 @@ export default function IntegrationDetailPage() {
 
             <button
               onClick={() => setActiveModal("delete")}
+              title="Remove this integration from ConfigTrace"
               style={{ padding: "6px 10px", borderRadius: "6px", border: "1px solid rgba(232,64,64,0.3)", background: "transparent", color: "#e84040", fontSize: "12px", cursor: "pointer", fontFamily: "inherit" }}
             >
-              Delete
+              Remove integration
             </button>
 
             <button

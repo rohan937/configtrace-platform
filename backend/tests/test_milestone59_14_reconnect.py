@@ -424,3 +424,268 @@ class TestLastSyncFailureCategoryExposed:
         ]
         assert len(match) == 1
         assert match[0]["last_sync_failure_category"] == "rate_limited"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G. M59.16 — GitHub App auto-reconnect on broken existing row
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestGitHubAppAutoReconnect:
+    """When the user re-installs the GitHub App for a repo whose existing
+    ConfigTrace integration is in ``needs_reconnect`` / ``error``, we update
+    the existing row in place rather than rejecting with the duplicate-repo
+    error.  Active rows still block.  Soft-deleted rows still allow a fresh
+    install."""
+
+    def _make_github_app_integration(
+        self,
+        db: Session,
+        user: User,
+        *,
+        owner: str = "acme",
+        repo: str = "widgets",
+        installation_id: int = 11111,
+        status: str = "active",
+    ) -> Integration:
+        from app.models.resource import Resource
+
+        creds = {
+            "credential_type": "github_app",
+            "installation_id": installation_id,
+            "repo_owner": owner,
+            "repo_name": repo,
+        }
+        ciphertext, iv = encrypt_credentials(creds)
+        integration = Integration(
+            user_id=user.id,
+            provider="github",
+            display_name=f"{owner}/{repo}",
+            encrypted_credentials=ciphertext,
+            credential_iv=iv,
+            status=status,
+            consecutive_failure_count=4,  # simulate prior failures
+        )
+        db.add(integration)
+        db.flush()
+        resource = Resource(
+            integration_id=integration.id,
+            user_id=user.id,
+            provider_resource_type="github_repo",
+            provider_resource_id=f"{owner}/{repo}",
+            display_name=f"{owner}/{repo}",
+            resource_metadata={
+                "repo_owner": owner,
+                "repo_name": repo,
+                "connection_method": "github_app",
+            },
+            is_active=True,
+        )
+        db.add(resource)
+        db.commit()
+        db.refresh(integration)
+        return integration
+
+    def test_G1_needs_reconnect_row_is_updated_in_place(
+        self, test_user, db_session
+    ):
+        """Re-installing the GitHub App for a repo whose existing row is in
+        ``needs_reconnect`` must reuse the same row, refresh its credentials,
+        flip status to ``active``, and reset the failure count."""
+        from app.services import integration_service
+
+        existing = self._make_github_app_integration(
+            db_session,
+            test_user,
+            owner="acme",
+            repo="widgets",
+            installation_id=11111,
+            status="needs_reconnect",
+        )
+        original_id = existing.id
+
+        result = integration_service.create_github_app_integration(
+            user_id=test_user.id,
+            display_name="Re-installed",
+            credentials={
+                "credential_type": "github_app",
+                "installation_id": 22222,  # new install
+                "repo_owner": "acme",
+                "repo_name": "widgets",
+            },
+            db=db_session,
+        )
+
+        # Same row, not a fresh one.
+        assert result.id == original_id
+        db_session.refresh(result)
+        assert result.status == "active"
+        assert result.consecutive_failure_count == 0
+
+        # Only one integration row for this repo now (no duplicate).
+        from app.models.resource import Resource
+
+        rows = (
+            db_session.query(Integration)
+            .join(Resource, Resource.integration_id == Integration.id)
+            .filter(
+                Resource.user_id == test_user.id,
+                Resource.provider_resource_id == "acme/widgets",
+                Integration.status != "deleted",
+            )
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].id == original_id
+
+    def test_G2_error_status_also_auto_reconnects(self, test_user, db_session):
+        """Legacy ``error`` status (kept for backwards-compat) follows the
+        same auto-reconnect path as ``needs_reconnect``."""
+        from app.services import integration_service
+
+        existing = self._make_github_app_integration(
+            db_session,
+            test_user,
+            owner="acme",
+            repo="legacy",
+            status="error",
+        )
+        original_id = existing.id
+
+        result = integration_service.create_github_app_integration(
+            user_id=test_user.id,
+            display_name="Re-installed",
+            credentials={
+                "credential_type": "github_app",
+                "installation_id": 33333,
+                "repo_owner": "acme",
+                "repo_name": "legacy",
+            },
+            db=db_session,
+        )
+
+        assert result.id == original_id
+        db_session.refresh(result)
+        assert result.status == "active"
+
+    def test_G3_active_row_still_blocks_duplicate(self, test_user, db_session):
+        """Re-installing on top of a healthy active integration must continue
+        to raise the duplicate-repo ValueError (no silent overwrite of a
+        working connection)."""
+        from app.services import integration_service
+
+        self._make_github_app_integration(
+            db_session,
+            test_user,
+            owner="acme",
+            repo="prod",
+            status="active",
+        )
+
+        with pytest.raises(ValueError, match="already connected"):
+            integration_service.create_github_app_integration(
+                user_id=test_user.id,
+                display_name="dup attempt",
+                credentials={
+                    "credential_type": "github_app",
+                    "installation_id": 44444,
+                    "repo_owner": "acme",
+                    "repo_name": "prod",
+                },
+                db=db_session,
+            )
+
+    def test_G4_deleted_row_allows_fresh_creation(self, test_user, db_session):
+        """A soft-deleted row must not block a fresh install of the same
+        repo — the new install creates a brand new row."""
+        from app.services import integration_service
+
+        old = self._make_github_app_integration(
+            db_session,
+            test_user,
+            owner="acme",
+            repo="resurrect",
+            status="deleted",
+        )
+
+        result = integration_service.create_github_app_integration(
+            user_id=test_user.id,
+            display_name="Fresh install",
+            credentials={
+                "credential_type": "github_app",
+                "installation_id": 55555,
+                "repo_owner": "acme",
+                "repo_name": "resurrect",
+            },
+            db=db_session,
+        )
+
+        # A new integration row was created — distinct from the deleted one.
+        assert result.id != old.id
+        assert result.status == "active"
+
+    def test_G5_pat_integration_in_needs_reconnect_migrates_to_app(
+        self, test_user, db_session
+    ):
+        """If the existing broken row is a PAT integration and the user
+        re-installs the App for the same repo, the row is reconnected and
+        its connection_method metadata flips to ``github_app`` (no orphaned
+        PAT row left behind)."""
+        from app.models.resource import Resource
+        from app.services import integration_service
+
+        # Hand-build a PAT-style row (connection_method='pat' in metadata).
+        creds = {
+            "github_token": "ghp_abc",
+            "repo_owner": "acme",
+            "repo_name": "mixed",
+        }
+        ciphertext, iv = encrypt_credentials(creds)
+        existing = Integration(
+            user_id=test_user.id,
+            provider="github",
+            display_name="acme/mixed (PAT)",
+            encrypted_credentials=ciphertext,
+            credential_iv=iv,
+            status="needs_reconnect",
+        )
+        db_session.add(existing)
+        db_session.flush()
+        db_session.add(
+            Resource(
+                integration_id=existing.id,
+                user_id=test_user.id,
+                provider_resource_type="github_repo",
+                provider_resource_id="acme/mixed",
+                display_name="acme/mixed",
+                resource_metadata={
+                    "repo_owner": "acme",
+                    "repo_name": "mixed",
+                    "connection_method": "pat",
+                },
+                is_active=True,
+            )
+        )
+        db_session.commit()
+        original_id = existing.id
+
+        integration_service.create_github_app_integration(
+            user_id=test_user.id,
+            display_name="acme/mixed (App)",
+            credentials={
+                "credential_type": "github_app",
+                "installation_id": 66666,
+                "repo_owner": "acme",
+                "repo_name": "mixed",
+            },
+            db=db_session,
+        )
+
+        # Same row, but metadata now says github_app.
+        db_session.expire_all()
+        reloaded = db_session.get(Integration, original_id)
+        assert reloaded is not None
+        assert reloaded.status == "active"
+        assert (
+            integration_service.get_connection_method(reloaded) == "github_app"
+        )
