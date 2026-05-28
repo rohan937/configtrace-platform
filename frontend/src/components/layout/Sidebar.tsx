@@ -65,10 +65,11 @@ export default function Sidebar() {
     if (authLoaded) void loadProfile();
   }, [authLoaded, loadProfile]);
 
-  // Show the user's name (when distinct from email) above the email line.
-  // If only email is available, the name slot is hidden to avoid duplication.
-  const showNameLine =
-    !!displayName && !!email && displayName !== email;
+  // Sidebar footer policy: prefer the user's display name; fall back to email
+  // only when no real name is set.  We never render both at once — the email
+  // remains visible inside Settings → Profile for users who need it.
+  const hasRealName = !!displayName && displayName !== email;
+  const footerLabel = hasRealName ? displayName : email;
 
   return (
     <aside
@@ -170,41 +171,20 @@ export default function Sidebar() {
               },
             }}
           />
-          {isLoaded && (email || displayName) && (
-            <div
+          {isLoaded && footerLabel && (
+            <span
+              className="truncate"
               style={{
-                display: "flex",
-                flexDirection: "column",
+                fontSize: hasRealName ? "12px" : "11px",
+                color: hasRealName ? "#c4c8d4" : "#8b90a0",
+                fontWeight: hasRealName ? 500 : 400,
+                lineHeight: 1.3,
                 minWidth: 0,
-                lineHeight: 1.25,
               }}
+              title={footerLabel}
             >
-              {showNameLine && (
-                <span
-                  className="truncate"
-                  style={{
-                    fontSize: "12px",
-                    color: "#c4c8d4",
-                    fontWeight: 500,
-                  }}
-                  title={displayName ?? undefined}
-                >
-                  {displayName}
-                </span>
-              )}
-              {email && (
-                <span
-                  className="truncate"
-                  style={{
-                    fontSize: "11px",
-                    color: "#8b90a0",
-                  }}
-                  title={email}
-                >
-                  {email}
-                </span>
-              )}
-            </div>
+              {footerLabel}
+            </span>
           )}
         </div>
 
