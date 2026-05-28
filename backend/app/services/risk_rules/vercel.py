@@ -657,9 +657,917 @@ def classify_vercel_change(change: Any) -> tuple[str, str]:
             change_type, field_path, prev_value, new_value, record_name
         )
 
+    # ── M59.12 expansion ────────────────────────────────────────────────────
+    if record_type == "vercel_deployment":
+        return _classify_deployment_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+    if record_type == "vercel_team_member":
+        return _classify_team_member_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+    if record_type == "vercel_edge_config_item":
+        return _classify_edge_config_item_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+    if record_type == "vercel_cron_job":
+        return _classify_cron_job_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+    if record_type == "vercel_deployment_protection":
+        return _classify_deployment_protection_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+    if record_type == "vercel_integration_installation":
+        return _classify_integration_installation_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+    if record_type == "vercel_function_runtime":
+        return _classify_function_runtime_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+    if record_type == "vercel_firewall_rule":
+        return _classify_firewall_rule_change(
+            change_type, field_path, prev_value, new_value, provider_metadata
+        )
+
     # Unknown Vercel record type — return low with a generic message
     return (
         "low",
         "No specific Vercel risk pattern matched. "
         "This change may be routine configuration maintenance.",
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.12 — Vercel expansion classifiers
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Wording policy (shared)
+# -----------------------
+# Hedged: "may disrupt", "could affect", "may expose", "verify".  Never
+# "definitely down", "compromised", or "hacked".  We classify configuration
+# deltas, not runtime outcomes.
+
+
+import re as _re_vercel_m5912
+
+
+# Git branch / Vercel-username allow-list regex.  Reasons that interpolate
+# operator-supplied strings (branch names, usernames) MUST pass them through
+# this gate so a misconfigured value carrying a credential shape cannot leak.
+# Real git branch names are rarely longer than 80 chars.  Real Vercel
+# usernames are ≤ 39 chars.  Both regexes cap length and require a
+# conservative character set.
+_VERCEL_BRANCH_LIKE_RE = _re_vercel_m5912.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._/\-]{0,79}$"
+)
+_VERCEL_USERNAME_LIKE_RE = _re_vercel_m5912.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,38}$"
+)
+
+# Defence-in-depth blocklist: even if a value passes the shape check, reject
+# anything that begins with a known credential prefix.  These prefixes are
+# never plausible branch / username choices in practice.
+_VERCEL_CREDENTIAL_PREFIX_BLOCKLIST: tuple[str, ...] = (
+    "sk_live_", "sk_test_", "rk_live_", "rk_test_",
+    "whsec_", "ghp_", "gho_", "github_pat_",
+    "AKIA", "ASIA",
+    "vercel_token", "vercel_pat",
+    "Bearer ", "Authorization:",
+    "-----BEGIN ",
+)
+
+
+def _has_credential_prefix(s: str) -> bool:
+    return any(s.startswith(p) for p in _VERCEL_CREDENTIAL_PREFIX_BLOCKLIST)
+
+
+def _safe_branch_label(value: object) -> str:
+    s = str(value or "")
+    if not s or len(s) > 80:
+        return "the configured branch"
+    if _has_credential_prefix(s):
+        return "the configured branch"
+    return s if _VERCEL_BRANCH_LIKE_RE.match(s) else "the configured branch"
+
+
+def _safe_username_label(value: object) -> str:
+    s = str(value or "")
+    if not s or len(s) > 39:
+        return "the configured user"
+    if _has_credential_prefix(s):
+        return "the configured user"
+    return s if _VERCEL_USERNAME_LIKE_RE.match(s) else "the configured user"
+
+
+# ── Sensitive Edge-Config / feature-flag key patterns ───────────────────────
+_EDGE_CONFIG_SENSITIVE_KEY_PATTERNS: tuple[str, ...] = (
+    "AUTH", "API", "BACKEND", "PAYMENT", "STRIPE", "PROD", "PRODUCTION",
+    "DB", "DATABASE", "SECRET", "PRIVATE_KEY", "TOKEN", "WEBHOOK",
+)
+
+
+def _vercel_edge_key_is_sensitive(key: str) -> bool:
+    u = (key or "").upper()
+    return any(p in u for p in _EDGE_CONFIG_SENSITIVE_KEY_PATTERNS)
+
+
+# ── Production-cron name patterns ───────────────────────────────────────────
+_VERCEL_PROD_CRON_PATTERNS: tuple[str, ...] = (
+    "billing", "billing-", "invoice", "payment", "payout",
+    "sync", "cleanup", "purge", "rotate", "rotation",
+    "backup", "snapshot",
+)
+
+
+def _vercel_cron_is_production_critical(pm: dict) -> bool:
+    """Heuristic: cron jobs whose name/path hint at billing/sync/cleanup
+    operations are production-critical."""
+    name = str(pm.get("name") or pm.get("record_id") or "").lower()
+    path = str(pm.get("path") or "").lower()
+    haystack = f"{name} {path}"
+    target_env = str(pm.get("target_env") or "").lower()
+    if target_env == "production":
+        return True
+    return any(p in haystack for p in _VERCEL_PROD_CRON_PATTERNS)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A. vercel_deployment
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_deployment_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    dep_id = str(pm.get("record_id") or "unknown")
+    target = str(pm.get("target") or "").lower()
+    is_production = (target == "production"
+                     or bool(pm.get("is_current_production_alias", False)))
+
+    if change_type == "removed":
+        sev = "high" if is_production else "medium"
+        return (
+            sev,
+            f"Vercel deployment {dep_id} was removed.  Production routing "
+            "may be affected if this was the active deployment.",
+        )
+
+    if change_type == "added":
+        # New production deployments are routine; preview is also routine.
+        return (
+            "low",
+            f"A new Vercel deployment {dep_id} was created.",
+        )
+
+    # ── Production alias / promotion signals ────────────────────────────────
+    if field_path == "is_current_production_alias":
+        if prev_value is False and new_value is True:
+            # A preview/staging deployment was promoted to production.
+            return (
+                "high",
+                f"Vercel deployment {dep_id} was promoted to the production "
+                "alias.  Verify the promotion was intentional and that the "
+                "deployment was built from the expected source.",
+            )
+        if prev_value is True and new_value is False:
+            # The deployment lost the production alias — typically because
+            # another deployment took over.  This often indicates a rollback.
+            return (
+                "high",
+                f"Vercel deployment {dep_id} is no longer the production "
+                "alias — another deployment may have taken over or a "
+                "rollback occurred.  Verify the active deployment matches "
+                "the intended source.",
+            )
+
+    if field_path == "target":
+        prev_s = str(prev_value or "").lower()
+        new_s = str(new_value or "").lower()
+        if prev_s != "production" and new_s == "production":
+            return (
+                "critical",
+                f"Vercel deployment {dep_id} target was changed to 'production'. "
+                "A non-production deployment is now serving production traffic — "
+                "verify the change is intentional.",
+            )
+        if prev_s == "production" and new_s != "production":
+            return (
+                "high",
+                f"Vercel deployment {dep_id} target was changed away from "
+                "'production'.  Verify the change is intentional.",
+            )
+
+    if field_path == "source_branch":
+        prev_label = _safe_branch_label(prev_value)
+        new_label = _safe_branch_label(new_value)
+        if is_production:
+            return (
+                "high",
+                f"Vercel production deployment {dep_id} source branch "
+                f"changed from '{prev_label}' to '{new_label}'.  Verify "
+                "the new branch is the intended release source.",
+            )
+        return (
+            "medium",
+            f"Vercel deployment {dep_id} source branch changed.",
+        )
+
+    if field_path == "deployment_url":
+        return (
+            "medium",
+            f"Vercel deployment {dep_id} URL changed.  Verify any external "
+            "references still point at the intended deployment.",
+        )
+
+    if field_path == "state":
+        new_s = str(new_value or "").lower()
+        if new_s == "error":
+            sev = "high" if is_production else "medium"
+            return (
+                sev,
+                f"Vercel deployment {dep_id} entered 'ERROR' state.  "
+                "Investigate build/runtime failures.",
+            )
+        if new_s == "canceled":
+            return (
+                "medium",
+                f"Vercel deployment {dep_id} was canceled.",
+            )
+        if new_s == "ready":
+            return (
+                "low",
+                f"Vercel deployment {dep_id} is now READY.",
+            )
+
+    if field_path == "creator_username":
+        prev_label = _safe_username_label(prev_value)
+        new_label = _safe_username_label(new_value)
+        return (
+            "medium",
+            f"Vercel deployment {dep_id} creator changed from '{prev_label}' "
+            f"to '{new_label}'.  Verify the new creator is authorised.",
+        )
+
+    return (
+        "low",
+        f"Vercel deployment {dep_id} configuration changed "
+        f"({field_path or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# B. vercel_team_member
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VERCEL_ROLE_RANK: dict[str, int] = {
+    "viewer": 1, "member": 2, "developer": 3, "admin": 4, "owner": 5,
+}
+
+
+def _classify_team_member_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    name = str(pm.get("name") or pm.get("record_id") or "unknown")
+    outside = bool(pm.get("is_outside_collaborator", False))
+
+    if change_type == "added":
+        role = str(pm.get("role") or new_value or "").lower()
+        if outside and role in ("admin", "owner"):
+            return (
+                "critical",
+                f"Outside collaborator {name} was added with '{role}' role. "
+                "External-account access at admin/owner level grants broad "
+                "control — verify the grant was approved.",
+            )
+        if role in ("admin", "owner"):
+            return (
+                "high",
+                f"Vercel member {name} was added with '{role}' role.  "
+                "Verify the grant was approved.",
+            )
+        if role in ("developer",):
+            sev = "high" if outside else "medium"
+            return (
+                sev,
+                f"Vercel {'outside collaborator' if outside else 'member'} "
+                f"{name} was added with '{role}' role.",
+            )
+        return (
+            "low",
+            f"Vercel member {name} was added with '{role or 'unknown'}' role.",
+        )
+
+    if change_type == "removed":
+        return (
+            "medium",
+            f"Vercel member {name} was removed.  Verify the change was "
+            "intentional — losing a team member may affect availability of "
+            "review and on-call coverage.",
+        )
+
+    if field_path == "role":
+        prev_s = str(prev_value or "").lower()
+        new_s = str(new_value or "").lower()
+        prev_r = _VERCEL_ROLE_RANK.get(prev_s, 0)
+        new_r = _VERCEL_ROLE_RANK.get(new_s, 0)
+        if new_r > prev_r and new_s in ("admin", "owner"):
+            sev = "critical" if outside else "high"
+            return (
+                sev,
+                f"Vercel member {name} role was raised from '{prev_s}' to "
+                f"'{new_s}'.  This grants broad project control — verify "
+                "the grant was approved.",
+            )
+        if new_r > prev_r:
+            sev = "high" if outside else "medium"
+            return (
+                sev,
+                f"Vercel member {name} role was raised from '{prev_s}' to "
+                f"'{new_s}'.",
+            )
+        if new_r < prev_r:
+            return (
+                "low",
+                f"Vercel member {name} role was lowered from '{prev_s}' to "
+                f"'{new_s}'.",
+            )
+
+    if field_path == "is_outside_collaborator":
+        if prev_value is False and new_value is True:
+            return (
+                "high",
+                f"Vercel member {name} was reclassified as an outside "
+                "collaborator.  Review whether their current role is still "
+                "appropriate.",
+            )
+
+    if field_path == "project_scope":
+        return (
+            "medium",
+            f"Vercel member {name} project scope changed.  Verify the new "
+            "scope is intentional.",
+        )
+
+    return (
+        "low",
+        f"Vercel member {name} metadata changed "
+        f"({field_path or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# C. vercel_edge_config_item
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_edge_config_item_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    key = str(pm.get("key") or pm.get("name") or pm.get("record_id") or "unknown")
+    target = str(pm.get("target") or "").lower()
+    is_production = target in ("production", "all")
+    is_sensitive_key = _vercel_edge_key_is_sensitive(key)
+
+    if change_type == "removed":
+        sev = ("high" if (is_sensitive_key and is_production)
+               else "medium")
+        return (
+            sev,
+            f"Vercel Edge Config item '{key}' was removed (target={target or 'unknown'}). "
+            "Code that reads this flag may now fall back to defaults — "
+            "verify the runtime behaviour is intentional.",
+        )
+
+    if change_type == "added":
+        sev = ("medium" if (is_sensitive_key and is_production) else "low")
+        return (
+            sev,
+            f"A new Vercel Edge Config item '{key}' was created "
+            f"(target={target or 'unknown'}).",
+        )
+
+    if field_path == "value_hash":
+        if is_sensitive_key and is_production:
+            return (
+                "high",
+                f"Vercel Edge Config item '{key}' value changed in "
+                "production.  This key looks security-sensitive "
+                "(auth/api/payment/backend-style label) — verify the new "
+                "value is intentional.",
+            )
+        if is_production:
+            return (
+                "medium",
+                f"Vercel Edge Config item '{key}' value changed in "
+                "production.  Verify the new behaviour matches expectations.",
+            )
+        return (
+            "low",
+            f"Vercel Edge Config item '{key}' value changed in "
+            f"{target or 'non-prod'}.",
+        )
+
+    if field_path == "value_type":
+        return (
+            "medium",
+            f"Vercel Edge Config item '{key}' value type changed from "
+            f"{prev_value!r} to {new_value!r}.  Verify consumer code can "
+            "handle the new type.",
+        )
+
+    if field_path == "target":
+        if target == "production":
+            return (
+                "high",
+                f"Vercel Edge Config item '{key}' was promoted to "
+                "production.  Verify the value is the intended one for the "
+                "production environment.",
+            )
+
+    return (
+        "low",
+        f"Vercel Edge Config item '{key}' metadata changed "
+        f"({field_path or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D. vercel_cron_job
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_cron_job_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    cid = str(pm.get("record_id") or pm.get("name") or "unknown")
+    is_critical = _vercel_cron_is_production_critical(pm)
+
+    if change_type == "removed":
+        sev = "high" if is_critical else "medium"
+        return (
+            sev,
+            f"Vercel cron job {cid} was removed.  Scheduled execution at the "
+            "previous cadence no longer runs — verify the change is "
+            "intentional.",
+        )
+
+    if change_type == "added":
+        return (
+            "low",
+            f"A new Vercel cron job {cid} was created.",
+        )
+
+    if field_path == "enabled":
+        if prev_value is True and new_value is False:
+            sev = "high" if is_critical else "medium"
+            return (
+                sev,
+                f"Vercel cron job {cid} was disabled.  Scheduled execution "
+                "no longer runs — verify the change is intentional.",
+            )
+        if new_value is True:
+            return (
+                "low",
+                f"Vercel cron job {cid} was re-enabled.",
+            )
+
+    if field_path == "schedule":
+        return (
+            "medium",
+            f"Vercel cron job {cid} schedule changed from {prev_value!r} to "
+            f"{new_value!r}.  Verify the new cron expression matches the "
+            "intended cadence.",
+        )
+
+    if field_path == "path":
+        sev = "high" if is_critical else "medium"
+        return (
+            sev,
+            f"Vercel cron job {cid} target path changed from {prev_value!r} "
+            f"to {new_value!r}.  Verify the new endpoint is the intended one.",
+        )
+
+    if field_path == "region":
+        return (
+            "low",
+            f"Vercel cron job {cid} region changed from {prev_value!r} to "
+            f"{new_value!r}.",
+        )
+
+    if field_path == "target_env":
+        if str(new_value or "").lower() == "production":
+            return (
+                "medium",
+                f"Vercel cron job {cid} was scoped to production.  Verify "
+                "the change is intentional.",
+            )
+
+    return (
+        "low",
+        f"Vercel cron job {cid} metadata changed "
+        f"({field_path or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. vercel_deployment_protection
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_deployment_protection_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    pid = str(pm.get("name") or pm.get("record_id") or "unknown")
+
+    if field_path == "sso_enabled":
+        if prev_value is True and new_value is False:
+            return (
+                "high",
+                f"Vercel Authentication (SSO) was disabled on project {pid}. "
+                "Preview/protected deployments may now be reachable without "
+                "team-member sign-in — verify the change is intentional.",
+            )
+        return (
+            "low",
+            f"Vercel Authentication (SSO) was enabled on project {pid}.",
+        )
+
+    if field_path == "password_enabled":
+        if prev_value is True and new_value is False:
+            return (
+                "high",
+                f"Vercel password protection was disabled on project {pid}. "
+                "Preview/protected deployments may now be reachable without "
+                "a password.",
+            )
+        return (
+            "low",
+            f"Vercel password protection was enabled on project {pid}.",
+        )
+
+    if field_path == "protection_bypass_for_automation":
+        if prev_value is False and new_value is True:
+            return (
+                "high",
+                f"Vercel deployment-protection bypass for automation was "
+                f"enabled on project {pid}.  Automation tokens can now skip "
+                "the protection barrier — verify the change is intentional.",
+            )
+        return (
+            "low",
+            f"Vercel deployment-protection bypass was removed on project "
+            f"{pid}.",
+        )
+
+    if field_path == "trusted_ips_count":
+        try:
+            prev_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n > prev_n:
+            return (
+                "high",
+                f"Vercel trusted-IP allowlist was broadened on project {pid} "
+                f"(from {prev_n} to {new_n}).  More IPs can now bypass "
+                "deployment protection.",
+            )
+        return (
+            "low",
+            f"Vercel trusted-IP allowlist was narrowed on project {pid} "
+            f"(from {prev_n} to {new_n}).",
+        )
+
+    if field_path == "trusted_ips_cidr_hash":
+        return (
+            "medium",
+            f"Vercel trusted-IP allowlist on project {pid} was modified "
+            "(content hash changed).  Verify the new allowlist is "
+            "intentional.",
+        )
+
+    if field_path == "preview_comments_public":
+        if prev_value is False and new_value is True:
+            return (
+                "medium",
+                f"Vercel preview comments were made public on project {pid}. "
+                "Comments are visible to anyone with the preview URL.",
+            )
+
+    if field_path == "preview_deployments_protected":
+        if prev_value is True and new_value is False:
+            return (
+                "high",
+                f"Vercel preview-deployment protection was disabled on "
+                f"project {pid}.  Preview URLs may now be reachable without "
+                "authentication.",
+            )
+
+    return (
+        "low",
+        f"Vercel deployment-protection setting on project {pid} changed "
+        f"({field_path or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F. vercel_integration_installation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_integration_installation_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    name = str(pm.get("name") or pm.get("record_id") or "unknown")
+
+    if change_type == "added":
+        if bool(pm.get("has_admin_access")):
+            return (
+                "critical",
+                f"Vercel integration '{name}' was installed with admin "
+                "access.  The integration can change project settings, env "
+                "vars, and domains.  Verify the integration is trusted.",
+            )
+        if (bool(pm.get("has_env_access"))
+                or bool(pm.get("has_deployment_access"))
+                or bool(pm.get("has_domain_access"))):
+            return (
+                "high",
+                f"Vercel integration '{name}' was installed with elevated "
+                "permissions (env, deployment, or domain).  Verify the "
+                "integration is trusted.",
+            )
+        return (
+            "medium",
+            f"Vercel integration '{name}' was installed.  Review its "
+            "permissions and project scope.",
+        )
+
+    if change_type == "removed":
+        return (
+            "medium",
+            f"Vercel integration '{name}' was removed.  Any automation it "
+            "provided no longer runs — verify the change is intentional.",
+        )
+
+    for cap_field in (
+        "has_admin_access", "has_env_access",
+        "has_deployment_access", "has_domain_access",
+    ):
+        if field_path == cap_field and prev_value is False and new_value is True:
+            sev = "critical" if cap_field == "has_admin_access" else "high"
+            return (
+                sev,
+                f"Vercel integration '{name}' gained {cap_field} permission. "
+                "Verify the grant was approved and reduce permissions if "
+                "unnecessary.",
+            )
+
+    if field_path == "project_count":
+        try:
+            prev_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n > prev_n:
+            sev = "high"
+            return (
+                sev,
+                f"Vercel integration '{name}' project scope broadened from "
+                f"{prev_n} to {new_n} projects.  Verify the additional "
+                "projects were intentionally connected.",
+            )
+        return (
+            "low",
+            f"Vercel integration '{name}' project scope narrowed from "
+            f"{prev_n} to {new_n} projects.",
+        )
+
+    return (
+        "low",
+        f"Vercel integration '{name}' metadata changed "
+        f"({field_path or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# G. vercel_function_runtime
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# Runtimes considered EOL or substantially behind current LTS — we don't
+# hardcode an authoritative list; the heuristic is "downgrades to an older
+# Node major or non-current runtime should surface a Medium reason".
+def _vercel_runtime_is_older(prev_s: str, new_s: str) -> bool:
+    """Heuristic comparison for Node runtimes.  Returns True if *new_s*
+    looks like an older Node major than *prev_s*."""
+    m_prev = _re_vercel_m5912.match(r"nodejs(\d+)", prev_s or "")
+    m_new = _re_vercel_m5912.match(r"nodejs(\d+)", new_s or "")
+    if m_prev and m_new:
+        return int(m_new.group(1)) < int(m_prev.group(1))
+    return False
+
+
+def _classify_function_runtime_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    pid = str(pm.get("name") or pm.get("record_id") or "unknown")
+
+    if field_path == "default_runtime":
+        prev_s = str(prev_value or "").lower()
+        new_s = str(new_value or "").lower()
+        if _vercel_runtime_is_older(prev_s, new_s):
+            return (
+                "high",
+                f"Vercel project {pid} default runtime was downgraded from "
+                f"{prev_s!r} to {new_s!r}.  Verify the downgrade is "
+                "intentional — older runtimes may receive less security "
+                "patching.",
+            )
+        return (
+            "medium",
+            f"Vercel project {pid} default runtime changed from {prev_s!r} "
+            f"to {new_s!r}.  Verify the new runtime is intentional.",
+        )
+
+    if field_path == "default_region":
+        return (
+            "medium",
+            f"Vercel project {pid} default region changed from {prev_value!r} "
+            f"to {new_value!r}.  Latency for end users may shift.",
+        )
+
+    if field_path == "default_max_duration_seconds":
+        try:
+            prev_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n > prev_n:
+            return (
+                "medium",
+                f"Vercel project {pid} default function max_duration was "
+                f"raised from {prev_n}s to {new_n}s.  Verify the new limit "
+                "is intentional (may increase cost).",
+            )
+        return (
+            "low",
+            f"Vercel project {pid} default function max_duration was lowered "
+            f"from {prev_n}s to {new_n}s.",
+        )
+
+    if field_path == "default_memory_mb":
+        return (
+            "medium",
+            f"Vercel project {pid} default function memory changed from "
+            f"{prev_value!r}MB to {new_value!r}MB.",
+        )
+
+    if field_path == "public_function_route_count":
+        try:
+            prev_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        if new_n > prev_n:
+            return (
+                "high",
+                f"Vercel project {pid} public function route count "
+                f"increased from {prev_n} to {new_n}.  More routes are now "
+                "publicly reachable — verify each new route applies the "
+                "intended auth/rate-limiting.",
+            )
+        return (
+            "low",
+            f"Vercel project {pid} public function route count decreased "
+            f"from {prev_n} to {new_n}.",
+        )
+
+    if field_path in ("edge_function_count", "serverless_function_count"):
+        try:
+            prev_n = int(prev_value or 0)
+            new_n = int(new_value or 0)
+        except (TypeError, ValueError):
+            prev_n = new_n = 0
+        direction = "increased" if new_n > prev_n else "decreased"
+        return (
+            "low",
+            f"Vercel project {pid} {field_path} {direction} from {prev_n} "
+            f"to {new_n}.",
+        )
+
+    return (
+        "low",
+        f"Vercel project {pid} function/runtime setting changed "
+        f"({field_path or 'unknown field'}).",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# H. vercel_firewall_rule
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VERCEL_FW_PROTECTIVE_ACTIONS: frozenset[str] = frozenset(
+    {"block", "challenge", "log"}
+)
+_VERCEL_FW_PERMISSIVE_ACTIONS: frozenset[str] = frozenset(
+    {"allow", "bypass"}
+)
+
+
+def _classify_firewall_rule_change(
+    change_type: str, field_path: Any, prev_value: Any, new_value: Any,
+    pm: dict,
+) -> tuple[str, str]:
+    description = str(pm.get("description") or pm.get("name")
+                      or pm.get("record_id") or "unknown")
+    targets_prod = bool(pm.get("targets_production", True))
+
+    if change_type == "removed":
+        prev_action = str(pm.get("action") or "").lower()
+        sev = ("high" if (targets_prod and prev_action in _VERCEL_FW_PROTECTIVE_ACTIONS)
+               else "medium")
+        return (
+            sev,
+            f"Vercel firewall rule '{description}' was removed.  Whatever "
+            "attack pattern or path it covered is no longer filtered at the "
+            "edge.",
+        )
+
+    if change_type == "added":
+        return (
+            "medium",
+            f"A new Vercel firewall rule '{description}' was added.  Review "
+            "the rule to ensure it matches the intended traffic.",
+        )
+
+    if field_path == "action":
+        prev_s = str(prev_value or "").lower()
+        new_s = str(new_value or "").lower()
+        if prev_s == "block" and new_s in _VERCEL_FW_PERMISSIVE_ACTIONS:
+            sev = "critical" if targets_prod else "high"
+            return (
+                sev,
+                f"Vercel firewall rule '{description}' action was lowered "
+                f"from 'block' to '{new_s}'.  Traffic that was previously "
+                "blocked is now permitted — this may weaken edge filtering.",
+            )
+        if (prev_s in _VERCEL_FW_PROTECTIVE_ACTIONS
+                and new_s in _VERCEL_FW_PERMISSIVE_ACTIONS):
+            sev = "high" if targets_prod else "medium"
+            return (
+                sev,
+                f"Vercel firewall rule '{description}' action was lowered "
+                f"from '{prev_s}' to '{new_s}'.  Verify the change is "
+                "intentional.",
+            )
+        if (prev_s in _VERCEL_FW_PERMISSIVE_ACTIONS
+                and new_s in _VERCEL_FW_PROTECTIVE_ACTIONS):
+            return (
+                "low",
+                f"Vercel firewall rule '{description}' action was "
+                f"strengthened from '{prev_s}' to '{new_s}'.",
+            )
+        return (
+            "medium",
+            f"Vercel firewall rule '{description}' action changed from "
+            f"'{prev_s}' to '{new_s}'.",
+        )
+
+    if field_path == "enabled":
+        if prev_value is True and new_value is False:
+            sev = "high" if targets_prod else "medium"
+            return (
+                sev,
+                f"Vercel firewall rule '{description}' was disabled.  The "
+                "attack pattern it covered is no longer filtered at the edge.",
+            )
+        if new_value is True:
+            return (
+                "low",
+                f"Vercel firewall rule '{description}' was re-enabled.",
+            )
+
+    if field_path == "expression_hash":
+        # Hash change means the matching logic was changed; we never see the
+        # expression text.
+        return (
+            "medium",
+            f"Vercel firewall rule '{description}' matching expression was "
+            "modified.  Verify the new pattern matches the intended traffic.",
+        )
+
+    return (
+        "low",
+        f"Vercel firewall rule '{description}' metadata changed "
+        f"({field_path or 'unknown field'}).",
     )

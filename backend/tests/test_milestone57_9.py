@@ -100,9 +100,21 @@ class TestVercelSchemaM579:
         from app.connectors.vercel_schema import VERCEL_RECORD_TYPES
         assert "vercel_deploy_hook_metadata" in VERCEL_RECORD_TYPES
 
-    def test_frozenset_has_four_types(self):
+    def test_frozenset_has_expected_types(self):
+        # M59.12 expanded VERCEL_RECORD_TYPES from 4 → 12 by adding the
+        # deployment / team / Edge Config / cron / deployment-protection /
+        # integration / function-runtime / firewall surfaces.  The original
+        # four legacy types must still be present; the new eight are
+        # additive.
         from app.connectors.vercel_schema import VERCEL_RECORD_TYPES
-        assert len(VERCEL_RECORD_TYPES) == 4
+        assert len(VERCEL_RECORD_TYPES) == 12
+        for legacy in (
+            "vercel_project",
+            "vercel_env_var",
+            "vercel_domain",
+            "vercel_deploy_hook_metadata",
+        ):
+            assert legacy in VERCEL_RECORD_TYPES
 
 
 class TestShopifySchemaM579:
