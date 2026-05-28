@@ -22,6 +22,7 @@ import {
 import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import PageHeader from "@/components/common/PageHeader";
 import StatusBadge from "@/components/common/StatusBadge";
+import { getDisplayStatus } from "@/lib/integrationStatus";
 import RiskBadge from "@/components/common/RiskBadge";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
@@ -394,7 +395,7 @@ function HealthPanel({
     <Panel title="Health">
       <MetaRow
         label="Status"
-        value={<StatusBadge status={integration.status} />}
+        value={<StatusBadge status={getDisplayStatus(integration)} />}
       />
       <MetaRow
         label="Scheduled sync"
@@ -998,7 +999,7 @@ export default function IntegrationDetailPage() {
             >
               {providerLabel}
             </span>
-            <StatusBadge status={integration.status} />
+            <StatusBadge status={getDisplayStatus(integration)} />
             {integration.last_sync_status === "failed" && (
               <span
                 title={integration.last_sync_error ?? "Last sync failed"}

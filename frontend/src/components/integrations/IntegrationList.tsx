@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import StatusBadge from "@/components/common/StatusBadge";
+import { getDisplayStatus } from "@/lib/integrationStatus";
 import { formatRelativeTime } from "@/lib/utils";
 import { getGitHubAppInstallUrl, getSyncStatus, patchIntegration, triggerSync } from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
@@ -476,6 +477,10 @@ export default function IntegrationList({
           // surfaces a Reconnect affordance in its place so users have a clear
           // path forward instead of hitting a dead button.
           const needsReconnect = integration.status === "needs_reconnect";
+          // M59.15: derived display status combines backend status with the
+          // latest sync outcome.  ``active`` + last sync failed ⇒ Needs
+          // attention or Degraded (never a clean green Active badge).
+          const displayStatus = getDisplayStatus(integration);
           const isBusy = pauseInProgress[integration.id] ?? false;
 
           return (
@@ -525,9 +530,11 @@ export default function IntegrationList({
                       : "Never synced"}
                 </span>
 
-                {/* Status badge */}
-                <div className="shrink-0" style={{ width: "72px" }}>
-                  <StatusBadge status={integration.status} />
+                {/* Status badge — M59.15: uses derived display status so the
+                    badge never shows green "Active" when the latest sync
+                    failed.  Width widened to accommodate "Needs attention". */}
+                <div className="shrink-0" style={{ width: "120px" }}>
+                  <StatusBadge status={displayStatus} />
                 </div>
 
                 {/* Sync Now / paused / Reconnect button */}

@@ -328,3 +328,99 @@ class TestWorkerFlipsStatusOnAuthFailure:
                 sync_integration(str(run_id), str(integ_id), str(user_id))
 
         assert integration.status == "paused"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F. M59.15 — last_sync_failure_category propagation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestLastSyncFailureCategoryExposed:
+    """The frontend needs the stable failure category from the most recent
+    SyncRun in order to render a derived display status (Active vs.
+    Needs attention vs. Degraded) without string-matching on the error
+    message.  Verify GET /integrations surfaces it correctly."""
+
+    def _add_failed_sync_run(
+        self,
+        db: Session,
+        integration: Integration,
+        *,
+        failure_category: str,
+        error_message: str = "boom",
+    ) -> None:
+        from app.models.sync_run import SyncRun
+
+        run = SyncRun(
+            user_id=integration.user_id,
+            integration_id=integration.id,
+            status="failed",
+            triggered_by="manual",
+            error_message=error_message,
+            failure_category=failure_category,
+        )
+        db.add(run)
+        db.commit()
+
+    def test_F1_no_sync_runs_yields_null_category(
+        self, client, test_user, db_session
+    ):
+        integration = _make_cloudflare_integration(
+            db_session, test_user, status="active"
+        )
+        resp = client.get(f"/integrations/{integration.id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["last_sync_status"] is None
+        assert body["last_sync_failure_category"] is None
+
+    def test_F2_resource_missing_category_propagates(
+        self, client, test_user, db_session
+    ):
+        integration = _make_cloudflare_integration(
+            db_session, test_user, status="active"
+        )
+        self._add_failed_sync_run(
+            db_session, integration, failure_category="resource_missing"
+        )
+        resp = client.get(f"/integrations/{integration.id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["last_sync_status"] == "failed"
+        assert body["last_sync_failure_category"] == "resource_missing"
+        # Status itself is unchanged — backend credentials are still valid.
+        assert body["status"] == "active"
+
+    def test_F3_generic_failure_category_propagates(
+        self, client, test_user, db_session
+    ):
+        """A non-resource-missing failure category surfaces too — the
+        frontend uses it to pick ``degraded`` over ``needs_attention``."""
+        integration = _make_cloudflare_integration(
+            db_session, test_user, status="active"
+        )
+        self._add_failed_sync_run(
+            db_session, integration, failure_category="provider_unavailable"
+        )
+        resp = client.get(f"/integrations/{integration.id}")
+        body = resp.json()
+        assert body["last_sync_failure_category"] == "provider_unavailable"
+
+    def test_F4_list_endpoint_includes_failure_category(
+        self, client, test_user, db_session
+    ):
+        integration = _make_cloudflare_integration(
+            db_session, test_user, status="active"
+        )
+        self._add_failed_sync_run(
+            db_session, integration, failure_category="rate_limited"
+        )
+        resp = client.get("/integrations")
+        assert resp.status_code == 200
+        match = [
+            r
+            for r in resp.json()["integrations"]
+            if r["id"] == str(integration.id)
+        ]
+        assert len(match) == 1
+        assert match[0]["last_sync_failure_category"] == "rate_limited"

@@ -1437,12 +1437,20 @@ def get_recent_sync_runs(
 def get_latest_sync_run_summary(
     integration_id: uuid.UUID,
     db: Session,
-) -> tuple[str | None, str | None]:
-    """Return ``(status, error_message)`` from the most recent SyncRun.
+) -> tuple[str | None, str | None, str | None]:
+    """Return ``(status, error_message, failure_category)`` from the most recent SyncRun.
 
-    Returns ``(None, None)`` if no SyncRun exists for this integration yet.
+    Returns ``(None, None, None)`` if no SyncRun exists for this integration yet.
     Used by the router's ``_build_response`` helper to populate
-    ``last_sync_status`` and ``last_sync_error`` in ``IntegrationResponse``.
+    ``last_sync_status``, ``last_sync_error``, and ``last_sync_failure_category``
+    in ``IntegrationResponse``.
+
+    M59.15: ``failure_category`` is the stable, machine-readable category from
+    the M32 failure classifier (``authentication``, ``resource_missing``,
+    ``provider_unavailable``, ``rate_limited``, ``network``, ``config_error``,
+    ``internal_error``, ``unknown``).  Exposing it lets the frontend pick a
+    display state (Active / Needs attention / Degraded) without string-matching
+    on the free-text error message.
     """
     from app.models.sync_run import SyncRun
 
@@ -1453,8 +1461,8 @@ def get_latest_sync_run_summary(
         .first()
     )
     if run is None:
-        return None, None
-    return run.status, run.error_message
+        return None, None, None
+    return run.status, run.error_message, run.failure_category
 
 
 # ── Workspace-scoped integration access (M51) ─────────────────────────────────

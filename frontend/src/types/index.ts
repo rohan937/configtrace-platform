@@ -142,11 +142,15 @@ export interface SnapshotListItem {
 // ``needs_reconnect`` (M59.14) — set automatically when the upstream provider
 // credentials are revoked / installation uninstalled / token rotated.  UI shows
 // a Reconnect affordance instead of Sync Now.
+// ``deleted`` is also a valid backend value (soft-delete) but the API filters
+// it out of list/detail responses; we include it in the union so derivation
+// helpers like ``getDisplayStatus`` can handle the value defensively.
 export type IntegrationStatus =
   | "active"
   | "error"
   | "paused"
   | "needs_reconnect"
+  | "deleted"
   | "unknown";
 
 /** Request body for POST /integrations.
@@ -251,6 +255,17 @@ export interface Integration {
   last_sync_status: "pending" | "running" | "completed" | "failed" | null;
   /** Error message from the most recent failed SyncRun, or null. */
   last_sync_error: string | null;
+  /**
+   * M59.15 — stable, machine-readable failure category from the most recent
+   * SyncRun.  One of: ``authentication``, ``resource_missing``,
+   * ``provider_unavailable``, ``rate_limited``, ``network``, ``config_error``,
+   * ``internal_error``, ``unknown``; or null if no failed run exists.
+   *
+   * Used to derive the displayed status (Active / Needs attention / Degraded)
+   * without string-matching on ``last_sync_error``.  See ``getDisplayStatus``
+   * in ``lib/integrationStatus.ts``.
+   */
+  last_sync_failure_category: string | null;
   // M31 addition
   /**
    * How the integration authenticates to GitHub.

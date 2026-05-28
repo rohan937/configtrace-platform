@@ -474,6 +474,20 @@ class IntegrationResponse(BaseModel):
     last_sync_status: Optional[str] = None
     last_sync_error: Optional[str] = None
 
+    # ── M59.15 addition ───────────────────────────────────────────────────────
+    # ``last_sync_failure_category`` — stable, machine-readable category from
+    # the M32 failure classifier on the most recent SyncRun.  Values match
+    # ``SyncRun.failure_category``: ``authentication``, ``resource_missing``,
+    # ``provider_unavailable``, ``rate_limited``, ``network``, ``config_error``,
+    # ``internal_error``, ``unknown``, or null when no failed run exists.
+    #
+    # Exposed so the frontend can derive a display status (Active / Needs
+    # attention / Degraded) without string-matching on the free-text
+    # ``last_sync_error`` message.  Backend ``status`` is unchanged — this is
+    # purely a UI-derivation hint that's safe to expose (no secrets, no PII,
+    # just a category label).
+    last_sync_failure_category: Optional[str] = None
+
     # ── M31 addition ──────────────────────────────────────────────────────────
     # Derived without credential decryption — read from resource_metadata.
     # Values: "github_app" | "pat" (GitHub only) | None (non-GitHub providers).

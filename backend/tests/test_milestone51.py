@@ -1190,7 +1190,7 @@ class TestAuditEventIntegrationRouter:
              patch("app.services.workspace_service.get_membership", return_value=_make_member(ws_id, user_id, "owner")), \
              patch("app.services.workspace_service.get_or_create_default_workspace") as mock_gw, \
              patch.object(integration_service, "create_integration", return_value=mock_integration), \
-             patch.object(integration_service, "get_latest_sync_run_summary", return_value=(None, None)), \
+             patch.object(integration_service, "get_latest_sync_run_summary", return_value=(None, None, None)), \
              patch.object(integration_service, "get_connection_method", return_value="pat"), \
              patch("app.services.billing_service.assert_can_create_integration"), \
              patch("app.services.workspace_service.log_audit_event") as mock_log:

@@ -73,8 +73,8 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
     """
     from app.core.failure_classifier import NEEDS_ATTENTION_THRESHOLD
 
-    last_status, last_error = integration_service.get_latest_sync_run_summary(
-        integration.id, db
+    last_status, last_error, last_failure_category = (
+        integration_service.get_latest_sync_run_summary(integration.id, db)
     )
     connection_method = integration_service.get_connection_method(integration)
     consecutive = integration.consecutive_failure_count or 0
@@ -89,6 +89,10 @@ def _build_response(integration: Integration, db: Session) -> IntegrationRespons
         sync_interval_minutes=integration.sync_interval_minutes,
         last_sync_status=last_status,
         last_sync_error=last_error,
+        # M59.15: stable failure category from the M32 classifier — lets the
+        # frontend pick a display status (Active / Needs attention / Degraded)
+        # without string-matching on the free-text error message.
+        last_sync_failure_category=last_failure_category,
         connection_method=connection_method,
         consecutive_failure_count=consecutive,
         needs_attention=consecutive >= NEEDS_ATTENTION_THRESHOLD,

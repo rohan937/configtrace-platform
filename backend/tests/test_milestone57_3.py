@@ -586,7 +586,7 @@ class TestDashboardReviewQueue:
                 "count_needs_review_by_risk",
                 side_effect=lambda uid, risk, _db: 2 if risk == "critical" else 1,
             ),
-            patch("app.services.integration_service.get_latest_sync_run_summary", return_value=(None, None)),
+            patch("app.services.integration_service.get_latest_sync_run_summary", return_value=(None, None, None)),
         ):
             summary = dashboard_service.get_dashboard_summary(user_id=user_id, db=db)
 

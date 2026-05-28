@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import { getIntegrations } from "@/lib/api";
+import { getDisplayStatus } from "@/lib/integrationStatus";
 import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import PageHeader from "@/components/common/PageHeader";
 import IntegrationList from "@/components/integrations/IntegrationList";
@@ -85,17 +86,30 @@ function SetupSteps({ steps }: { steps: StepDef[] }) {
 
 // ── Provider card ─────────────────────────────────────────────────────────────
 
+interface ProviderCounts {
+  /** Rows where the latest sync succeeded (or never ran). Backend status active. */
+  healthy: number;
+  /** Rows where backend status is active but the latest sync failed (any category). */
+  failing: number;
+  /** Rows where backend status is needs_reconnect. */
+  needsReconnect: number;
+}
+
 function ProviderCard({
   providerId,
-  integrationCount,
+  counts,
   onConnect,
 }: {
   providerId: ProviderId;
-  integrationCount: number;
+  counts: ProviderCounts;
   onConnect: (p: Provider) => void;
 }) {
   const meta       = PROVIDERS[providerId];
-  const connected  = integrationCount > 0;
+  // M59.15: "connected" for card-styling purposes means any row exists.
+  // The headline pill tracks healthy only; failing/needsReconnect surface
+  // as separate sub-pills so the dashboard never overstates green health.
+  const totalRows = counts.healthy + counts.failing + counts.needsReconnect;
+  const connected = totalRows > 0;
   const catLabel   = CATEGORY_LABELS[meta.category] ?? meta.category;
 
   return (
@@ -128,12 +142,35 @@ function ProviderCard({
           </p>
         </div>
         {connected && (
-          <span
-            style={{ fontSize: "11px", color: "#3ccf7e", flexShrink: 0, fontWeight: 500 }}
-            aria-label={`${integrationCount} ${meta.label} integration${integrationCount !== 1 ? "s" : ""} connected`}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: "2px",
+              flexShrink: 0,
+            }}
+            aria-label={
+              `${counts.healthy} healthy, ${counts.failing} failing, ` +
+              `${counts.needsReconnect} need reconnect`
+            }
           >
-            ✓ {integrationCount} connected
-          </span>
+            {counts.healthy > 0 && (
+              <span style={{ fontSize: "11px", color: "#3ccf7e", fontWeight: 500 }}>
+                ✓ {counts.healthy} healthy
+              </span>
+            )}
+            {counts.failing > 0 && (
+              <span style={{ fontSize: "11px", color: "#f5a623", fontWeight: 500 }}>
+                ⚠ {counts.failing} failing
+              </span>
+            )}
+            {counts.needsReconnect > 0 && (
+              <span style={{ fontSize: "11px", color: "#f5a623", fontWeight: 500 }}>
+                ↻ {counts.needsReconnect} reconnect
+              </span>
+            )}
+          </div>
         )}
       </div>
 
@@ -552,18 +589,27 @@ export default function IntegrationsPage() {
 
   // ── Derived state ─────────────────────────────────────────────────────────
 
-  /** Connected integration count per provider (from loaded list).
+  /** Per-provider count breakdown (healthy / failing / needs reconnect).
    *
-   * M59.14: excludes ``needs_reconnect`` so the provider-card headline
-   * reflects integrations that are actually usable.  A disconnected
-   * integration still appears in the table below (with a Reconnect chip),
-   * but the "✓ N connected" claim on the card would otherwise be a lie.
+   * M59.15: the dashboard headline must distinguish "this integration is
+   * working right now" from "this integration exists but its last sync
+   * failed" from "this integration's credentials are gone".  Each bucket
+   * is rendered as a distinct sub-pill on the provider card.
    */
   const integrationCountByProvider = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, ProviderCounts>();
     for (const i of integrations) {
-      if (i.status === "needs_reconnect") continue;
-      map.set(i.provider, (map.get(i.provider) ?? 0) + 1);
+      const cur = map.get(i.provider) ?? {
+        healthy: 0,
+        failing: 0,
+        needsReconnect: 0,
+      };
+      const d = getDisplayStatus(i);
+      if (d === "needs_reconnect") cur.needsReconnect += 1;
+      else if (d === "needs_attention" || d === "degraded") cur.failing += 1;
+      else if (d === "active") cur.healthy += 1;
+      // paused / deleted / unknown intentionally do not bump any count.
+      map.set(i.provider, cur);
     }
     return map;
   }, [integrations]);
@@ -759,7 +805,13 @@ export default function IntegrationsPage() {
                 <ProviderCard
                   key={pid}
                   providerId={pid}
-                  integrationCount={integrationCountByProvider.get(pid) ?? 0}
+                  counts={
+                    integrationCountByProvider.get(pid) ?? {
+                      healthy: 0,
+                      failing: 0,
+                      needsReconnect: 0,
+                    }
+                  }
                   onConnect={handleConnect}
                 />
               ))}

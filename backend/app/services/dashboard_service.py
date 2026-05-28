@@ -276,7 +276,12 @@ def get_dashboard_summary(user_id: uuid.UUID, db: Session) -> DashboardSummaryRe
 
     recent_failed_syncs: List[RecentFailedSync] = []
     for integ in recent_failed_integrations:
-        last_status, last_error = get_latest_sync_run_summary(integ.id, db)
+        # M59.15: tuple grew to 3-tuple (added failure_category); dashboard
+        # already reads classification fields off the SyncRun row directly
+        # below so the third value is unused here.
+        last_status, last_error, _last_failure_category = (
+            get_latest_sync_run_summary(integ.id, db)
+        )
 
         # Get the most recent failed run's classification fields
         failed_run = (
