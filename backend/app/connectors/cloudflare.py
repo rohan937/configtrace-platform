@@ -39,14 +39,24 @@ SECURITY (M57.7)
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import re
 import time
+from urllib.parse import urlparse
 
 import httpx
 
 from app.connectors.base import BaseConnector
 from app.connectors.cloudflare_schema import (
+    CLOUDFLARE_ACCESS_APPLICATION,
+    CLOUDFLARE_ACCESS_POLICY,
+    CLOUDFLARE_PAGE_RULE,
     CLOUDFLARE_RULESET,
+    CLOUDFLARE_WAF_RULE,
+    CLOUDFLARE_WORKER_ROUTE,
+    CLOUDFLARE_WORKER_SCRIPT,
+    CLOUDFLARE_ZONE_SETTING,
     CloudflareDNSRecord,
     CloudflareRuleset,
 )
@@ -243,6 +253,40 @@ class CloudflareConnector(BaseConnector):
             # DNS records are still returned.
             ruleset_records = self._fetch_rulesets(client, zone_id, headers)
             records.extend(ruleset_records)
+
+            # ── M59.7: zone settings, page rules, worker routes, granular WAF
+            # rules, Access applications/policies, worker scripts.  Each
+            # surface is fetched with the same fail-soft pattern: if the
+            # token lacks the relevant scope (401/403) or the endpoint is
+            # unavailable for the plan (404/422), a safe warning is logged
+            # and an empty list is returned.  DNS sync is never blocked
+            # by a missing optional permission.
+            records.extend(self._fetch_zone_settings(client, zone_id, headers))
+            records.extend(self._fetch_page_rules(client, zone_id, headers))
+            records.extend(self._fetch_worker_routes(client, zone_id, headers))
+            records.extend(self._fetch_waf_rules(client, zone_id, headers))
+
+            # Account-scoped surfaces — resolve the parent account_id first.
+            account_id = self._resolve_account_id(client, zone_id, headers)
+            if account_id:
+                records.extend(
+                    self._fetch_worker_scripts(client, account_id, headers)
+                )
+                app_records = self._fetch_access_applications(
+                    client, account_id, headers
+                )
+                records.extend(app_records)
+                # Policies require an application id; iterate the apps
+                # already fetched above.
+                for app in app_records:
+                    app_id = app.get("record_id")
+                    if not app_id:
+                        continue
+                    records.extend(
+                        self._fetch_access_policies(
+                            client, account_id, app_id, headers
+                        )
+                    )
 
         return records
 
@@ -457,3 +501,558 @@ class CloudflareConnector(BaseConnector):
 
         # The loop always raises or returns — this line is unreachable.
         raise ConnectorError("Unexpected end of retry loop")  # pragma: no cover
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# M59.7 — Additional Cloudflare surface fetchers
+# ═════════════════════════════════════════════════════════════════════════════
+#
+# Security stance shared by every helper below
+# ---------------------------------------------
+# * The Cloudflare API token is NEVER logged.  Logs use only ``zone_id``,
+#   ``account_id``, the HTTP status code, and surface-name short labels.
+# * Authorization / Bearer headers are NEVER echoed (the response.text is
+#   not interpolated into any log line that crosses a permission boundary).
+# * Raw WAF rule expressions are NEVER stored — only their sha256 hash.
+# * Page Rule redirect targets are reduced to scheme+host before storage
+#   so query-string tokens cannot leak into ``Snapshot.state``.
+# * Worker secrets, env-var values, Access rules' raw email/IP/group lists,
+#   IdP client secrets, and service tokens are NEVER fetched or stored.
+#
+# Fail-soft pattern
+# -----------------
+# Every helper returns ``list[dict]`` and degrades to ``[]`` on:
+#   - httpx.TimeoutException / httpx.RequestError
+#   - HTTP 401/403 (missing scope)
+#   - HTTP 404/422 (endpoint unavailable for plan tier)
+#   - response body parse failure or success=false
+# DNS sync continues unaffected when an optional surface is denied.
+
+
+# ── Settings we monitor (security-relevant, safe to read) ────────────────────
+
+_ZONE_SETTING_IDS: tuple[str, ...] = (
+    "ssl",
+    "always_use_https",
+    "min_tls_version",
+    "security_level",
+    "browser_check",
+    "development_mode",
+    "automatic_https_rewrites",
+    "security_header",   # HSTS — value is a dict
+)
+
+
+# Page-rule actions whose targets must be redacted (no query strings).
+_REDIRECT_ACTION_IDS: frozenset[str] = frozenset(
+    {"forwarding_url"}
+)
+
+
+def _safe_redirect_target(url: str) -> str:
+    """Return scheme+host for a URL, stripping path/query so tokens cannot
+    leak via ``actions_summary`` storage.
+    """
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return ""
+    if not parsed.scheme or not parsed.hostname:
+        # Not a URL-shape — return empty rather than store the raw blob.
+        return ""
+    return f"{parsed.scheme}://{parsed.hostname}"
+
+
+def _hash_expression(expr: str) -> str:
+    """Deterministic sha256 of a WAF rule expression.
+
+    The raw expression itself is NEVER stored — only this hash, which lets
+    the diff service detect a change without leaking the expression text.
+    """
+    return hashlib.sha256((expr or "").encode("utf-8")).hexdigest()
+
+
+def _normalize_zone_setting(raw: dict) -> dict:
+    """Map a raw Cloudflare zone-setting response to a snapshot dict."""
+    setting_id = raw.get("id") or ""
+    return {
+        "record_type": CLOUDFLARE_ZONE_SETTING,
+        "record_id":   setting_id,
+        "setting_id":  setting_id,
+        "value":       raw.get("value"),
+        "editable":    bool(raw.get("editable", True)),
+        "modified_on": raw.get("modified_on"),
+    }
+
+
+def _summarize_page_rule_actions(actions: list[dict]) -> str:
+    """Build a compact, redacted ``actions_summary`` string for a Page Rule.
+
+    Format examples:
+      ``"forwarding_url:to=https://new.example.com,302"``
+      ``"cache_level:cache_everything"``
+      ``"always_use_https"``
+
+    Any redirect target is reduced to scheme+host (no path/query) so an
+    embedded ``?token=...`` cannot land in ``Snapshot.state``.
+    """
+    parts: list[str] = []
+    for a in actions or []:
+        aid = (a.get("id") or "").lower()
+        if not aid:
+            continue
+        if aid in _REDIRECT_ACTION_IDS:
+            v = a.get("value") or {}
+            if isinstance(v, dict):
+                target = _safe_redirect_target(str(v.get("url") or ""))
+                status = v.get("status_code")
+                if target and status is not None:
+                    parts.append(f"{aid}:to={target},{status}")
+                elif target:
+                    parts.append(f"{aid}:to={target}")
+                else:
+                    parts.append(aid)  # do not echo a malformed/risky URL
+            else:
+                parts.append(aid)
+        elif aid in ("cache_level", "browser_cache_ttl", "edge_cache_ttl"):
+            v = a.get("value")
+            parts.append(f"{aid}:{v}")
+        else:
+            # All other action ids: store id alone (no value bodies that
+            # could carry sensitive substrings).
+            parts.append(aid)
+    return ",".join(parts)
+
+
+def _detect_page_rule_kind(actions_summary: str) -> str:
+    s = actions_summary.lower()
+    if "forwarding_url" in s:
+        return "redirect"
+    if "cache_level" in s or "cache_everything" in s or "_cache_ttl" in s:
+        return "cache_rule"
+    return "page_rule"
+
+
+def _normalize_page_rule(raw: dict) -> dict:
+    actions = raw.get("actions") or []
+    # Pull the URL pattern from the first matching target (Cloudflare's shape).
+    targets = raw.get("targets") or []
+    target_pattern = ""
+    for t in targets:
+        if (t.get("target") or "").lower() == "url":
+            v = t.get("constraint") or {}
+            target_pattern = str(v.get("value") or "")
+            break
+    actions_summary = _summarize_page_rule_actions(actions)
+    return {
+        "record_type":        CLOUDFLARE_PAGE_RULE,
+        "record_id":          raw.get("id") or "",
+        "target_url_pattern": target_pattern,
+        "actions_summary":    actions_summary,
+        "rule_kind":          _detect_page_rule_kind(actions_summary),
+        "priority":           int(raw.get("priority") or 0),
+        "status":             str(raw.get("status") or "active").lower(),
+        "modified_on":        raw.get("modified_on"),
+    }
+
+
+def _normalize_worker_route(raw: dict) -> dict:
+    return {
+        "record_type": CLOUDFLARE_WORKER_ROUTE,
+        "record_id":   raw.get("id") or "",
+        "pattern":     str(raw.get("pattern") or ""),
+        "script_name": str(raw.get("script") or ""),
+        # Worker routes are active when configured — Cloudflare's API does
+        # not expose a separate ``enabled`` flag, so we treat presence as
+        # enabled.
+        "enabled":     True,
+        "modified_on": raw.get("modified_on"),
+    }
+
+
+def _normalize_worker_script(raw: dict) -> dict:
+    """Worker script METADATA only — source code is never fetched/stored.
+
+    Cloudflare's ``GET /accounts/{aid}/workers/scripts`` returns a list of
+    script metadata entries (script_name, etag, created_on, modified_on,
+    optional bindings array).  We never call the ``content`` endpoint
+    which would return source code.
+    """
+    bindings = raw.get("bindings") or []
+    # Count env var bindings WITHOUT inspecting their values.
+    env_var_count = sum(
+        1 for b in bindings
+        if (b.get("type") or "").lower() in ("plain_text", "secret_text")
+    )
+    return {
+        "record_type":    CLOUDFLARE_WORKER_SCRIPT,
+        "record_id":      raw.get("id") or raw.get("name") or "",
+        "script_name":    raw.get("id") or raw.get("name") or "",
+        "script_etag":    str(raw.get("etag") or raw.get("script_etag") or ""),
+        "env_var_count":  env_var_count,
+        "binding_count":  len(bindings),
+        "modified_on":    raw.get("modified_on"),
+    }
+
+
+def _normalize_access_application(raw: dict) -> dict:
+    allowed_idps = raw.get("allowed_idps") or []
+    return {
+        "record_type":         CLOUDFLARE_ACCESS_APPLICATION,
+        "record_id":           raw.get("id") or "",
+        "name":                str(raw.get("name") or ""),
+        "type":                str(raw.get("type") or "self_hosted"),
+        "domain":              str(raw.get("domain") or ""),
+        "visibility":          "private" if not bool(raw.get("app_launcher_visible", True)) else "public",
+        "enabled":             bool(raw.get("enabled", True)),
+        "session_duration":    str(raw.get("session_duration") or ""),
+        "allowed_idps_count":  len(allowed_idps),
+        "modified_on":         raw.get("updated_at") or raw.get("modified_on"),
+    }
+
+
+def _normalize_access_policy(raw: dict, app_id: str) -> dict:
+    """Access policy snapshot — INCLUDE/EXCLUDE/REQUIRE stored as COUNTS only.
+
+    SECURITY: the raw include/exclude/require lists contain emails, group
+    IDs, service-token references, and IP ranges.  None of these are
+    persisted — only their counts.  This prevents PII (email allowlists)
+    and operational secrets (service tokens) from landing in snapshots.
+    """
+    return {
+        "record_type":      CLOUDFLARE_ACCESS_POLICY,
+        "record_id":        raw.get("id") or "",
+        "application_id":   app_id,
+        "name":             str(raw.get("name") or ""),
+        "decision":         str(raw.get("decision") or "allow").lower(),
+        "enabled":          bool(raw.get("enabled", True)),
+        "precedence":       int(raw.get("precedence") or 0),
+        "include_count":    len(raw.get("include") or []),
+        "exclude_count":    len(raw.get("exclude") or []),
+        "require_count":    len(raw.get("require") or []),
+        "modified_on":      raw.get("updated_at") or raw.get("modified_on"),
+    }
+
+
+def _normalize_waf_rule(raw: dict, ruleset_id: str) -> dict:
+    """Per-rule WAF snapshot — expression is HASHED, never stored.
+
+    SECURITY: ``raw["expression"]`` is read only to compute the hash and
+    is immediately discarded.  The ``description`` field is stored because
+    it is human-supplied and intentionally non-sensitive (e.g. "block SQLi").
+    """
+    expr = str(raw.get("expression") or "")
+    action = (raw.get("action") or "").lower()
+    return {
+        "record_type":      CLOUDFLARE_WAF_RULE,
+        "record_id":        raw.get("id") or "",
+        "ruleset_id":       ruleset_id,
+        "description":      str(raw.get("description") or ""),
+        "action":           action,
+        "enabled":          bool(raw.get("enabled", True)),
+        "expression_hash":  _hash_expression(expr),
+        "modified_on":      raw.get("last_updated"),
+    }
+
+
+# ── Connector-class method extensions ────────────────────────────────────────
+
+
+def _is_skip_status(code: int) -> bool:
+    """True if the HTTP status indicates a missing scope or unsupported
+    endpoint that should be silently skipped."""
+    return code in (401, 403, 404, 422)
+
+
+def _safe_get(
+    client: httpx.Client,
+    url: str,
+    headers: dict[str, str],
+    *,
+    surface: str,
+    zone_id: str = "",
+    account_id: str = "",
+) -> dict | None:
+    """Issue a GET that fail-softs on missing scope / network errors.
+
+    Returns the parsed JSON body on success, ``None`` on any error path.
+    NEVER logs the Authorization header, response.text, or token material.
+    """
+    try:
+        response = client.get(url, headers=headers)
+    except httpx.TimeoutException:
+        logger.warning(
+            "cloudflare: %s fetch timed out  zone=%s  account=%s",
+            surface, zone_id or "-", account_id or "-",
+        )
+        return None
+    except httpx.RequestError as exc:
+        # Only the exception TYPE is logged — the message may contain the URL.
+        logger.warning(
+            "cloudflare: %s fetch network error  zone=%s  account=%s  error_type=%s",
+            surface, zone_id or "-", account_id or "-", type(exc).__name__,
+        )
+        return None
+
+    if _is_skip_status(response.status_code):
+        logger.warning(
+            "cloudflare: %s skipped — token lacks scope or endpoint "
+            "unavailable  zone=%s  account=%s  http=%d",
+            surface, zone_id or "-", account_id or "-", response.status_code,
+        )
+        return None
+
+    if not response.is_success:
+        logger.warning(
+            "cloudflare: %s fetch failed  zone=%s  account=%s  http=%d",
+            surface, zone_id or "-", account_id or "-", response.status_code,
+        )
+        return None
+
+    try:
+        body = response.json()
+    except Exception:
+        logger.warning(
+            "cloudflare: %s response is not valid JSON  zone=%s",
+            surface, zone_id or "-",
+        )
+        return None
+
+    if not body.get("success", True):
+        # Some Access endpoints return an envelope-less body; tolerate that.
+        # When ``success`` is explicitly false, log the error CODES only.
+        errors = body.get("errors") or []
+        # Pull only Cloudflare-supplied error code numbers; the messages
+        # may contain echoed input.
+        codes = sorted({e.get("code") for e in errors if isinstance(e, dict)})
+        logger.warning(
+            "cloudflare: %s API returned success=false  zone=%s  codes=%s",
+            surface, zone_id or "-", codes,
+        )
+        return None
+
+    return body
+
+
+def _fetch_zone_settings_impl(
+    self,
+    client: httpx.Client,
+    zone_id: str,
+    headers: dict[str, str],
+) -> list[dict]:
+    """Fetch the security-relevant subset of ``/zones/{id}/settings``.
+
+    Each setting is fetched individually so that a 403 on one setting (e.g.
+    ``security_header`` on a plan that doesn't support it) does not stop
+    the others from being recorded.
+    """
+    out: list[dict] = []
+    base = f"{_BASE_URL}/zones/{zone_id}/settings"
+    for setting_id in _ZONE_SETTING_IDS:
+        body = _safe_get(
+            client, f"{base}/{setting_id}", headers,
+            surface=f"zone_setting:{setting_id}", zone_id=zone_id,
+        )
+        if body is None:
+            continue
+        result = body.get("result")
+        if not isinstance(result, dict):
+            continue
+        out.append(_normalize_zone_setting(result))
+    return out
+
+
+def _fetch_page_rules_impl(
+    self,
+    client: httpx.Client,
+    zone_id: str,
+    headers: dict[str, str],
+) -> list[dict]:
+    body = _safe_get(
+        client, f"{_BASE_URL}/zones/{zone_id}/pagerules", headers,
+        surface="page_rules", zone_id=zone_id,
+    )
+    if body is None:
+        return []
+    out: list[dict] = []
+    for raw in body.get("result") or []:
+        rid = raw.get("id")
+        if not rid:
+            continue
+        out.append(_normalize_page_rule(raw))
+    return out
+
+
+def _fetch_worker_routes_impl(
+    self,
+    client: httpx.Client,
+    zone_id: str,
+    headers: dict[str, str],
+) -> list[dict]:
+    body = _safe_get(
+        client, f"{_BASE_URL}/zones/{zone_id}/workers/routes", headers,
+        surface="worker_routes", zone_id=zone_id,
+    )
+    if body is None:
+        return []
+    out: list[dict] = []
+    for raw in body.get("result") or []:
+        rid = raw.get("id")
+        if not rid:
+            continue
+        out.append(_normalize_worker_route(raw))
+    return out
+
+
+def _fetch_waf_rules_impl(
+    self,
+    client: httpx.Client,
+    zone_id: str,
+    headers: dict[str, str],
+) -> list[dict]:
+    """Per-rule WAF records (granular).
+
+    Distinct from ``_fetch_rulesets`` which emits aggregate counts.  This
+    helper iterates each ruleset and emits one ``cloudflare_waf_rule``
+    record per rule with the expression HASHED.
+    """
+    list_body = _safe_get(
+        client, f"{_BASE_URL}/zones/{zone_id}/rulesets", headers,
+        surface="waf_rules:list", zone_id=zone_id,
+    )
+    if list_body is None:
+        return []
+    out: list[dict] = []
+    for ruleset in list_body.get("result") or []:
+        ruleset_id = ruleset.get("id") or ""
+        if not ruleset_id:
+            continue
+        # The list endpoint sometimes returns the inline ``rules`` array,
+        # sometimes not.  If absent, follow up with the detail endpoint —
+        # also fail-softly.
+        rules = ruleset.get("rules")
+        if not isinstance(rules, list):
+            detail = _safe_get(
+                client,
+                f"{_BASE_URL}/zones/{zone_id}/rulesets/{ruleset_id}",
+                headers,
+                surface=f"waf_rules:detail:{ruleset_id[:8]}",
+                zone_id=zone_id,
+            )
+            if detail is None:
+                continue
+            result = detail.get("result") or {}
+            rules = result.get("rules") if isinstance(result, dict) else None
+            if not isinstance(rules, list):
+                continue
+        for rule in rules:
+            rid = rule.get("id")
+            if not rid:
+                continue
+            out.append(_normalize_waf_rule(rule, ruleset_id))
+    return out
+
+
+def _resolve_account_id_impl(
+    self,
+    client: httpx.Client,
+    zone_id: str,
+    headers: dict[str, str],
+) -> str | None:
+    """Look up the parent account id for *zone_id*.
+
+    Returns ``None`` (and logs a safe warning) if the token cannot read the
+    zone's account context — account-scoped surfaces are then skipped.
+    """
+    body = _safe_get(
+        client, f"{_BASE_URL}/zones/{zone_id}", headers,
+        surface="account_id_lookup", zone_id=zone_id,
+    )
+    if body is None:
+        return None
+    result = body.get("result") or {}
+    account = result.get("account") or {}
+    account_id = str(account.get("id") or "")
+    return account_id or None
+
+
+def _fetch_worker_scripts_impl(
+    self,
+    client: httpx.Client,
+    account_id: str,
+    headers: dict[str, str],
+) -> list[dict]:
+    body = _safe_get(
+        client, f"{_BASE_URL}/accounts/{account_id}/workers/scripts", headers,
+        surface="worker_scripts", account_id=account_id,
+    )
+    if body is None:
+        return []
+    out: list[dict] = []
+    for raw in body.get("result") or []:
+        name = raw.get("id") or raw.get("name")
+        if not name:
+            continue
+        out.append(_normalize_worker_script(raw))
+    return out
+
+
+def _fetch_access_applications_impl(
+    self,
+    client: httpx.Client,
+    account_id: str,
+    headers: dict[str, str],
+) -> list[dict]:
+    body = _safe_get(
+        client, f"{_BASE_URL}/accounts/{account_id}/access/apps", headers,
+        surface="access_apps", account_id=account_id,
+    )
+    if body is None:
+        return []
+    out: list[dict] = []
+    for raw in body.get("result") or []:
+        aid = raw.get("id")
+        if not aid:
+            continue
+        out.append(_normalize_access_application(raw))
+    return out
+
+
+def _fetch_access_policies_impl(
+    self,
+    client: httpx.Client,
+    account_id: str,
+    app_id: str,
+    headers: dict[str, str],
+) -> list[dict]:
+    body = _safe_get(
+        client,
+        f"{_BASE_URL}/accounts/{account_id}/access/apps/{app_id}/policies",
+        headers,
+        surface=f"access_policies:{app_id[:8]}",
+        account_id=account_id,
+    )
+    if body is None:
+        return []
+    out: list[dict] = []
+    for raw in body.get("result") or []:
+        pid = raw.get("id")
+        if not pid:
+            continue
+        out.append(_normalize_access_policy(raw, app_id))
+    return out
+
+
+# Bind the impl functions as methods on ``CloudflareConnector``.  This keeps
+# the file readable (no 600-line class body) without changing the public
+# surface — the connector still has the same class name and call sites.
+CloudflareConnector._fetch_zone_settings = _fetch_zone_settings_impl       # type: ignore[attr-defined]
+CloudflareConnector._fetch_page_rules = _fetch_page_rules_impl             # type: ignore[attr-defined]
+CloudflareConnector._fetch_worker_routes = _fetch_worker_routes_impl       # type: ignore[attr-defined]
+CloudflareConnector._fetch_waf_rules = _fetch_waf_rules_impl               # type: ignore[attr-defined]
+CloudflareConnector._resolve_account_id = _resolve_account_id_impl         # type: ignore[attr-defined]
+CloudflareConnector._fetch_worker_scripts = _fetch_worker_scripts_impl     # type: ignore[attr-defined]
+CloudflareConnector._fetch_access_applications = _fetch_access_applications_impl  # type: ignore[attr-defined]
+CloudflareConnector._fetch_access_policies = _fetch_access_policies_impl   # type: ignore[attr-defined]

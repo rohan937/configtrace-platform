@@ -72,7 +72,8 @@ def classify_change(change: Change) -> tuple[str, str]:
         ``(risk_level, risk_reason)`` where *risk_level* is one of
         ``"critical"``, ``"high"``, ``"medium"``, ``"low"``.
     """
-    pm: dict = _get(change, "provider_metadata") or {}
+    raw_pm = _get(change, "provider_metadata")
+    pm: dict = raw_pm if isinstance(raw_pm, dict) else {}
     record_type = (pm.get("record_type") or "").lower()
 
     if record_type.startswith("github_"):
