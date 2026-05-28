@@ -549,6 +549,25 @@ export interface UserSettings {
 
 export type UserSettingsUpdateRequest = Partial<UserSettings>;
 
+// ── User profile (M59.13) ─────────────────────────────────────────────────────
+// First/last name supplied by the user in Settings → Profile.  The
+// ``computed_display_name`` is resolved on the server using the policy:
+//   first/last → display_name (if not the "ConfigTrace User" placeholder) → email.
+
+export interface ProfileResponse {
+  id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  display_name: string | null;
+  computed_display_name: string;
+}
+
+export interface ProfileUpdateRequest {
+  first_name?: string | null;
+  last_name?: string | null;
+}
+
 // ── Workspaces (M50) ──────────────────────────────────────────────────────────
 
 export type WorkspaceRole = "owner" | "admin" | "member";

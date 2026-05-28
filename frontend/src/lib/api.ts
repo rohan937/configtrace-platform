@@ -35,6 +35,8 @@ import type {
   InvitePreview,
   MemberListResponse,
   PaginatedResponse,
+  ProfileResponse,
+  ProfileUpdateRequest,
   ResourceDetail,
   ResourceListItem,
   SnapshotListItem,
@@ -826,6 +828,35 @@ export async function patchSettings(
   token?: string | null,
 ): Promise<UserSettings> {
   return apiFetch("/settings", {
+    method: "PATCH",
+    body: JSON.stringify(data),
+    token,
+  });
+}
+
+// ── User profile (M59.13) ────────────────────────────────────────────────────
+
+/**
+ * Fetch the authenticated user's profile (first_name / last_name plus
+ * server-computed ``computed_display_name``).
+ */
+export async function getMyProfile(
+  token?: string | null,
+): Promise<ProfileResponse> {
+  return apiFetch("/me/profile", { token });
+}
+
+/**
+ * Update the authenticated user's profile.
+ *
+ * Omitted fields are unchanged.  An explicit empty string clears the field.
+ * Names are trimmed and capped at 100 characters by the server.
+ */
+export async function patchMyProfile(
+  data: ProfileUpdateRequest,
+  token?: string | null,
+): Promise<ProfileResponse> {
+  return apiFetch("/me/profile", {
     method: "PATCH",
     body: JSON.stringify(data),
     token,

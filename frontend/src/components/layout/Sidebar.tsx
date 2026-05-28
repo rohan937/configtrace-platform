@@ -1,8 +1,10 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { UserButton, useUser } from "@clerk/nextjs";
+import { UserButton, useAuth, useUser } from "@clerk/nextjs";
+import { getMyProfile } from "@/lib/api";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
 
 interface NavItem {
@@ -32,12 +34,41 @@ const NAV_ITEMS: NavItem[] = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { user, isLoaded } = useUser();
+  const { getToken, isLoaded: authLoaded } = useAuth();
 
-  // Best available display: primary email address, then full name, then nothing
+  // Best available email fallback: primary, then first listed.
   const email =
     user?.primaryEmailAddress?.emailAddress ??
     user?.emailAddresses?.[0]?.emailAddress ??
     null;
+
+  // ── M59.13 — display name from /me/profile ─────────────────────────────────
+  // The server resolves the final display name using:
+  //   first/last → display_name (non-placeholder) → email
+  // so we just trust ``computed_display_name``.  Email remains visible as a
+  // secondary line so users always see which account they're signed into.
+  const [displayName, setDisplayName] = useState<string | null>(null);
+
+  const loadProfile = useCallback(async () => {
+    if (!authLoaded) return;
+    try {
+      const token = await getToken();
+      const p = await getMyProfile(token);
+      setDisplayName(p.computed_display_name);
+    } catch {
+      // Network/auth errors fall back silently to the email line below.
+      setDisplayName(null);
+    }
+  }, [authLoaded, getToken]);
+
+  useEffect(() => {
+    if (authLoaded) void loadProfile();
+  }, [authLoaded, loadProfile]);
+
+  // Show the user's name (when distinct from email) above the email line.
+  // If only email is available, the name slot is hidden to avoid duplication.
+  const showNameLine =
+    !!displayName && !!email && displayName !== email;
 
   return (
     <aside
@@ -139,19 +170,41 @@ export default function Sidebar() {
               },
             }}
           />
-          {isLoaded && email && (
-            <span
-              className="truncate"
+          {isLoaded && (email || displayName) && (
+            <div
               style={{
-                fontSize: "11px",
-                color: "#8b90a0",
-                lineHeight: 1.3,
+                display: "flex",
+                flexDirection: "column",
                 minWidth: 0,
+                lineHeight: 1.25,
               }}
-              title={email}
             >
-              {email}
-            </span>
+              {showNameLine && (
+                <span
+                  className="truncate"
+                  style={{
+                    fontSize: "12px",
+                    color: "#c4c8d4",
+                    fontWeight: 500,
+                  }}
+                  title={displayName ?? undefined}
+                >
+                  {displayName}
+                </span>
+              )}
+              {email && (
+                <span
+                  className="truncate"
+                  style={{
+                    fontSize: "11px",
+                    color: "#8b90a0",
+                  }}
+                  title={email}
+                >
+                  {email}
+                </span>
+              )}
+            </div>
           )}
         </div>
 

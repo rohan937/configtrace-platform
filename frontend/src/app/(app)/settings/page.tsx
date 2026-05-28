@@ -4,12 +4,18 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import type {
   AlertRiskThreshold,
+  ProfileResponse,
   ProviderFilter,
   TimelineRange,
   UserSettings,
   UserSettingsUpdateRequest,
 } from "@/types";
-import { getSettings, patchSettings } from "@/lib/api";
+import {
+  getMyProfile,
+  getSettings,
+  patchMyProfile,
+  patchSettings,
+} from "@/lib/api";
 import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
@@ -285,6 +291,219 @@ function SaveBar({
   );
 }
 
+// ── Profile card (M59.13) ─────────────────────────────────────────────────────
+// Self-contained: owns its own load/save state so it does not interact with
+// the page-wide SaveBar (UserSettings).  Users can edit their first and last
+// name here; both fields are optional and trimmed server-side.
+
+function ProfileCard() {
+  const { getToken, isLoaded } = useAuth();
+  const [profile, setProfile] = useState<ProfileResponse | null>(null);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+
+  const load = useCallback(async () => {
+    if (!isLoaded) return;
+    try {
+      const token = await getToken();
+      const data = await getMyProfile(token);
+      setProfile(data);
+      setFirstName(data.first_name ?? "");
+      setLastName(data.last_name ?? "");
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Failed to load profile.");
+    } finally {
+      setLoading(false);
+    }
+  }, [isLoaded, getToken]);
+
+  useEffect(() => {
+    if (isLoaded) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded]);
+
+  const dirty =
+    profile !== null &&
+    (firstName.trim() !== (profile.first_name ?? "") ||
+      lastName.trim() !== (profile.last_name ?? ""));
+
+  async function save() {
+    if (!dirty) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const token = await getToken();
+      const updated = await patchMyProfile(
+        {
+          // Send empty strings explicitly so the server clears the field.
+          // (Omitted fields are unchanged; empty string => null.)
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+        },
+        token,
+      );
+      setProfile(updated);
+      setFirstName(updated.first_name ?? "");
+      setLastName(updated.last_name ?? "");
+      setSavedAt(new Date());
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save profile.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <SectionHeading>Profile</SectionHeading>
+      <div style={CARD}>
+        <p style={SECTION_TITLE}>Your name</p>
+        <p style={SECTION_DESC}>
+          Shown in the sidebar and account menu. If both fields are empty, your
+          email address is shown instead.
+        </p>
+
+        {loading && (
+          <p style={{ fontSize: "12px", color: "#565b6e", margin: 0 }}>
+            Loading profile…
+          </p>
+        )}
+        {!loading && loadError && (
+          <p style={{ fontSize: "12px", color: "#e84040", margin: 0 }}>
+            {loadError}
+          </p>
+        )}
+
+        {!loading && !loadError && profile && (
+          <>
+            <div style={{ ...ROW, borderTop: "none", paddingTop: 0 }}>
+              <FieldLeft
+                label="First name"
+                hint="Optional. Leave blank to fall back to your email."
+              />
+              <input
+                type="text"
+                value={firstName}
+                maxLength={100}
+                placeholder="First name"
+                onChange={(e) => {
+                  setFirstName(e.target.value);
+                  setSaveError(null);
+                }}
+                disabled={saving}
+                style={{
+                  background: "#1a1d26",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "5px",
+                  color: "#e8eaf0",
+                  fontSize: "12px",
+                  padding: "5px 10px",
+                  fontFamily: "inherit",
+                  flexShrink: 0,
+                  minWidth: "220px",
+                }}
+              />
+            </div>
+
+            <div style={ROW}>
+              <FieldLeft
+                label="Last name"
+                hint="Optional. Trimmed and capped at 100 characters."
+              />
+              <input
+                type="text"
+                value={lastName}
+                maxLength={100}
+                placeholder="Last name"
+                onChange={(e) => {
+                  setLastName(e.target.value);
+                  setSaveError(null);
+                }}
+                disabled={saving}
+                style={{
+                  background: "#1a1d26",
+                  border: "1px solid #2a2d38",
+                  borderRadius: "5px",
+                  color: "#e8eaf0",
+                  fontSize: "12px",
+                  padding: "5px 10px",
+                  fontFamily: "inherit",
+                  flexShrink: 0,
+                  minWidth: "220px",
+                }}
+              />
+            </div>
+
+            <ReadOnlyRow label="Email" value={profile.email} />
+            <ReadOnlyRow
+              label="Displayed as"
+              value={
+                dirty
+                  ? "Updates after you save"
+                  : profile.computed_display_name
+              }
+            />
+
+            {saveError && (
+              <p
+                style={{
+                  margin: "10px 0 0",
+                  fontSize: "12px",
+                  color: "#e84040",
+                }}
+              >
+                {saveError}
+              </p>
+            )}
+
+            <div
+              style={{
+                marginTop: "14px",
+                display: "flex",
+                justifyContent: "flex-end",
+                alignItems: "center",
+                gap: "12px",
+              }}
+            >
+              {savedAt && !dirty && !saveError && (
+                <span style={{ fontSize: "11px", color: "#565b6e" }}>
+                  Saved{" "}
+                  {savedAt.toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              )}
+              <button
+                onClick={save}
+                disabled={!dirty || saving}
+                style={{
+                  background: !dirty || saving ? "#2a2d38" : "#4f80f7",
+                  border: "none",
+                  color: !dirty || saving ? "#565b6e" : "#ffffff",
+                  borderRadius: "5px",
+                  padding: "5px 18px",
+                  fontSize: "12px",
+                  fontWeight: 500,
+                  cursor: !dirty || saving ? "not-allowed" : "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                {saving ? "Saving…" : "Save profile"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
@@ -368,6 +587,9 @@ export default function SettingsPage() {
       />
 
       <div className="px-6 py-6" style={{ maxWidth: "720px" }}>
+        {/* ── Profile (M59.13) ─────────────────────────────────────────── */}
+        <ProfileCard />
+
         {/* ── Workspace admin quick links ──────────────────────────────── */}
         <div
           style={{

@@ -21,6 +21,13 @@ class User(BaseMixin, Base):
     email: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # ── M59.13 — user-supplied profile fields ────────────────────────────────
+    # Optional first/last name entered in Settings → Profile.  When both are
+    # blank the UI falls back to ``display_name`` (Clerk-supplied) and then
+    # to ``email``.  Trimmed and capped at 100 chars each by the API schema.
+    first_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # ── Relationships ────────────────────────────────────────────────────────
     integrations: Mapped[list[Integration]] = relationship(
         "Integration",
