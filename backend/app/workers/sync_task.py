@@ -365,6 +365,7 @@ def sync_integration(
 
                 _sec_upserted = 0
                 _sec_resolved = 0
+                _sec_events: list = []
                 for _res, _snap, _res_changes in security_eval_inputs:
                     _summary = evaluate_security_findings_for_resource(
                         db=db,
@@ -376,14 +377,46 @@ def sync_integration(
                     )
                     _sec_upserted += _summary.get("upserted", 0)
                     _sec_resolved += _summary.get("resolved", 0)
+                    _sec_events.extend(_summary.get("events", []))
                 logger.info(
                     "sync_integration: security evaluation  sync_run_id=%s  "
-                    "resources=%d upserted=%d resolved=%d",
+                    "resources=%d upserted=%d resolved=%d events=%d",
                     sync_run_id,
                     len(security_eval_inputs),
                     _sec_upserted,
                     _sec_resolved,
+                    len(_sec_events),
                 )
+
+                # ── M60.11: notification routing (compute + log only) ─────────
+                # Decide channel eligibility per security event category. This
+                # does NOT dispatch — it prepares M60.12/M60.13 routing. Guarded
+                # so routing can never affect the sync.
+                if _sec_events:
+                    try:
+                        from app.services import notification_routing_service as _routing
+                        from app.services.notification_service import (
+                            get_or_create_notification_settings,
+                        )
+
+                        _routing_settings = (
+                            get_or_create_notification_settings(
+                                integration.workspace_id, db
+                            )
+                            if integration.workspace_id is not None
+                            else None
+                        )
+                        for _ev in _sec_events:
+                            _decision = _routing.route_security_event(
+                                event=_ev, settings=_routing_settings
+                            )
+                            _routing.log_security_routing(_ev, _decision)
+                    except Exception:
+                        logger.exception(
+                            "notification_routing: routing pass raised  "
+                            "sync_run_id=%s",
+                            sync_run_id,
+                        )
             except Exception:
                 # Security evaluation must never fail the sync.
                 logger.exception(
