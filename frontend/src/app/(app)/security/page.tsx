@@ -19,7 +19,12 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 
 import type { ChangeListItem, Integration } from "@/types";
-import { getChanges, getNeedsReviewChanges, getIntegrations } from "@/lib/api";
+import {
+  getChanges,
+  getNeedsReviewChanges,
+  getIntegrations,
+  getSecurityFindings,
+} from "@/lib/api";
 import { formatRelativeTime } from "@/lib/utils";
 import {
   buildSecurityFeed,
@@ -61,6 +66,9 @@ export default function SecurityOverviewPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // M60.4: live active-exposure count from the real findings engine. Null until
+  // known; the page still works entirely on M60.2 derived data if this fails.
+  const [liveActiveCount, setLiveActiveCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,11 +79,14 @@ export default function SecurityOverviewPage() {
         const token = await getToken();
         // Defensive: each source is independent; a partial failure degrades
         // gracefully rather than breaking the whole page.
-        const [changesRes, needsRes, intRes] = await Promise.allSettled([
-          getChanges({ page_size: WINDOW_SIZE }, token),
-          getNeedsReviewChanges({ page_size: WINDOW_SIZE }, token),
-          getIntegrations(token),
-        ]);
+        const [changesRes, needsRes, intRes, findingsRes] =
+          await Promise.allSettled([
+            getChanges({ page_size: WINDOW_SIZE }, token),
+            getNeedsReviewChanges({ page_size: WINDOW_SIZE }, token),
+            getIntegrations(token),
+            // M60.4: prefer real active-finding metrics when the engine has run.
+            getSecurityFindings({ status: "active", page_size: 1 }, token),
+          ]);
         if (cancelled) return;
 
         if (changesRes.status === "fulfilled") {
@@ -86,6 +97,9 @@ export default function SecurityOverviewPage() {
         }
         if (intRes.status === "fulfilled") {
           setIntegrations(intRes.value.integrations ?? []);
+        }
+        if (findingsRes.status === "fulfilled") {
+          setLiveActiveCount(findingsRes.value.total ?? 0);
         }
 
         // Only hard-error if literally everything failed.
@@ -148,11 +162,49 @@ export default function SecurityOverviewPage() {
     <div>
       <Hero />
 
-      <PreviewBanner>
-        Active exposure findings arrive in M60.3/M60.4. This overview currently
-        summarizes <strong>security-relevant drift</strong> from your recent
-        change data — not confirmed exposures.
-      </PreviewBanner>
+      {liveActiveCount !== null && liveActiveCount > 0 ? (
+        <div
+          role="status"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            padding: "12px 14px",
+            borderRadius: "10px",
+            background: "rgba(232, 64, 64, 0.08)",
+            border: "1px solid rgba(232, 64, 64, 0.32)",
+            marginBottom: "16px",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: "8px",
+              height: "8px",
+              borderRadius: "5px",
+              background: "#e84040",
+              flexShrink: 0,
+            }}
+          />
+          <span style={{ fontSize: "13px", color: "#e8eaf0" }}>
+            <strong>{liveActiveCount}</strong> active security{" "}
+            {liveActiveCount === 1 ? "exposure" : "exposures"} detected by the
+            findings engine.{" "}
+            <Link
+              href="/security/exposures"
+              style={{ color: "#6b9cf8", textDecoration: "none" }}
+            >
+              View active exposures →
+            </Link>
+          </span>
+        </div>
+      ) : (
+        <PreviewBanner>
+          Active exposure findings arrive in M60.3/M60.4. This overview currently
+          summarizes <strong>security-relevant drift</strong> from your recent
+          change data — not confirmed exposures.
+        </PreviewBanner>
+      )}
 
       {/* B. Summary metric cards */}
       <SectionLabel>Exposure summary</SectionLabel>

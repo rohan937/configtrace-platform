@@ -240,3 +240,39 @@ def upsert_active_finding(
         evidence=evidence,
         remediation=remediation,
     )
+
+
+def list_active_findings_for_resource(
+    *,
+    db: Session,
+    workspace_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    resource_id: Optional[uuid.UUID],
+) -> list[SecurityFinding]:
+    """Return all currently-active findings for a single resource scope.
+
+    Used by the evaluator to determine which previously-active findings should
+    be resolved because their risky state is no longer present.
+    """
+    query = db.query(SecurityFinding).filter(
+        SecurityFinding.workspace_id == workspace_id,
+        SecurityFinding.integration_id == integration_id,
+        SecurityFinding.status == "active",
+    )
+    if resource_id is not None:
+        query = query.filter(SecurityFinding.resource_id == resource_id)
+    else:
+        query = query.filter(SecurityFinding.resource_id.is_(None))
+    return query.all()
+
+
+def resolve_finding(*, db: Session, finding: SecurityFinding) -> SecurityFinding:
+    """Mark a finding resolved (idempotent) and stamp ``resolved_at``."""
+    if finding.status == "resolved":
+        return finding
+    finding.status = "resolved"
+    finding.resolved_at = _utcnow()
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return finding

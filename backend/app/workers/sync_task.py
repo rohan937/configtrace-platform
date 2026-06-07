@@ -180,8 +180,15 @@ def sync_integration(
         # alert dispatch would split a single zone reconfiguration into
         # multiple emails — undesirable noise.
         all_changes_this_sync: list = []
+        # M60.4: queue (resource, snapshot, resource_changes) per resource for a
+        # post-commit Security Exposure evaluation pass. We evaluate AFTER the
+        # atomic snapshot/change commit so the evaluator's own commits never
+        # prematurely flush sync writes.
+        security_eval_inputs: list = []
 
         for resource in resources:
+            # Per-iteration changes for this resource (empty on baseline/no-diff).
+            _resource_changes: list = []
             # Select the correct connector based on provider.
             # New providers: add an elif branch here.
             if integration.provider == "cloudflare":
@@ -313,6 +320,7 @@ def sync_integration(
                         apply_risk_classification(changes, db)
                         change_count += len(changes)
                         all_changes_this_sync.extend(changes)
+                        _resource_changes = changes
                         logger.info(
                             "sync_integration: %d change(s) detected  resource_id=%s",
                             len(changes),
@@ -331,11 +339,65 @@ def sync_integration(
                         resource.id,
                     )
 
+            # M60.4: queue this resource for security evaluation. We run for
+            # every resource that has a current snapshot (even a baseline, which
+            # can already be risky), so findings stay fresh across syncs.
+            if new_snapshot is not None:
+                security_eval_inputs.append(
+                    (resource, new_snapshot, list(_resource_changes))
+                )
+
         # ── Commit all snapshot + change + timestamp writes ──────────────────
         # store_snapshot and store_changes both use db.flush(); we commit
         # everything together here so the writes are atomic per sync run.
         integration.last_synced_at = datetime.now(timezone.utc)
         db.commit()
+
+        # ── M60.4: Security Exposure evaluation pass ─────────────────────────
+        # Runs after the atomic snapshot/change commit so the evaluator's own
+        # commits are safe. Defence in depth: a security-evaluation error must
+        # NEVER fail the sync.
+        if security_eval_inputs:
+            try:
+                from app.services.security_finding_evaluator import (
+                    evaluate_security_findings_for_resource,
+                )
+
+                _sec_upserted = 0
+                _sec_resolved = 0
+                for _res, _snap, _res_changes in security_eval_inputs:
+                    _summary = evaluate_security_findings_for_resource(
+                        db=db,
+                        workspace_id=integration.workspace_id,
+                        integration=integration,
+                        resource=_res,
+                        snapshot=_snap,
+                        linked_changes=_res_changes,
+                    )
+                    _sec_upserted += _summary.get("upserted", 0)
+                    _sec_resolved += _summary.get("resolved", 0)
+                logger.info(
+                    "sync_integration: security evaluation  sync_run_id=%s  "
+                    "resources=%d upserted=%d resolved=%d",
+                    sync_run_id,
+                    len(security_eval_inputs),
+                    _sec_upserted,
+                    _sec_resolved,
+                )
+            except Exception:
+                # Security evaluation must never fail the sync.
+                logger.exception(
+                    "sync_integration: security evaluation raised unexpectedly  "
+                    "sync_run_id=%s",
+                    sync_run_id,
+                )
+                try:
+                    db.rollback()
+                except Exception:
+                    logger.exception(
+                        "sync_integration: rollback after security eval failure "
+                        "also failed"
+                    )
 
         # ── Dispatch high/critical email alerts (M24) ────────────────────────
         # Runs AFTER commit so a never-reached email path can't leave us with
