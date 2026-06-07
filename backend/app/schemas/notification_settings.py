@@ -44,9 +44,14 @@ class NotificationSettingsResponse(BaseModel):
     # Slack workspace name — safe to return.
     slack_team_name: Optional[str] = None
     slack_team_id: Optional[str] = None
-    # Selected delivery channel.
+    # Selected delivery channel (default channel).
     slack_channel_id: Optional[str] = None
     slack_channel_name: Optional[str] = None
+    # ── M60.12 Slack routing (Drift vs Security) ──────────────────────────────
+    slack_drift_channel_id: Optional[str] = None
+    slack_security_channel_id: Optional[str] = None
+    slack_security_alerts_enabled: bool = False
+    slack_security_resolved_enabled: bool = False
     # Audit timestamps.
     slack_installed_at: Optional[datetime] = None
     slack_app_last_test_at: Optional[datetime] = None
@@ -98,6 +103,13 @@ class NotificationSettingsUpdateRequest(BaseModel):
     )
 
     notify_on_risk_level: Optional[str] = None
+
+    # ── M60.12 Slack routing (Drift vs Security) ──────────────────────────────
+    # Channel overrides: a Slack channel ID, or "" to clear (→ default channel).
+    slack_drift_channel_id: Optional[str] = Field(default=None, max_length=64)
+    slack_security_channel_id: Optional[str] = Field(default=None, max_length=64)
+    slack_security_alerts_enabled: Optional[bool] = None
+    slack_security_resolved_enabled: Optional[bool] = None
 
     @field_validator("notify_on_risk_level")
     @classmethod

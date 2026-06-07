@@ -58,8 +58,13 @@ def category_for_security_event(event_type: str) -> str:
 
 @dataclass(frozen=True)
 class RoutingDecision:
-    """Which channels an event is eligible for. ``dispatched`` is always False
-    in M60.11 — this layer only prepares routing, it does not send."""
+    """Which channels an event is eligible for, plus the resolved Slack target.
+
+    ``slack_eligible`` = "Slack is configured and this category/severity could
+    route" (M60.11 semantics, unchanged). ``slack_should_send`` = "actually send
+    to Slack now" — it additionally requires the workspace's opt-in flags and a
+    resolved channel (M60.12). ``slack_channel_id`` is the resolved destination.
+    """
 
     category: str
     slack_eligible: bool
@@ -67,6 +72,8 @@ class RoutingDecision:
     push_eligible: bool
     dispatched: bool
     reason: str
+    slack_channel_id: Optional[str] = None
+    slack_should_send: bool = False
 
     @property
     def any_eligible(self) -> bool:
@@ -79,6 +86,21 @@ def _slack_configured(settings: Optional[WorkspaceNotificationSettings]) -> bool
     return bool(
         getattr(settings, "slack_app_enabled", False)
         or getattr(settings, "slack_enabled", False)
+    )
+
+
+def resolve_security_slack_channel(
+    settings: Optional[WorkspaceNotificationSettings],
+) -> Optional[str]:
+    """Resolve the Slack channel for security exposure alerts.
+
+    Security channel override when set, else the default channel. Returns None
+    when no channel is configured at all.
+    """
+    if settings is None:
+        return None
+    return getattr(settings, "slack_security_channel_id", None) or getattr(
+        settings, "slack_channel_id", None
     )
 
 
@@ -101,15 +123,36 @@ def route_security_event(
     * Nothing is dispatched in M60.11 (``dispatched`` is always False).
     """
     category = category_for_security_event(event.event_type)
+    channel = resolve_security_slack_channel(settings)
+    slack_configured = _slack_configured(settings)
 
     if category == CATEGORY_SECURITY_RESOLVED:
+        # Resolved is low-noise: only sent when the workspace explicitly opts in
+        # (slack_security_resolved_enabled) AND the event is alertable AND Slack
+        # is configured with a resolvable channel.
+        resolved_enabled = bool(
+            settings is not None
+            and getattr(settings, "slack_security_resolved_enabled", False)
+        )
+        should_send = bool(
+            resolved_enabled
+            and event.is_alertable
+            and slack_configured
+            and channel
+        )
         return RoutingDecision(
             category=category,
             slack_eligible=False,
             email_eligible=False,
             push_eligible=False,
             dispatched=False,
-            reason="resolved exposure events are low-noise and not routed by default",
+            reason=(
+                "resolved exposure routed to Slack (opt-in enabled)"
+                if should_send
+                else "resolved exposure events are not sent by default"
+            ),
+            slack_channel_id=channel if should_send else None,
+            slack_should_send=should_send,
         )
 
     if not event.is_alertable:
@@ -120,15 +163,29 @@ def route_security_event(
             push_eligible=False,
             dispatched=False,
             reason="severity is not alertable (only critical/high route)",
+            slack_should_send=False,
         )
 
+    # Alertable opened/reopened: Slack send requires the security opt-in flag +
+    # a resolvable channel. Existing workspaces (opt-in off) stay log-only.
+    security_enabled = bool(
+        settings is not None
+        and getattr(settings, "slack_security_alerts_enabled", False)
+    )
+    should_send = bool(security_enabled and slack_configured and channel)
     return RoutingDecision(
         category=category,
-        slack_eligible=_slack_configured(settings),
+        slack_eligible=slack_configured,
         email_eligible=True,
         push_eligible=True,
         dispatched=False,
-        reason="alertable security exposure eligible for enabled channels (not dispatched in M60.11)",
+        reason=(
+            "alertable security exposure routed to Slack"
+            if should_send
+            else "alertable security exposure eligible; Slack send requires opt-in"
+        ),
+        slack_channel_id=channel if should_send else None,
+        slack_should_send=should_send,
     )
 
 

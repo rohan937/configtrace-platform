@@ -142,9 +142,28 @@ class WorkspaceNotificationSettings(BaseMixin, Base):
     # Slack bot user ID (e.g. UABC123) — safe to store and display.
     slack_bot_user_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    # Chosen Slack channel for alert delivery.
+    # Chosen Slack channel for alert delivery (the DEFAULT channel).
     slack_channel_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     slack_channel_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # ── M60.12 — separate Drift vs Security Slack routing ──────────────────────
+    # One Slack install, multiple routes. Blank channel overrides fall back to
+    # ``slack_channel_id`` (the default channel) — so existing workspaces are
+    # unchanged. Security Slack delivery is OPT-IN (defaults off) so no existing
+    # workspace is surprised by new security messages.
+    slack_drift_channel_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
+    slack_security_channel_id: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
+    slack_security_alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # Resolved-exposure Slack messages are low-noise; off by default.
+    slack_security_resolved_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     # Installation audit fields.
     slack_installed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(

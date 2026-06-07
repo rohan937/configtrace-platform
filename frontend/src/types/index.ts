@@ -721,9 +721,14 @@ export interface WorkspaceNotificationSettings {
   /** Slack workspace name — safe to display. */
   slack_team_name: string | null;
   slack_team_id: string | null;
-  /** Selected delivery channel. */
+  /** Selected delivery channel (default channel). */
   slack_channel_id: string | null;
   slack_channel_name: string | null;
+  /** M60.12: separate Slack routing for Drift vs Security exposure. */
+  slack_drift_channel_id: string | null;
+  slack_security_channel_id: string | null;
+  slack_security_alerts_enabled: boolean;
+  slack_security_resolved_enabled: boolean;
   slack_installed_at: string | null;
   slack_app_last_test_at: string | null;
   /** Last delivery error message, or null when healthy. */
@@ -763,6 +768,11 @@ export interface NotificationSettingsUpdateRequest {
    */
   webhook_url?: string;
   notify_on_risk_level?: NotifyRiskLevel;
+  /** M60.12: Slack channel routing. Pass "" to clear an override (→ default). */
+  slack_drift_channel_id?: string;
+  slack_security_channel_id?: string;
+  slack_security_alerts_enabled?: boolean;
+  slack_security_resolved_enabled?: boolean;
 }
 
 export interface TestNotificationResponse {

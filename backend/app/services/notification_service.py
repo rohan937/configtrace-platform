@@ -366,6 +366,10 @@ def update_notification_settings(
     webhook_enabled: Optional[bool] = None,
     webhook_url: Optional[str] = None,
     notify_on_risk_level: Optional[str] = None,
+    slack_drift_channel_id: Optional[str] = None,
+    slack_security_channel_id: Optional[str] = None,
+    slack_security_alerts_enabled: Optional[bool] = None,
+    slack_security_resolved_enabled: Optional[bool] = None,
     db: Session,
 ) -> WorkspaceNotificationSettings:
     """Persist notification settings changes for *workspace_id*.
@@ -441,6 +445,17 @@ def update_notification_settings(
     if notify_on_risk_level is not None:
         row.notify_on_risk_level = notify_on_risk_level
 
+    # ── M60.12 Slack routing (Drift vs Security) ───────────────────────────────
+    # Empty string clears an override (→ fall back to the default channel).
+    if slack_drift_channel_id is not None:
+        row.slack_drift_channel_id = slack_drift_channel_id or None
+    if slack_security_channel_id is not None:
+        row.slack_security_channel_id = slack_security_channel_id or None
+    if slack_security_alerts_enabled is not None:
+        row.slack_security_alerts_enabled = slack_security_alerts_enabled
+    if slack_security_resolved_enabled is not None:
+        row.slack_security_resolved_enabled = slack_security_resolved_enabled
+
     db.commit()
     db.refresh(row)
     return row
@@ -491,6 +506,15 @@ def build_settings_response(row: WorkspaceNotificationSettings) -> dict:
         "slack_team_name": getattr(row, "slack_team_name", None),
         "slack_channel_id": getattr(row, "slack_channel_id", None),
         "slack_channel_name": getattr(row, "slack_channel_name", None),
+        # M60.12 Slack routing (Drift vs Security).
+        "slack_drift_channel_id": getattr(row, "slack_drift_channel_id", None),
+        "slack_security_channel_id": getattr(row, "slack_security_channel_id", None),
+        "slack_security_alerts_enabled": bool(
+            getattr(row, "slack_security_alerts_enabled", False)
+        ),
+        "slack_security_resolved_enabled": bool(
+            getattr(row, "slack_security_resolved_enabled", False)
+        ),
         "slack_installed_at": getattr(row, "slack_installed_at", None),
         "slack_app_last_test_at": getattr(row, "slack_app_last_test_at", None),
         "slack_app_last_error": getattr(row, "slack_app_last_error", None),
@@ -731,7 +755,11 @@ def dispatch_notifications_for_sync(
     _slack_app_enabled = bool(getattr(settings_row, "slack_app_enabled", False))
     _slack_app_token = getattr(settings_row, "slack_bot_token_encrypted", None)
     _slack_app_iv = getattr(settings_row, "slack_bot_iv", None)
-    _slack_app_channel = getattr(settings_row, "slack_channel_id", None)
+    # M60.12: drift alerts use the drift channel override when set, else the
+    # default channel (blank override → unchanged behavior for existing setups).
+    _slack_app_channel = getattr(
+        settings_row, "slack_drift_channel_id", None
+    ) or getattr(settings_row, "slack_channel_id", None)
 
     if _slack_app_enabled and _slack_app_token and _slack_app_iv and _slack_app_channel:
         # ── Slack App path (M58.5/M58.6 interactive) ──────────────────────

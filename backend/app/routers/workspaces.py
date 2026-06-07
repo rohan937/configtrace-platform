@@ -565,6 +565,10 @@ def update_notification_settings(
             webhook_enabled=body.webhook_enabled,
             webhook_url=body.webhook_url,
             notify_on_risk_level=body.notify_on_risk_level,
+            slack_drift_channel_id=body.slack_drift_channel_id,
+            slack_security_channel_id=body.slack_security_channel_id,
+            slack_security_alerts_enabled=body.slack_security_alerts_enabled,
+            slack_security_resolved_enabled=body.slack_security_resolved_enabled,
             db=db,
         )
     except WebhookURLError as exc:

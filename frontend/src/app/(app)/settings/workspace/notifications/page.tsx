@@ -1502,6 +1502,156 @@ function WeeklyDigestCard({ workspaceId }: { workspaceId: string }) {
   );
 }
 
+// ── Slack routing card (M60.12) ─────────────────────────────────────────────
+
+function SlackRoutingCard({
+  settings,
+  workspaceId,
+  onUpdate,
+}: {
+  settings: WorkspaceNotificationSettings | null;
+  workspaceId: string;
+  onUpdate: (msg: string) => void;
+}) {
+  const { getToken } = useAuth();
+  const installed = settings?.slack_app_installed ?? false;
+
+  const [drift, setDrift] = useState(settings?.slack_drift_channel_id ?? "");
+  const [security, setSecurity] = useState(settings?.slack_security_channel_id ?? "");
+  const [securityEnabled, setSecurityEnabled] = useState(
+    settings?.slack_security_alerts_enabled ?? false,
+  );
+  const [resolvedEnabled, setResolvedEnabled] = useState(
+    settings?.slack_security_resolved_enabled ?? false,
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!settings) return;
+    setDrift(settings.slack_drift_channel_id ?? "");
+    setSecurity(settings.slack_security_channel_id ?? "");
+    setSecurityEnabled(settings.slack_security_alerts_enabled ?? false);
+    setResolvedEnabled(settings.slack_security_resolved_enabled ?? false);
+  }, [settings]);
+
+  if (!installed) {
+    return (
+      <p style={{ fontSize: "13px", color: "#8b90a0", margin: 0, lineHeight: 1.6 }}>
+        Connect the Slack App above first, then route drift and security exposure
+        alerts to the channels your teams already use.
+      </p>
+    );
+  }
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      await updateNotificationSettings(
+        workspaceId,
+        {
+          slack_drift_channel_id: drift.trim(),
+          slack_security_channel_id: security.trim(),
+          slack_security_alerts_enabled: securityEnabled,
+          slack_security_resolved_enabled: resolvedEnabled,
+        },
+        token,
+      );
+      onUpdate("Slack routing saved.");
+    } catch {
+      setError("Could not save Slack routing. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const labelStyle = { fontSize: "12px", color: "#8b90a0", marginBottom: "4px" } as const;
+  const inputStyle = {
+    width: "100%",
+    fontSize: "13px",
+    color: "#e8eaf0",
+    background: "#13151a",
+    border: "1px solid #2a2d38",
+    borderRadius: "8px",
+    padding: "8px 10px",
+  } as const;
+
+  return (
+    <div>
+      <p style={{ fontSize: "13px", color: "#8b90a0", margin: "0 0 14px", lineHeight: 1.6 }}>
+        Connect Slack once, then route drift and security exposure alerts to the
+        channels your teams already use. Leave a field blank to use the default
+        channel
+        {settings?.slack_channel_name ? ` (#${settings.slack_channel_name})` : ""}.
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "14px", maxWidth: "440px" }}>
+        <div>
+          <div style={labelStyle}>Drift Detection alerts channel ID</div>
+          <input
+            value={drift}
+            onChange={(e) => setDrift(e.target.value)}
+            placeholder="Leave blank to use the default Slack channel"
+            style={inputStyle}
+          />
+        </div>
+
+        <div>
+          <div style={labelStyle}>Security Exposure alerts channel ID</div>
+          <input
+            value={security}
+            onChange={(e) => setSecurity(e.target.value)}
+            placeholder="Leave blank to use the default Slack channel"
+            style={inputStyle}
+          />
+        </div>
+
+        <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#c4c8d4" }}>
+          <input
+            type="checkbox"
+            checked={securityEnabled}
+            onChange={(e) => setSecurityEnabled(e.target.checked)}
+          />
+          Send Security Exposure alerts to Slack (critical/high opened &amp; re-opened)
+        </label>
+
+        <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#c4c8d4" }}>
+          <input
+            type="checkbox"
+            checked={resolvedEnabled}
+            onChange={(e) => setResolvedEnabled(e.target.checked)}
+          />
+          Also send when an exposure is resolved (off by default — lower noise)
+        </label>
+
+        {error ? (
+          <div style={{ fontSize: "12.5px", color: "#e84040" }}>{error}</div>
+        ) : null}
+
+        <button
+          onClick={save}
+          disabled={saving}
+          style={{
+            alignSelf: "flex-start",
+            fontSize: "13px",
+            fontWeight: 600,
+            color: "#0e0f11",
+            background: saving ? "#3a4a6a" : "#4f80f7",
+            border: "none",
+            borderRadius: "8px",
+            padding: "8px 16px",
+            cursor: saving ? "default" : "pointer",
+          }}
+        >
+          {saving ? "Saving…" : "Save Slack routing"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function NotificationsSettingsPage() {
@@ -1719,6 +1869,15 @@ export default function NotificationsSettingsPage() {
         {/* ── Slack App (recommended) ───────────────────────────────── */}
         <SectionCard title="Slack App" accentColor="#4a9eff" badge="Recommended">
           <SlackAppCard
+            settings={settings}
+            workspaceId={selectedWorkspace.id}
+            onUpdate={handleSlackAppUpdate}
+          />
+        </SectionCard>
+
+        {/* ── Slack routing: Drift vs Security (M60.12) ─────────────── */}
+        <SectionCard title="Slack routing" accentColor="#4a9eff">
+          <SlackRoutingCard
             settings={settings}
             workspaceId={selectedWorkspace.id}
             onUpdate={handleSlackAppUpdate}

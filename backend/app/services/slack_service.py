@@ -1347,3 +1347,86 @@ def _get(obj: Any, key: str) -> Any:
 def _s(value: Any) -> str:
     """Safely coerce to lowercase string; returns '' for non-strings."""
     return value.lower() if isinstance(value, str) else ""
+
+
+# ── M60.12 — Security exposure Slack messages ─────────────────────────────────
+# Metadata-only: severity, provider, status, title, and navigation links. NEVER
+# includes evidence blobs, secrets, tokens, payloads, or raw rules. Careful
+# wording: "Security exposure opened/resolved" — never "breach"/"attack".
+
+_SECURITY_EVENT_HEADLINE = {
+    "security_exposure_opened": "Security exposure opened",
+    "security_exposure_reopened": "Security exposure re-opened",
+    "security_exposure_resolved": "Security exposure resolved",
+}
+
+_SECURITY_SEVERITY_EMOJI = {
+    "critical": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "🔵",
+    "info": "⚪",
+}
+
+
+def compose_security_exposure_blocks(*, event: Any, base_url: str) -> list[dict]:
+    """Build Block Kit blocks for a security exposure lifecycle event.
+
+    ``event`` is a SecurityExposureEvent (duck-typed here to avoid a hard import
+    cycle). Only metadata fields are read.
+    """
+    headline = _SECURITY_EVENT_HEADLINE.get(event.event_type, "Security exposure")
+    severity = (event.severity or "").lower()
+    emoji = _SECURITY_SEVERITY_EMOJI.get(severity, "⚪")
+    base = base_url.rstrip("/")
+    detail_url = f"{base}{event.detail_path}"
+
+    detail_lines = [
+        f"*Severity:* {severity.upper() or 'UNKNOWN'}",
+        f"*Provider:* {event.provider}",
+        f"*Status:* {event.status}",
+    ]
+
+    blocks: list[dict] = [
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"{emoji} {headline}", "emoji": True},
+        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"*{event.title}*"}},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "\n".join(detail_lines)}},
+    ]
+
+    action_elements: list[dict] = [
+        {
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Open exposure", "emoji": True},
+            "url": detail_url,
+        }
+    ]
+    if getattr(event, "linked_change_id", None):
+        action_elements.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": "View linked drift", "emoji": True},
+                "url": f"{base}/changes/{event.linked_change_id}",
+            }
+        )
+    blocks.append({"type": "actions", "elements": action_elements})
+    return blocks
+
+
+def dispatch_security_exposure_alert(
+    *,
+    bot_token: str,
+    channel_id: str,
+    event: Any,
+    base_url: str,
+) -> None:
+    """Post a security exposure event to a Slack channel (metadata-only).
+
+    Raises RuntimeError on Slack API / network failure (callers must guard).
+    """
+    headline = _SECURITY_EVENT_HEADLINE.get(event.event_type, "Security exposure")
+    fallback = f"{headline}: {event.title} ({(event.severity or '').upper()})"
+    blocks = compose_security_exposure_blocks(event=event, base_url=base_url)
+    send_interactive_message(bot_token, channel_id, blocks, fallback)

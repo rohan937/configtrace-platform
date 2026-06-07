@@ -406,11 +406,59 @@ def sync_integration(
                             if integration.workspace_id is not None
                             else None
                         )
+                        # Decrypt the Slack bot token once (only if we may send).
+                        _bot_token = None
+                        if _routing_settings is not None and getattr(
+                            _routing_settings, "slack_bot_token_encrypted", None
+                        ) and getattr(_routing_settings, "slack_bot_iv", None):
+                            try:
+                                from app.services.slack_service import _decrypt_token
+                                _bot_token = _decrypt_token(
+                                    _routing_settings.slack_bot_token_encrypted,
+                                    _routing_settings.slack_bot_iv,
+                                )
+                            except Exception:
+                                _bot_token = None
+
+                        from app.config import settings as _cfg
+                        _base_url = _cfg.APP_BASE_URL.rstrip("/")
+                        _sec_slack_sent = 0
                         for _ev in _sec_events:
                             _decision = _routing.route_security_event(
                                 event=_ev, settings=_routing_settings
                             )
                             _routing.log_security_routing(_ev, _decision)
+                            # M60.12: dispatch to Slack when the workspace opted
+                            # in and a channel resolved. Each send is guarded so
+                            # a Slack failure never affects the sync.
+                            if (
+                                _decision.slack_should_send
+                                and _decision.slack_channel_id
+                                and _bot_token
+                            ):
+                                try:
+                                    from app.services.slack_service import (
+                                        dispatch_security_exposure_alert,
+                                    )
+                                    dispatch_security_exposure_alert(
+                                        bot_token=_bot_token,
+                                        channel_id=_decision.slack_channel_id,
+                                        event=_ev,
+                                        base_url=_base_url,
+                                    )
+                                    _sec_slack_sent += 1
+                                except Exception:
+                                    logger.exception(
+                                        "security_slack_alerts: send failed  "
+                                        "finding_id=%s",
+                                        _ev.finding_id,
+                                    )
+                        if _sec_slack_sent:
+                            logger.info(
+                                "security_slack_alerts: sent=%d sync_run_id=%s",
+                                _sec_slack_sent,
+                                sync_run_id,
+                            )
                     except Exception:
                         logger.exception(
                             "notification_routing: routing pass raised  "
