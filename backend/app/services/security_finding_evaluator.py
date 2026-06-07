@@ -38,6 +38,7 @@ from app.models.resource import Resource
 from app.models.snapshot import Snapshot
 from app.services import security_finding_service
 from app.services.security_rules import aws as aws_rules
+from app.services.security_rules import cloudflare as cloudflare_rules
 from app.services.security_rules import firebase as firebase_rules
 from app.services.security_rules import github as github_rules
 from app.services.security_rules import stripe as stripe_rules
@@ -54,6 +55,7 @@ _PROVIDER_RULES = {
     "aws": [aws_rules.evaluate],
     "supabase": [supabase_rules.evaluate],
     "firebase": [firebase_rules.evaluate],
+    "cloudflare": [cloudflare_rules.evaluate],
 }
 
 
