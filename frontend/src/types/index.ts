@@ -1426,3 +1426,47 @@ export interface GitHubPrCreateResponse {
   /** UUID of the audit record. */
   suggestion_id: string | null;
 }
+
+// ── Security Exposure findings (M60.3) ──────────────────────────────────────
+
+export type SecurityFindingSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "low"
+  | "info";
+
+export type SecurityFindingStatus =
+  | "active"
+  | "resolved"
+  | "accepted_risk"
+  | "snoozed";
+
+/**
+ * A persisted Security Exposure finding — a risky *current state* on a
+ * connected provider. Read-only in M60.3 (the evaluation engine that produces
+ * these arrives in M60.4).
+ */
+export interface SecurityFinding {
+  id: string;
+  workspace_id: string;
+  integration_id: string;
+  resource_id: string | null;
+  linked_change_id: string | null;
+  provider: string;
+  finding_key: string;
+  severity: SecurityFindingSeverity;
+  status: SecurityFindingStatus;
+  title: string;
+  description: string | null;
+  evidence: Record<string, unknown> | null;
+  remediation: Record<string, unknown> | null;
+  first_detected_at: string;
+  last_seen_at: string;
+  resolved_at: string | null;
+  accepted_until: string | null;
+  reviewed_by_user_id: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

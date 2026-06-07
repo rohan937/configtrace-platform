@@ -39,6 +39,7 @@ import type {
   ProfileUpdateRequest,
   ResourceDetail,
   ResourceListItem,
+  SecurityFinding,
   SnapshotListItem,
   SyncRun,
   SyncRunListResponse,
@@ -439,6 +440,34 @@ export async function getChange(
   token?: string | null,
 ): Promise<ChangeDetail> {
   return apiFetch(`/changes/${changeId}`, { token });
+}
+
+// ── M60.3: Security Exposure findings (read-only) ─────────────────────────────
+
+export interface GetSecurityFindingsParams {
+  status?: string;
+  severity?: string;
+  provider?: string;
+  integration_id?: string;
+  resource_id?: string;
+  page?: number;
+  page_size?: number;
+}
+
+/** List security exposure findings for the current user's workspaces. */
+export async function getSecurityFindings(
+  params: GetSecurityFindingsParams = {},
+  token?: string | null,
+): Promise<PaginatedResponse<SecurityFinding>> {
+  return apiFetch(`/security/findings${buildQuery(params)}`, { token });
+}
+
+/** Fetch full detail for a single security exposure finding. */
+export async function getSecurityFinding(
+  findingId: string,
+  token?: string | null,
+): Promise<SecurityFinding> {
+  return apiFetch(`/security/findings/${findingId}`, { token });
 }
 
 // ── M57.3: Needs Review queue ─────────────────────────────────────────────────
