@@ -1,0 +1,614 @@
+/**
+ * securityRuleCatalog.ts — read-only catalog of the Security Exposure rules
+ * ConfigTrace evaluates (M60.9).
+ *
+ * This is a STATIC mirror of the backend rules implemented in
+ * backend/app/services/security_rules/*.py (M60.4–M60.4.5). Every entry's
+ * `key` matches a real backend rule_key. It is intentionally a hand-maintained
+ * catalog (no backend endpoint exists for rule metadata yet); when a backend
+ * rule is added/changed, update this file to match.
+ *
+ * Nothing here claims breach/threat detection. All rules evaluate provider
+ * CONFIGURATION snapshots for risky current states, using metadata only.
+ */
+
+export type RuleSeverity = "critical" | "high" | "medium" | "low" | "info";
+export type RuleConfidence = "high" | "medium";
+
+export interface SecurityRuleMeta {
+  key: string;
+  provider: string; // matches getProviderMeta ids: github/aws/cloudflare/…
+  severity: RuleSeverity; // headline (worst case the rule can emit)
+  severityNote?: string;
+  title: string;
+  category: string;
+  confidence: RuleConfidence;
+  metadataOnly: true;
+  description: string;
+  whatItChecks: string;
+  whyItMatters: string;
+  evidence: string;
+  remediation: string;
+  falsePositiveGuard: string;
+}
+
+export interface DeferredRuleMeta {
+  provider: string;
+  title: string;
+  reason: string;
+}
+
+export interface ProviderCoverage {
+  provider: string;
+  surfaces: string[];
+}
+
+// ── Implemented rules (exact keys from backend security_rules/*) ─────────────
+
+export const SECURITY_RULES: SecurityRuleMeta[] = [
+  // ── GitHub ────────────────────────────────────────────────────────────────
+  {
+    key: "github_webhook_http",
+    provider: "github",
+    severity: "critical",
+    title: "GitHub webhook uses plain HTTP",
+    category: "Webhooks",
+    confidence: "high",
+    metadataOnly: true,
+    description: "An active GitHub webhook delivers events over plain HTTP.",
+    whatItChecks: "Each active webhook's delivery URL scheme.",
+    whyItMatters:
+      "Event payloads and signature headers may be transmitted in cleartext, which could allow interception or tampering.",
+    evidence: "Webhook delivery URL (scheme/host/path).",
+    remediation: "Restore HTTPS on the endpoint and verify ownership.",
+    falsePositiveGuard: "Only fires for active webhooks whose URL begins with http://.",
+  },
+  {
+    key: "github_branch_protection_missing",
+    provider: "github",
+    severity: "high",
+    title: "GitHub default branch has no protection",
+    category: "Branch protection",
+    confidence: "high",
+    metadataOnly: true,
+    description: "The default branch has no branch protection rule.",
+    whatItChecks: "Whether protection is enabled on the repository's default branch.",
+    whyItMatters:
+      "Commits can be pushed directly without review, and history can be rewritten or the branch deleted.",
+    evidence: "Branch name and protection-enabled flag.",
+    remediation: "Enable branch protection: require reviews, status checks, and block force pushes/deletions.",
+    falsePositiveGuard:
+      "Only the default branch is evaluated; a 403/permission error aborts the fetch before this fires, so a 404→disabled reliably means 'no rule configured'.",
+  },
+  {
+    key: "github_force_pushes_allowed",
+    provider: "github",
+    severity: "high",
+    title: "GitHub default branch allows force pushes",
+    category: "Branch protection",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Force pushes are permitted on the protected default branch.",
+    whatItChecks: "The allow_force_pushes flag on an enabled protection rule.",
+    whyItMatters: "History can be rewritten, erasing the audit trail.",
+    evidence: "Branch name and force-pushes-allowed flag.",
+    remediation: "Disable 'Allow force pushes' in branch protection.",
+    falsePositiveGuard: "Only evaluated when protection is enabled (sub-rules are skipped when protection is missing).",
+  },
+  {
+    key: "github_branch_deletion_allowed",
+    provider: "github",
+    severity: "high",
+    title: "GitHub default branch allows deletion",
+    category: "Branch protection",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Branch deletion is permitted on the protected default branch.",
+    whatItChecks: "The allow_deletions flag on an enabled protection rule.",
+    whyItMatters: "The protected branch could be removed.",
+    evidence: "Branch name and deletions-allowed flag.",
+    remediation: "Disable 'Allow deletions' in branch protection.",
+    falsePositiveGuard: "Only evaluated when protection is enabled.",
+  },
+  {
+    key: "github_pr_review_not_required",
+    provider: "github",
+    severity: "high",
+    title: "GitHub default branch does not require PR review",
+    category: "Branch protection",
+    confidence: "high",
+    metadataOnly: true,
+    description: "The protected default branch does not require an approving review before merge.",
+    whatItChecks: "Whether PR reviews are required and the approving-review count is ≥ 1.",
+    whyItMatters: "Unreviewed code can reach production.",
+    evidence: "Branch name and required-review count.",
+    remediation: "Require at least one approving review; enable dismiss-stale-approvals.",
+    falsePositiveGuard: "Only evaluated when protection is enabled.",
+  },
+  {
+    key: "github_status_checks_not_required",
+    provider: "github",
+    severity: "medium",
+    title: "GitHub default branch does not require status checks",
+    category: "Branch protection",
+    confidence: "high",
+    metadataOnly: true,
+    description: "The protected default branch does not require status checks before merge.",
+    whatItChecks: "The required_status_checks_enabled flag on an enabled protection rule.",
+    whyItMatters: "Broken or failing code can be merged.",
+    evidence: "Branch name and status-checks-required flag.",
+    remediation: "Require status checks to pass before merging.",
+    falsePositiveGuard: "Only evaluated when protection is enabled.",
+  },
+  {
+    key: "github_deploy_key_write_access",
+    provider: "github",
+    severity: "high",
+    title: "GitHub deploy key has write access",
+    category: "Deploy keys",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A repository deploy key has read-write access.",
+    whatItChecks: "The read_only flag on each deploy key.",
+    whyItMatters: "A leaked write-capable deploy key allows pushing malicious code.",
+    evidence: "Deploy key title, id, and verified flag (never key material).",
+    remediation: "Recreate the key as read-only or remove it if unused.",
+    falsePositiveGuard: "Missing read_only defaults to read-only (safe), so partial records are ignored.",
+  },
+  {
+    key: "github_env_protection_missing",
+    provider: "github",
+    severity: "medium",
+    title: "GitHub production environment has no protection rules",
+    category: "Environment protection",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A production environment has no reviewers, wait timer, or branch policy.",
+    whatItChecks: "Environments named production/prod with zero reviewers, zero wait timer, and no branch policy.",
+    whyItMatters: "Anyone able to run a workflow can deploy to production without approval.",
+    evidence: "Environment name, required reviewers, wait timer, branch-policy flag.",
+    remediation: "Add required reviewers and restrict deployments to protected branches.",
+    falsePositiveGuard: "Narrowly scoped to environments explicitly named production/prod.",
+  },
+
+  // ── AWS ───────────────────────────────────────────────────────────────────
+  {
+    key: "aws_public_admin_port",
+    provider: "aws",
+    severity: "high",
+    title: "AWS security group exposes administrative ports to the internet",
+    category: "Security groups",
+    confidence: "high",
+    metadataOnly: true,
+    description: "An inbound rule allows public access to admin ports (SSH/RDP/WinRM).",
+    whatItChecks: "Ingress rules where is_public is true and port_category is admin.",
+    whyItMatters:
+      "If the group is attached to an internet-reachable resource, admin ports are reachable from anywhere.",
+    evidence: "Security group id, direction, protocol, ports, CIDR, port category.",
+    remediation: "Restrict to trusted CIDRs; prefer a bastion/VPN.",
+    falsePositiveGuard:
+      "Only 0.0.0.0/0 or ::/0 count as public; language is careful since reachability is not proven from the rule alone.",
+  },
+  {
+    key: "aws_public_database_port",
+    provider: "aws",
+    severity: "critical",
+    title: "AWS security group exposes database ports to the internet",
+    category: "Security groups",
+    confidence: "high",
+    metadataOnly: true,
+    description: "An inbound rule allows public access to database ports.",
+    whatItChecks: "Ingress rules where is_public is true and port_category is database.",
+    whyItMatters: "Databases reachable from the public internet are a high-impact exposure.",
+    evidence: "Security group id, ports, CIDR, port category.",
+    remediation: "Restrict to trusted CIDRs or private networking only.",
+    falsePositiveGuard: "Only canonical 'any' CIDRs count as public.",
+  },
+  {
+    key: "aws_public_all_ports",
+    provider: "aws",
+    severity: "critical",
+    title: "AWS security group exposes all ports to the internet",
+    category: "Security groups",
+    confidence: "high",
+    metadataOnly: true,
+    description: "An all-traffic inbound rule is open to the public internet.",
+    whatItChecks: "Ingress rules where is_public is true and the protocol is all-traffic.",
+    whyItMatters: "Every port is reachable from anywhere if attached to a public resource.",
+    evidence: "Security group id, protocol, CIDR.",
+    remediation: "Replace the all-traffic rule with least-privilege rules.",
+    falsePositiveGuard: "Only canonical 'any' CIDRs count as public.",
+  },
+  {
+    key: "aws_s3_public_policy",
+    provider: "aws",
+    severity: "critical",
+    title: "AWS S3 bucket policy allows public access",
+    category: "S3 public access",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A bucket policy grants public access (AWS's own determination).",
+    whatItChecks: "policy_status_is_public / public_principals_detected on the bucket.",
+    whyItMatters: "Objects may be readable or writable by anyone on the internet.",
+    evidence: "Bucket name, public-policy flags, public-access-block state.",
+    remediation: "Remove public grants and enable S3 Block Public Access.",
+    falsePositiveGuard: "Only explicit True flags fire; an unknown/None state is never treated as public.",
+  },
+  {
+    key: "aws_s3_public_acl",
+    provider: "aws",
+    severity: "critical",
+    severityNote: "Critical when public write; high when public read only.",
+    title: "AWS S3 bucket ACL grants public access",
+    category: "S3 public access",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A bucket ACL grants read or write to AllUsers / AuthenticatedUsers.",
+    whatItChecks: "ACL all-users / authenticated-users read & write grants.",
+    whyItMatters: "Public ACL grants can expose or allow tampering with objects.",
+    evidence: "Bucket name and the specific ACL grant flags.",
+    remediation: "Remove public ACL grants; prefer policies and enable Block Public Access.",
+    falsePositiveGuard: "Only explicit True grants fire; None is never treated as public.",
+  },
+  {
+    key: "aws_iam_admin_policy_attached",
+    provider: "aws",
+    severity: "high",
+    title: "AWS AdministratorAccess attached to an IAM principal",
+    category: "IAM",
+    confidence: "high",
+    metadataOnly: true,
+    description: "The AWS-managed AdministratorAccess policy is attached to a principal.",
+    whatItChecks: "Policy attachments whose ARN is exactly arn:aws:iam::aws:policy/AdministratorAccess.",
+    whyItMatters: "Over-broad admin grants increase blast radius if the principal is compromised.",
+    evidence: "Principal type/name and policy name.",
+    remediation: "Replace with least-privilege policies; reserve admin for break-glass roles with MFA.",
+    falsePositiveGuard: "Exact ARN match — not a keyword guess.",
+  },
+  {
+    key: "aws_access_key_unused",
+    provider: "aws",
+    severity: "medium",
+    title: "AWS access key is active but unused",
+    category: "IAM access keys",
+    confidence: "high",
+    metadataOnly: true,
+    description: "An active access key has not been used in 90+ days.",
+    whatItChecks: "Active keys whose last-used age is a concrete value ≥ 90 days.",
+    whyItMatters: "Long-lived unused keys are an unnecessary standing credential.",
+    evidence: "Username, key id last-4, status, last-used age in days.",
+    remediation: "Deactivate then delete; prefer short-lived role credentials.",
+    falsePositiveGuard: "An unknown last-used age (never-used vs fetch-failed) is not flagged.",
+  },
+
+  // ── Cloudflare ────────────────────────────────────────────────────────────
+  {
+    key: "cloudflare_ssl_mode_weak",
+    provider: "cloudflare",
+    severity: "high",
+    title: "Cloudflare SSL/TLS mode is weak",
+    category: "SSL/TLS",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Zone SSL/TLS mode is 'off' or 'flexible'.",
+    whatItChecks: "The zone 'ssl' setting value.",
+    whyItMatters: "Traffic to the origin may be sent in cleartext.",
+    evidence: "SSL mode value.",
+    remediation: "Set SSL/TLS mode to 'Full (strict)'.",
+    falsePositiveGuard: "Only off/flexible fire; full/strict are safe.",
+  },
+  {
+    key: "cloudflare_always_https_off",
+    provider: "cloudflare",
+    severity: "medium",
+    title: "Cloudflare 'Always Use HTTPS' is disabled",
+    category: "HTTPS",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Plain-HTTP requests are not redirected to HTTPS.",
+    whatItChecks: "The 'always_use_https' setting value.",
+    whyItMatters: "Visitors may transmit data over an unencrypted connection.",
+    evidence: "Setting value.",
+    remediation: "Enable 'Always Use HTTPS'.",
+    falsePositiveGuard: "Only fires when the value is explicitly 'off'.",
+  },
+  {
+    key: "cloudflare_min_tls_weak",
+    provider: "cloudflare",
+    severity: "medium",
+    title: "Cloudflare minimum TLS version is outdated",
+    category: "SSL/TLS",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Minimum TLS version is 1.0 or 1.1.",
+    whatItChecks: "The 'min_tls_version' setting value.",
+    whyItMatters: "Deprecated TLS versions may weaken transport security.",
+    evidence: "Minimum TLS version value.",
+    remediation: "Set the minimum TLS version to 1.2 or higher.",
+    falsePositiveGuard: "Only 1.0/1.1 fire.",
+  },
+  {
+    key: "cloudflare_security_level_low",
+    provider: "cloudflare",
+    severity: "medium",
+    title: "Cloudflare security level is effectively off",
+    category: "WAF / security",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Security level is 'off' or 'essentially_off'.",
+    whatItChecks: "The 'security_level' setting value.",
+    whyItMatters: "Cloudflare applies little or no challenge to suspicious traffic.",
+    evidence: "Security level value.",
+    remediation: "Raise the security level to at least 'Medium'.",
+    falsePositiveGuard: "low/medium/high are treated as normal; only off/essentially_off fire.",
+  },
+  {
+    key: "cloudflare_development_mode_on",
+    provider: "cloudflare",
+    severity: "medium",
+    title: "Cloudflare development mode is enabled",
+    category: "WAF / security",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Development mode bypasses edge cache and some optimizations.",
+    whatItChecks: "The 'development_mode' setting value.",
+    whyItMatters: "It is meant to be temporary and may reduce protection while active.",
+    evidence: "Setting value.",
+    remediation: "Turn off development mode when finished.",
+    falsePositiveGuard: "Only fires when explicitly 'on'.",
+  },
+  {
+    key: "cloudflare_hsts_disabled",
+    provider: "cloudflare",
+    severity: "medium",
+    title: "Cloudflare HSTS is disabled",
+    category: "HTTPS",
+    confidence: "high",
+    metadataOnly: true,
+    description: "HTTP Strict Transport Security is disabled.",
+    whatItChecks: "The security_header (HSTS) enabled flag.",
+    whyItMatters: "Browsers are not told to use HTTPS, allowing protocol downgrade on first contact.",
+    evidence: "HSTS enabled flag.",
+    remediation: "Enable HSTS with a reasonable max-age once HTTPS is verified.",
+    falsePositiveGuard: "Only an explicit enabled=false fires; indeterminate values are skipped.",
+  },
+  {
+    key: "cloudflare_waf_rule_disabled",
+    provider: "cloudflare",
+    severity: "high",
+    severityNote: "High when a 'block' rule is disabled; medium for challenge rules.",
+    title: "Cloudflare WAF rule is disabled",
+    category: "WAF / security",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A protective WAF rule (block/challenge) is disabled.",
+    whatItChecks: "Per-rule enabled flag for protective actions only.",
+    whyItMatters: "The rule no longer blocks or challenges matching traffic.",
+    evidence: "Rule description, action, enabled flag, ruleset id (never the expression).",
+    remediation: "Re-enable the rule or document why it is intentionally off.",
+    falsePositiveGuard: "Disabled log/skip rules are ignored — only protective actions fire.",
+  },
+  {
+    key: "cloudflare_dns_private_origin",
+    provider: "cloudflare",
+    severity: "high",
+    title: "Cloudflare DNS record points to a private or reserved IP",
+    category: "DNS",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A public A/AAAA record resolves to a private/loopback/reserved IP.",
+    whatItChecks: "A/AAAA record content classified via IP-address rules.",
+    whyItMatters: "Usually a misconfiguration that may break routing or leak internal network details.",
+    evidence: "Record name, type, content, address kind, proxied flag.",
+    remediation: "Point the record at the correct public address or remove it.",
+    falsePositiveGuard: "Public/global IPs are normal and never flagged; CNAMEs/non-IP content are ignored.",
+  },
+
+  // ── Supabase ──────────────────────────────────────────────────────────────
+  {
+    key: "supabase_rls_disabled",
+    provider: "supabase",
+    severity: "high",
+    title: "Supabase table has Row Level Security disabled",
+    category: "RLS",
+    confidence: "high",
+    metadataOnly: true,
+    description: "Row Level Security is disabled on a table.",
+    whatItChecks: "The rls_enabled flag per table.",
+    whyItMatters: "Without RLS, rows may be broadly readable or writable by any role that can reach the table.",
+    evidence: "Schema and table name.",
+    remediation: "Enable RLS and add explicit policies.",
+    falsePositiveGuard: "Only an explicit rls_enabled=false fires; missing/unknown is skipped.",
+  },
+  {
+    key: "supabase_anonymous_access_enabled",
+    provider: "supabase",
+    severity: "medium",
+    title: "Supabase anonymous sign-ins are enabled",
+    category: "Auth",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "Anonymous authentication is enabled.",
+    whatItChecks: "The auth-config anonymous_enabled flag.",
+    whyItMatters: "Combined with weak/missing RLS, this may allow unauthenticated data access.",
+    evidence: "anonymous_enabled flag.",
+    remediation: "Disable anonymous sign-ins if not required; otherwise scope RLS tightly.",
+    falsePositiveGuard: "Medium severity and careful wording — anonymous auth is a feature, risky mainly with weak RLS.",
+  },
+  {
+    key: "supabase_jwt_expiry_long",
+    provider: "supabase",
+    severity: "medium",
+    title: "Supabase JWT expiry is very long",
+    category: "Auth",
+    confidence: "high",
+    metadataOnly: true,
+    description: "The JWT access-token lifetime is over a day.",
+    whatItChecks: "auth-config jwt_exp as a concrete integer > 86400 seconds.",
+    whyItMatters: "Long-lived tokens stay valid after sign-out and widen the impact of a leaked token.",
+    evidence: "JWT expiry in seconds.",
+    remediation: "Shorten the access-token lifetime; rely on refresh-token rotation.",
+    falsePositiveGuard: "Only a concrete int over the threshold fires; non-int/None is skipped.",
+  },
+
+  // ── Firebase ──────────────────────────────────────────────────────────────
+  {
+    key: "firebase_rules_public",
+    provider: "firebase",
+    severity: "critical",
+    severityNote: "Critical when public write; high when public read only.",
+    title: "Firebase Firestore rules allow public access",
+    category: "Security rules",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "The active Firestore ruleset appears to allow public read/write.",
+    whatItChecks: "public_read_detected / public_write_detected on the Firestore ruleset.",
+    whyItMatters: "Documents may be exposed to unauthenticated reads or writes.",
+    evidence: "Release name, public read/write flags, parser confidence (never raw rules).",
+    remediation: "Replace broad 'allow if true' rules with auth-scoped checks.",
+    falsePositiveGuard: "Low-confidence parses are skipped to avoid false positives.",
+  },
+  {
+    key: "firebase_storage_rules_public",
+    provider: "firebase",
+    severity: "critical",
+    severityNote: "Critical when public write; high when public read only.",
+    title: "Firebase Storage rules allow public access",
+    category: "Security rules",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "The active Storage ruleset appears to allow public read/write.",
+    whatItChecks: "public_read_detected / public_write_detected on the Storage ruleset.",
+    whyItMatters: "Stored objects may be exposed to unauthenticated access.",
+    evidence: "Release name, public read/write flags, parser confidence.",
+    remediation: "Tighten Storage rules to require auth and scope to owners.",
+    falsePositiveGuard: "Low-confidence parses are skipped.",
+  },
+  {
+    key: "firebase_anonymous_auth_enabled",
+    provider: "firebase",
+    severity: "medium",
+    title: "Firebase anonymous authentication is enabled",
+    category: "Auth",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "Anonymous authentication is enabled.",
+    whatItChecks: "The auth-config anonymous_enabled flag.",
+    whyItMatters: "With permissive rules, this may allow unauthenticated users to access data.",
+    evidence: "Project id and anonymous_enabled flag.",
+    remediation: "Disable anonymous auth if not required; otherwise scope rules tightly.",
+    falsePositiveGuard: "Medium severity — risky mainly when paired with permissive rules.",
+  },
+
+  // ── Stripe ────────────────────────────────────────────────────────────────
+  {
+    key: "stripe_webhook_http",
+    provider: "stripe",
+    severity: "critical",
+    title: "Stripe webhook uses plain HTTP",
+    category: "Webhooks",
+    confidence: "high",
+    metadataOnly: true,
+    description: "An enabled Stripe webhook endpoint delivers over plain HTTP.",
+    whatItChecks: "The endpoint URL scheme for enabled webhook endpoints.",
+    whyItMatters: "Event payloads and signature headers may be transmitted in cleartext.",
+    evidence: "Endpoint delivery URL.",
+    remediation: "Update the endpoint to https:// and verify signature checks still pass.",
+    falsePositiveGuard: "Disabled endpoints are not flagged.",
+  },
+
+  // ── Vercel ────────────────────────────────────────────────────────────────
+  {
+    key: "vercel_preview_unprotected",
+    provider: "vercel",
+    severity: "medium",
+    title: "Vercel preview deployments are not protected",
+    category: "Deployment protection",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "Preview deployments have no Vercel Authentication, password, or preview protection.",
+    whatItChecks: "deployment-protection flags: preview protection, SSO, password all off.",
+    whyItMatters: "Preview URLs may be publicly accessible and could expose unreleased features or non-production data.",
+    evidence: "Project name and the (empty) set of active protections.",
+    remediation: "Enable Vercel Authentication or password protection for previews.",
+    falsePositiveGuard: "Only fires when every protection mechanism is off; previews are not production data, so severity is medium.",
+  },
+
+  // ── Shopify ───────────────────────────────────────────────────────────────
+  {
+    key: "shopify_webhook_http",
+    provider: "shopify",
+    severity: "critical",
+    title: "Shopify webhook uses plain HTTP",
+    category: "Webhooks",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Shopify webhook delivers to a plain-HTTP endpoint.",
+    whatItChecks: "The webhook endpoint scheme.",
+    whyItMatters: "Event payloads and HMAC headers may be transmitted in cleartext.",
+    evidence: "Webhook topic, endpoint domain, scheme (path is hashed, never stored).",
+    remediation: "Switch the webhook endpoint to HTTPS and re-verify HMAC.",
+    falsePositiveGuard: "Only an explicit http scheme fires; non-HTTP transports (EventBridge/Pub-Sub) are ignored.",
+  },
+];
+
+// ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
+
+export const DEFERRED_RULES: DeferredRuleMeta[] = [
+  {
+    provider: "cloudflare",
+    title: "Unproxied DNS for sensitive hostnames",
+    reason:
+      "Many DNS-only records are intentional (MX, TXT, mail, verification, third-party CNAMEs); flagging them needs an expected-proxy baseline.",
+  },
+  {
+    provider: "aws",
+    title: "Public web ports (80/443)",
+    reason:
+      "Public 80/443 is normal for web servers; without reachability/attachment context, flagging it would be noise.",
+  },
+  {
+    provider: "aws",
+    title: "Default security group public ingress",
+    reason: "Requires joining a rule to its parent group's name, which the per-rule record does not carry.",
+  },
+  {
+    provider: "stripe",
+    title: "Restricted key scope expansion / live-mode webhook",
+    reason:
+      "The connector does not emit restricted-key scope records, and webhook records have no live/test mode field.",
+  },
+  {
+    provider: "github",
+    title: "Repository public visibility",
+    reason: "There is no expected-private signal, so flagging public repos would be wrong.",
+  },
+  {
+    provider: "github",
+    title: "Broad Actions permissions",
+    reason: "allowed_actions='all' is GitHub's common default and is too low-signal to call an exposure.",
+  },
+  {
+    provider: "vercel",
+    title: "Deploy hooks exposed",
+    reason: "Every deploy hook is an unauthenticated trigger by design; existence alone is not a reliable exposure.",
+  },
+  {
+    provider: "shopify",
+    title: "Dangerous app scopes",
+    reason: "Scope presence is normal for legitimate apps; flagging needs an expected-scope baseline to avoid noise.",
+  },
+];
+
+// ── Provider coverage summary ────────────────────────────────────────────────
+
+export const PROVIDER_COVERAGE: ProviderCoverage[] = [
+  { provider: "github", surfaces: ["Branch protection", "Webhooks", "Deploy keys", "Environment protection"] },
+  { provider: "aws", surfaces: ["Security groups", "S3 public access", "IAM administrator policy", "Stale access keys"] },
+  { provider: "cloudflare", surfaces: ["SSL/TLS", "HTTPS", "WAF", "HSTS", "Development mode", "Private-origin DNS"] },
+  { provider: "supabase", surfaces: ["Row Level Security", "Anonymous access", "JWT expiry"] },
+  { provider: "firebase", surfaces: ["Firestore rules", "Storage rules", "Anonymous auth"] },
+  { provider: "stripe", surfaces: ["Webhook HTTPS"] },
+  { provider: "vercel", surfaces: ["Preview protection"] },
+  { provider: "shopify", surfaces: ["Webhook HTTPS"] },
+];

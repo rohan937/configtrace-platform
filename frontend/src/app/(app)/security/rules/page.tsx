@@ -1,66 +1,512 @@
-import PageHeader from "@/components/common/PageHeader";
-import {
-  PreviewBanner,
-  RuleRow,
-  SectionLabel,
-} from "@/components/security/previews";
+"use client";
 
 /**
- * Security Rules (M60.1 placeholder).
+ * Security Rules (M60.9).
  *
- * Preview of the rule catalog that will evaluate provider settings for risky
- * security states. The rules engine itself arrives in M60.3/M60.4.
+ * A read-only catalog of the Security Exposure rules ConfigTrace evaluates,
+ * mirroring the backend rules in security_rules/* (see lib/securityRuleCatalog).
+ * No enable/disable mutations — transparency only.
  */
+
+import { useMemo, useState } from "react";
+
+import { getProviderMeta } from "@/lib/providers";
+import {
+  DEFERRED_RULES,
+  PROVIDER_COVERAGE,
+  SECURITY_RULES,
+  SecurityRuleMeta,
+} from "@/lib/securityRuleCatalog";
+
+import PageHeader from "@/components/common/PageHeader";
+import { SectionLabel } from "@/components/security/previews";
+import { SeverityBadge } from "@/components/security/findingDisplay";
+
+type StatusFilter = "all" | "active" | "planned";
+
+const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
+
 export default function SecurityRulesPage() {
+  const [search, setSearch] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [severityFilter, setSeverityFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+  // Distinct option lists derived from the catalog.
+  const providerOptions = useMemo(
+    () => [...new Set(SECURITY_RULES.map((r) => r.provider))].sort(),
+    [],
+  );
+  const categoryOptions = useMemo(
+    () => [...new Set(SECURITY_RULES.map((r) => r.category))].sort(),
+    [],
+  );
+
+  // Metrics from the implemented catalog.
+  const metrics = useMemo(() => {
+    const critical = SECURITY_RULES.filter((r) => r.severity === "critical").length;
+    const high = SECURITY_RULES.filter((r) => r.severity === "high").length;
+    const providers = new Set(SECURITY_RULES.map((r) => r.provider)).size;
+    return { total: SECURITY_RULES.length, critical, high, providers };
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return SECURITY_RULES.filter((r) => {
+      if (providerFilter !== "all" && r.provider !== providerFilter) return false;
+      if (severityFilter !== "all" && r.severity !== severityFilter) return false;
+      if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
+      if (q) {
+        const hay = `${r.title} ${r.key} ${r.provider} ${r.category}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [search, providerFilter, severityFilter, categoryFilter]);
+
+  const showActive = statusFilter !== "planned";
+  const showPlanned = statusFilter !== "active";
+
   return (
     <div>
       <PageHeader
         title="Security Rules"
-        description="Rules that will evaluate connected provider settings for risky security states."
+        description="See the configuration exposure rules ConfigTrace evaluates across connected providers."
       />
-
-      <PreviewBanner>
-        Rules are previews of the planned catalog and are not active yet. The
-        engine that evaluates them lands in M60.3/M60.4.
-      </PreviewBanner>
-
-      <SectionLabel>Planned rule catalog</SectionLabel>
-      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        <RuleRow
-          title="Webhook endpoint uses HTTP"
-          severity="critical"
-          providers="GitHub · Stripe"
-        />
-        <RuleRow
-          title="Branch protection missing"
-          severity="high"
-          providers="GitHub"
-        />
-        <RuleRow
-          title="Public admin port exposed"
-          severity="critical"
-          providers="AWS"
-        />
-        <RuleRow title="WAF disabled" severity="high" providers="Cloudflare" />
-        <RuleRow title="RLS disabled" severity="high" providers="Supabase" />
-        <RuleRow
-          title="Public bucket policy detected"
-          severity="medium"
-          providers="AWS"
-        />
-      </div>
 
       <p
         style={{
-          marginTop: "20px",
-          fontSize: "12px",
-          color: "#565b6e",
+          margin: "-12px 0 24px",
+          fontSize: "13px",
+          color: "#8b90a0",
           lineHeight: 1.6,
+          maxWidth: "780px",
         }}
       >
-        Rules evaluate configuration state only. They use your existing,
-        metadata-only provider connections — no new access is required.
+        Security Rules shows the current checks used by the Security Exposure engine.
+        These rules evaluate provider configuration snapshots for risky current
+        states. They do not claim breach detection or inspect payloads or secrets.
       </p>
+
+      {/* Metrics */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gap: "14px",
+          marginBottom: "24px",
+        }}
+      >
+        <Metric label="Active rules" value={metrics.total} accent="#4f80f7" />
+        <Metric label="Critical rules" value={metrics.critical} accent="#e84040" />
+        <Metric label="High rules" value={metrics.high} accent="#f5632a" />
+        <Metric label="Providers covered" value={metrics.providers} accent="#6b9cf8" />
+        <Metric label="Metadata-only checks" value={metrics.total} accent="#3ccf7e" />
+      </div>
+
+      {/* Filters / search */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "12px",
+          alignItems: "center",
+          marginBottom: "18px",
+        }}
+      >
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search rules by title, key, or provider…"
+          style={{
+            flex: "1 1 240px",
+            minWidth: "200px",
+            fontSize: "13px",
+            color: "#e8eaf0",
+            background: "#13151a",
+            border: "1px solid #2a2d38",
+            borderRadius: "8px",
+            padding: "8px 12px",
+          }}
+        />
+        <FilterSelect
+          label="Status"
+          value={statusFilter}
+          onChange={(v) => setStatusFilter(v as StatusFilter)}
+          options={[
+            { value: "all", label: "All" },
+            { value: "active", label: "Active" },
+            { value: "planned", label: "Planned" },
+          ]}
+        />
+        <FilterSelect
+          label="Provider"
+          value={providerFilter}
+          onChange={setProviderFilter}
+          options={[
+            { value: "all", label: "All providers" },
+            ...providerOptions.map((p) => ({ value: p, label: getProviderMeta(p).shortLabel })),
+          ]}
+        />
+        <FilterSelect
+          label="Severity"
+          value={severityFilter}
+          onChange={setSeverityFilter}
+          options={[
+            { value: "all", label: "All severities" },
+            ...SEVERITY_OPTIONS.map((s) => ({ value: s, label: s[0].toUpperCase() + s.slice(1) })),
+          ]}
+        />
+        <FilterSelect
+          label="Category"
+          value={categoryFilter}
+          onChange={setCategoryFilter}
+          options={[
+            { value: "all", label: "All categories" },
+            ...categoryOptions.map((c) => ({ value: c, label: c })),
+          ]}
+        />
+      </div>
+
+      {/* Active rule catalog */}
+      {showActive ? (
+        <div style={{ marginBottom: "32px" }}>
+          <SectionLabel>
+            Active rules ({filtered.length}
+            {filtered.length !== SECURITY_RULES.length ? ` of ${SECURITY_RULES.length}` : ""})
+          </SectionLabel>
+          {filtered.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "12px" }}>
+              {filtered.map((r) => (
+                <RuleCard
+                  key={r.key}
+                  rule={r}
+                  expanded={expanded.has(r.key)}
+                  onToggle={() => toggle(r.key)}
+                />
+              ))}
+            </div>
+          ) : (
+            <div
+              className="bg-surface1 border border-border"
+              style={{ borderRadius: "12px", padding: "28px", textAlign: "center", marginTop: "12px" }}
+            >
+              <div style={{ fontSize: "14px", color: "#e8eaf0", fontWeight: 600 }}>
+                No rules match these filters.
+              </div>
+              <div style={{ fontSize: "12.5px", color: "#8b90a0", marginTop: "6px" }}>
+                Try adjusting search, provider, severity, or category.
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* Provider coverage */}
+      {showActive ? (
+        <div style={{ marginBottom: "32px" }}>
+          <SectionLabel>Provider coverage</SectionLabel>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+              gap: "14px",
+              marginTop: "12px",
+            }}
+          >
+            {PROVIDER_COVERAGE.map((c) => {
+              const meta = getProviderMeta(c.provider);
+              return (
+                <div
+                  key={c.provider}
+                  className="bg-surface1 border border-border"
+                  style={{ borderRadius: "12px", padding: "16px 18px" }}
+                >
+                  <div style={{ fontSize: "14px", fontWeight: 700, color: meta.color }}>
+                    {meta.shortLabel}
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexWrap: "wrap",
+                      gap: "6px",
+                      marginTop: "10px",
+                    }}
+                  >
+                    {c.surfaces.map((s) => (
+                      <span
+                        key={s}
+                        style={{
+                          fontSize: "11.5px",
+                          color: "#8b90a0",
+                          background: "rgba(148,163,184,0.08)",
+                          border: "1px solid #2a2d38",
+                          borderRadius: "7px",
+                          padding: "3px 9px",
+                        }}
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Deferred / planned coverage */}
+      {showPlanned ? (
+        <div>
+          <SectionLabel>Planned / deferred coverage (not active yet)</SectionLabel>
+          <p style={{ fontSize: "12.5px", color: "#565b6e", margin: "8px 0 12px", lineHeight: 1.6 }}>
+            These checks are intentionally not active — they need data or context the
+            current connectors don&apos;t reliably provide, and enabling them would
+            create noise.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            {DEFERRED_RULES.map((d, i) => {
+              const meta = getProviderMeta(d.provider);
+              return (
+                <div
+                  key={i}
+                  className="bg-surface1 border border-border"
+                  style={{ borderRadius: "10px", padding: "13px 16px", opacity: 0.9 }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 600, color: meta.color }}>
+                      {meta.shortLabel}
+                    </span>
+                    <span style={{ fontSize: "13.5px", color: "#c4c8d4", fontWeight: 500 }}>
+                      {d.title}
+                    </span>
+                    <span
+                      style={{
+                        marginLeft: "auto",
+                        fontSize: "10px",
+                        color: "#565b6e",
+                        border: "1px solid #2a2d38",
+                        borderRadius: "6px",
+                        padding: "2px 8px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Planned
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#8b90a0", marginTop: "6px", lineHeight: 1.55 }}>
+                    {d.reason}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+// ── Rule card ──────────────────────────────────────────────────────────────
+
+function RuleCard({
+  rule,
+  expanded,
+  onToggle,
+}: {
+  rule: SecurityRuleMeta;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const meta = getProviderMeta(rule.provider);
+
+  return (
+    <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", overflow: "hidden" }}>
+      <button
+        onClick={onToggle}
+        aria-expanded={expanded}
+        style={{
+          width: "100%",
+          textAlign: "left",
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
+          padding: "14px 16px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0, flexWrap: "wrap" }}>
+            <SeverityBadge severity={rule.severity} />
+            <span style={{ fontSize: "12px", color: meta.color, fontWeight: 600 }}>{meta.shortLabel}</span>
+            <span style={{ fontSize: "14px", fontWeight: 600, color: "#e8eaf0" }}>{rule.title}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+            <ActiveBadge />
+            {rule.metadataOnly ? <MetadataBadge /> : null}
+            <span style={{ fontSize: "16px", color: "#565b6e" }}>{expanded ? "▾" : "▸"}</span>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "8px",
+            fontSize: "12px",
+            color: "#8b90a0",
+          }}
+        >
+          <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#565b6e" }}>{rule.key}</span>
+          <span style={{ color: "#3a3d4a" }}>·</span>
+          <span>{rule.category}</span>
+          <span style={{ color: "#3a3d4a" }}>·</span>
+          <span>confidence: {rule.confidence}</span>
+        </div>
+
+        <div style={{ fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.5 }}>{rule.description}</div>
+      </button>
+
+      {expanded ? (
+        <div
+          style={{
+            borderTop: "1px solid #2a2d38",
+            padding: "16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "14px",
+          }}
+        >
+          <DetailRow label="What it checks" value={rule.whatItChecks} />
+          <DetailRow label="Why it matters" value={rule.whyItMatters} />
+          <DetailRow label="Evidence used" value={rule.evidence} />
+          <DetailRow label="Suggested remediation" value={rule.remediation} />
+          <DetailRow label="Why it's conservative" value={rule.falsePositiveGuard} />
+          {rule.severityNote ? <DetailRow label="Severity note" value={rule.severityNote} /> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: "11px",
+          fontWeight: 600,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+          color: "#565b6e",
+          marginBottom: "4px",
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: "13px", color: "#c4c8d4", lineHeight: 1.55 }}>{value}</div>
+    </div>
+  );
+}
+
+function ActiveBadge() {
+  return (
+    <span
+      style={{
+        fontSize: "10px",
+        fontWeight: 700,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        color: "#3ccf7e",
+        background: "rgba(60,207,126,0.14)",
+        border: "1px solid rgba(60,207,126,0.4)",
+        borderRadius: "6px",
+        padding: "2px 8px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      Active
+    </span>
+  );
+}
+
+function MetadataBadge() {
+  return (
+    <span
+      title="Evaluates configuration metadata only — never secrets, payloads, or customer data."
+      style={{
+        fontSize: "10px",
+        fontWeight: 600,
+        color: "#6b9cf8",
+        background: "rgba(107,156,248,0.12)",
+        border: "1px solid rgba(107,156,248,0.35)",
+        borderRadius: "6px",
+        padding: "2px 8px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      Metadata-only
+    </span>
+  );
+}
+
+function Metric({ label, value, accent }: { label: string; value: number; accent: string }) {
+  return (
+    <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "16px 18px" }}>
+      <div style={{ fontSize: "12px", color: "#8b90a0", fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: "26px", fontWeight: 700, color: accent, marginTop: "8px", letterSpacing: "-0.02em" }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <span style={{ fontSize: "12px", color: "#565b6e" }}>{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          fontSize: "13px",
+          color: "#e8eaf0",
+          background: "#13151a",
+          border: "1px solid #2a2d38",
+          borderRadius: "8px",
+          padding: "7px 10px",
+          cursor: "pointer",
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
