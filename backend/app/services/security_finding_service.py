@@ -213,7 +213,7 @@ def refresh_active_finding(
     return finding
 
 
-def upsert_active_finding(
+def record_active_finding(
     *,
     db: Session,
     workspace_id: uuid.UUID,
@@ -227,20 +227,16 @@ def upsert_active_finding(
     description: Optional[str] = None,
     evidence: Optional[dict[str, Any]] = None,
     remediation: Optional[dict[str, Any]] = None,
-) -> SecurityFinding:
-    """Idempotently record an active finding for a logical issue.
+) -> tuple[SecurityFinding, bool]:
+    """Idempotently record an active finding, reporting whether it was created.
 
-    If an ACTIVE finding already exists for
-    (workspace_id, integration_id, resource_id, finding_key) it is refreshed via
-    :func:`refresh_active_finding` (preserving first_detected_at/status/review
-    fields); otherwise a new active row is created with a fresh
-    ``first_detected_at``.
+    Returns ``(finding, created)`` where ``created`` is True only when a NEW
+    active row was inserted (a fresh exposure), and False when an existing active
+    row was refreshed. The ``created`` flag is what the M60.10 event layer uses
+    to emit an "opened"/"reopened" event exactly once, never on a refresh.
 
-    Only ACTIVE rows are matched. A finding that a user has moved to
-    ``accepted_risk`` or ``snoozed`` is intentionally NOT matched here, so those
-    rows are never overwritten by the evaluator (their dedicated workflows own
-    them). Because the partial unique index covers only active rows, creating a
-    fresh active row alongside an accepted/snoozed historical row is safe.
+    Only ACTIVE rows are matched; ``accepted_risk`` / ``snoozed`` rows are never
+    overwritten here (their dedicated workflows own them).
     """
     existing = (
         db.query(SecurityFinding)
@@ -258,7 +254,7 @@ def upsert_active_finding(
         .first()
     )
     if existing is not None:
-        return refresh_active_finding(
+        refreshed = refresh_active_finding(
             db=db,
             finding=existing,
             severity=severity,
@@ -268,8 +264,9 @@ def upsert_active_finding(
             evidence=evidence,
             remediation=remediation,
         )
+        return refreshed, False
 
-    return create_finding(
+    created = create_finding(
         db=db,
         workspace_id=workspace_id,
         integration_id=integration_id,
@@ -284,6 +281,71 @@ def upsert_active_finding(
         evidence=evidence,
         remediation=remediation,
     )
+    return created, True
+
+
+def upsert_active_finding(
+    *,
+    db: Session,
+    workspace_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    provider: str,
+    finding_key: str,
+    severity: str,
+    title: str,
+    resource_id: Optional[uuid.UUID] = None,
+    linked_change_id: Optional[uuid.UUID] = None,
+    description: Optional[str] = None,
+    evidence: Optional[dict[str, Any]] = None,
+    remediation: Optional[dict[str, Any]] = None,
+) -> SecurityFinding:
+    """Idempotently record an active finding for a logical issue.
+
+    Thin wrapper over :func:`record_active_finding` that returns just the
+    finding (preserved for existing callers/tests). See that function for the
+    create-vs-refresh contract.
+    """
+    finding, _created = record_active_finding(
+        db=db,
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        provider=provider,
+        finding_key=finding_key,
+        severity=severity,
+        title=title,
+        resource_id=resource_id,
+        linked_change_id=linked_change_id,
+        description=description,
+        evidence=evidence,
+        remediation=remediation,
+    )
+    return finding
+
+
+def has_prior_resolved_finding(
+    *,
+    db: Session,
+    workspace_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    resource_id: Optional[uuid.UUID],
+    finding_key: str,
+) -> bool:
+    """True if a RESOLVED finding already exists for this logical issue.
+
+    Used by the event layer to distinguish a re-opened exposure (a fresh active
+    finding after a prior resolution) from a first-time open.
+    """
+    query = db.query(SecurityFinding.id).filter(
+        SecurityFinding.workspace_id == workspace_id,
+        SecurityFinding.integration_id == integration_id,
+        SecurityFinding.finding_key == finding_key,
+        SecurityFinding.status == "resolved",
+    )
+    if resource_id is not None:
+        query = query.filter(SecurityFinding.resource_id == resource_id)
+    else:
+        query = query.filter(SecurityFinding.resource_id.is_(None))
+    return query.first() is not None
 
 
 def list_active_findings_for_resource(
@@ -337,7 +399,7 @@ def resolve_missing_findings_for_resource(
     integration_id: uuid.UUID,
     resource_id: Optional[uuid.UUID],
     active_keys: set[str],
-) -> int:
+) -> list[SecurityFinding]:
     """Resolve active findings for a resource whose risky state is gone.
 
     Given the set of ``finding_key`` values still present in the latest
@@ -345,7 +407,8 @@ def resolve_missing_findings_for_resource(
     this (workspace, integration, resource) scope whose key is NOT in that set.
 
     Only ACTIVE findings are considered — ``accepted_risk`` / ``snoozed`` rows
-    are never resolved here. Returns the number of findings resolved.
+    are never resolved here. Returns the list of findings that were resolved
+    (so the M60.10 event layer can emit a "resolved" event for each).
     """
     active = list_active_findings_for_resource(
         db=db,
@@ -353,9 +416,9 @@ def resolve_missing_findings_for_resource(
         integration_id=integration_id,
         resource_id=resource_id,
     )
-    resolved = 0
+    resolved: list[SecurityFinding] = []
     for finding in active:
         if finding.finding_key not in active_keys:
             resolve_finding(db=db, finding=finding)
-            resolved += 1
+            resolved.append(finding)
     return resolved

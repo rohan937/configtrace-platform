@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.models.integration import Integration
 from app.models.resource import Resource
 from app.models.snapshot import Snapshot
+from app.services import security_exposure_events as exposure_events
 from app.services import security_finding_service
 from app.services.security_rules import aws as aws_rules
 from app.services.security_rules import cloudflare as cloudflare_rules
@@ -80,6 +81,59 @@ def evaluate_record(record: dict[str, Any], provider: str) -> list[FindingCandid
     return out
 
 
+def _emit_event_safely(
+    *,
+    db: Session,
+    workspace_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    resource_id: Optional[uuid.UUID],
+    finding_key: str,
+    finding: Any,
+    is_new: bool,
+) -> Optional[exposure_events.SecurityExposureEvent]:
+    """Build + log a lifecycle event; never raise (sync must not fail).
+
+    ``is_new=True`` → opened, unless a prior resolved finding exists for the
+    same logical key, in which case it's a re-open. ``is_new=False`` → resolved.
+    """
+    try:
+        if is_new:
+            reopened = security_finding_service.has_prior_resolved_finding(
+                db=db,
+                workspace_id=workspace_id,
+                integration_id=integration_id,
+                resource_id=resource_id,
+                finding_key=finding_key,
+            )
+            event_type = (
+                exposure_events.EVENT_REOPENED
+                if reopened
+                else exposure_events.EVENT_OPENED
+            )
+        else:
+            event_type = exposure_events.EVENT_RESOLVED
+
+        ev = exposure_events.event_from_finding(event_type, finding)
+        logger.info(
+            "security_exposure_events: %s  finding_id=%s provider=%s "
+            "severity=%s alertable=%s resource_id=%s",
+            ev.event_type,
+            ev.finding_id,
+            ev.provider,
+            ev.severity,
+            ev.is_alertable,
+            ev.resource_id,
+        )
+        return ev
+    except Exception:
+        # Event creation/logging must never break the evaluation pass.
+        logger.exception(
+            "security_exposure_events: failed to build event  finding_key=%s",
+            finding_key,
+        )
+        return None
+
+
 def evaluate_security_findings_for_resource(
     *,
     db: Session,
@@ -94,12 +148,13 @@ def evaluate_security_findings_for_resource(
     Returns a summary dict: ``{provider, candidates, upserted, resolved, skipped}``.
     Never raises for expected conditions (missing workspace, unknown provider).
     """
-    summary = {
+    summary: dict[str, Any] = {
         "provider": getattr(integration, "provider", None),
         "candidates": 0,
         "upserted": 0,
         "resolved": 0,
         "skipped": False,
+        "events": [],
     }
 
     if workspace_id is None:
@@ -134,6 +189,9 @@ def evaluate_security_findings_for_resource(
         candidates.extend(evaluate_record(record, provider))
     summary["candidates"] = len(candidates)
 
+    # M60.10: collect alertable lifecycle events for the caller / future routing.
+    events: list[exposure_events.SecurityExposureEvent] = []
+
     seen_keys: set[str] = set()
     for cand in candidates:
         if cand.finding_key in seen_keys:
@@ -146,7 +204,7 @@ def evaluate_security_findings_for_resource(
             else None
         )
 
-        security_finding_service.upsert_active_finding(
+        finding, created = security_finding_service.record_active_finding(
             db=db,
             workspace_id=workspace_id,
             integration_id=integration.id,
@@ -162,16 +220,47 @@ def evaluate_security_findings_for_resource(
         )
         summary["upserted"] += 1
 
+        # Emit an event ONLY when a brand-new active finding is created — never
+        # on a refresh of the same still-active risky state. A new finding that
+        # follows a prior resolved finding for the same logical key is a re-open.
+        if created:
+            ev = _emit_event_safely(
+                db=db,
+                workspace_id=workspace_id,
+                integration_id=integration.id,
+                resource_id=resource.id,
+                finding_key=cand.finding_key,
+                finding=finding,
+                is_new=True,
+            )
+            if ev is not None:
+                events.append(ev)
+
     # Resolve previously-active findings for this resource whose risky state is
     # gone. Scoped to this resource's ACTIVE findings only — accepted_risk /
     # snoozed rows and other resources are never touched.
-    summary["resolved"] = security_finding_service.resolve_missing_findings_for_resource(
+    resolved_findings = security_finding_service.resolve_missing_findings_for_resource(
         db=db,
         workspace_id=workspace_id,
         integration_id=integration.id,
         resource_id=resource.id,
         active_keys=seen_keys,
     )
+    summary["resolved"] = len(resolved_findings)
+    for finding in resolved_findings:
+        ev = _emit_event_safely(
+            db=db,
+            workspace_id=workspace_id,
+            integration_id=integration.id,
+            resource_id=resource.id,
+            finding_key=finding.finding_key,
+            finding=finding,
+            is_new=False,
+        )
+        if ev is not None:
+            events.append(ev)
+
+    summary["events"] = events
 
     logger.info(
         "security_findings: evaluated  provider=%s resource_id=%s "
