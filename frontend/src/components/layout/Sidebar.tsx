@@ -5,36 +5,55 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton, useAuth, useUser } from "@clerk/nextjs";
 import { getMyProfile } from "@/lib/api";
+import {
+  DRIFT_HOME,
+  SECURITY_HOME,
+  ProductMode,
+  isNavActive,
+  navForMode,
+  resolveMode,
+} from "@/lib/nav";
 import WorkspaceSwitcher from "./WorkspaceSwitcher";
+import ModeSwitch from "./ModeSwitch";
 
-interface NavItem {
-  label: string;
-  href: string;
-  /** Render as a sub-item (indented, smaller) under a parent section. */
-  sub?: boolean;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard",    href: "/dashboard" },
-  { label: "Needs Review", href: "/needs-review" },
-  { label: "Timeline",     href: "/timeline" },
-  { label: "Integrations", href: "/integrations" },
-  { label: "Resources",    href: "/resources" },
-  { label: "Settings",     href: "/settings" },
-  { label: "Workspace",    href: "/settings/workspace" },
-  { label: "Members",        href: "/settings/workspace/members",       sub: true },
-  { label: "Audit Log",      href: "/settings/workspace/audit",         sub: true },
-  { label: "Billing",        href: "/settings/workspace/billing",       sub: true },
-  { label: "Notifications",  href: "/settings/workspace/notifications", sub: true },
-  { label: "Trust Center",   href: "/settings/workspace/data-access",   sub: true },
-  { label: "Policies",          href: "/settings/workspace/policies",         sub: true },
-  { label: "Expected Changes",  href: "/settings/workspace/expected-changes", sub: true },
-];
+/** localStorage key persisting the last active product mode (M60.1). */
+const MODE_STORAGE_KEY = "ct.productMode";
 
 export default function Sidebar() {
   const pathname = usePathname();
   const { user, isLoaded } = useUser();
   const { getToken, isLoaded: authLoaded } = useAuth();
+
+  // ── M60.1 — product mode (Drift Detection vs Security Exposure) ────────────
+  // Mode is derived from the URL so deep links / refreshes are preserved. On a
+  // SHARED page (Integrations/Settings/…) the URL is mode-agnostic, so we fall
+  // back to the last mode the user was in (persisted to localStorage). This
+  // keeps you in Security Exposure when you click a shared item from it.
+  const urlMode = resolveMode(pathname);
+  const [mode, setMode] = useState<ProductMode>(urlMode ?? "drift");
+
+  useEffect(() => {
+    if (urlMode) {
+      setMode(urlMode);
+      try {
+        window.localStorage.setItem(MODE_STORAGE_KEY, urlMode);
+      } catch {
+        /* storage may be unavailable (private mode) — non-fatal */
+      }
+    } else {
+      // Shared page: restore the persisted mode if present.
+      try {
+        const stored = window.localStorage.getItem(
+          MODE_STORAGE_KEY,
+        ) as ProductMode | null;
+        if (stored === "drift" || stored === "security") setMode(stored);
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }, [urlMode, pathname]);
+
+  const navItems = navForMode(mode);
 
   // Best available email fallback: primary, then first listed.
   const email =
@@ -88,18 +107,21 @@ export default function Sidebar() {
         </span>
       </div>
 
+      {/* Product mode switch — M60.1 (Drift Detection · Security Exposure) */}
+      <ModeSwitch
+        mode={mode}
+        driftHref={DRIFT_HOME}
+        securityHref={SECURITY_HOME}
+      />
+
       {/* Workspace switcher — M50 */}
       <WorkspaceSwitcher />
 
       {/* Nav links */}
       <nav className="flex-1 overflow-y-auto py-3">
         <ul className="space-y-0.5">
-          {NAV_ITEMS.map((item) => {
-            const isActive =
-              pathname === item.href ||
-              (item.href !== "/dashboard" &&
-                item.href !== "/settings" &&
-                pathname.startsWith(item.href));
+          {navItems.map((item) => {
+            const isActive = isNavActive(item.href, pathname);
 
             if (item.sub) {
               return (
