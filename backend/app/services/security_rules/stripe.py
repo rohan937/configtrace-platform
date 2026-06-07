@@ -3,6 +3,17 @@
 Backed by the normalized ``stripe_webhook_endpoint`` record
 (app/connectors/stripe.py): ``url``, ``status`` ("enabled"/"disabled"),
 ``record_id``.
+
+M60.4.5 review — no new Stripe rules added; all candidates deferred because the
+normalized data does not reliably support them:
+* Live-mode webhook HTTP: the ``stripe_webhook_endpoint`` record has no
+  ``livemode`` field, so live vs test cannot be distinguished here. The existing
+  HTTP rule already fires regardless of mode.
+* Disabled webhook endpoint: a disabled endpoint stops delivery — that is a
+  reliability concern, not a "dangerous current state" exposure.
+* Restricted-key scope expansion: the connector does NOT emit
+  ``stripe_restricted_api_key`` records (Stripe's API cannot enumerate other
+  keys' scopes), so there is no scope data to evaluate.
 """
 
 from __future__ import annotations

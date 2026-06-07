@@ -41,8 +41,10 @@ from app.services.security_rules import aws as aws_rules
 from app.services.security_rules import cloudflare as cloudflare_rules
 from app.services.security_rules import firebase as firebase_rules
 from app.services.security_rules import github as github_rules
+from app.services.security_rules import shopify as shopify_rules
 from app.services.security_rules import stripe as stripe_rules
 from app.services.security_rules import supabase as supabase_rules
+from app.services.security_rules import vercel as vercel_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,8 @@ _PROVIDER_RULES = {
     "supabase": [supabase_rules.evaluate],
     "firebase": [firebase_rules.evaluate],
     "cloudflare": [cloudflare_rules.evaluate],
+    "vercel": [vercel_rules.evaluate],
+    "shopify": [shopify_rules.evaluate],
 }
 
 
