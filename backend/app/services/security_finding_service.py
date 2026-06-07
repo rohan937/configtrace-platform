@@ -170,6 +170,49 @@ def create_finding(
     return finding
 
 
+def refresh_active_finding(
+    *,
+    db: Session,
+    finding: SecurityFinding,
+    severity: str,
+    title: str,
+    linked_change_id: Optional[uuid.UUID] = None,
+    description: Optional[str] = None,
+    evidence: Optional[dict[str, Any]] = None,
+    remediation: Optional[dict[str, Any]] = None,
+) -> SecurityFinding:
+    """Refresh an existing ACTIVE finding from the latest evaluation.
+
+    Lifecycle contract (M60.7):
+    * ALWAYS bumps ``last_seen_at`` (the risky state is still present).
+    * Updates ``severity`` and ``title`` to the latest classification, and
+      updates ``description`` / ``evidence`` / ``remediation`` when the caller
+      provides them (None means "leave as-is", so a transient gap never wipes
+      good data).
+    * ``linked_change_id`` is only SET when a new one is supplied; an existing
+      link is never cleared by a later evaluation that lacks one.
+    * NEVER changes ``first_detected_at`` (when the exposure first opened),
+      ``status`` (stays ``active``), ``resolved_at``, or the review attribution
+      fields (``reviewed_by_user_id`` / ``reviewed_at``). Those belong to the
+      open/resolve and (future) review workflows, not to a routine refresh.
+    """
+    finding.last_seen_at = _utcnow()
+    finding.severity = severity
+    finding.title = title
+    if description is not None:
+        finding.description = description
+    if evidence is not None:
+        finding.evidence = evidence
+    if remediation is not None:
+        finding.remediation = remediation
+    if linked_change_id is not None:
+        finding.linked_change_id = linked_change_id
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return finding
+
+
 def upsert_active_finding(
     *,
     db: Session,
@@ -187,11 +230,17 @@ def upsert_active_finding(
 ) -> SecurityFinding:
     """Idempotently record an active finding for a logical issue.
 
-    If an active finding already exists for
-    (workspace_id, integration_id, resource_id, finding_key) its ``last_seen_at``
-    (and refreshable fields) are updated; otherwise a new active row is created.
-    This is the foundation the M60.4 engine will call on each evaluation pass —
-    it does not itself evaluate anything.
+    If an ACTIVE finding already exists for
+    (workspace_id, integration_id, resource_id, finding_key) it is refreshed via
+    :func:`refresh_active_finding` (preserving first_detected_at/status/review
+    fields); otherwise a new active row is created with a fresh
+    ``first_detected_at``.
+
+    Only ACTIVE rows are matched. A finding that a user has moved to
+    ``accepted_risk`` or ``snoozed`` is intentionally NOT matched here, so those
+    rows are never overwritten by the evaluator (their dedicated workflows own
+    them). Because the partial unique index covers only active rows, creating a
+    fresh active row alongside an accepted/snoozed historical row is safe.
     """
     existing = (
         db.query(SecurityFinding)
@@ -209,21 +258,16 @@ def upsert_active_finding(
         .first()
     )
     if existing is not None:
-        existing.last_seen_at = _utcnow()
-        existing.severity = severity
-        existing.title = title
-        if description is not None:
-            existing.description = description
-        if evidence is not None:
-            existing.evidence = evidence
-        if remediation is not None:
-            existing.remediation = remediation
-        if linked_change_id is not None:
-            existing.linked_change_id = linked_change_id
-        db.add(existing)
-        db.commit()
-        db.refresh(existing)
-        return existing
+        return refresh_active_finding(
+            db=db,
+            finding=existing,
+            severity=severity,
+            title=title,
+            linked_change_id=linked_change_id,
+            description=description,
+            evidence=evidence,
+            remediation=remediation,
+        )
 
     return create_finding(
         db=db,
@@ -267,7 +311,15 @@ def list_active_findings_for_resource(
 
 
 def resolve_finding(*, db: Session, finding: SecurityFinding) -> SecurityFinding:
-    """Mark a finding resolved (idempotent) and stamp ``resolved_at``."""
+    """Mark a finding resolved and stamp ``resolved_at`` (idempotent).
+
+    Lifecycle contract (M60.7):
+    * Idempotent — resolving an already-resolved finding is a no-op (the
+      original ``resolved_at`` is preserved).
+    * Preserves ``first_detected_at``, ``evidence``, and ``remediation`` so the
+      resolved row remains a useful historical record.
+    * Sets ``resolved_at`` only on the active→resolved transition.
+    """
     if finding.status == "resolved":
         return finding
     finding.status = "resolved"
@@ -276,3 +328,34 @@ def resolve_finding(*, db: Session, finding: SecurityFinding) -> SecurityFinding
     db.commit()
     db.refresh(finding)
     return finding
+
+
+def resolve_missing_findings_for_resource(
+    *,
+    db: Session,
+    workspace_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    resource_id: Optional[uuid.UUID],
+    active_keys: set[str],
+) -> int:
+    """Resolve active findings for a resource whose risky state is gone.
+
+    Given the set of ``finding_key`` values still present in the latest
+    evaluation (``active_keys``), resolve every currently-ACTIVE finding for
+    this (workspace, integration, resource) scope whose key is NOT in that set.
+
+    Only ACTIVE findings are considered — ``accepted_risk`` / ``snoozed`` rows
+    are never resolved here. Returns the number of findings resolved.
+    """
+    active = list_active_findings_for_resource(
+        db=db,
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        resource_id=resource_id,
+    )
+    resolved = 0
+    for finding in active:
+        if finding.finding_key not in active_keys:
+            resolve_finding(db=db, finding=finding)
+            resolved += 1
+    return resolved

@@ -162,17 +162,16 @@ def evaluate_security_findings_for_resource(
         )
         summary["upserted"] += 1
 
-    # Resolve previously-active findings for this resource that no longer match.
-    active = security_finding_service.list_active_findings_for_resource(
+    # Resolve previously-active findings for this resource whose risky state is
+    # gone. Scoped to this resource's ACTIVE findings only — accepted_risk /
+    # snoozed rows and other resources are never touched.
+    summary["resolved"] = security_finding_service.resolve_missing_findings_for_resource(
         db=db,
         workspace_id=workspace_id,
         integration_id=integration.id,
         resource_id=resource.id,
+        active_keys=seen_keys,
     )
-    for finding in active:
-        if finding.finding_key not in seen_keys:
-            security_finding_service.resolve_finding(db=db, finding=finding)
-            summary["resolved"] += 1
 
     logger.info(
         "security_findings: evaluated  provider=%s resource_id=%s "
