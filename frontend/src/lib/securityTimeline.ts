@@ -8,17 +8,23 @@
  *   opened       ← first_detected_at        (always)
  *   reopened     ← first_detected_at        (when an earlier finding with the
  *                                            same finding_key exists in the set)
- *   still_active ← last_seen_at             (active findings, seen after open)
- *   resolved     ← resolved_at              (resolved findings)
+ *   still_active  ← last_seen_at            (active findings, seen after open)
+ *   resolved      ← resolved_at             (resolved findings)
+ *   accepted_risk ← reviewed_at             (M61.1: accepted_risk findings)
  *
- * We deliberately do NOT derive "Acknowledged", "Snoozed", "Alert sent", or
- * "Risk accepted" — those require review/alert data that does not exist yet.
+ * We deliberately do NOT derive "Acknowledged", "Snoozed", or "Alert sent" —
+ * those require review/alert data that does not exist yet.
  */
 
 import type { SecurityFinding } from "@/types";
 import { formatDurationMs } from "@/components/security/findingDisplay";
 
-export type TimelineEventType = "opened" | "reopened" | "still_active" | "resolved";
+export type TimelineEventType =
+  | "opened"
+  | "reopened"
+  | "still_active"
+  | "resolved"
+  | "accepted_risk";
 
 export interface TimelineEvent {
   /** Stable key: `${finding.id}:${type}`. */
@@ -34,10 +40,16 @@ export const EVENT_LABEL: Record<TimelineEventType, string> = {
   reopened: "Re-opened",
   still_active: "Still active",
   resolved: "Exposure resolved",
+  accepted_risk: "Risk accepted",
 };
 
 /** Filter value for the event-type control. "opened" includes "reopened". */
-export type EventTypeFilter = "all" | "opened" | "still_active" | "resolved";
+export type EventTypeFilter =
+  | "all"
+  | "opened"
+  | "still_active"
+  | "resolved"
+  | "accepted_risk";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -97,6 +109,16 @@ export function buildTimelineEvents(findings: SecurityFinding[]): TimelineEvent[
         key: `${f.id}:resolved`,
         type: "resolved",
         at: f.resolved_at,
+        finding: f,
+      });
+    }
+
+    // Risk accepted (M61.1): derived from reviewed_at on accepted_risk findings.
+    if (f.status === "accepted_risk" && f.reviewed_at && !Number.isNaN(ts(f.reviewed_at))) {
+      events.push({
+        key: `${f.id}:accepted_risk`,
+        type: "accepted_risk",
+        at: f.reviewed_at,
         finding: f,
       });
     }

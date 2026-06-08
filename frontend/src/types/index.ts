@@ -1498,6 +1498,16 @@ export interface SecurityFinding {
   accepted_until: string | null;
   reviewed_by_user_id: string | null;
   reviewed_at: string | null;
+  /** M61.1 — rationale captured when the finding was marked accepted_risk. */
+  acceptance_reason: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Body for POST /security/findings/{id}/accept-risk (M61.1). */
+export interface AcceptRiskRequest {
+  /** Why the team is intentionally carrying this risk (min 5 chars). */
+  reason: string;
+  /** ISO 8601 datetime when the acceptance expires (must be in the future). */
+  accepted_until: string;
 }

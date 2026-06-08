@@ -35,6 +35,7 @@ from app.models.security_finding import (
 )
 from app.models.user import User
 from app.schemas.security_finding import (
+    AcceptRiskRequest,
     SecurityFindingListResponse,
     SecurityFindingResponse,
 )
@@ -108,3 +109,49 @@ def get_security_finding(
     if finding is None:
         raise HTTPException(status_code=404, detail="Security finding not found.")
     return SecurityFindingResponse.model_validate(finding)
+
+
+@router.post(
+    "/findings/{finding_id}/accept-risk",
+    response_model=SecurityFindingResponse,
+)
+def accept_security_finding_risk(
+    finding_id: UUID4,
+    body: AcceptRiskRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityFindingResponse:
+    """Mark an active security finding as accepted risk (M61.1).
+
+    Accepting risk records that the team is intentionally carrying a known
+    exposure until ``accepted_until`` — for the stated reason. It does NOT mark
+    the exposure resolved or fixed, and it sends no notifications.
+
+    * 404 — finding does not exist, or belongs to a workspace the user is not a
+      member of (never 403, to avoid leaking existence).
+    * 400 — the finding cannot be accepted (e.g. it is already resolved).
+    * 422 — the request body is invalid (missing reason, past expiry).
+
+    Re-accepting an already ``accepted_risk`` finding updates its reason and
+    expiry without re-subscribing it as a new exposure.
+    """
+    finding = security_finding_service.get_finding_for_user(
+        finding_id=finding_id,
+        user_id=current_user.id,
+        db=db,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Security finding not found.")
+
+    try:
+        updated = security_finding_service.accept_finding_risk(
+            db=db,
+            finding=finding,
+            actor_user_id=current_user.id,
+            reason=body.reason,
+            accepted_until=body.accepted_until,
+        )
+    except security_finding_service.FindingNotAcceptableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return SecurityFindingResponse.model_validate(updated)

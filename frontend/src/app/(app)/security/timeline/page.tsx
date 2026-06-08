@@ -56,6 +56,7 @@ const EVENT_DOT: Record<TimelineEventType, string> = {
   reopened: "#f5a623",
   still_active: "#6b9cf8",
   resolved: "#3ccf7e",
+  accepted_risk: "#f5a623",
 };
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -224,6 +225,7 @@ export default function ExposureTimelinePage() {
             { value: "opened", label: "Opened" },
             { value: "still_active", label: "Still active" },
             { value: "resolved", label: "Resolved" },
+            { value: "accepted_risk", label: "Risk accepted" },
           ]}
         />
       </div>

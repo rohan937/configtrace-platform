@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import timedelta
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -315,14 +316,16 @@ def test_evaluator_never_touches_protected_status(test_user, db_session, protect
     # An existing finding the user moved to accepted_risk / snoozed.
     f = _make_finding(db_session, ws, integ, res)
     f.status = protected_status
+    if protected_status == "accepted_risk":
+        # A real acceptance carries an expiry; non-expired here.
+        f.accepted_until = svc._utcnow() + timedelta(days=30)
     f.last_seen_at = svc._utcnow()
     db_session.add(f)
     db_session.commit()
     protected_last_seen = f.last_seen_at
     protected_id = f.id
 
-    # (a) risky state still present → protected row untouched; a NEW active row
-    # opens (upsert only matches active rows).
+    # (a) risky state still present → protected row untouched.
     snap = _snap(db_session, res, integ, test_user, [_http_webhook()])
     evaluator.evaluate_security_findings_for_resource(
         db=db_session, workspace_id=ws.id, integration=integ, resource=res, snapshot=snap
@@ -331,7 +334,13 @@ def test_evaluator_never_touches_protected_status(test_user, db_session, protect
     assert f.status == protected_status  # not overwritten
     assert f.last_seen_at == protected_last_seen  # not refreshed
     actives = _active(db_session, ws.id, res.id)
-    assert len(actives) == 1 and actives[0].id != protected_id
+    if protected_status == "accepted_risk":
+        # M61.1: a non-expired accepted_risk SUPPRESSES re-opening an active
+        # duplicate for the same logical key (that is the point of accepted risk).
+        assert actives == []
+    else:
+        # Snooze suppression is a later milestone — a new active row still opens.
+        assert len(actives) == 1 and actives[0].id != protected_id
 
     # (b) risky state gone → protected row still NOT resolved.
     snap2 = _snap(db_session, res, integ, test_user, [_https_webhook()])

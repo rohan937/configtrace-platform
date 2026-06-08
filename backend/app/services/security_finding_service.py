@@ -266,6 +266,24 @@ def record_active_finding(
         )
         return refreshed, False
 
+    # M61.1: if the team has intentionally accepted this risk and that
+    # acceptance has NOT yet expired, suppress re-creating an active duplicate
+    # for the same logical key. That is the whole point of accepted risk — we
+    # carry the known exposure until ``accepted_until``. We do NOT modify the
+    # accepted_risk row (no refresh, no last_seen bump) and report it as
+    # ``created=False`` so no opened/reopened event is emitted. Once the
+    # acceptance expires, this returns None and a fresh active finding is
+    # created normally (re-opening + alerting resume).
+    accepted = find_currently_accepted_finding(
+        db=db,
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        resource_id=resource_id,
+        finding_key=finding_key,
+    )
+    if accepted is not None:
+        return accepted, False
+
     created = create_finding(
         db=db,
         workspace_id=workspace_id,
@@ -422,3 +440,114 @@ def resolve_missing_findings_for_resource(
             resolve_finding(db=db, finding=finding)
             resolved.append(finding)
     return resolved
+
+
+# ── Accepted Risk workflow (M61.1) ────────────────────────────────────────────
+
+
+class FindingNotAcceptableError(Exception):
+    """Raised when a finding cannot be moved into ``accepted_risk``.
+
+    Carries a human-readable message; the router maps it to HTTP 400.
+    """
+
+
+def _aware(dt: datetime) -> datetime:
+    """Return *dt* as a UTC-aware datetime (assume UTC if naive)."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def find_currently_accepted_finding(
+    *,
+    db: Session,
+    workspace_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    resource_id: Optional[uuid.UUID],
+    finding_key: str,
+    now: Optional[datetime] = None,
+) -> Optional[SecurityFinding]:
+    """Return a non-expired ``accepted_risk`` finding for this logical key.
+
+    "Currently accepted" means status is ``accepted_risk`` AND the acceptance
+    has not expired (``accepted_until`` is in the future, or NULL = indefinite).
+    Used by :func:`record_active_finding` to suppress re-creating an active
+    duplicate while the team is intentionally carrying a known risk.
+
+    Returns None when no such acceptance exists (including when the most recent
+    acceptance has expired), so the caller may open a fresh active finding.
+    """
+    now = now or _utcnow()
+    query = db.query(SecurityFinding).filter(
+        SecurityFinding.workspace_id == workspace_id,
+        SecurityFinding.integration_id == integration_id,
+        SecurityFinding.finding_key == finding_key,
+        SecurityFinding.status == "accepted_risk",
+    )
+    if resource_id is not None:
+        query = query.filter(SecurityFinding.resource_id == resource_id)
+    else:
+        query = query.filter(SecurityFinding.resource_id.is_(None))
+
+    for finding in query.all():
+        if finding.accepted_until is None or _aware(finding.accepted_until) > now:
+            return finding
+    return None
+
+
+def accept_finding_risk(
+    *,
+    db: Session,
+    finding: SecurityFinding,
+    actor_user_id: uuid.UUID,
+    reason: str,
+    accepted_until: datetime,
+) -> SecurityFinding:
+    """Mark a finding as ``accepted_risk`` (M61.1).
+
+    Records that the team is intentionally carrying a known exposure until
+    ``accepted_until``. This is NOT a fix and NOT a resolution.
+
+    Lifecycle contract:
+    * Allowed only from ``active`` or ``accepted_risk`` (re-accepting / updating
+      the reason or expiry of an existing acceptance). A ``resolved`` finding,
+      or any other status, raises :class:`FindingNotAcceptableError` (→ 400).
+    * Sets ``status='accepted_risk'``, ``accepted_until``, ``reviewed_by_user_id``,
+      ``reviewed_at`` (now), and ``acceptance_reason``.
+    * NEVER sets ``resolved_at`` and NEVER changes ``first_detected_at``,
+      ``last_seen_at``, ``evidence``, or ``remediation`` — history is preserved.
+    * Emits NO lifecycle event and sends NO Slack/push (acceptance is a quiet,
+      deliberate human action, not an alertable exposure transition).
+    """
+    if finding.status == "resolved":
+        raise FindingNotAcceptableError(
+            "A resolved exposure cannot be marked accepted risk."
+        )
+    if finding.status not in ("active", "accepted_risk"):
+        raise FindingNotAcceptableError(
+            f"A finding with status {finding.status!r} cannot be marked "
+            "accepted risk."
+        )
+
+    # Defence in depth — the API schema validates these, re-check here.
+    reason = (reason or "").strip()
+    if len(reason) < 5:
+        raise FindingNotAcceptableError(
+            "An acceptance reason of at least 5 characters is required."
+        )
+
+    now = _utcnow()
+    accepted_until = _aware(accepted_until)
+    if accepted_until <= now:
+        raise FindingNotAcceptableError("accepted_until must be in the future.")
+
+    finding.status = "accepted_risk"
+    finding.accepted_until = accepted_until
+    finding.reviewed_by_user_id = actor_user_id
+    finding.reviewed_at = now
+    finding.acceptance_reason = reason
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return finding

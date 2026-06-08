@@ -470,6 +470,25 @@ export async function getSecurityFinding(
   return apiFetch(`/security/findings/${findingId}`, { token });
 }
 
+/**
+ * Mark a security finding as accepted risk (M61.1).
+ *
+ * Records that the team is intentionally carrying a known exposure until
+ * `accepted_until` for the stated reason. This does NOT mark the exposure
+ * resolved or fixed. Returns the updated finding.
+ */
+export async function acceptSecurityFindingRisk(
+  findingId: string,
+  body: import("@/types").AcceptRiskRequest,
+  token?: string | null,
+): Promise<SecurityFinding> {
+  return apiFetch(`/security/findings/${findingId}/accept-risk`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+
 // ── M57.3: Needs Review queue ─────────────────────────────────────────────────
 
 export interface GetNeedsReviewParams {

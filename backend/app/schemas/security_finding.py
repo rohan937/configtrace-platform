@@ -8,10 +8,10 @@ GET /security/findings/{id}. JSONB fields (evidence, remediation) are typed as
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from pydantic import UUID4, BaseModel, ConfigDict
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 
 
 class SecurityFindingResponse(BaseModel):
@@ -39,6 +39,8 @@ class SecurityFindingResponse(BaseModel):
     accepted_until: Optional[datetime]
     reviewed_by_user_id: Optional[UUID4]
     reviewed_at: Optional[datetime]
+    # M61.1 — rationale captured when the finding was marked accepted_risk.
+    acceptance_reason: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime
@@ -53,3 +55,37 @@ class SecurityFindingListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class AcceptRiskRequest(BaseModel):
+    """Body for POST /security/findings/{id}/accept-risk (M61.1).
+
+    Accepting risk records that the team is intentionally carrying a known
+    exposure until ``accepted_until``. It does NOT mark the exposure fixed.
+    """
+
+    reason: str = Field(
+        ...,
+        min_length=5,
+        max_length=1000,
+        description="Why the team is intentionally carrying this risk.",
+    )
+    accepted_until: datetime = Field(
+        ...,
+        description="When the acceptance expires (must be in the future, UTC).",
+    )
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_not_blank(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("reason must not be blank.")
+        return v.strip()
+
+    @field_validator("accepted_until")
+    @classmethod
+    def _must_be_future(cls, v: datetime) -> datetime:
+        aware = v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
+        if aware <= datetime.now(timezone.utc):
+            raise ValueError("accepted_until must be in the future.")
+        return aware

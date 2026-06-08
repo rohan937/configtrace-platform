@@ -152,6 +152,9 @@ class SecurityFinding(BaseMixin, Base):
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Free-text rationale captured when a finding is marked accepted_risk (M61.1).
+    # NULL for findings that have never been through the accept-risk workflow.
+    acceptance_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:
         return (
