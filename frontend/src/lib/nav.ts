@@ -57,6 +57,7 @@ export const DRIFT_NAV: NavItem[] = [
 export const SECURITY_NAV: NavItem[] = [
   { label: "Security Overview", href: "/security" },
   { label: "Active Exposures", href: "/security/exposures" },
+  { label: "Affected Assets", href: "/security/assets" },
   { label: "Exposure Timeline", href: "/security/timeline" },
   { label: "Security Rules", href: "/security/rules" },
   // Shared platform pages — reuse existing routes (no duplication).
