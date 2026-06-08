@@ -21,6 +21,7 @@ import type {
   SecurityFindingSeverity,
 } from "@/types";
 import { getSecurityFindings, getIntegrations } from "@/lib/api";
+import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { getProviderMeta } from "@/lib/providers";
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/utils";
 import {
@@ -74,14 +75,23 @@ export default function AffectedAssetsPage() {
   const [search, setSearch] = useState("");
 
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggle = useCallback((key: string) => {
+  const toggle = useCallback((key: string, assetType?: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+        // Track expansions only (not collapses); asset_type is allowlisted.
+        trackSecurityBetaEvent(
+          "security_asset_expanded",
+          { ...(assetType ? { asset_type: assetType } : {}) },
+          { getToken, pagePath: "/security/assets" },
+        );
+      }
       return next;
     });
-  }, []);
+  }, [getToken]);
 
   // Load integrations (drives the no-integrations empty state).
   useEffect(() => {
@@ -316,7 +326,7 @@ export default function AffectedAssetsPage() {
               asset={a}
               visibleFindings={findingsForAsset(a)}
               expanded={expanded.has(a.asset_key)}
-              onToggle={() => toggle(a.asset_key)}
+              onToggle={() => toggle(a.asset_key, a.asset_type)}
             />
           ))}
         </div>

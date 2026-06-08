@@ -57,11 +57,16 @@ from app.schemas.security_demo_data import (
     SecurityDemoDataStatus,
 )
 from app.schemas.security_coverage import SecurityCoverageResponse
+from app.schemas.security_beta_event import (
+    SecurityBetaEventCreate,
+    SecurityBetaEventResponse,
+)
 from app.services import security_finding_service
 from app.services import security_finding_note_service
 from app.services import security_rule_settings_service
 from app.services import security_demo_data_service
 from app.services import security_coverage_service
+from app.services import security_beta_event_service
 from app.services import workspace_service
 from app.services.security_rule_registry import is_known_rule_key
 
@@ -489,3 +494,34 @@ def get_security_coverage(
     return SecurityCoverageResponse(
         **security_coverage_service.get_coverage(workspace_id, db)
     )
+
+
+# ── Beta usage instrumentation (M63.1) ────────────────────────────────────────
+
+
+@router.post("/beta-events", response_model=SecurityBetaEventResponse, status_code=201)
+def create_security_beta_event(
+    body: SecurityBetaEventCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityBetaEventResponse:
+    """Record a lightweight, workspace-scoped Security Exposure beta usage event.
+
+    First-party only. ``event_name`` is validated against a fixed allowlist
+    (422 on unknown names); ``metadata`` keys are allowlisted, type-checked, and
+    truncated server-side — evidence/remediation/secrets/payloads/note bodies
+    can never be stored. Intended for beta learning, not surveillance.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    try:
+        event = security_beta_event_service.record_event(
+            workspace_id=workspace_id,
+            user_id=current_user.id,
+            event_name=body.event_name,
+            page_path=body.page_path,
+            metadata=body.metadata,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return SecurityBetaEventResponse(id=str(event.id), ok=True)

@@ -19,6 +19,7 @@ import type {
   SecurityRuleSetting,
 } from "@/types";
 import { getSecurityFindings, getSecurityCoverage, getSecurityRuleSettings } from "@/lib/api";
+import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { getProviderMeta } from "@/lib/providers";
 import { SEVERITY_LABEL } from "@/components/security/findingDisplay";
 import PageHeader from "@/components/common/PageHeader";
@@ -192,25 +193,38 @@ export default function SecurityReportsPage() {
 
   const fileStem = reportFileStem(generatedAtIso || new Date().toISOString());
 
+  const trackExport = useCallback(
+    (action: string) => {
+      trackSecurityBetaEvent(
+        "security_report_exported",
+        { action, report_type: config.reportType },
+        { getToken, pagePath: "/security/reports" },
+      );
+    },
+    [getToken, config.reportType],
+  );
+
   const onCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(markdown);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
+      trackExport("markdown_copied");
     } catch {
       setError("Could not copy to clipboard. Use Download Markdown instead.");
     }
-  }, [markdown]);
+  }, [markdown, trackExport]);
 
   const onCopyExec = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(generateExecutiveSummaryMarkdown(model));
       setCopiedExec(true);
       window.setTimeout(() => setCopiedExec(false), 2000);
+      trackExport("executive_summary_copied");
     } catch {
       setError("Could not copy to clipboard. Use Download Markdown instead.");
     }
-  }, [model]);
+  }, [model, trackExport]);
 
   // Section jump: scroll the Markdown preview to the first matching heading.
   const jumpTo = useCallback(
@@ -368,7 +382,10 @@ export default function SecurityReportsPage() {
         <button
           type="button"
           disabled={noData || noMatches}
-          onClick={() => download(`${fileStem}.md`, markdown, "text/markdown;charset=utf-8")}
+          onClick={() => {
+            download(`${fileStem}.md`, markdown, "text/markdown;charset=utf-8");
+            trackExport("markdown_download");
+          }}
           style={primaryBtn(noData || noMatches)}
         >
           Download Markdown
@@ -392,7 +409,10 @@ export default function SecurityReportsPage() {
         <button
           type="button"
           disabled={noData || noMatches}
-          onClick={() => download(`${fileStem}.json`, generateJSON(model), "application/json;charset=utf-8")}
+          onClick={() => {
+            download(`${fileStem}.json`, generateJSON(model), "application/json;charset=utf-8");
+            trackExport("json_download");
+          }}
           style={secondaryBtn(noData || noMatches)}
         >
           Download JSON
@@ -400,7 +420,10 @@ export default function SecurityReportsPage() {
         <button
           type="button"
           disabled={noData || noMatches}
-          onClick={() => download(`${fileStem}-findings.csv`, generateFindingsCSV(model), "text/csv;charset=utf-8")}
+          onClick={() => {
+            download(`${fileStem}-findings.csv`, generateFindingsCSV(model), "text/csv;charset=utf-8");
+            trackExport("csv_download");
+          }}
           style={secondaryBtn(noData || noMatches)}
         >
           Download findings CSV

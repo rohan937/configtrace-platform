@@ -14,6 +14,7 @@ import { useAuth } from "@clerk/nextjs";
 
 import { getProviderMeta } from "@/lib/providers";
 import { getSecurityRuleSettings, updateSecurityRuleSetting } from "@/lib/api";
+import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { formatAbsoluteTime } from "@/lib/utils";
 import {
   DEFERRED_RULES,
@@ -84,6 +85,11 @@ export default function SecurityRulesPage() {
         const updated = await updateSecurityRuleSetting(key, next, token);
         setEnabledByKey((m) => ({ ...m, [key]: updated.enabled }));
         setUpdatedByKey((m) => ({ ...m, [key]: updated.updated_at }));
+        trackSecurityBetaEvent(
+          "security_rule_toggled",
+          { rule_key: key, action: updated.enabled ? "enabled" : "disabled" },
+          { getToken, pagePath: "/security/rules" },
+        );
       } catch (e) {
         // Roll back on failure.
         setEnabledByKey((m) => ({ ...m, [key]: prev ?? true }));

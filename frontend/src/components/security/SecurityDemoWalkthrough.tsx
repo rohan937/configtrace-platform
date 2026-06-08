@@ -25,6 +25,7 @@ import {
   clearSecurityDemoData,
   getSecurityFindings,
 } from "@/lib/api";
+import { trackSecurityBetaEvent, normalizeSecurityPath } from "@/lib/securityBetaEvents";
 
 // ── Pure step builder (exported for testing) ──────────────────────────────────
 
@@ -204,26 +205,31 @@ export default function SecurityDemoWalkthrough() {
     [],
   );
 
+  const trackOpts = { getToken, pagePath: normalizeSecurityPath(pathname) ?? undefined };
+
   const onSeed = useCallback(async () => {
     setBusy(true);
     setNote(null);
+    trackSecurityBetaEvent("security_demo_seed_clicked", { action: "walkthrough" }, { getToken, pagePath: normalizeSecurityPath(pathname) ?? undefined });
     try {
       const token = await getToken();
       const s = await seedSecurityDemoData(token);
       setStatus(s);
       await refreshStatus();
       setNote("Demo data loaded. Open Security Overview to view sample findings.");
+      trackSecurityBetaEvent("security_demo_seed_completed", { action: "walkthrough", result: "ok" }, { getToken, pagePath: normalizeSecurityPath(pathname) ?? undefined });
       router.refresh();
     } catch {
       setNote("Could not load demo data. Please try again.");
     } finally {
       setBusy(false);
     }
-  }, [getToken, refreshStatus, router]);
+  }, [getToken, refreshStatus, router, pathname]);
 
   const onClear = useCallback(async () => {
     setBusy(true);
     setNote(null);
+    trackSecurityBetaEvent("security_demo_clear_clicked", { action: "walkthrough" }, { getToken, pagePath: normalizeSecurityPath(pathname) ?? undefined });
     try {
       const token = await getToken();
       await clearSecurityDemoData(token);
@@ -243,7 +249,7 @@ export default function SecurityDemoWalkthrough() {
     } finally {
       setBusy(false);
     }
-  }, [getToken, router]);
+  }, [getToken, router, pathname]);
 
   // Render nothing on the server / non-security pages / before hydration.
   if (!visible || !hydrated) return null;
@@ -259,6 +265,7 @@ export default function SecurityDemoWalkthrough() {
         onClick={() => {
           persistDismissed(false);
           persistCollapsed(false);
+          trackSecurityBetaEvent("security_walkthrough_opened", { action: "reopen" }, trackOpts);
         }}
         style={{ ...pillStyle, cursor: "pointer" }}
         aria-label="Open Security demo walkthrough"
@@ -278,7 +285,15 @@ export default function SecurityDemoWalkthrough() {
             <div style={subStyle}>{statusLine}</div>
           </div>
           <div style={{ display: "flex", gap: "6px", flexShrink: 0 }}>
-            <button type="button" onClick={() => persistCollapsed(false)} style={iconBtn} aria-label="Expand walkthrough">
+            <button
+              type="button"
+              onClick={() => {
+                persistCollapsed(false);
+                trackSecurityBetaEvent("security_walkthrough_opened", { action: "expand" }, trackOpts);
+              }}
+              style={iconBtn}
+              aria-label="Expand walkthrough"
+            >
               ▢
             </button>
             <button type="button" onClick={() => persistDismissed(true)} style={iconBtn} aria-label="Dismiss walkthrough">
@@ -336,11 +351,25 @@ export default function SecurityDemoWalkthrough() {
 
       {/* Step CTAs */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "12px" }}>
-        <Link href={current.href} style={primaryLink} onClick={() => persistCollapsed(true)}>
+        <Link
+          href={current.href}
+          style={primaryLink}
+          onClick={() => {
+            trackSecurityBetaEvent("security_walkthrough_step_clicked", { action: current.id }, trackOpts);
+            persistCollapsed(true);
+          }}
+        >
           {current.cta} →
         </Link>
         {current.secondaryHref && current.secondaryCta ? (
-          <Link href={current.secondaryHref} style={secondaryLink} onClick={() => persistCollapsed(true)}>
+          <Link
+            href={current.secondaryHref}
+            style={secondaryLink}
+            onClick={() => {
+              trackSecurityBetaEvent("security_walkthrough_step_clicked", { action: `${current.id}_secondary` }, trackOpts);
+              persistCollapsed(true);
+            }}
+          >
             {current.secondaryCta} →
           </Link>
         ) : null}

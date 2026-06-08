@@ -22,6 +22,7 @@ import type {
   SecurityDiagnosticStatus,
 } from "@/types";
 import { getSecurityCoverage, getSecurityDemoDataStatus } from "@/lib/api";
+import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { getProviderMeta } from "@/lib/providers";
 import { formatRelativeTime } from "@/lib/utils";
 import { humanizeKey } from "@/components/security/findingDisplay";
@@ -89,8 +90,14 @@ export default function SecurityCoveragePage() {
         getSecurityCoverage(token),
         getSecurityDemoDataStatus(token),
       ]);
-      if (cov.status === "fulfilled") setData(cov.value);
-      else throw new Error("coverage failed");
+      if (cov.status === "fulfilled") {
+        setData(cov.value);
+        trackSecurityBetaEvent(
+          "security_coverage_viewed",
+          { result: String(cov.value.summary.connected_providers) },
+          { getToken, pagePath: "/security/coverage" },
+        );
+      } else throw new Error("coverage failed");
       setDemoLoaded(demo.status === "fulfilled" ? demo.value.exists : false);
     } catch {
       setError("Could not load coverage. Please try again.");

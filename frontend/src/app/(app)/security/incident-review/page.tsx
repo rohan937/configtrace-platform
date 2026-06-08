@@ -22,6 +22,7 @@ import type {
   SecurityFindingSeverity,
 } from "@/types";
 import { getSecurityFindings, getChanges, getIntegrations } from "@/lib/api";
+import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { getProviderMeta } from "@/lib/providers";
 import { formatAbsoluteTime, formatRelativeTime } from "@/lib/utils";
 import {
@@ -287,7 +288,14 @@ export default function IncidentReviewPage() {
           />
           <button
             type="button"
-            onClick={() => void load()}
+            onClick={() => {
+              trackSecurityBetaEvent(
+                "security_incident_review_run",
+                { action: "refresh", provider: providerFilter, severity: severityFilter },
+                { getToken, pagePath: "/security/incident-review" },
+              );
+              void load();
+            }}
             style={{
               marginLeft: "auto", fontSize: "12px", color: "#8b90a0", background: "transparent",
               border: "1px solid #2a2d38", borderRadius: "8px", padding: "7px 12px", cursor: "pointer",

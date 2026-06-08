@@ -29,6 +29,7 @@ import {
   getSecurityFindingActivity,
 } from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
+import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { formatAbsoluteTime } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader";
@@ -65,6 +66,11 @@ export default function ExposureDetailPage() {
       const token = await getToken();
       const f = await getSecurityFinding(id, token);
       setFinding(f);
+      trackSecurityBetaEvent(
+        "security_exposure_opened",
+        { finding_id: f.id, severity: f.severity, status: f.status, provider: f.provider },
+        { getToken, pagePath: "/security/exposures/[id]" },
+      );
     } catch {
       // 404 / unauthorized / network all surface as a not-found state.
       setError("This exposure could not be found, or you do not have access to it.");
@@ -480,6 +486,7 @@ function AcceptRiskAction({
     if (!reasonValid || !untilValid) return;
     setBusy(true);
     setErr(null);
+    trackSecurityBetaEvent("security_exposure_action_clicked", { action: "accept_risk", finding_id: finding.id }, { getToken, pagePath: "/security/exposures/[id]" });
     try {
       const token = await getToken();
       // Send end-of-day in the user's local zone so "today" is never in the past.
@@ -492,6 +499,7 @@ function AcceptRiskAction({
       onUpdated(updated);
       setOpen(false);
       setReason("");
+      trackSecurityBetaEvent("security_exposure_action_completed", { action: "accept_risk", finding_id: finding.id, result: "ok" }, { getToken, pagePath: "/security/exposures/[id]" });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to accept risk.");
     } finally {
@@ -645,11 +653,13 @@ function AcknowledgeAction({
   async function submit() {
     setBusy(true);
     setErr(null);
+    trackSecurityBetaEvent("security_exposure_action_clicked", { action: "acknowledge", finding_id: finding.id }, { getToken, pagePath: "/security/exposures/[id]" });
     try {
       const token = await getToken();
       const updated = await acknowledgeSecurityFinding(finding.id, token);
       onUpdated(updated);
       setOpen(false);
+      trackSecurityBetaEvent("security_exposure_action_completed", { action: "acknowledge", finding_id: finding.id, result: "ok" }, { getToken, pagePath: "/security/exposures/[id]" });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to acknowledge.");
     } finally {
@@ -769,6 +779,7 @@ function SnoozeAction({
     if (!untilValid) return;
     setBusy(true);
     setErr(null);
+    trackSecurityBetaEvent("security_exposure_action_clicked", { action: "snooze", finding_id: finding.id }, { getToken, pagePath: "/security/exposures/[id]" });
     try {
       const token = await getToken();
       const snoozedUntilIso = new Date(until).toISOString();
@@ -779,6 +790,7 @@ function SnoozeAction({
       );
       onUpdated(updated);
       setOpen(false);
+      trackSecurityBetaEvent("security_exposure_action_completed", { action: "snooze", finding_id: finding.id, result: "ok" }, { getToken, pagePath: "/security/exposures/[id]" });
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Failed to snooze.");
     } finally {
@@ -927,6 +939,7 @@ function NotesAndActivity({ finding }: { finding: SecurityFinding }) {
       const created = await createSecurityFindingNote(finding.id, draftTrimmed, token);
       setNotes((prev) => [...prev, created]);
       setDraft("");
+      trackSecurityBetaEvent("security_note_added", { finding_id: finding.id }, { getToken, pagePath: "/security/exposures/[id]" });
       // Refresh activity so the new note appears in the feed too.
       void load();
     } catch (e) {

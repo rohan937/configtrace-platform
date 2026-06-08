@@ -31,6 +31,7 @@ import {
   type OnboardingSummary,
 } from "@/lib/securityOnboarding";
 import { SectionLabel } from "@/components/security/previews";
+import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 
 export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () => void }) {
   const { getToken } = useAuth();
@@ -92,10 +93,12 @@ export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () =
   const handleLoadDemo = useCallback(async () => {
     setSeeding(true);
     setError(null);
+    trackSecurityBetaEvent("security_demo_seed_clicked", { action: "onboarding" }, { getToken, pagePath: "/security" });
     try {
       const token = await getToken();
       await seedSecurityDemoData(token);
       await load();
+      trackSecurityBetaEvent("security_demo_seed_completed", { action: "onboarding", result: "ok" }, { getToken, pagePath: "/security" });
       onChanged?.();
     } catch {
       setError("Could not load demo data.");
@@ -103,6 +106,13 @@ export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () =
       setSeeding(false);
     }
   }, [getToken, load, onChanged]);
+
+  const handleCtaClick = useCallback(
+    (itemId: string) => {
+      trackSecurityBetaEvent("security_onboarding_cta_clicked", { checklist_item_id: itemId }, { getToken, pagePath: "/security" });
+    },
+    [getToken],
+  );
 
   if (loading || !summary) return null; // stay quiet until ready; never blocks page
   if (summary.items.length === 0) return null;
@@ -150,7 +160,7 @@ export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () =
 
       <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
         {summary.items.map((item) => (
-          <ChecklistRow key={item.id} item={item} seeding={seeding} onLoadDemo={handleLoadDemo} />
+          <ChecklistRow key={item.id} item={item} seeding={seeding} onLoadDemo={handleLoadDemo} onCtaClick={handleCtaClick} />
         ))}
       </div>
     </div>
@@ -161,10 +171,12 @@ function ChecklistRow({
   item,
   seeding,
   onLoadDemo,
+  onCtaClick,
 }: {
   item: ChecklistItem;
   seeding: boolean;
   onLoadDemo: () => void;
+  onCtaClick: (itemId: string) => void;
 }) {
   return (
     <div
@@ -213,6 +225,7 @@ function ChecklistRow({
         ) : (
           <Link
             href={item.ctaHref}
+            onClick={() => onCtaClick(item.id)}
             style={{
               fontSize: "12.5px", fontWeight: 600, color: "#6b9cf8",
               textDecoration: "none", border: "1px solid #2a2d38",

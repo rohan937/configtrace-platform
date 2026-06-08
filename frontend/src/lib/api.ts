@@ -600,6 +600,20 @@ export async function clearSecurityDemoData(
   return apiFetch(`/security/demo-data`, { method: "DELETE", token });
 }
 
+/** Record a lightweight Security Exposure beta usage event (M63.1).
+ *  Metadata is allowlisted + truncated server-side. */
+export async function postSecurityBetaEvent(
+  body: { event_name: string; page_path?: string | null; metadata?: Record<string, unknown> },
+  token?: string | null,
+): Promise<{ id: string; ok: boolean }> {
+  return apiFetch(`/security/beta-events`, {
+    method: "POST",
+    token,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 /** Provider coverage-quality report for Security Exposure (M62.3). */
 export async function getSecurityCoverage(
   token?: string | null,
