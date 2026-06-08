@@ -432,6 +432,7 @@ def resolve_missing_findings_for_resource(
     integration_id: uuid.UUID,
     resource_id: Optional[uuid.UUID],
     active_keys: set[str],
+    disabled_rule_keys: Optional[set[str]] = None,
 ) -> list[SecurityFinding]:
     """Resolve active findings for a resource whose risky state is gone.
 
@@ -442,7 +443,17 @@ def resolve_missing_findings_for_resource(
     Only ACTIVE findings are considered — ``accepted_risk`` / ``snoozed`` rows
     are never resolved here. Returns the list of findings that were resolved
     (so the M60.10 event layer can emit a "resolved" event for each).
+
+    M61.7: active findings whose base rule key is in ``disabled_rule_keys`` are
+    NEVER resolved here. A disabled rule produces no candidates, so its finding
+    keys would otherwise look "missing" and be auto-resolved — but disabling a
+    rule must never mark existing findings resolved. They remain active until the
+    rule is re-enabled (and the risky state then genuinely clears) or the user
+    acts on them.
     """
+    from app.services.security_rule_registry import base_rule_key
+
+    disabled = disabled_rule_keys or set()
     active = list_active_findings_for_resource(
         db=db,
         workspace_id=workspace_id,
@@ -451,6 +462,8 @@ def resolve_missing_findings_for_resource(
     )
     resolved: list[SecurityFinding] = []
     for finding in active:
+        if base_rule_key(finding.finding_key) in disabled:
+            continue  # disabling a rule never auto-resolves its findings
         if finding.finding_key not in active_keys:
             resolve_finding(db=db, finding=finding)
             resolved.append(finding)

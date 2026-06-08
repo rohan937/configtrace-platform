@@ -555,6 +555,30 @@ export async function getSecurityFindingActivity(
   return apiFetch(`/security/findings/${findingId}/activity`, { token });
 }
 
+/** List all known security rules with their effective enabled state (M61.7). */
+export async function getSecurityRuleSettings(
+  token?: string | null,
+): Promise<import("@/types").SecurityRuleSettingsListResponse> {
+  return apiFetch(`/security/rules/settings`, { token });
+}
+
+/**
+ * Enable or disable a security rule for the current workspace (M61.7).
+ * Disabling stops future findings from that rule; it does not resolve existing
+ * findings or send notifications.
+ */
+export async function updateSecurityRuleSetting(
+  ruleKey: string,
+  enabled: boolean,
+  token?: string | null,
+): Promise<import("@/types").SecurityRuleSetting> {
+  return apiFetch(`/security/rules/settings/${ruleKey}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+    token,
+  });
+}
+
 // ── M57.3: Needs Review queue ─────────────────────────────────────────────────
 
 export interface GetNeedsReviewParams {

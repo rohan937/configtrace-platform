@@ -1558,3 +1558,19 @@ export interface SecurityFindingActivityResponse {
   items: SecurityFindingActivityItem[];
   total: number;
 }
+
+/** Effective enable/disable state for one security rule (M61.7). */
+export interface SecurityRuleSetting {
+  rule_key: string;
+  enabled: boolean;
+  /** True when an explicit override row exists (vs the implicit default). */
+  explicit_setting: boolean;
+  updated_at: string | null;
+  updated_by_user_id: string | null;
+}
+
+/** Response from GET /security/rules/settings. */
+export interface SecurityRuleSettingsListResponse {
+  items: SecurityRuleSetting[];
+  total: number;
+}

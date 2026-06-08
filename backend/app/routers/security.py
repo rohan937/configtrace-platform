@@ -47,8 +47,16 @@ from app.schemas.security_finding_note import (
     SecurityFindingNoteListResponse,
     SecurityFindingNoteResponse,
 )
+from app.schemas.security_rule_setting import (
+    RuleSettingUpdateRequest,
+    SecurityRuleSettingItem,
+    SecurityRuleSettingsListResponse,
+)
 from app.services import security_finding_service
 from app.services import security_finding_note_service
+from app.services import security_rule_settings_service
+from app.services import workspace_service
+from app.services.security_rule_registry import is_known_rule_key
 
 router = APIRouter(prefix="/security", tags=["security"])
 
@@ -339,3 +347,72 @@ def get_security_finding_activity(
         items=[SecurityFindingActivityItem(**it) for it in items],
         total=len(items),
     )
+
+
+# ── Rule enable/disable settings (M61.7) ──────────────────────────────────────
+
+
+def _current_workspace_id(current_user: User, db: Session):
+    """Resolve the workspace for rule settings (the user's default workspace).
+
+    Rule settings are workspace-scoped; we use the same default-workspace helper
+    other non-/workspaces/{id} surfaces use, so a single workspace is targeted.
+    """
+    ws = workspace_service.get_or_create_default_workspace(
+        user_id=current_user.id,
+        user_display_name=getattr(current_user, "display_name", None),
+        db=db,
+    )
+    return ws.id
+
+
+@router.get("/rules/settings", response_model=SecurityRuleSettingsListResponse)
+def list_security_rule_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityRuleSettingsListResponse:
+    """Return every known security rule with its effective enabled state (M61.7).
+
+    Scoped to the current user's workspace. Rules with no override report
+    ``enabled=true`` / ``explicit_setting=false``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    items = security_rule_settings_service.list_effective_settings(workspace_id, db)
+    return SecurityRuleSettingsListResponse(
+        items=[SecurityRuleSettingItem(**it) for it in items],
+        total=len(items),
+    )
+
+
+@router.patch(
+    "/rules/settings/{rule_key}",
+    response_model=SecurityRuleSettingItem,
+)
+def update_security_rule_setting(
+    rule_key: str,
+    body: RuleSettingUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityRuleSettingItem:
+    """Enable or disable a security rule for the current workspace (M61.7).
+
+    Disabling a rule stops FUTURE findings from that rule. It does not mark
+    existing findings resolved, delete them, or send notifications.
+
+    * 404 — unknown rule key.
+    """
+    if not is_known_rule_key(rule_key):
+        raise HTTPException(status_code=404, detail="Unknown security rule key.")
+
+    workspace_id = _current_workspace_id(current_user, db)
+    try:
+        item = security_rule_settings_service.set_rule_enabled(
+            workspace_id=workspace_id,
+            rule_key=rule_key,
+            enabled=body.enabled,
+            actor_user_id=current_user.id,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return SecurityRuleSettingItem(**item)

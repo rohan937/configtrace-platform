@@ -173,6 +173,19 @@ def evaluate_security_findings_for_resource(
         summary["skipped"] = True
         return summary
 
+    # M61.7: rules disabled for this workspace are skipped — no create/refresh
+    # and (below) their existing active findings are NOT auto-resolved.
+    try:
+        from app.services import security_rule_settings_service as _rule_settings
+        from app.services.security_rule_registry import base_rule_key
+
+        disabled_rule_keys = _rule_settings.get_disabled_rule_keys(workspace_id, db)
+    except Exception:
+        logger.exception(
+            "security_findings: failed to load disabled rules  workspace=%s", workspace_id
+        )
+        disabled_rule_keys = set()
+
     state = snapshot.state if isinstance(snapshot.state, list) else []
 
     # Best-effort change linkage: map normalized record_id → latest change id.
@@ -196,6 +209,9 @@ def evaluate_security_findings_for_resource(
     for cand in candidates:
         if cand.finding_key in seen_keys:
             continue  # de-dupe within a single pass
+        # M61.7: a disabled rule produces no new/refreshed findings.
+        if base_rule_key(cand.finding_key) in disabled_rule_keys:
+            continue
         seen_keys.add(cand.finding_key)
 
         linked_change_id = (
@@ -245,6 +261,7 @@ def evaluate_security_findings_for_resource(
         integration_id=integration.id,
         resource_id=resource.id,
         active_keys=seen_keys,
+        disabled_rule_keys=disabled_rule_keys,
     )
     summary["resolved"] = len(resolved_findings)
     for finding in resolved_findings:

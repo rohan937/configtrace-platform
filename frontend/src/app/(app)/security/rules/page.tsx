@@ -1,16 +1,20 @@
 "use client";
 
 /**
- * Security Rules (M60.9).
+ * Security Rules (M60.9 catalog + M61.7 enable/disable).
  *
- * A read-only catalog of the Security Exposure rules ConfigTrace evaluates,
- * mirroring the backend rules in security_rules/* (see lib/securityRuleCatalog).
- * No enable/disable mutations — transparency only.
+ * A catalog of the Security Exposure rules ConfigTrace evaluates, mirroring the
+ * backend rules in security_rules/* (see lib/securityRuleCatalog). M61.7 adds
+ * per-workspace enable/disable controls: disabling a rule stops FUTURE findings
+ * from it — it does not resolve or remove existing findings.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 
 import { getProviderMeta } from "@/lib/providers";
+import { getSecurityRuleSettings, updateSecurityRuleSetting } from "@/lib/api";
+import { formatAbsoluteTime } from "@/lib/utils";
 import {
   DEFERRED_RULES,
   PROVIDER_COVERAGE,
@@ -23,16 +27,73 @@ import { SectionLabel } from "@/components/security/previews";
 import { SeverityBadge } from "@/components/security/findingDisplay";
 
 type StatusFilter = "all" | "active" | "planned";
+type StateFilter = "all" | "enabled" | "disabled";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 
 export default function SecurityRulesPage() {
+  const { getToken } = useAuth();
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // M61.7: per-workspace enable/disable state. Missing key → enabled (default).
+  const [enabledByKey, setEnabledByKey] = useState<Record<string, boolean>>({});
+  const [updatedByKey, setUpdatedByKey] = useState<Record<string, string | null>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const res = await getSecurityRuleSettings(token);
+      const en: Record<string, boolean> = {};
+      const up: Record<string, string | null> = {};
+      for (const s of res.items) {
+        en[s.rule_key] = s.enabled;
+        up[s.rule_key] = s.updated_at;
+      }
+      setEnabledByKey(en);
+      setUpdatedByKey(up);
+    } catch {
+      // Non-fatal: rules remain visible; toggles default to enabled.
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
+  const isEnabled = useCallback(
+    (key: string) => enabledByKey[key] !== false, // default true
+    [enabledByKey],
+  );
+
+  const handleToggleEnabled = useCallback(
+    async (key: string, next: boolean) => {
+      setSavingKey(key);
+      setActionError(null);
+      const prev = enabledByKey[key];
+      setEnabledByKey((m) => ({ ...m, [key]: next })); // optimistic
+      try {
+        const token = await getToken();
+        const updated = await updateSecurityRuleSetting(key, next, token);
+        setEnabledByKey((m) => ({ ...m, [key]: updated.enabled }));
+        setUpdatedByKey((m) => ({ ...m, [key]: updated.updated_at }));
+      } catch (e) {
+        // Roll back on failure.
+        setEnabledByKey((m) => ({ ...m, [key]: prev ?? true }));
+        setActionError(e instanceof Error ? e.message : "Failed to update rule.");
+      } finally {
+        setSavingKey(null);
+      }
+    },
+    [enabledByKey, getToken],
+  );
 
   const toggle = (key: string) =>
     setExpanded((prev) => {
@@ -65,13 +126,18 @@ export default function SecurityRulesPage() {
       if (providerFilter !== "all" && r.provider !== providerFilter) return false;
       if (severityFilter !== "all" && r.severity !== severityFilter) return false;
       if (categoryFilter !== "all" && r.category !== categoryFilter) return false;
+      if (stateFilter !== "all") {
+        const on = enabledByKey[r.key] !== false;
+        if (stateFilter === "enabled" && !on) return false;
+        if (stateFilter === "disabled" && on) return false;
+      }
       if (q) {
         const hay = `${r.title} ${r.key} ${r.provider} ${r.category}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
-  }, [search, providerFilter, severityFilter, categoryFilter]);
+  }, [search, providerFilter, severityFilter, categoryFilter, stateFilter, enabledByKey]);
 
   const showActive = statusFilter !== "planned";
   const showPlanned = statusFilter !== "active";
@@ -175,7 +241,27 @@ export default function SecurityRulesPage() {
             ...categoryOptions.map((c) => ({ value: c, label: c })),
           ]}
         />
+        <FilterSelect
+          label="State"
+          value={stateFilter}
+          onChange={(v) => setStateFilter(v as StateFilter)}
+          options={[
+            { value: "all", label: "All states" },
+            { value: "enabled", label: "Enabled" },
+            { value: "disabled", label: "Disabled" },
+          ]}
+        />
       </div>
+
+      {/* M61.7: enable/disable note */}
+      <p style={{ fontSize: "12px", color: "#8b90a0", margin: "0 0 18px", lineHeight: 1.6, maxWidth: "780px" }}>
+        Disabling a rule prevents future findings from that rule. It does not mark
+        existing findings fixed or resolved, and it does not remove the underlying
+        risk. Re-enabling resumes normal evaluation.
+      </p>
+      {actionError ? (
+        <p style={{ fontSize: "12px", color: "#e07a5f", margin: "0 0 14px" }}>{actionError}</p>
+      ) : null}
 
       {/* Active rule catalog */}
       {showActive ? (
@@ -192,6 +278,10 @@ export default function SecurityRulesPage() {
                   rule={r}
                   expanded={expanded.has(r.key)}
                   onToggle={() => toggle(r.key)}
+                  enabled={isEnabled(r.key)}
+                  saving={savingKey === r.key}
+                  updatedAt={updatedByKey[r.key] ?? null}
+                  onToggleEnabled={(next) => handleToggleEnabled(r.key, next)}
                 />
               ))}
             </div>
@@ -323,62 +413,90 @@ function RuleCard({
   rule,
   expanded,
   onToggle,
+  enabled,
+  saving,
+  updatedAt,
+  onToggleEnabled,
 }: {
   rule: SecurityRuleMeta;
   expanded: boolean;
   onToggle: () => void;
+  enabled: boolean;
+  saving: boolean;
+  updatedAt: string | null;
+  onToggleEnabled: (next: boolean) => void;
 }) {
   const meta = getProviderMeta(rule.provider);
 
   return (
-    <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", overflow: "hidden" }}>
-      <button
-        onClick={onToggle}
-        aria-expanded={expanded}
-        style={{
-          width: "100%",
-          textAlign: "left",
-          background: "transparent",
-          border: "none",
-          cursor: "pointer",
-          padding: "14px 16px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "8px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+    <div
+      className="bg-surface1 border border-border"
+      style={{ borderRadius: "12px", overflow: "hidden", opacity: enabled ? 1 : 0.72 }}
+    >
+      {/* Header: expand button on the left, enable toggle as a sibling (never
+          a nested interactive element). */}
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", padding: "14px 16px" }}>
+        <button
+          onClick={onToggle}
+          aria-expanded={expanded}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textAlign: "left",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            padding: 0,
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: "10px", minWidth: 0, flexWrap: "wrap" }}>
             <SeverityBadge severity={rule.severity} />
             <span style={{ fontSize: "12px", color: meta.color, fontWeight: 600 }}>{meta.shortLabel}</span>
             <span style={{ fontSize: "14px", fontWeight: 600, color: "#e8eaf0" }}>{rule.title}</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
-            <ActiveBadge />
             {rule.metadataOnly ? <MetadataBadge /> : null}
-            <span style={{ fontSize: "16px", color: "#565b6e" }}>{expanded ? "▾" : "▸"}</span>
           </div>
-        </div>
 
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: "8px",
-            fontSize: "12px",
-            color: "#8b90a0",
-          }}
-        >
-          <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#565b6e" }}>{rule.key}</span>
-          <span style={{ color: "#3a3d4a" }}>·</span>
-          <span>{rule.category}</span>
-          <span style={{ color: "#3a3d4a" }}>·</span>
-          <span>confidence: {rule.confidence}</span>
-        </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "8px",
+              fontSize: "12px",
+              color: "#8b90a0",
+            }}
+          >
+            <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#565b6e" }}>{rule.key}</span>
+            <span style={{ color: "#3a3d4a" }}>·</span>
+            <span>{rule.category}</span>
+            <span style={{ color: "#3a3d4a" }}>·</span>
+            <span>confidence: {rule.confidence}</span>
+            {!enabled && updatedAt ? (
+              <>
+                <span style={{ color: "#3a3d4a" }}>·</span>
+                <span>disabled {formatAbsoluteTime(updatedAt)}</span>
+              </>
+            ) : null}
+          </div>
 
-        <div style={{ fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.5 }}>{rule.description}</div>
-      </button>
+          <div style={{ fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.5 }}>{rule.description}</div>
+        </button>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+          <EnableToggle enabled={enabled} saving={saving} onToggleEnabled={onToggleEnabled} />
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-label={expanded ? "Collapse" : "Expand"}
+            style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: "16px", color: "#565b6e", padding: 0 }}
+          >
+            {expanded ? "▾" : "▸"}
+          </button>
+        </div>
+      </div>
 
       {expanded ? (
         <div
@@ -422,24 +540,47 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ActiveBadge() {
+function EnableToggle({
+  enabled,
+  saving,
+  onToggleEnabled,
+}: {
+  enabled: boolean;
+  saving: boolean;
+  onToggleEnabled: (next: boolean) => void;
+}) {
+  const color = enabled ? "#3ccf7e" : "#8b90a0";
+  const bg = enabled ? "rgba(60,207,126,0.14)" : "rgba(148,163,184,0.10)";
+  const border = enabled ? "rgba(60,207,126,0.4)" : "#2a2d38";
   return (
-    <span
+    <button
+      type="button"
+      disabled={saving}
+      aria-pressed={enabled}
+      onClick={() => onToggleEnabled(!enabled)}
+      title={
+        enabled
+          ? "Disable this rule — stops future findings; does not resolve existing ones."
+          : "Enable this rule — resumes normal evaluation."
+      }
       style={{
-        fontSize: "10px",
+        fontSize: "11px",
         fontWeight: 700,
-        letterSpacing: "0.04em",
+        letterSpacing: "0.03em",
         textTransform: "uppercase",
-        color: "#3ccf7e",
-        background: "rgba(60,207,126,0.14)",
-        border: "1px solid rgba(60,207,126,0.4)",
-        borderRadius: "6px",
-        padding: "2px 8px",
+        color,
+        background: bg,
+        border: `1px solid ${border}`,
+        borderRadius: "7px",
+        padding: "4px 10px",
+        cursor: saving ? "wait" : "pointer",
+        opacity: saving ? 0.6 : 1,
         whiteSpace: "nowrap",
+        fontFamily: "inherit",
       }}
     >
-      Active
-    </span>
+      {saving ? "Saving…" : enabled ? "Enabled" : "Disabled"}
+    </button>
   );
 }
 
