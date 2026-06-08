@@ -367,14 +367,25 @@ def sync_integration(
                 _sec_resolved = 0
                 _sec_events: list = []
                 for _res, _snap, _res_changes in security_eval_inputs:
-                    _summary = evaluate_security_findings_for_resource(
-                        db=db,
-                        workspace_id=integration.workspace_id,
-                        integration=integration,
-                        resource=_res,
-                        snapshot=_snap,
-                        linked_changes=_res_changes,
-                    )
+                    # M62.1: guard per-resource so one resource's evaluation
+                    # error cannot skip the remaining resources in this sync.
+                    try:
+                        _summary = evaluate_security_findings_for_resource(
+                            db=db,
+                            workspace_id=integration.workspace_id,
+                            integration=integration,
+                            resource=_res,
+                            snapshot=_snap,
+                            linked_changes=_res_changes,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "security_findings: evaluation failed  sync_run_id=%s "
+                            "resource_id=%s",
+                            sync_run_id,
+                            getattr(_res, "id", "?"),
+                        )
+                        continue
                     _sec_upserted += _summary.get("upserted", 0)
                     _sec_resolved += _summary.get("resolved", 0)
                     _sec_events.extend(_summary.get("events", []))
