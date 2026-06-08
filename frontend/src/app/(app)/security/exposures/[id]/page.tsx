@@ -14,12 +14,19 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 
-import type { SecurityFinding } from "@/types";
+import type {
+  SecurityFinding,
+  SecurityFindingNote,
+  SecurityFindingActivityItem,
+} from "@/types";
 import {
   getSecurityFinding,
   acceptSecurityFindingRisk,
   acknowledgeSecurityFinding,
   snoozeSecurityFinding,
+  getSecurityFindingNotes,
+  createSecurityFindingNote,
+  getSecurityFindingActivity,
 } from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
 import { formatAbsoluteTime } from "@/lib/utils";
@@ -404,6 +411,9 @@ function ExposureBody({
           <AcceptRiskAction finding={finding} onUpdated={onUpdated} />
         </div>
       </Panel>
+
+      {/* 9. Review notes + activity (M61.3) */}
+      <NotesAndActivity finding={finding} />
     </div>
   );
 }
@@ -840,6 +850,201 @@ function SnoozeAction({
     </div>
   );
 }
+
+// ── Review notes + activity (M61.3) ───────────────────────────────────────────
+
+const _NOTE_MAX = 2000;
+
+function actorLabel(actorUserId: string | null): string {
+  return actorUserId ? "Team member" : "ConfigTrace";
+}
+
+function NotesAndActivity({ finding }: { finding: SecurityFinding }) {
+  const { getToken } = useAuth();
+  const [notes, setNotes] = useState<SecurityFindingNote[]>([]);
+  const [activity, setActivity] = useState<SecurityFindingActivityItem[]>([]);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Re-fetch whenever the finding identity or its lifecycle stamp changes, so
+  // the activity feed reflects acknowledge/snooze/accept actions immediately.
+  const stamp = `${finding.id}:${finding.status}:${finding.reviewed_at ?? ""}:${finding.resolved_at ?? ""}`;
+
+  const load = useCallback(async () => {
+    try {
+      const token = await getToken();
+      const [n, a] = await Promise.all([
+        getSecurityFindingNotes(finding.id, token),
+        getSecurityFindingActivity(finding.id, token),
+      ]);
+      setNotes(n.items);
+      setActivity(a.items);
+    } catch {
+      // Non-fatal — leave existing state; the add-note path surfaces errors.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finding.id, getToken, stamp]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const draftTrimmed = draft.trim();
+  const draftValid = draftTrimmed.length >= 2 && draftTrimmed.length <= _NOTE_MAX;
+
+  async function addNote() {
+    if (!draftValid) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = await getToken();
+      const created = await createSecurityFindingNote(finding.id, draftTrimmed, token);
+      setNotes((prev) => [...prev, created]);
+      setDraft("");
+      // Refresh activity so the new note appears in the feed too.
+      void load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to add note.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    background: "#1c1e26", border: "1px solid #3a3d4a", borderRadius: "6px",
+    padding: "8px 10px", fontSize: "13px", color: "#e2e5ef", fontFamily: "inherit",
+    width: "100%", boxSizing: "border-box", resize: "vertical",
+  };
+
+  return (
+    <>
+      {/* Review notes */}
+      <Panel>
+        <SectionLabel>Review notes</SectionLabel>
+        <p style={{ fontSize: "12px", color: "#565b6e", margin: "6px 0 12px", lineHeight: 1.6 }}>
+          Capture investigation context without changing the finding status.
+        </p>
+
+        {notes.length === 0 ? (
+          <div style={{ fontSize: "12.5px", color: "#565b6e", marginBottom: "14px" }}>
+            <div style={{ color: "#8b90a0", fontWeight: 600 }}>No review notes yet.</div>
+            <div style={{ marginTop: "4px" }}>
+              Use notes to capture investigation context without changing the
+              finding status.
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginBottom: "14px" }}>
+            {notes.map((n) => (
+              <div
+                key={n.id}
+                style={{
+                  background: "#16181f", border: "1px solid #23252e",
+                  borderRadius: "8px", padding: "10px 12px",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", marginBottom: "4px" }}>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: "#c4c8d4" }}>
+                    {actorLabel(n.author_user_id)}
+                  </span>
+                  <span style={{ fontSize: "11px", color: "#565b6e" }}>
+                    {formatAbsoluteTime(n.created_at)}
+                  </span>
+                </div>
+                <p style={{ fontSize: "13px", color: "#c4c8d4", lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap" }}>
+                  {n.body}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={3}
+          maxLength={_NOTE_MAX}
+          placeholder="Add investigation context, owner handoff, or follow-up notes…"
+          style={{ ...inputStyle, marginBottom: "6px" }}
+        />
+        {err ? <p style={{ fontSize: "12px", color: "#e07a5f", margin: "0 0 8px" }}>{err}</p> : null}
+        <button
+          type="button"
+          onClick={addNote}
+          disabled={busy || !draftValid}
+          style={{
+            fontSize: "13px", fontWeight: 600, color: "#6b9cf8",
+            background: "rgba(107,156,248,0.12)", border: "1px solid rgba(107,156,248,0.4)",
+            borderRadius: "8px", padding: "8px 14px", fontFamily: "inherit",
+            opacity: busy || !draftValid ? 0.5 : 1,
+            cursor: busy || !draftValid ? "not-allowed" : "pointer",
+          }}
+        >
+          {busy ? "Adding…" : "Add note"}
+        </button>
+      </Panel>
+
+      {/* Activity */}
+      <Panel>
+        <SectionLabel>Activity</SectionLabel>
+        <p style={{ fontSize: "12px", color: "#565b6e", margin: "6px 0 12px", lineHeight: 1.6 }}>
+          A chronological record of review and lifecycle actions, newest first.
+        </p>
+        {activity.length === 0 ? (
+          <div style={{ fontSize: "12.5px", color: "#565b6e" }}>No activity yet.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+            {activity.map((item, i) => (
+              <div
+                key={`${item.type}:${item.timestamp ?? ""}:${i}`}
+                style={{
+                  display: "flex", gap: "10px", padding: "8px 0",
+                  borderTop: i === 0 ? "none" : "1px solid #1d1f27",
+                }}
+              >
+                <span
+                  style={{
+                    width: "7px", height: "7px", borderRadius: "50%",
+                    background: ACTIVITY_DOT[item.type] ?? "#8b90a0",
+                    marginTop: "6px", flexShrink: 0,
+                  }}
+                />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "10px" }}>
+                    <span style={{ fontSize: "13px", fontWeight: 600, color: "#e2e5ef" }}>
+                      {item.title}
+                    </span>
+                    <span style={{ fontSize: "11px", color: "#565b6e", flexShrink: 0 }}>
+                      {item.timestamp ? formatAbsoluteTime(item.timestamp) : "—"}
+                    </span>
+                  </div>
+                  {item.description ? (
+                    <p style={{ fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.55, margin: "2px 0 0", whiteSpace: "pre-wrap" }}>
+                      {item.description}
+                    </p>
+                  ) : null}
+                  <span style={{ fontSize: "11px", color: "#565b6e" }}>
+                    {actorLabel(item.actor_user_id)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </>
+  );
+}
+
+const ACTIVITY_DOT: Record<string, string> = {
+  exposure_opened: "#f5632a",
+  acknowledged: "#3ccf7e",
+  snoozed: "#8b90a0",
+  accepted_risk: "#f5a623",
+  resolved: "#3ccf7e",
+  note_added: "#6b9cf8",
+};
 
 // ── Small building blocks ─────────────────────────────────────────────────────
 

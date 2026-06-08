@@ -1519,3 +1519,42 @@ export interface SecuritySnoozeRequest {
   /** ISO 8601 datetime when the snooze expires (must be in the future). */
   snoozed_until: string;
 }
+
+/** A single review note attached to a security finding (M61.3). */
+export interface SecurityFindingNote {
+  id: string;
+  finding_id: string;
+  workspace_id: string | null;
+  author_user_id: string | null;
+  body: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response from GET /security/findings/{id}/notes. */
+export interface SecurityFindingNoteListResponse {
+  items: SecurityFindingNote[];
+  total: number;
+}
+
+/** One derived activity/audit entry for a security finding (M61.3). */
+export interface SecurityFindingActivityItem {
+  type:
+    | "exposure_opened"
+    | "acknowledged"
+    | "snoozed"
+    | "accepted_risk"
+    | "resolved"
+    | "note_added";
+  timestamp: string | null;
+  actor_user_id: string | null;
+  title: string;
+  description: string | null;
+  metadata: Record<string, unknown>;
+}
+
+/** Response from GET /security/findings/{id}/activity. */
+export interface SecurityFindingActivityResponse {
+  items: SecurityFindingActivityItem[];
+  total: number;
+}

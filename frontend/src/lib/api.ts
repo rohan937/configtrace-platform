@@ -523,6 +523,38 @@ export async function snoozeSecurityFinding(
   });
 }
 
+/** List review notes for a security finding, oldest first (M61.3). */
+export async function getSecurityFindingNotes(
+  findingId: string,
+  token?: string | null,
+): Promise<import("@/types").SecurityFindingNoteListResponse> {
+  return apiFetch(`/security/findings/${findingId}/notes`, { token });
+}
+
+/**
+ * Add a review note to a security finding (M61.3).
+ * Plain text, 2–2000 chars. Does NOT change the finding status.
+ */
+export async function createSecurityFindingNote(
+  findingId: string,
+  body: string,
+  token?: string | null,
+): Promise<import("@/types").SecurityFindingNote> {
+  return apiFetch(`/security/findings/${findingId}/notes`, {
+    method: "POST",
+    body: JSON.stringify({ body }),
+    token,
+  });
+}
+
+/** Fetch the combined activity/audit feed for a security finding (M61.3). */
+export async function getSecurityFindingActivity(
+  findingId: string,
+  token?: string | null,
+): Promise<import("@/types").SecurityFindingActivityResponse> {
+  return apiFetch(`/security/findings/${findingId}/activity`, { token });
+}
+
 // ── M57.3: Needs Review queue ─────────────────────────────────────────────────
 
 export interface GetNeedsReviewParams {

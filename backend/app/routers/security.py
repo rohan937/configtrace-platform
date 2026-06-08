@@ -40,7 +40,15 @@ from app.schemas.security_finding import (
     SecurityFindingResponse,
     SnoozeRequest,
 )
+from app.schemas.security_finding_note import (
+    SecurityFindingActivityItem,
+    SecurityFindingActivityResponse,
+    SecurityFindingNoteCreate,
+    SecurityFindingNoteListResponse,
+    SecurityFindingNoteResponse,
+)
 from app.services import security_finding_service
+from app.services import security_finding_note_service
 
 router = APIRouter(prefix="/security", tags=["security"])
 
@@ -238,3 +246,96 @@ def snooze_security_finding(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return SecurityFindingResponse.model_validate(updated)
+
+
+# ── Review notes + activity feed (M61.3) ──────────────────────────────────────
+
+
+def _require_finding(finding_id, current_user, db):
+    """Load a finding scoped to the user's workspace, or raise 404."""
+    finding = security_finding_service.get_finding_for_user(
+        finding_id=finding_id, user_id=current_user.id, db=db,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Security finding not found.")
+    return finding
+
+
+@router.get(
+    "/findings/{finding_id}/notes",
+    response_model=SecurityFindingNoteListResponse,
+)
+def list_security_finding_notes(
+    finding_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityFindingNoteListResponse:
+    """Return all review notes for a finding, oldest first (M61.3).
+
+    Only members of the finding's workspace may view notes; others get 404.
+    """
+    _require_finding(finding_id, current_user, db)
+    notes = security_finding_note_service.list_notes(finding_id=finding_id, db=db)
+    return SecurityFindingNoteListResponse(
+        items=[SecurityFindingNoteResponse.model_validate(n) for n in notes],
+        total=len(notes),
+    )
+
+
+@router.post(
+    "/findings/{finding_id}/notes",
+    response_model=SecurityFindingNoteResponse,
+    status_code=201,
+)
+def create_security_finding_note(
+    finding_id: UUID4,
+    body: SecurityFindingNoteCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityFindingNoteResponse:
+    """Add a review note to a finding (M61.3).
+
+    Notes capture investigation context, owner handoff, or follow-up. A note
+    NEVER changes the finding's status and sends no notifications.
+
+    * 404 — finding not found, or not in the user's workspace.
+    * 422 — note body is empty / too short / too long.
+    """
+    finding = _require_finding(finding_id, current_user, db)
+    try:
+        note = security_finding_note_service.create_note(
+            finding_id=finding_id,
+            workspace_id=finding.workspace_id,
+            author_user_id=current_user.id,
+            body=body.body,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return SecurityFindingNoteResponse.model_validate(note)
+
+
+@router.get(
+    "/findings/{finding_id}/activity",
+    response_model=SecurityFindingActivityResponse,
+)
+def get_security_finding_activity(
+    finding_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityFindingActivityResponse:
+    """Return a combined, derived activity feed for a finding (M61.3).
+
+    Combines lifecycle actions (exposure opened, acknowledged, snoozed, risk
+    accepted, resolved) derived from the finding's own fields with note_added
+    entries. Read-only and metadata-only; emits nothing.
+
+    Only members of the finding's workspace may view activity; others get 404.
+    """
+    finding = _require_finding(finding_id, current_user, db)
+    notes = security_finding_note_service.list_notes(finding_id=finding_id, db=db)
+    items = security_finding_note_service.build_activity(finding=finding, notes=notes)
+    return SecurityFindingActivityResponse(
+        items=[SecurityFindingActivityItem(**it) for it in items],
+        total=len(items),
+    )

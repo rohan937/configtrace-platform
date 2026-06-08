@@ -21,6 +21,7 @@ from app.models.change_snooze_rule import ChangeSnoozeRule  # noqa: F401  (M57.3
 from app.models.workspace_policy import WorkspacePolicy  # noqa: F401  (M58.14)
 from app.models.expected_change_window import ExpectedChangeWindow  # noqa: F401  (M58.16)
 from app.models.security_finding import SecurityFinding  # noqa: F401  (M60.3)
+from app.models.security_finding_note import SecurityFindingNote  # noqa: F401  (M61.3)
 
 __all__ = [
     "Base",
