@@ -370,6 +370,9 @@ def update_notification_settings(
     slack_security_channel_id: Optional[str] = None,
     slack_security_alerts_enabled: Optional[bool] = None,
     slack_security_resolved_enabled: Optional[bool] = None,
+    email_security_alerts_enabled: Optional[bool] = None,
+    email_security_resolved_enabled: Optional[bool] = None,
+    email_security_recipients: Optional[str] = None,
     db: Session,
 ) -> WorkspaceNotificationSettings:
     """Persist notification settings changes for *workspace_id*.
@@ -456,6 +459,16 @@ def update_notification_settings(
     if slack_security_resolved_enabled is not None:
         row.slack_security_resolved_enabled = slack_security_resolved_enabled
 
+    # ── M61.8 Email routing (Drift vs Security) ────────────────────────────────
+    # Drift email is unchanged; these only control opt-in security emails.
+    # Empty recipients string clears the override (→ default recipient).
+    if email_security_alerts_enabled is not None:
+        row.email_security_alerts_enabled = email_security_alerts_enabled
+    if email_security_resolved_enabled is not None:
+        row.email_security_resolved_enabled = email_security_resolved_enabled
+    if email_security_recipients is not None:
+        row.email_security_recipients = email_security_recipients or None
+
     db.commit()
     db.refresh(row)
     return row
@@ -515,6 +528,14 @@ def build_settings_response(row: WorkspaceNotificationSettings) -> dict:
         "slack_security_resolved_enabled": bool(
             getattr(row, "slack_security_resolved_enabled", False)
         ),
+        # M61.8 Email routing (Drift vs Security).
+        "email_security_alerts_enabled": bool(
+            getattr(row, "email_security_alerts_enabled", False)
+        ),
+        "email_security_resolved_enabled": bool(
+            getattr(row, "email_security_resolved_enabled", False)
+        ),
+        "email_security_recipients": getattr(row, "email_security_recipients", None),
         "slack_installed_at": getattr(row, "slack_installed_at", None),
         "slack_app_last_test_at": getattr(row, "slack_app_last_test_at", None),
         "slack_app_last_error": getattr(row, "slack_app_last_error", None),

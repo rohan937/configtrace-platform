@@ -729,6 +729,11 @@ export interface WorkspaceNotificationSettings {
   slack_security_channel_id: string | null;
   slack_security_alerts_enabled: boolean;
   slack_security_resolved_enabled: boolean;
+  /** M61.8: separate email routing for Drift vs Security exposure. */
+  email_security_alerts_enabled: boolean;
+  email_security_resolved_enabled: boolean;
+  /** Comma/newline-separated recipients; null = use the default recipient. */
+  email_security_recipients: string | null;
   slack_installed_at: string | null;
   slack_app_last_test_at: string | null;
   /** Last delivery error message, or null when healthy. */
@@ -773,6 +778,10 @@ export interface NotificationSettingsUpdateRequest {
   slack_security_channel_id?: string;
   slack_security_alerts_enabled?: boolean;
   slack_security_resolved_enabled?: boolean;
+  /** M61.8: email routing for security exposures. Pass "" to clear recipients. */
+  email_security_alerts_enabled?: boolean;
+  email_security_resolved_enabled?: boolean;
+  email_security_recipients?: string;
 }
 
 export interface TestNotificationResponse {

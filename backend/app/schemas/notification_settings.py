@@ -52,6 +52,10 @@ class NotificationSettingsResponse(BaseModel):
     slack_security_channel_id: Optional[str] = None
     slack_security_alerts_enabled: bool = False
     slack_security_resolved_enabled: bool = False
+    # ── M61.8 Email routing (Drift vs Security) ───────────────────────────────
+    email_security_alerts_enabled: bool = False
+    email_security_resolved_enabled: bool = False
+    email_security_recipients: Optional[str] = None
     # Audit timestamps.
     slack_installed_at: Optional[datetime] = None
     slack_app_last_test_at: Optional[datetime] = None
@@ -110,6 +114,12 @@ class NotificationSettingsUpdateRequest(BaseModel):
     slack_security_channel_id: Optional[str] = Field(default=None, max_length=64)
     slack_security_alerts_enabled: Optional[bool] = None
     slack_security_resolved_enabled: Optional[bool] = None
+
+    # ── M61.8 Email routing (Drift vs Security) ───────────────────────────────
+    email_security_alerts_enabled: Optional[bool] = None
+    email_security_resolved_enabled: Optional[bool] = None
+    # Comma/newline-separated recipient list, or "" to clear (→ default recipient).
+    email_security_recipients: Optional[str] = Field(default=None, max_length=2000)
 
     @field_validator("notify_on_risk_level")
     @classmethod

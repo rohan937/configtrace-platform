@@ -180,6 +180,24 @@ class WorkspaceNotificationSettings(BaseMixin, Base):
     # Last delivery error message (if any).  Safe to return to admins.
     slack_app_last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # ── M61.8 — separate Drift vs Security email routing ───────────────────────
+    # Drift/change emails are unchanged (sent to the integration owner for
+    # high/critical changes). Security exposure emails are OPT-IN (default off)
+    # so no existing workspace is surprised by new security emails. Resolved
+    # security emails are also off by default (low-noise).
+    email_security_alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    email_security_resolved_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # Optional comma/newline-separated recipient list for security emails.
+    # Blank → fall back to the workspace default recipient (the integration
+    # owner, same as drift). Plain text, no secrets.
+    email_security_recipients: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True
+    )
+
     # ── Weekly digest (M58.15) ─────────────────────────────────────────────────
     # When True, a weekly digest email is sent to workspace admins on schedule.
     weekly_digest_enabled: Mapped[bool] = mapped_column(

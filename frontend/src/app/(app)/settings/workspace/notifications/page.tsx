@@ -1777,6 +1777,136 @@ function SlackRoutingCard({
   );
 }
 
+// ── Email routing: Drift vs Security (M61.8) ────────────────────────────────────
+
+function EmailRoutingCard({
+  settings,
+  workspaceId,
+  onUpdate,
+}: {
+  settings: WorkspaceNotificationSettings | null;
+  workspaceId: string;
+  onUpdate: (msg: string) => void;
+}) {
+  const { getToken } = useAuth();
+
+  const [securityEnabled, setSecurityEnabled] = useState(
+    settings?.email_security_alerts_enabled ?? false,
+  );
+  const [resolvedEnabled, setResolvedEnabled] = useState(
+    settings?.email_security_resolved_enabled ?? false,
+  );
+  const [recipients, setRecipients] = useState(settings?.email_security_recipients ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!settings) return;
+    setSecurityEnabled(settings.email_security_alerts_enabled ?? false);
+    setResolvedEnabled(settings.email_security_resolved_enabled ?? false);
+    setRecipients(settings.email_security_recipients ?? "");
+  }, [settings]);
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const token = await getToken();
+      await updateNotificationSettings(
+        workspaceId,
+        {
+          email_security_alerts_enabled: securityEnabled,
+          email_security_resolved_enabled: resolvedEnabled,
+          email_security_recipients: recipients.trim(),
+        },
+        token,
+      );
+      onUpdate("Email routing saved.");
+    } catch {
+      setError("Could not save email routing. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const labelStyle = { fontSize: "12px", color: "#8b90a0", marginBottom: "4px" } as const;
+  const inputStyle = {
+    width: "100%",
+    fontSize: "13px",
+    color: "#e8eaf0",
+    background: "#13151a",
+    border: "1px solid #2a2d38",
+    borderRadius: "8px",
+    padding: "8px 10px",
+  } as const;
+
+  return (
+    <div>
+      <p style={{ fontSize: "13px", color: "#8b90a0", margin: "0 0 14px", lineHeight: 1.6 }}>
+        Route security exposure emails to the people who own security review, while
+        keeping drift emails unchanged. Drift/change emails continue to go to the
+        existing recipients automatically.
+      </p>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "14px", maxWidth: "440px" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#c4c8d4" }}>
+          <input
+            type="checkbox"
+            checked={securityEnabled}
+            onChange={(e) => setSecurityEnabled(e.target.checked)}
+          />
+          Send Security Exposure emails (critical/high opened &amp; re-opened)
+        </label>
+
+        <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#c4c8d4" }}>
+          <input
+            type="checkbox"
+            checked={resolvedEnabled}
+            onChange={(e) => setResolvedEnabled(e.target.checked)}
+          />
+          Also email when an exposure is resolved (off by default — lower noise)
+        </label>
+
+        <div>
+          <div style={labelStyle}>Security email recipients</div>
+          <input
+            value={recipients}
+            onChange={(e) => setRecipients(e.target.value)}
+            placeholder="Leave blank to use the workspace default email recipient"
+            style={inputStyle}
+          />
+          <div style={{ fontSize: "11.5px", color: "#565b6e", marginTop: "4px" }}>
+            Comma-separated emails. Leave blank to use the workspace default
+            email recipient.
+          </div>
+        </div>
+
+        {error ? (
+          <div style={{ fontSize: "12.5px", color: "#e84040" }}>{error}</div>
+        ) : null}
+
+        <button
+          onClick={save}
+          disabled={saving}
+          style={{
+            alignSelf: "flex-start",
+            fontSize: "13px",
+            fontWeight: 600,
+            color: "#0e0f11",
+            background: saving ? "#3a4a6a" : "#f59e0b",
+            border: "none",
+            borderRadius: "8px",
+            padding: "8px 16px",
+            cursor: saving ? "default" : "pointer",
+          }}
+        >
+          {saving ? "Saving…" : "Save email routing"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function NotificationsSettingsPage() {
@@ -1989,6 +2119,15 @@ export default function NotificationsSettingsPage() {
             Email alerts are sent automatically to all workspace members for
             high and critical changes. No configuration needed.
           </p>
+        </SectionCard>
+
+        {/* ── Email routing: Drift vs Security (M61.8) ──────────────── */}
+        <SectionCard title="Email routing" accentColor="#f59e0b">
+          <EmailRoutingCard
+            settings={settings}
+            workspaceId={selectedWorkspace.id}
+            onUpdate={handleSlackAppUpdate}
+          />
         </SectionCard>
 
         {/* ── Slack App (recommended) ───────────────────────────────── */}

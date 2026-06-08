@@ -570,6 +570,9 @@ def update_notification_settings(
             slack_security_channel_id=body.slack_security_channel_id,
             slack_security_alerts_enabled=body.slack_security_alerts_enabled,
             slack_security_resolved_enabled=body.slack_security_resolved_enabled,
+            email_security_alerts_enabled=body.email_security_alerts_enabled,
+            email_security_resolved_enabled=body.email_security_resolved_enabled,
+            email_security_recipients=body.email_security_recipients,
             db=db,
         )
     except WebhookURLError as exc:

@@ -422,8 +422,23 @@ def sync_integration(
 
                         from app.config import settings as _cfg
                         _base_url = _cfg.APP_BASE_URL.rstrip("/")
+                        # M61.8: default security-email recipient = integration
+                        # owner email (same fallback as drift email). Used only
+                        # when no explicit recipient list is configured.
+                        _owner_email = None
+                        try:
+                            from app.models.user import User as _User
+                            _owner = (
+                                db.get(_User, integration.user_id)
+                                if integration.user_id is not None
+                                else None
+                            )
+                            _owner_email = getattr(_owner, "email", None) if _owner else None
+                        except Exception:
+                            _owner_email = None
                         _sec_slack_sent = 0
                         _sec_push_sent = 0
+                        _sec_email_sent = 0
                         for _ev in _sec_events:
                             _decision = _routing.route_security_event(
                                 event=_ev, settings=_routing_settings
@@ -475,6 +490,27 @@ def sync_integration(
                                         "finding_id=%s",
                                         _ev.finding_id,
                                     )
+
+                            # M61.8: opt-in security exposure email. Gated per
+                            # workspace by category + severity inside the
+                            # service. Guarded so an email failure never affects
+                            # the sync. Drift email is unchanged (alert_service).
+                            try:
+                                from app.services.security_email_alert_service import (
+                                    dispatch_security_email_for_event,
+                                )
+                                _sec_email_sent += dispatch_security_email_for_event(
+                                    event=_ev,
+                                    settings=_routing_settings,
+                                    base_url=_base_url,
+                                    fallback_recipient=_owner_email,
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "security_email_alerts: dispatch failed  "
+                                    "finding_id=%s",
+                                    _ev.finding_id,
+                                )
                         if _sec_slack_sent:
                             logger.info(
                                 "security_slack_alerts: sent=%d sync_run_id=%s",
@@ -485,6 +521,12 @@ def sync_integration(
                             logger.info(
                                 "security_push_alerts: total_sent=%d sync_run_id=%s",
                                 _sec_push_sent,
+                                sync_run_id,
+                            )
+                        if _sec_email_sent:
+                            logger.info(
+                                "security_email_alerts: total_sent=%d sync_run_id=%s",
+                                _sec_email_sent,
                                 sync_run_id,
                             )
                     except Exception:
