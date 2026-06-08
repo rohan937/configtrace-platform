@@ -68,6 +68,7 @@ from app.services import security_demo_data_service
 from app.services import security_coverage_service
 from app.services import security_beta_event_service
 from app.services import workspace_service
+from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
 
 router = APIRouter(prefix="/security", tags=["security"])
@@ -172,6 +173,11 @@ def accept_security_finding_risk(
     if finding is None:
         raise HTTPException(status_code=404, detail="Security finding not found.")
 
+    # M63.2 — accepting risk is a higher-impact action: admin/owner only.
+    workspace_permission_service.require_workspace_admin(
+        finding.workspace_id, current_user.id, db
+    )
+
     try:
         updated = security_finding_service.accept_finding_risk(
             db=db,
@@ -212,6 +218,11 @@ def acknowledge_security_finding(
     )
     if finding is None:
         raise HTTPException(status_code=404, detail="Security finding not found.")
+
+    # M63.2 — acknowledge is a collaborative review action: any member or above.
+    workspace_permission_service.require_workspace_member(
+        finding.workspace_id, current_user.id, db
+    )
 
     try:
         updated = security_finding_service.acknowledge_finding(
@@ -254,6 +265,11 @@ def snooze_security_finding(
     )
     if finding is None:
         raise HTTPException(status_code=404, detail="Security finding not found.")
+
+    # M63.2 — snoozing is a higher-impact action: admin/owner only.
+    workspace_permission_service.require_workspace_admin(
+        finding.workspace_id, current_user.id, db
+    )
 
     try:
         updated = security_finding_service.snooze_finding(
@@ -322,6 +338,10 @@ def create_security_finding_note(
     * 422 — note body is empty / too short / too long.
     """
     finding = _require_finding(finding_id, current_user, db)
+    # M63.2 — adding a review note is collaborative: any member or above.
+    workspace_permission_service.require_workspace_member(
+        finding.workspace_id, current_user.id, db
+    )
     try:
         note = security_finding_note_service.create_note(
             finding_id=finding_id,
@@ -417,6 +437,10 @@ def update_security_rule_setting(
         raise HTTPException(status_code=404, detail="Unknown security rule key.")
 
     workspace_id = _current_workspace_id(current_user, db)
+    # M63.2 — changing rule settings is admin/owner only.
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
     try:
         item = security_rule_settings_service.set_rule_enabled(
             workspace_id=workspace_id,
@@ -457,6 +481,10 @@ def seed_security_demo_data(
     no Slack/email/push notifications.
     """
     workspace_id = _current_workspace_id(current_user, db)
+    # M63.2 — seeding demo data mutates workspace data: admin/owner only.
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
     return SecurityDemoDataStatus(
         **security_demo_data_service.seed(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
@@ -471,6 +499,10 @@ def clear_security_demo_data(
 ) -> SecurityDemoClearResponse:
     """Remove only the demo-created Security Exposure rows for the workspace."""
     workspace_id = _current_workspace_id(current_user, db)
+    # M63.2 — clearing demo data mutates workspace data: admin/owner only.
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
     return SecurityDemoClearResponse(
         **security_demo_data_service.clear(workspace_id=workspace_id, db=db)
     )
