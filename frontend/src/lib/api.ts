@@ -585,6 +585,19 @@ export async function getSecurityBetaEventsSummary(
   return apiFetch(`/security/beta-events/summary${buildQuery(params)}`, { token });
 }
 
+/** Submit optional qualitative feedback after a report export (M63.6). */
+export async function submitSecurityBetaFeedback(
+  body: import("@/types").SecurityBetaFeedbackRequest,
+  token?: string | null,
+): Promise<import("@/types").SecurityBetaFeedbackResponse> {
+  return apiFetch(`/security/beta-feedback`, {
+    method: "POST",
+    token,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 /**
  * Enable or disable a security rule for the current workspace (M61.7).
  * Disabling stops future findings from that rule; it does not resolve existing

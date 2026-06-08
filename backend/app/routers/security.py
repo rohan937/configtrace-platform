@@ -66,12 +66,17 @@ from app.schemas.security_rule_pack import (
     SecurityRulePackResponse,
     SecurityRulePackRule,
 )
+from app.schemas.security_beta_feedback import (
+    SecurityBetaFeedbackCreate,
+    SecurityBetaFeedbackResponse,
+)
 from app.services import security_finding_service
 from app.services import security_finding_note_service
 from app.services import security_rule_settings_service
 from app.services import security_demo_data_service
 from app.services import security_coverage_service
 from app.services import security_beta_event_service
+from app.services import security_beta_feedback_service
 from app.services import security_rule_pack
 from app.services import workspace_service
 from app.services import workspace_permission_service
@@ -615,3 +620,33 @@ def get_security_beta_events_summary(
         db=db,
     )
     return SecurityBetaSummaryResponse(**data)
+
+
+@router.post("/beta-feedback", response_model=SecurityBetaFeedbackResponse, status_code=201)
+def create_security_beta_feedback(
+    body: SecurityBetaFeedbackCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityBetaFeedbackResponse:
+    """Record optional qualitative feedback after a report export (M63.6).
+
+    First-party + workspace-scoped. ``rating`` and ``feedback_type`` are
+    validated against fixed allowlists (422 on bad values); ``comment`` is
+    truncated; ``context`` keys are allowlisted + scalar-only — report contents,
+    evidence/remediation, notes, secrets, tokens, and payloads can never be
+    stored. Any authenticated workspace member may submit feedback.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    try:
+        feedback = security_beta_feedback_service.record_feedback(
+            workspace_id=workspace_id,
+            user_id=current_user.id,
+            feedback_type=body.feedback_type,
+            rating=body.rating,
+            comment=body.comment,
+            context=body.context,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return SecurityBetaFeedbackResponse(id=str(feedback.id), ok=True)

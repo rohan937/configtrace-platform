@@ -18,8 +18,8 @@ import type {
   SecurityCoverageProvider,
   SecurityRuleSetting,
 } from "@/types";
-import { getSecurityFindings, getSecurityCoverage, getSecurityRuleSettings, getSecurityRulePack } from "@/lib/api";
-import type { SecurityRulePack } from "@/types";
+import { getSecurityFindings, getSecurityCoverage, getSecurityRuleSettings, getSecurityRulePack, submitSecurityBetaFeedback } from "@/lib/api";
+import type { SecurityRulePack, SecurityBetaFeedbackRating } from "@/types";
 import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { getProviderMeta } from "@/lib/providers";
 import { SEVERITY_LABEL } from "@/components/security/findingDisplay";
@@ -86,6 +86,15 @@ export default function SecurityReportsPage() {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedExec, setCopiedExec] = useState(false);
+
+  // M63.6 — post-export feedback prompt (optional, non-blocking, dismissible).
+  const [feedbackVisible, setFeedbackVisible] = useState(false);
+  const [feedbackFormat, setFeedbackFormat] = useState<string>("");
+  const [feedbackRating, setFeedbackRating] = useState<SecurityBetaFeedbackRating | null>(null);
+  const [feedbackComment, setFeedbackComment] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
 
   const previewRef = useRef<HTMLPreElement>(null);
 
@@ -200,6 +209,8 @@ export default function SecurityReportsPage() {
 
   const fileStem = reportFileStem(generatedAtIso || new Date().toISOString());
 
+  const FEEDBACK_DISMISS_KEY = "ct.securityReportFeedback.dismissed";
+
   const trackExport = useCallback(
     (action: string) => {
       trackSecurityBetaEvent(
@@ -207,9 +218,65 @@ export default function SecurityReportsPage() {
         { action, report_type: config.reportType },
         { getToken, pagePath: "/security/reports" },
       );
+      // M63.6 — surface the (optional) feedback prompt after a successful export,
+      // unless the user dismissed/sent it before. Never blocks the download.
+      setFeedbackFormat(action);
+      let dismissed = false;
+      try {
+        dismissed = typeof window !== "undefined" && window.localStorage.getItem(FEEDBACK_DISMISS_KEY) === "1";
+      } catch {
+        dismissed = false;
+      }
+      if (!dismissed && !feedbackSent) {
+        setFeedbackVisible(true);
+      }
     },
-    [getToken, config.reportType],
+    [getToken, config.reportType, feedbackSent],
   );
+
+  const dismissFeedback = useCallback(() => {
+    setFeedbackVisible(false);
+    try {
+      window.localStorage.setItem(FEEDBACK_DISMISS_KEY, "1");
+    } catch {
+      /* private mode — session state already hides it */
+    }
+  }, []);
+
+  const sendFeedback = useCallback(async () => {
+    if (!feedbackRating) return;
+    setFeedbackBusy(true);
+    setFeedbackError(null);
+    try {
+      const token = await getToken();
+      await submitSecurityBetaFeedback(
+        {
+          feedback_type: "report_export",
+          rating: feedbackRating,
+          comment: feedbackComment.trim() || undefined,
+          context: {
+            report_type: config.reportType,
+            export_format: feedbackFormat,
+            finding_count: model.findings.length,
+            active_count: model.summary.active,
+            critical_count: model.summary.critical,
+            high_count: model.summary.high,
+          },
+        },
+        token,
+      );
+      setFeedbackSent(true);
+      try {
+        window.localStorage.setItem(FEEDBACK_DISMISS_KEY, "1");
+      } catch {
+        /* non-fatal */
+      }
+    } catch {
+      setFeedbackError("Could not send feedback. Please try again.");
+    } finally {
+      setFeedbackBusy(false);
+    }
+  }, [feedbackRating, feedbackComment, getToken, config.reportType, feedbackFormat, model]);
 
   const onCopy = useCallback(async () => {
     try {
@@ -439,6 +506,86 @@ export default function SecurityReportsPage() {
           Refresh
         </button>
       </div>
+
+      {/* M63.6 — optional, non-blocking feedback prompt after an export. */}
+      {feedbackVisible ? (
+        <div
+          className="bg-surface1 border border-border"
+          style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "18px", maxWidth: "560px" }}
+        >
+          {feedbackSent ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+              <span style={{ fontSize: "13px", color: "#3ccf7e", fontWeight: 600 }}>
+                Thanks — your feedback helps improve beta.
+              </span>
+              <button type="button" onClick={() => setFeedbackVisible(false)} style={secondaryBtn(false)}>
+                Close
+              </button>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: "13.5px", fontWeight: 600, color: "#e8eaf0" }}>Was this report useful?</div>
+              <p style={{ fontSize: "12px", color: "#565b6e", margin: "4px 0 12px" }}>
+                Optional · helps improve beta · does not include report contents.
+              </p>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {([
+                  { v: "useful", label: "Yes" },
+                  { v: "somewhat", label: "Somewhat" },
+                  { v: "not_useful", label: "No" },
+                ] as { v: SecurityBetaFeedbackRating; label: string }[]).map((o) => {
+                  const active = feedbackRating === o.v;
+                  return (
+                    <button
+                      key={o.v}
+                      type="button"
+                      onClick={() => setFeedbackRating(o.v)}
+                      style={{
+                        fontSize: "13px", fontWeight: 600, fontFamily: "inherit",
+                        color: active ? "#fff" : "#c4c8d4",
+                        background: active ? "#6b9cf8" : "transparent",
+                        border: `1px solid ${active ? "#6b9cf8" : "#2a2d38"}`,
+                        borderRadius: "8px", padding: "6px 16px", cursor: "pointer",
+                      }}
+                    >
+                      {o.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <textarea
+                value={feedbackComment}
+                onChange={(e) => setFeedbackComment(e.target.value)}
+                rows={2}
+                maxLength={500}
+                placeholder="What would make this report more useful? (optional)"
+                style={{
+                  width: "100%", boxSizing: "border-box", marginTop: "12px",
+                  background: "#13151a", border: "1px solid #2a2d38", borderRadius: "8px",
+                  padding: "8px 10px", fontSize: "12.5px", color: "#e8eaf0", fontFamily: "inherit",
+                  resize: "vertical",
+                }}
+              />
+              {feedbackError ? (
+                <p style={{ fontSize: "12px", color: "#e07a5f", margin: "8px 0 0" }}>{feedbackError}</p>
+              ) : null}
+              <div style={{ display: "flex", gap: "10px", marginTop: "12px" }}>
+                <button
+                  type="button"
+                  onClick={sendFeedback}
+                  disabled={!feedbackRating || feedbackBusy}
+                  style={primaryBtn(!feedbackRating || feedbackBusy)}
+                >
+                  {feedbackBusy ? "Sending…" : "Send feedback"}
+                </button>
+                <button type="button" onClick={dismissFeedback} style={secondaryBtn(false)}>
+                  Dismiss
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {/* 3. Report preview / states */}
       {loading ? (

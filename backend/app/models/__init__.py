@@ -24,6 +24,7 @@ from app.models.security_finding import SecurityFinding  # noqa: F401  (M60.3)
 from app.models.security_finding_note import SecurityFindingNote  # noqa: F401  (M61.3)
 from app.models.security_rule_setting import SecurityRuleSetting  # noqa: F401  (M61.7)
 from app.models.security_beta_event import SecurityBetaEvent  # noqa: F401  (M63.1)
+from app.models.security_beta_feedback import SecurityBetaFeedback  # noqa: F401  (M63.6)
 
 __all__ = [
     "Base",
@@ -49,4 +50,5 @@ __all__ = [
     "SecurityFindingNote",
     "SecurityRuleSetting",
     "SecurityBetaEvent",
+    "SecurityBetaFeedback",
 ]

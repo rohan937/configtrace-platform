@@ -1553,6 +1553,21 @@ export interface SecurityRulePack {
   rules: SecurityRulePackRule[];
 }
 
+// ── M63.6 — beta feedback after report export ─────────────────────────────────
+export type SecurityBetaFeedbackRating = "useful" | "somewhat" | "not_useful";
+
+export interface SecurityBetaFeedbackRequest {
+  feedback_type?: string; // default "report_export"
+  rating: SecurityBetaFeedbackRating;
+  comment?: string;
+  context?: Record<string, string | number | boolean>;
+}
+
+export interface SecurityBetaFeedbackResponse {
+  id: string;
+  ok: boolean;
+}
+
 // ── M63.4 — beta analytics summary ────────────────────────────────────────────
 export interface BetaRecentEvent {
   event_name: string;
