@@ -20,6 +20,7 @@ import { formatRelativeTime, formatAbsoluteTime } from "@/lib/utils";
 import { usePollingRefresh } from "@/hooks/usePollingRefresh";
 import { formatFieldLabel } from "@/lib/timeline";
 import { PROVIDER_IDS, getProviderMeta } from "@/lib/providers";
+import SecurityPostureSummaryCard from "@/components/security/SecurityPostureSummaryCard";
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
@@ -1400,6 +1401,10 @@ export default function DashboardPage() {
       )}
 
       <div className="px-6 py-6">
+        {/* M62.6: Security Exposure posture summary — visible in every state,
+            self-contained, and non-blocking to the rest of the dashboard. */}
+        <SecurityPostureSummaryCard />
+
         {loading && <LoadingState />}
         {!loading && error && <ErrorState message={error} />}
 
