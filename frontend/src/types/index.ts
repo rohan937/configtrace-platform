@@ -1600,3 +1600,48 @@ export interface SecurityDemoClearResponse {
   findings_deleted: number;
   notes_deleted: number;
 }
+
+/** Coverage status for a provider (M62.3). */
+export type SecurityCoverageStatus =
+  | "good"
+  | "limited"
+  | "not_synced"
+  | "needs_attention"
+  | "not_connected";
+
+export interface SecurityCoverageRule {
+  rule_key: string;
+  enabled: boolean;
+  supported: boolean;
+}
+
+export interface SecurityCoverageProvider {
+  provider: string;
+  connected: boolean;
+  integration_id: string | null;
+  integration_status: string | null;
+  last_synced_at: string | null;
+  coverage_status: SecurityCoverageStatus;
+  monitored_surfaces: string[];
+  observed_record_types: string[];
+  expected_record_types: string[];
+  missing_record_types: string[];
+  active_rules: number;
+  disabled_rules: number;
+  supported_rules: number;
+  recommendation: string;
+  rules: SecurityCoverageRule[];
+}
+
+export interface SecurityCoverageSummary {
+  connected_providers: number;
+  good_coverage: number;
+  limited_coverage: number;
+  not_connected: number;
+  disabled_rules: number;
+}
+
+export interface SecurityCoverageResponse {
+  providers: SecurityCoverageProvider[];
+  summary: SecurityCoverageSummary;
+}

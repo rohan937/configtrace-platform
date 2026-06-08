@@ -56,10 +56,12 @@ from app.schemas.security_demo_data import (
     SecurityDemoClearResponse,
     SecurityDemoDataStatus,
 )
+from app.schemas.security_coverage import SecurityCoverageResponse
 from app.services import security_finding_service
 from app.services import security_finding_note_service
 from app.services import security_rule_settings_service
 from app.services import security_demo_data_service
+from app.services import security_coverage_service
 from app.services import workspace_service
 from app.services.security_rule_registry import is_known_rule_key
 
@@ -466,4 +468,24 @@ def clear_security_demo_data(
     workspace_id = _current_workspace_id(current_user, db)
     return SecurityDemoClearResponse(
         **security_demo_data_service.clear(workspace_id=workspace_id, db=db)
+    )
+
+
+# ── Coverage quality (M62.3) ──────────────────────────────────────────────────
+
+
+@router.get("/coverage", response_model=SecurityCoverageResponse)
+def get_security_coverage(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCoverageResponse:
+    """Report Security Exposure coverage quality per provider (read-only, M62.3).
+
+    Inspects stored snapshots only — never calls provider APIs. Reports which
+    surfaces are monitored and which rules have enough data to run. Demo and
+    deleted integrations are ignored. Good coverage does not mean no risk exists.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    return SecurityCoverageResponse(
+        **security_coverage_service.get_coverage(workspace_id, db)
     )

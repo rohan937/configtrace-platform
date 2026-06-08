@@ -600,6 +600,13 @@ export async function clearSecurityDemoData(
   return apiFetch(`/security/demo-data`, { method: "DELETE", token });
 }
 
+/** Provider coverage-quality report for Security Exposure (M62.3). */
+export async function getSecurityCoverage(
+  token?: string | null,
+): Promise<import("@/types").SecurityCoverageResponse> {
+  return apiFetch(`/security/coverage`, { token });
+}
+
 // ── M57.3: Needs Review queue ─────────────────────────────────────────────────
 
 export interface GetNeedsReviewParams {
