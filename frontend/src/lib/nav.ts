@@ -60,6 +60,7 @@ export const SECURITY_NAV: NavItem[] = [
   { label: "Affected Assets", href: "/security/assets" },
   { label: "Exposure Timeline", href: "/security/timeline" },
   { label: "Incident Review", href: "/security/incident-review" },
+  { label: "Reports", href: "/security/reports" },
   { label: "Security Rules", href: "/security/rules" },
   // Shared platform pages — reuse existing routes (no duplication).
   { label: "Integrations", href: "/integrations", shared: true },
