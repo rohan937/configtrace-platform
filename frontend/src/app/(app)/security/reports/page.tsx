@@ -9,11 +9,16 @@
  * metadata-only — see lib/securityReportExport.ts for the privacy invariants.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 
-import type { SecurityFinding, SecurityFindingSeverity } from "@/types";
-import { getSecurityFindings } from "@/lib/api";
+import type {
+  SecurityFinding,
+  SecurityFindingSeverity,
+  SecurityCoverageProvider,
+  SecurityRuleSetting,
+} from "@/types";
+import { getSecurityFindings, getSecurityCoverage, getSecurityRuleSettings } from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
 import { SEVERITY_LABEL } from "@/components/security/findingDisplay";
 import PageHeader from "@/components/common/PageHeader";
@@ -22,9 +27,12 @@ import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 import {
   type ReportConfig,
+  type ReportType,
+  REPORT_TYPE_LABEL,
   DEFAULT_REPORT_CONFIG,
   buildReportModel,
   generateMarkdown,
+  generateExecutiveSummaryMarkdown,
   generateJSON,
   generateFindingsCSV,
   reportFileStem,
@@ -67,13 +75,19 @@ export default function SecurityReportsPage() {
   const { getToken } = useAuth();
 
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
+  const [coverage, setCoverage] = useState<SecurityCoverageProvider[]>([]);
+  const [ruleSettings, setRuleSettings] = useState<SecurityRuleSetting[]>([]);
   const [total, setTotal] = useState(0);
   const [generatedAtIso, setGeneratedAtIso] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedExec, setCopiedExec] = useState(false);
+
+  const previewRef = useRef<HTMLPreElement>(null);
 
   // Controls
+  const [reportType, setReportType] = useState<ReportType>(DEFAULT_REPORT_CONFIG.reportType);
   const [periodMode, setPeriodMode] = useState<PeriodMode>("7d");
   const [customStart, setCustomStart] = useState<string>(() => toLocalInput(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
   const [customEnd, setCustomEnd] = useState<string>(() => toLocalInput(new Date()));
@@ -87,6 +101,9 @@ export default function SecurityReportsPage() {
     assets: DEFAULT_REPORT_CONFIG.includeAssets,
     ruleCoverage: DEFAULT_REPORT_CONFIG.includeRuleCoverage,
     activitySummary: DEFAULT_REPORT_CONFIG.includeActivitySummary,
+    coverage: DEFAULT_REPORT_CONFIG.includeCoverage,
+    confidence: DEFAULT_REPORT_CONFIG.includeConfidence,
+    ruleSettings: DEFAULT_REPORT_CONFIG.includeRuleSettings,
   });
 
   const load = useCallback(async () => {
@@ -94,13 +111,27 @@ export default function SecurityReportsPage() {
     setError(null);
     try {
       const token = await getToken();
-      const res = await getSecurityFindings({ page_size: FETCH_SIZE }, token);
-      setFindings(res.items ?? []);
-      setTotal(res.total ?? 0);
+      // Findings are required; coverage + rule settings are optional enrichers
+      // and degrade gracefully so the report still renders if they fail.
+      const [findingsRes, coverageRes, ruleRes] = await Promise.allSettled([
+        getSecurityFindings({ page_size: FETCH_SIZE }, token),
+        getSecurityCoverage(token),
+        getSecurityRuleSettings(token),
+      ]);
+
+      if (findingsRes.status !== "fulfilled") {
+        throw new Error("findings");
+      }
+      setFindings(findingsRes.value.items ?? []);
+      setTotal(findingsRes.value.total ?? 0);
+      setCoverage(coverageRes.status === "fulfilled" ? coverageRes.value.providers ?? [] : []);
+      setRuleSettings(ruleRes.status === "fulfilled" ? ruleRes.value.items ?? [] : []);
       setGeneratedAtIso(new Date().toISOString());
     } catch {
       setError("Could not load report data. Please try again.");
       setFindings([]);
+      setCoverage([]);
+      setRuleSettings([]);
       setTotal(0);
     } finally {
       setLoading(false);
@@ -125,6 +156,7 @@ export default function SecurityReportsPage() {
       start = end - PERIOD_HOURS[periodMode] * 60 * 60 * 1000;
     }
     return {
+      reportType,
       periodLabel: PERIOD_LABEL[periodMode],
       start,
       end,
@@ -137,12 +169,19 @@ export default function SecurityReportsPage() {
       includeAssets: inc.assets,
       includeRuleCoverage: inc.ruleCoverage,
       includeActivitySummary: inc.activitySummary,
+      includeCoverage: inc.coverage,
+      includeConfidence: inc.confidence,
+      includeRuleSettings: inc.ruleSettings,
     };
-  }, [periodMode, customStart, customEnd, provider, severity, inc]);
+  }, [reportType, periodMode, customStart, customEnd, provider, severity, inc]);
 
   const model = useMemo(
-    () => buildReportModel(findings, config, generatedAtIso || new Date(0).toISOString()),
-    [findings, config, generatedAtIso],
+    () =>
+      buildReportModel(findings, config, generatedAtIso || new Date(0).toISOString(), {
+        coverage,
+        ruleSettings,
+      }),
+    [findings, config, generatedAtIso, coverage, ruleSettings],
   );
   const markdown = useMemo(() => generateMarkdown(model), [model]);
 
@@ -163,8 +202,45 @@ export default function SecurityReportsPage() {
     }
   }, [markdown]);
 
+  const onCopyExec = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(generateExecutiveSummaryMarkdown(model));
+      setCopiedExec(true);
+      window.setTimeout(() => setCopiedExec(false), 2000);
+    } catch {
+      setError("Could not copy to clipboard. Use Download Markdown instead.");
+    }
+  }, [model]);
+
+  // Section jump: scroll the Markdown preview to the first matching heading.
+  const jumpTo = useCallback(
+    (headings: string[]) => {
+      const el = previewRef.current;
+      if (!el) return;
+      let idx = -1;
+      for (const h of headings) {
+        idx = markdown.indexOf(h);
+        if (idx >= 0) break;
+      }
+      if (idx < 0) return;
+      const linesBefore = markdown.slice(0, idx).split("\n").length - 1;
+      const totalLines = Math.max(1, markdown.split("\n").length);
+      el.scrollTop = (linesBefore / totalLines) * (el.scrollHeight - el.clientHeight);
+    },
+    [markdown],
+  );
+
   const noData = findings.length === 0;
   const noMatches = !noData && model.findings.length === 0;
+
+  const JUMP_TARGETS: { label: string; headings: string[] }[] = [
+    { label: "Summary", headings: ["## Executive posture summary"] },
+    { label: "Findings", headings: ["## Findings", "## Open critical and high exposures"] },
+    { label: "Assets", headings: ["## Affected assets"] },
+    { label: "Rules", headings: ["## Rule coverage", "## Rule confidence"] },
+    { label: "Coverage", headings: ["## Provider coverage"] },
+    { label: "Checklist", headings: ["## Suggested follow-up"] },
+  ];
 
   return (
     <div>
@@ -183,6 +259,15 @@ export default function SecurityReportsPage() {
       <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "22px" }}>
         <SectionLabel>Report configuration</SectionLabel>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "center", margin: "12px 0" }}>
+          <FilterSelect
+            label="Report type"
+            value={reportType}
+            onChange={(v) => setReportType(v as ReportType)}
+            options={(["summary", "review_packet", "rule_coverage_appendix"] as ReportType[]).map((t) => ({
+              value: t,
+              label: REPORT_TYPE_LABEL[t],
+            }))}
+          />
           <FilterSelect
             label="Period"
             value={periodMode}
@@ -230,7 +315,10 @@ export default function SecurityReportsPage() {
           <Check label="Snoozed" checked={inc.snoozed} onChange={(v) => setInc((p) => ({ ...p, snoozed: v }))} />
           <Check label="Affected assets" checked={inc.assets} onChange={(v) => setInc((p) => ({ ...p, assets: v }))} />
           <Check label="Rule coverage" checked={inc.ruleCoverage} onChange={(v) => setInc((p) => ({ ...p, ruleCoverage: v }))} />
-          <Check label="Activity summary (counts only)" checked={inc.activitySummary} onChange={(v) => setInc((p) => ({ ...p, activitySummary: v }))} />
+          <Check label="Review status (counts only)" checked={inc.activitySummary} onChange={(v) => setInc((p) => ({ ...p, activitySummary: v }))} />
+          <Check label="Provider coverage" checked={inc.coverage} onChange={(v) => setInc((p) => ({ ...p, coverage: v }))} />
+          <Check label="Rule confidence" checked={inc.confidence} onChange={(v) => setInc((p) => ({ ...p, confidence: v }))} />
+          <Check label="Disabled rules (rule settings)" checked={inc.ruleSettings} onChange={(v) => setInc((p) => ({ ...p, ruleSettings: v }))} />
         </div>
       </div>
 
@@ -247,8 +335,32 @@ export default function SecurityReportsPage() {
         <Metric label="Critical (active)" value={model.summary.critical} accent="#e84040" />
         <Metric label="High (active)" value={model.summary.high} accent="#f5632a" />
         <Metric label="Accepted risk" value={model.summary.acceptedRisks} accent="#f5a623" />
+        <Metric label="High-confidence findings" value={model.confidence.high} accent="#3ccf7e" />
         <Metric label="Affected assets" value={model.summary.affectedAssets} accent="#6b9cf8" />
-        <Metric label="Rules evaluated" value={model.summary.rulesEvaluated} accent="#3ccf7e" />
+      </div>
+
+      {/* Section jump links */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", marginBottom: "16px" }}>
+        <span style={{ fontSize: "12px", color: "#565b6e", marginRight: "4px" }}>Jump to:</span>
+        {JUMP_TARGETS.map((t) => {
+          const present = t.headings.some((h) => markdown.includes(h));
+          return (
+            <button
+              key={t.label}
+              type="button"
+              disabled={!present || noData || noMatches}
+              onClick={() => jumpTo(t.headings)}
+              style={{
+                fontSize: "12px", color: present ? "#6b9cf8" : "#565b6e", background: "transparent",
+                border: "1px solid #2a2d38", borderRadius: "999px", padding: "4px 11px",
+                cursor: present && !noData && !noMatches ? "pointer" : "not-allowed",
+                opacity: present ? 1 : 0.5, fontFamily: "inherit",
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Export buttons */}
@@ -268,6 +380,14 @@ export default function SecurityReportsPage() {
           style={secondaryBtn(noData || noMatches)}
         >
           {copied ? "Copied ✓" : "Copy Markdown"}
+        </button>
+        <button
+          type="button"
+          disabled={noData || noMatches}
+          onClick={onCopyExec}
+          style={secondaryBtn(noData || noMatches)}
+        >
+          {copiedExec ? "Copied ✓" : "Copy executive summary"}
         </button>
         <button
           type="button"
@@ -303,6 +423,7 @@ export default function SecurityReportsPage() {
         <div>
           <SectionLabel>Report preview</SectionLabel>
           <pre
+            ref={previewRef}
             className="bg-surface1 border border-border"
             style={{
               marginTop: "10px", borderRadius: "12px", padding: "18px 20px",

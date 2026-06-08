@@ -1,29 +1,54 @@
 /**
- * securityReportExport.ts — build a shareable Security Exposure report (M61.6).
+ * securityReportExport.ts — build a shareable Security Exposure review packet
+ * (M61.6, expanded in M62.7).
  *
- * Deterministic, frontend-only report generation from existing data
- * (GET /security/findings + the static rule catalog + securityAssets grouping).
- * Output is a customer/demo-friendly Markdown summary (plus optional JSON/CSV).
+ * Deterministic, frontend-only report generation from existing data:
+ *   • GET /security/findings              (findings metadata)
+ *   • GET /security/coverage   (M62.3)    (provider coverage quality)
+ *   • GET /security/rules/settings (M61.7) (rule enabled/disabled state)
+ *   • the static rule catalog + securityAssets grouping
+ *
+ * Output is a customer-facing "security exposure review packet" in Markdown,
+ * plus metadata-only JSON and a findings CSV.
  *
  * Privacy / metadata-only invariants:
  *   • Never include evidence blobs, remediation blobs, secrets, tokens, payloads,
- *     or raw rule internals.
+ *     webhook signing secrets, private keys, or raw rule internals.
  *   • Never export review-note bodies. (We do not even fetch them here.)
  *   • The only human-entered text included is a finding's acceptance reason,
  *     which is the intentional justification for an accepted risk.
  *   • Careful wording: "configuration exposure", "risky current state",
  *     "accepted risk", "snoozed", "resolved". Never breach/attack/compromise or
- *     compliance/SOC/SIEM claims.
+ *     compliance/SOC/SIEM certification claims.
  */
 
-import type { SecurityFinding, SecurityFindingSeverity } from "@/types";
+import type {
+  SecurityFinding,
+  SecurityFindingSeverity,
+  SecurityCoverageProvider,
+  SecurityRuleSetting,
+} from "@/types";
 import { groupFindingsByAsset, type AffectedAsset } from "@/lib/securityAssets";
 import { findingInWindow, type TimeWindow } from "@/lib/securityIncidentReview";
 import { SECURITY_RULES, type SecurityRuleMeta } from "@/lib/securityRuleCatalog";
-import { SEVERITY_RANK, SEVERITY_LABEL, STATUS_LABEL } from "@/components/security/findingDisplay";
+import {
+  SEVERITY_RANK,
+  SEVERITY_LABEL,
+  STATUS_LABEL,
+  CONFIDENCE_LABEL,
+} from "@/components/security/findingDisplay";
 import { getProviderMeta } from "@/lib/providers";
 
+export type ReportType = "summary" | "review_packet" | "rule_coverage_appendix";
+
+export const REPORT_TYPE_LABEL: Record<ReportType, string> = {
+  summary: "Security Exposure Summary",
+  review_packet: "Review Packet",
+  rule_coverage_appendix: "Rule Coverage Appendix",
+};
+
 export interface ReportConfig {
+  reportType: ReportType;
   periodLabel: string;
   /** epoch ms inclusive; null = all time (no period filter). */
   start: number | null;
@@ -37,9 +62,13 @@ export interface ReportConfig {
   includeAssets: boolean;
   includeRuleCoverage: boolean;
   includeActivitySummary: boolean;
+  includeCoverage: boolean; // M62.7: provider coverage section (M62.3 data)
+  includeConfidence: boolean; // M62.7: rule confidence section (M62.4 data)
+  includeRuleSettings: boolean; // M62.7: reflect enabled/disabled (M61.7 data)
 }
 
 export const DEFAULT_REPORT_CONFIG: ReportConfig = {
+  reportType: "review_packet",
   periodLabel: "Last 7 days",
   start: null,
   end: null,
@@ -52,7 +81,20 @@ export const DEFAULT_REPORT_CONFIG: ReportConfig = {
   includeAssets: true,
   includeRuleCoverage: true,
   includeActivitySummary: true,
+  includeCoverage: true,
+  includeConfidence: true,
+  includeRuleSettings: true,
 };
+
+export interface CoverageRow {
+  provider: string;
+  coverage_status: string;
+  observed_record_types: string[];
+  missing_record_types: string[];
+  active_rules: number;
+  disabled_rules: number;
+  recommendation: string;
+}
 
 export interface ReportModel {
   generatedAtIso: string;
@@ -65,15 +107,40 @@ export interface ReportModel {
     acceptedRisks: number;
     snoozed: number;
     resolvedInPeriod: number;
+    resolved: number; // alias of resolvedInPeriod for report clarity
     affectedAssets: number;
     providersCovered: number;
+    providersGoodCoverage: number;
+    providersLimitedCoverage: number;
+    disabledRules: number;
     rulesEvaluated: number;
   };
+  reviewStatus: {
+    activeUnreviewed: number;
+    acknowledgedActive: number; // active findings with a recorded review action
+    acceptedRisk: number;
+    snoozed: number;
+    resolved: number;
+  };
+  confidence: {
+    high: number;
+    medium: number;
+    low: number;
+    criticalHighActive: SecurityFinding[]; // active critical/high, sorted
+  };
+  coverage: CoverageRow[];
+  ruleSettingsByKey: Record<string, boolean>; // rule_key -> enabled
   statusBreakdown: { status: string; count: number }[];
   severityBreakdown: { severity: string; count: number }[];
   providerBreakdown: { provider: string; count: number }[];
   assets: AffectedAsset[];
   ruleCoverage: SecurityRuleMeta[];
+  followUps: string[];
+}
+
+export interface ReportExtras {
+  coverage?: SecurityCoverageProvider[] | null;
+  ruleSettings?: SecurityRuleSetting[] | null;
 }
 
 const INCLUDED_STATUSES = (c: ReportConfig): Set<string> => {
@@ -110,6 +177,7 @@ export function buildReportModel(
   allFindings: SecurityFinding[],
   config: ReportConfig,
   generatedAtIso: string,
+  extras: ReportExtras = {},
 ): ReportModel {
   const statuses = INCLUDED_STATUSES(config);
   const hasWindow = config.start !== null && config.end !== null;
@@ -165,26 +233,134 @@ export function buildReportModel(
     .map(([provider, count]) => ({ provider, count }))
     .sort((a, b) => b.count - a.count || a.provider.localeCompare(b.provider));
 
+  // ── Review status (counts only; never note bodies) ─────────────────────────
+  const activeUnreviewed = active.filter((f) => !f.reviewed_at).length;
+  const acknowledgedActive = active.filter((f) => !!f.reviewed_at).length;
+  const reviewStatus = {
+    activeUnreviewed,
+    acknowledgedActive,
+    acceptedRisk: acceptedRisks.length,
+    snoozed: snoozed.length,
+    resolved: resolvedInPeriod.length,
+  };
+
+  // ── Confidence (M62.4) ─────────────────────────────────────────────────────
+  const confCount = (level: string) => findings.filter((f) => f.confidence === level).length;
+  const criticalHighActive = active.filter(
+    (f) => f.severity === "critical" || f.severity === "high",
+  );
+  const confidence = {
+    high: confCount("high"),
+    medium: confCount("medium"),
+    low: confCount("low"),
+    criticalHighActive,
+  };
+
+  // ── Provider coverage (M62.3) ──────────────────────────────────────────────
+  const coverageSource = config.includeCoverage ? extras.coverage ?? [] : [];
+  const coverage: CoverageRow[] = coverageSource
+    .filter((p) => config.provider === "all" || p.provider === config.provider)
+    .map((p) => ({
+      provider: p.provider,
+      coverage_status: p.coverage_status,
+      observed_record_types: p.observed_record_types ?? [],
+      missing_record_types: p.missing_record_types ?? [],
+      active_rules: p.active_rules ?? 0,
+      disabled_rules: p.disabled_rules ?? 0,
+      recommendation: p.recommendation ?? "",
+    }))
+    .sort((a, b) => a.provider.localeCompare(b.provider));
+
+  const providersGoodCoverage = coverage.filter((c) => c.coverage_status === "good").length;
+  const providersLimitedCoverage = coverage.filter((c) => c.coverage_status === "limited").length;
+
+  // ── Rule settings (M61.7) ──────────────────────────────────────────────────
+  const ruleSettingsByKey: Record<string, boolean> = {};
+  let disabledRules = 0;
+  if (config.includeRuleSettings) {
+    for (const rs of extras.ruleSettings ?? []) {
+      ruleSettingsByKey[rs.rule_key] = rs.enabled;
+      if (!rs.enabled) disabledRules += 1;
+    }
+  }
+
+  const summary = {
+    active: active.length,
+    critical: active.filter((f) => f.severity === "critical").length,
+    high: active.filter((f) => f.severity === "high").length,
+    acceptedRisks: acceptedRisks.length,
+    snoozed: snoozed.length,
+    resolvedInPeriod: resolvedInPeriod.length,
+    resolved: resolvedInPeriod.length,
+    affectedAssets: assets.length,
+    providersCovered: provMap.size,
+    providersGoodCoverage,
+    providersLimitedCoverage,
+    disabledRules,
+    rulesEvaluated: ruleCoverage.length,
+  };
+
+  // ── Deterministic, context-aware follow-up checklist ───────────────────────
+  const followUps: string[] = [];
+  if (summary.critical + summary.high > 0) followUps.push("Review critical/high active exposures.");
+  if (summary.acceptedRisks > 0) followUps.push("Confirm accepted risks still have owners and valid expiry dates.");
+  if (summary.snoozed > 0) followUps.push("Revisit snoozed findings before expiry.");
+  if (providersLimitedCoverage > 0) followUps.push("Review provider coverage gaps.");
+  if (disabledRules > 0) followUps.push("Confirm disabled rules are intentional.");
+  if (activeUnreviewed > 0) followUps.push("Add review notes or acknowledgement for unreviewed exposures.");
+  followUps.push("Re-run sync after remediation.");
+
   return {
     generatedAtIso,
     config,
     findings,
-    summary: {
-      active: active.length,
-      critical: active.filter((f) => f.severity === "critical").length,
-      high: active.filter((f) => f.severity === "high").length,
-      acceptedRisks: acceptedRisks.length,
-      snoozed: snoozed.length,
-      resolvedInPeriod: resolvedInPeriod.length,
-      affectedAssets: assets.length,
-      providersCovered: provMap.size,
-      rulesEvaluated: ruleCoverage.length,
-    },
+    summary,
+    reviewStatus,
+    confidence,
+    coverage,
+    ruleSettingsByKey,
     statusBreakdown,
     severityBreakdown,
     providerBreakdown,
     assets,
     ruleCoverage,
+    followUps,
+  };
+}
+
+// ── Section flags by report type ─────────────────────────────────────────────
+
+interface SectionFlags {
+  executive: boolean;
+  reviewStatus: boolean;
+  breakdowns: boolean;
+  openCritHigh: boolean;
+  findingsTable: boolean;
+  assets: boolean;
+  acceptedRegister: boolean;
+  snoozedRegister: boolean;
+  confidence: boolean;
+  providerCoverage: boolean;
+  ruleCoverage: boolean;
+  followUp: boolean;
+}
+
+function sectionFlags(c: ReportConfig): SectionFlags {
+  const appendix = c.reportType === "rule_coverage_appendix";
+  const packet = c.reportType === "review_packet";
+  return {
+    executive: true,
+    reviewStatus: !appendix && c.includeActivitySummary,
+    breakdowns: packet,
+    openCritHigh: !appendix,
+    findingsTable: packet,
+    assets: !appendix && c.includeAssets,
+    acceptedRegister: !appendix && c.includeAcceptedRisk,
+    snoozedRegister: !appendix && c.includeSnoozed,
+    confidence: c.includeConfidence && (packet || appendix),
+    providerCoverage: c.includeCoverage,
+    ruleCoverage: c.includeRuleCoverage && (packet || appendix),
+    followUp: !appendix,
   };
 }
 
@@ -204,13 +380,26 @@ function statusLabel(status: string): string {
 function provLabel(provider: string): string {
   return getProviderMeta(provider).shortLabel;
 }
+function confLabel(conf: string | null | undefined): string {
+  if (!conf) return "—";
+  return CONFIDENCE_LABEL[conf] ?? conf;
+}
+function coverageLabel(status: string): string {
+  const map: Record<string, string> = {
+    good: "Good",
+    limited: "Limited",
+    not_synced: "Not synced",
+    needs_attention: "Needs attention",
+    not_connected: "Not connected",
+  };
+  return map[status] ?? status;
+}
 
-export function generateMarkdown(model: ReportModel): string {
+function header(model: ReportModel, L: string[]): void {
   const c = model.config;
-  const L: string[] = [];
-
-  // 1. Header
   L.push("# ConfigTrace — Security Exposure Report");
+  L.push("");
+  L.push(`_${REPORT_TYPE_LABEL[c.reportType]}_`);
   L.push("");
   L.push(`- Generated: ${fmtUtc(model.generatedAtIso)}`);
   L.push(`- Period: ${c.periodLabel}${c.start && c.end ? ` (${fmtUtc(new Date(c.start).toISOString())} → ${fmtUtc(new Date(c.end).toISOString())})` : ""}`);
@@ -227,10 +416,11 @@ export function generateMarkdown(model: ReportModel): string {
   L.push(`- Filters: ${filters.join(" · ")}`);
   L.push(`- Scope: metadata-only configuration exposure findings. This report does not inspect payloads, secrets, or customer data.`);
   L.push("");
+}
 
-  // 2. Executive summary
+function executiveSummary(model: ReportModel, L: string[]): void {
   const s = model.summary;
-  L.push("## Executive summary");
+  L.push("## Executive posture summary");
   L.push("");
   L.push(`| Metric | Count |`);
   L.push(`| --- | ---: |`);
@@ -239,98 +429,196 @@ export function generateMarkdown(model: ReportModel): string {
   L.push(`| High (active) | ${s.high} |`);
   L.push(`| Accepted risks | ${s.acceptedRisks} |`);
   L.push(`| Snoozed findings | ${s.snoozed} |`);
-  L.push(`| Resolved in period | ${s.resolvedInPeriod} |`);
+  L.push(`| Resolved findings | ${s.resolved} |`);
   L.push(`| Affected assets | ${s.affectedAssets} |`);
-  L.push(`| Providers covered | ${s.providersCovered} |`);
+  if (model.config.includeCoverage) {
+    L.push(`| Providers with good coverage | ${s.providersGoodCoverage} |`);
+    L.push(`| Providers with limited coverage | ${s.providersLimitedCoverage} |`);
+  }
+  if (model.config.includeRuleSettings) {
+    L.push(`| Disabled rules | ${s.disabledRules} |`);
+  }
   L.push(`| Rules evaluated | ${s.rulesEvaluated} |`);
   L.push("");
+}
 
-  // 3. Current exposure summary (breakdowns)
-  L.push("## Current exposure summary");
-  L.push("");
-  L.push("**Status breakdown**");
-  L.push("");
-  if (model.statusBreakdown.length) {
-    for (const b of model.statusBreakdown) L.push(`- ${statusLabel(b.status)}: ${b.count}`);
-  } else L.push("- No findings in scope.");
-  L.push("");
-  L.push("**Severity breakdown**");
-  L.push("");
-  if (model.severityBreakdown.length) {
-    for (const b of model.severityBreakdown) L.push(`- ${sevLabel(b.severity)}: ${b.count}`);
-  } else L.push("- No findings in scope.");
-  L.push("");
-  L.push("**Provider breakdown**");
-  L.push("");
-  if (model.providerBreakdown.length) {
-    for (const b of model.providerBreakdown) L.push(`- ${provLabel(b.provider)}: ${b.count}`);
-  } else L.push("- No findings in scope.");
-  L.push("");
+export function generateMarkdown(model: ReportModel): string {
+  const c = model.config;
+  const flags = sectionFlags(c);
+  const L: string[] = [];
 
-  // 4. Affected assets
-  if (c.includeAssets) {
+  header(model, L);
+
+  if (flags.executive) executiveSummary(model, L);
+
+  // Review status
+  if (flags.reviewStatus) {
+    const r = model.reviewStatus;
+    L.push("## Review status");
+    L.push("");
+    L.push(`- Active unreviewed: ${r.activeUnreviewed}`);
+    L.push(`- Acknowledged active: ${r.acknowledgedActive}`);
+    L.push(`- Accepted risk: ${r.acceptedRisk}`);
+    L.push(`- Snoozed: ${r.snoozed}`);
+    L.push(`- Resolved: ${r.resolved}`);
+    L.push("");
+    L.push("Review-note text is intentionally excluded from this export; only review status counts are shown.");
+    L.push("");
+  }
+
+  // Breakdowns (review packet only)
+  if (flags.breakdowns) {
+    L.push("## Current exposure summary");
+    L.push("");
+    L.push("**Status breakdown**");
+    L.push("");
+    if (model.statusBreakdown.length) {
+      for (const b of model.statusBreakdown) L.push(`- ${statusLabel(b.status)}: ${b.count}`);
+    } else L.push("- No findings in scope.");
+    L.push("");
+    L.push("**Severity breakdown**");
+    L.push("");
+    if (model.severityBreakdown.length) {
+      for (const b of model.severityBreakdown) L.push(`- ${sevLabel(b.severity)}: ${b.count}`);
+    } else L.push("- No findings in scope.");
+    L.push("");
+    L.push("**Provider breakdown**");
+    L.push("");
+    if (model.providerBreakdown.length) {
+      for (const b of model.providerBreakdown) L.push(`- ${provLabel(b.provider)}: ${b.count}`);
+    } else L.push("- No findings in scope.");
+    L.push("");
+  }
+
+  // Open critical/high findings
+  if (flags.openCritHigh) {
+    const list = model.confidence.criticalHighActive;
+    L.push("## Open critical and high exposures");
+    L.push("");
+    if (list.length === 0) {
+      L.push("No active critical or high exposures in scope.");
+    } else {
+      L.push(`| Severity | Provider | Title | Confidence | First detected | Last seen | Reviewed | Detail |`);
+      L.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+      for (const f of list) {
+        L.push(
+          `| ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${mdCell(confLabel(f.confidence))} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | ${f.reviewed_at ? "Reviewed" : "Unreviewed"} | /security/exposures/${f.id} |`,
+        );
+      }
+    }
+    L.push("");
+  }
+
+  // Affected assets
+  if (flags.assets) {
     L.push("## Affected assets");
     L.push("");
     if (model.assets.length === 0) {
       L.push("No affected assets in scope.");
     } else {
-      L.push(`| Asset | Type | Provider | Highest severity | Findings |`);
-      L.push(`| --- | --- | --- | --- | ---: |`);
+      L.push(`| Asset | Type | Provider | Highest severity | Findings | Top findings |`);
+      L.push(`| --- | --- | --- | --- | ---: | --- |`);
       for (const a of model.assets) {
-        L.push(`| ${mdCell(a.asset_label)} | ${mdCell(a.asset_type)} | ${mdCell(provLabel(a.provider))} | ${mdCell(sevLabel(a.highest_severity))} | ${a.exposure_count} |`);
+        const top = a.findings.slice(0, 3).map((f) => f.title).join("; ");
+        L.push(`| ${mdCell(a.asset_label)} | ${mdCell(a.asset_type)} | ${mdCell(provLabel(a.provider))} | ${mdCell(sevLabel(a.highest_severity))} | ${a.exposure_count} | ${mdCell(top)} |`);
       }
     }
     L.push("");
   }
 
-  // 5. Findings table
-  L.push("## Findings");
-  L.push("");
-  if (model.findings.length === 0) {
-    L.push("No findings match this report configuration.");
-  } else {
-    L.push(`| Severity | Confidence | Status | Provider | Title | First detected | Last seen | Detail |`);
-    L.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
-    for (const f of model.findings) {
-      L.push(
-        `| ${mdCell(sevLabel(f.severity))} | ${mdCell(f.confidence)} | ${mdCell(statusLabel(f.status))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | /security/exposures/${f.id} |`,
-      );
+  // Full findings table (review packet)
+  if (flags.findingsTable) {
+    L.push("## Findings");
+    L.push("");
+    if (model.findings.length === 0) {
+      L.push("No findings match this report configuration.");
+    } else {
+      L.push(`| Severity | Confidence | Status | Provider | Title | First detected | Last seen | Detail |`);
+      L.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
+      for (const f of model.findings) {
+        L.push(
+          `| ${mdCell(sevLabel(f.severity))} | ${mdCell(confLabel(f.confidence))} | ${mdCell(statusLabel(f.status))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | /security/exposures/${f.id} |`,
+        );
+      }
     }
+    L.push("");
   }
-  L.push("");
 
-  // 6. Accepted risk / snoozed
+  // Accepted risk register
   const accepted = model.findings.filter((f) => f.status === "accepted_risk");
-  const snoozedList = model.findings.filter((f) => f.status === "snoozed");
-  if ((c.includeAcceptedRisk && accepted.length) || (c.includeSnoozed && snoozedList.length)) {
-    L.push("## Accepted risk and snoozed findings");
+  if (flags.acceptedRegister && accepted.length) {
+    L.push("## Accepted risk register");
     L.push("");
-    L.push("Accepted and snoozed findings are not fixed or resolved — they are intentionally carried or temporarily paused.");
+    L.push("Accepted risk means the team is intentionally carrying this exposure until the listed date. It does not mean the exposure is fixed.");
     L.push("");
-    if (c.includeAcceptedRisk && accepted.length) {
-      L.push("**Accepted risk**");
-      L.push("");
-      L.push(`| Title | Provider | Accepted until | Reason |`);
-      L.push(`| --- | --- | --- | --- |`);
-      for (const f of accepted) {
-        L.push(`| ${mdCell(f.title)} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.accepted_until)} | ${mdCell(f.acceptance_reason)} |`);
-      }
-      L.push("");
+    L.push(`| Title | Severity | Provider | Accepted until | First detected | Reason | Detail |`);
+    L.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+    for (const f of accepted) {
+      L.push(`| ${mdCell(f.title)} | ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.accepted_until)} | ${fmtUtc(f.first_detected_at)} | ${mdCell(f.acceptance_reason)} | /security/exposures/${f.id} |`);
     }
-    if (c.includeSnoozed && snoozedList.length) {
-      L.push("**Snoozed**");
+    L.push("");
+  }
+
+  // Snoozed register
+  const snoozedList = model.findings.filter((f) => f.status === "snoozed");
+  if (flags.snoozedRegister && snoozedList.length) {
+    L.push("## Snoozed findings register");
+    L.push("");
+    L.push("Snoozed findings are temporarily deferred. They are not resolved or accepted risk.");
+    L.push("");
+    L.push(`| Title | Severity | Provider | Snoozed until | First detected | Detail |`);
+    L.push(`| --- | --- | --- | --- | --- | --- |`);
+    for (const f of snoozedList) {
+      L.push(`| ${mdCell(f.title)} | ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.snoozed_until)} | ${fmtUtc(f.first_detected_at)} | /security/exposures/${f.id} |`);
+    }
+    L.push("");
+  }
+
+  // Rule confidence (M62.4)
+  if (flags.confidence) {
+    const cf = model.confidence;
+    L.push("## Rule confidence");
+    L.push("");
+    L.push("Confidence reflects how strongly a rule's metadata signal indicates a real exposure. Lower-confidence findings may warrant manual review before action.");
+    L.push("");
+    L.push(`- High confidence findings: ${cf.high}`);
+    L.push(`- Medium confidence findings: ${cf.medium}`);
+    if (cf.low > 0) L.push(`- Low confidence findings: ${cf.low}`);
+    L.push("");
+    if (cf.criticalHighActive.length) {
+      L.push("**Critical/high active findings with confidence**");
       L.push("");
-      L.push(`| Title | Provider | Snoozed until |`);
-      L.push(`| --- | --- | --- |`);
-      for (const f of snoozedList) {
-        L.push(`| ${mdCell(f.title)} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.snoozed_until)} |`);
+      L.push(`| Severity | Provider | Title | Confidence | False-positive guard |`);
+      L.push(`| --- | --- | --- | --- | --- |`);
+      for (const f of cf.criticalHighActive) {
+        L.push(`| ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${mdCell(confLabel(f.confidence))} | ${mdCell(f.false_positive_guard)} |`);
       }
       L.push("");
     }
   }
 
-  // 7. Rule coverage
-  if (c.includeRuleCoverage) {
+  // Provider coverage (M62.3)
+  if (flags.providerCoverage) {
+    L.push("## Provider coverage");
+    L.push("");
+    L.push("Coverage reflects whether connected providers are returning the configuration record types each rule set expects.");
+    L.push("");
+    if (model.coverage.length === 0) {
+      L.push("No provider coverage data is available for this scope.");
+    } else {
+      L.push(`| Provider | Coverage | Observed types | Missing types | Active rules | Disabled rules | Recommendation |`);
+      L.push(`| --- | --- | --- | --- | ---: | ---: | --- |`);
+      for (const p of model.coverage) {
+        L.push(
+          `| ${mdCell(provLabel(p.provider))} | ${mdCell(coverageLabel(p.coverage_status))} | ${mdCell(p.observed_record_types.join(", "))} | ${mdCell(p.missing_record_types.join(", "))} | ${p.active_rules} | ${p.disabled_rules} | ${mdCell(p.recommendation)} |`,
+        );
+      }
+    }
+    L.push("");
+  }
+
+  // Rule coverage catalog
+  if (flags.ruleCoverage) {
     L.push("## Rule coverage");
     L.push("");
     L.push("All rules are metadata-only: they evaluate provider configuration, never payloads or secrets.");
@@ -338,48 +626,52 @@ export function generateMarkdown(model: ReportModel): string {
     if (model.ruleCoverage.length === 0) {
       L.push("No rules match the selected provider/severity.");
     } else {
-      L.push(`| Provider | Rule key | Severity | Category |`);
-      L.push(`| --- | --- | --- | --- |`);
+      const showState = c.includeRuleSettings;
+      L.push(`| Provider | Rule key | Severity | Confidence | Category |${showState ? " Status |" : ""}`);
+      L.push(`| --- | --- | --- | --- | --- |${showState ? " --- |" : ""}`);
       for (const r of model.ruleCoverage) {
-        L.push(`| ${mdCell(provLabel(r.provider))} | ${mdCell(r.key)} | ${mdCell(sevLabel(r.severity))} | ${mdCell(r.category)} |`);
+        const enabled = model.ruleSettingsByKey[r.key];
+        const state = enabled === false ? "Disabled" : "Enabled";
+        L.push(
+          `| ${mdCell(provLabel(r.provider))} | ${mdCell(r.key)} | ${mdCell(sevLabel(r.severity))} | ${mdCell(confLabel(r.confidence))} | ${mdCell(r.category)} |${showState ? ` ${state} |` : ""}`,
+        );
       }
     }
     L.push("");
   }
 
-  // (Optional) activity summary — counts only, never note bodies.
-  if (c.includeActivitySummary) {
-    const reviewed = model.findings.filter((f) => f.reviewed_at).length;
-    L.push("## Review activity summary");
+  // Follow-up checklist (deterministic, context-aware)
+  if (flags.followUp) {
+    L.push("## Suggested follow-up");
     L.push("");
-    L.push(`- Findings with a recorded review action: ${reviewed}`);
-    L.push(`- Accepted risk: ${model.summary.acceptedRisks}`);
-    L.push(`- Snoozed: ${model.summary.snoozed}`);
-    L.push(`- Resolved in period: ${model.summary.resolvedInPeriod}`);
-    L.push("");
-    L.push("Review-note text is intentionally excluded from this export.");
+    for (const item of model.followUps) L.push(`- ${item}`);
     L.push("");
   }
 
-  // 8. Suggested follow-up checklist
-  L.push("## Suggested follow-up");
-  L.push("");
-  L.push("- Review all critical active findings.");
-  L.push("- Confirm accepted risks have owners and expiry dates.");
-  L.push("- Revisit snoozed findings before their snooze expires.");
-  L.push("- Check affected assets that carry multiple findings.");
-  L.push("- Add review notes for unresolved critical/high findings.");
-  L.push("- Re-run a sync after remediation to confirm exposures clear.");
-  L.push("");
-
-  // 9. Disclaimer
+  // Disclaimer (always)
   L.push("## Disclaimer");
   L.push("");
   L.push(
-    "This report summarizes configuration exposure findings detected from connected provider metadata. It does not inspect payloads, secrets, or customer data, and it does not claim breach detection. It is intended for internal review and customer feedback, not formal compliance certification.",
+    "This report summarizes configuration exposure findings detected from connected provider metadata. It does not inspect payloads, secrets, or customer data, and it does not claim breach detection or formal compliance certification. It is intended for internal review and customer feedback.",
   );
   L.push("");
 
+  return L.join("\n");
+}
+
+/** Compact executive summary + follow-up checklist only (for "Copy executive summary"). */
+export function generateExecutiveSummaryMarkdown(model: ReportModel): string {
+  const L: string[] = [];
+  header(model, L);
+  executiveSummary(model, L);
+  L.push("## Suggested follow-up");
+  L.push("");
+  for (const item of model.followUps) L.push(`- ${item}`);
+  L.push("");
+  L.push(
+    "_Configuration exposure summary from connected provider metadata. Not a breach-detection or formal compliance certification report._",
+  );
+  L.push("");
   return L.join("\n");
 }
 
@@ -387,24 +679,35 @@ export function generateMarkdown(model: ReportModel): string {
 
 /** Safe, metadata-only JSON bundle (no evidence/remediation/notes). */
 export function generateJSON(model: ReportModel): string {
+  const c = model.config;
   const out = {
+    report_type: c.reportType,
     generated_at: model.generatedAtIso,
-    period: model.config.periodLabel,
+    period: c.periodLabel,
     filters: {
-      provider: model.config.provider,
-      severity: model.config.severity,
+      provider: c.provider,
+      severity: c.severity,
       include: {
-        active: model.config.includeActive,
-        resolved: model.config.includeResolved,
-        accepted_risk: model.config.includeAcceptedRisk,
-        snoozed: model.config.includeSnoozed,
+        active: c.includeActive,
+        resolved: c.includeResolved,
+        accepted_risk: c.includeAcceptedRisk,
+        snoozed: c.includeSnoozed,
+        coverage: c.includeCoverage,
+        confidence: c.includeConfidence,
+        rule_settings: c.includeRuleSettings,
       },
     },
     summary: model.summary,
+    review_status: model.reviewStatus,
+    confidence_summary: {
+      high: model.confidence.high,
+      medium: model.confidence.medium,
+      low: model.confidence.low,
+    },
     status_breakdown: model.statusBreakdown,
     severity_breakdown: model.severityBreakdown,
     provider_breakdown: model.providerBreakdown,
-    assets: model.config.includeAssets
+    assets: c.includeAssets
       ? model.assets.map((a) => ({
           asset_label: a.asset_label,
           asset_type: a.asset_type,
@@ -415,6 +718,7 @@ export function generateJSON(model: ReportModel): string {
           accepted_count: a.accepted_count,
           snoozed_count: a.snoozed_count,
           resolved_count: a.resolved_count,
+          top_finding_titles: a.findings.slice(0, 3).map((f) => f.title),
         }))
       : [],
     findings: model.findings.map((f) => ({
@@ -428,16 +732,31 @@ export function generateJSON(model: ReportModel): string {
       first_detected_at: f.first_detected_at,
       last_seen_at: f.last_seen_at,
       resolved_at: f.resolved_at,
+      reviewed_at: f.reviewed_at,
       accepted_until: f.accepted_until,
       snoozed_until: f.snoozed_until,
-      detail_path: `/security/exposures/${f.id}`,
+      acceptance_reason: f.status === "accepted_risk" ? f.acceptance_reason : null,
+      link_path: `/security/exposures/${f.id}`,
     })),
-    rule_coverage: model.config.includeRuleCoverage
+    provider_coverage: c.includeCoverage
+      ? model.coverage.map((p) => ({
+          provider: p.provider,
+          coverage_status: p.coverage_status,
+          observed_record_types: p.observed_record_types,
+          missing_record_types: p.missing_record_types,
+          active_rules: p.active_rules,
+          disabled_rules: p.disabled_rules,
+          recommendation: p.recommendation,
+        }))
+      : [],
+    rule_coverage: c.includeRuleCoverage
       ? model.ruleCoverage.map((r) => ({
           provider: r.provider,
           key: r.key,
           severity: r.severity,
+          confidence: r.confidence,
           category: r.category,
+          enabled: c.includeRuleSettings ? model.ruleSettingsByKey[r.key] !== false : undefined,
           metadata_only: true,
         }))
       : [],
@@ -465,9 +784,10 @@ export function generateFindingsCSV(model: ReportModel): string {
     "first_detected_at",
     "last_seen_at",
     "resolved_at",
+    "reviewed_at",
     "accepted_until",
     "snoozed_until",
-    "detail_path",
+    "link_path",
   ];
   const rows = model.findings.map((f) =>
     [
@@ -480,6 +800,7 @@ export function generateFindingsCSV(model: ReportModel): string {
       f.first_detected_at ?? "",
       f.last_seen_at ?? "",
       f.resolved_at ?? "",
+      f.reviewed_at ?? "",
       f.accepted_until ?? "",
       f.snoozed_until ?? "",
       `/security/exposures/${f.id}`,
