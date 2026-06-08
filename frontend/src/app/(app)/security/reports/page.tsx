@@ -18,7 +18,8 @@ import type {
   SecurityCoverageProvider,
   SecurityRuleSetting,
 } from "@/types";
-import { getSecurityFindings, getSecurityCoverage, getSecurityRuleSettings } from "@/lib/api";
+import { getSecurityFindings, getSecurityCoverage, getSecurityRuleSettings, getSecurityRulePack } from "@/lib/api";
+import type { SecurityRulePack } from "@/types";
 import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { getProviderMeta } from "@/lib/providers";
 import { SEVERITY_LABEL } from "@/components/security/findingDisplay";
@@ -78,6 +79,7 @@ export default function SecurityReportsPage() {
   const [findings, setFindings] = useState<SecurityFinding[]>([]);
   const [coverage, setCoverage] = useState<SecurityCoverageProvider[]>([]);
   const [ruleSettings, setRuleSettings] = useState<SecurityRuleSetting[]>([]);
+  const [pack, setPack] = useState<SecurityRulePack | null>(null);
   const [total, setTotal] = useState(0);
   const [generatedAtIso, setGeneratedAtIso] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -114,10 +116,11 @@ export default function SecurityReportsPage() {
       const token = await getToken();
       // Findings are required; coverage + rule settings are optional enrichers
       // and degrade gracefully so the report still renders if they fail.
-      const [findingsRes, coverageRes, ruleRes] = await Promise.allSettled([
+      const [findingsRes, coverageRes, ruleRes, packRes] = await Promise.allSettled([
         getSecurityFindings({ page_size: FETCH_SIZE }, token),
         getSecurityCoverage(token),
         getSecurityRuleSettings(token),
+        getSecurityRulePack(token),
       ]);
 
       if (findingsRes.status !== "fulfilled") {
@@ -127,12 +130,14 @@ export default function SecurityReportsPage() {
       setTotal(findingsRes.value.total ?? 0);
       setCoverage(coverageRes.status === "fulfilled" ? coverageRes.value.providers ?? [] : []);
       setRuleSettings(ruleRes.status === "fulfilled" ? ruleRes.value.items ?? [] : []);
+      setPack(packRes.status === "fulfilled" ? packRes.value : null);
       setGeneratedAtIso(new Date().toISOString());
     } catch {
       setError("Could not load report data. Please try again.");
       setFindings([]);
       setCoverage([]);
       setRuleSettings([]);
+      setPack(null);
       setTotal(0);
     } finally {
       setLoading(false);
@@ -173,8 +178,10 @@ export default function SecurityReportsPage() {
       includeCoverage: inc.coverage,
       includeConfidence: inc.confidence,
       includeRuleSettings: inc.ruleSettings,
+      rulePackName: pack?.name,
+      rulePackVersion: pack?.version,
     };
-  }, [reportType, periodMode, customStart, customEnd, provider, severity, inc]);
+  }, [reportType, periodMode, customStart, customEnd, provider, severity, inc, pack]);
 
   const model = useMemo(
     () =>

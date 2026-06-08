@@ -186,6 +186,14 @@ export async function getWorkspaceMembers(
   return apiFetch(`/workspaces/${workspaceId}/members`, { token });
 }
 
+/** Current user's role in a workspace (M63.5) — drives permission UI gating. */
+export async function getMyWorkspaceMembership(
+  workspaceId: string,
+  token?: string | null,
+): Promise<import("@/types").WorkspaceMembershipMe> {
+  return apiFetch(`/workspaces/${workspaceId}/membership/me`, { token });
+}
+
 export async function updateMemberRole(
   workspaceId: string,
   memberId: string,

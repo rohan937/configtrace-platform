@@ -625,6 +625,15 @@ export interface MemberListResponse {
   total: number;
 }
 
+/** Current user's role in a workspace — GET /workspaces/{id}/membership/me (M63.5). */
+export interface WorkspaceMembershipMe {
+  workspace_id: string;
+  user_id: string;
+  role: WorkspaceRole;
+  is_admin: boolean;
+  is_owner: boolean;
+}
+
 export interface WorkspaceInvite {
   id: string;
   workspace_id: string;

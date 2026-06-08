@@ -165,6 +165,7 @@ def create_finding(
         remediation=remediation,
     )
     _apply_confidence(finding)
+    _apply_rule_pack_metadata(finding)
     db.add(finding)
     db.commit()
     db.refresh(finding)
@@ -182,6 +183,20 @@ def _apply_confidence(finding: SecurityFinding) -> None:
     finding.confidence = confidence
     finding.confidence_reason = reason
     finding.false_positive_guard = guard or None
+
+
+def _apply_rule_pack_metadata(finding: SecurityFinding) -> None:
+    """Stamp the active rule pack + version on a finding (M63.3).
+
+    Deterministic from the pack registry + ``finding_key`` — safe to re-apply on
+    every refresh so a finding always reflects the pack that last evaluated it.
+    """
+    from app.services.security_rule_pack import pack_metadata_for
+
+    pack_name, pack_version, rule_version = pack_metadata_for(finding.finding_key)
+    finding.rule_pack_name = pack_name
+    finding.rule_pack_version = pack_version
+    finding.rule_version = rule_version
 
 
 def refresh_active_finding(
@@ -223,6 +238,7 @@ def refresh_active_finding(
         finding.linked_change_id = linked_change_id
     # M62.4: keep confidence metadata current (rule-derived, deterministic).
     _apply_confidence(finding)
+    _apply_rule_pack_metadata(finding)
     db.add(finding)
     db.commit()
     db.refresh(finding)

@@ -171,6 +171,13 @@ class SecurityFinding(BaseMixin, Base):
     confidence_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     false_positive_guard: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # ── M63.3 — rule pack / version traceability ───────────────────────────────
+    # Which rule pack + version produced (or last refreshed) this finding.
+    # Nullable so pre-M63.3 rows display null-safe ("unknown version").
+    rule_pack_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rule_pack_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rule_version: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return (
             f"<SecurityFinding id={self.id} key={self.finding_key!r} "

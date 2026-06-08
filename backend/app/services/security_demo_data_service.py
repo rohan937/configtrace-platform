@@ -92,12 +92,14 @@ def _demo_findings(workspace_id: uuid.UUID, integ_id: uuid.UUID, actor_user_id):
     rows: list[SecurityFinding] = []
 
     from app.services.security_rule_confidence import confidence_for
+    from app.services.security_rule_pack import pack_metadata_for
 
     def add(rule, record, provider, severity, status, title, remediation, *,
             opened, last_seen=None, resolved_at=None, accepted_until=None,
             snoozed_until=None, reviewed_at=None, acceptance_reason=None):
         finding_key = f"{rule}:{record}"
         conf, conf_reason, guard = confidence_for(finding_key)
+        pack_name, pack_version, rule_version = pack_metadata_for(finding_key)
         rows.append(
             SecurityFinding(
                 workspace_id=workspace_id,
@@ -123,6 +125,9 @@ def _demo_findings(workspace_id: uuid.UUID, integ_id: uuid.UUID, actor_user_id):
                 confidence=conf,
                 confidence_reason=conf_reason,
                 false_positive_guard=guard or None,
+                rule_pack_name=pack_name,
+                rule_pack_version=pack_version,
+                rule_version=rule_version,
             )
         )
 

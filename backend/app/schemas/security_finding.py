@@ -47,6 +47,10 @@ class SecurityFindingResponse(BaseModel):
     confidence: str = "high"
     confidence_reason: Optional[str] = None
     false_positive_guard: Optional[str] = None
+    # M63.3 — rule pack versioning metadata (null-safe for pre-M63.3 findings).
+    rule_pack_name: Optional[str] = None
+    rule_pack_version: Optional[str] = None
+    rule_version: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime

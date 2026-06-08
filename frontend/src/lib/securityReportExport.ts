@@ -65,6 +65,8 @@ export interface ReportConfig {
   includeCoverage: boolean; // M62.7: provider coverage section (M62.3 data)
   includeConfidence: boolean; // M62.7: rule confidence section (M62.4 data)
   includeRuleSettings: boolean; // M62.7: reflect enabled/disabled (M61.7 data)
+  rulePackName?: string; // M63.3: active rule pack name (header traceability)
+  rulePackVersion?: string; // M63.3: active rule pack version
 }
 
 export const DEFAULT_REPORT_CONFIG: ReportConfig = {
@@ -415,6 +417,9 @@ function header(model: ReportModel, L: string[]): void {
   L.push(`_${REPORT_TYPE_LABEL[c.reportType]}_`);
   L.push("");
   L.push(`- Generated: ${fmtUtc(model.generatedAtIso)}`);
+  if (c.rulePackVersion) {
+    L.push(`- Rule pack: ${c.rulePackName ?? "configtrace_security_exposure"} · version ${c.rulePackVersion}`);
+  }
   L.push(`- Period: ${c.periodLabel}${c.start && c.end ? ` (${fmtUtc(new Date(c.start).toISOString())} → ${fmtUtc(new Date(c.end).toISOString())})` : ""}`);
   const filters: string[] = [];
   filters.push(`provider: ${c.provider === "all" ? "all" : provLabel(c.provider)}`);
@@ -695,6 +700,8 @@ export function generateJSON(model: ReportModel): string {
   const c = model.config;
   const out = {
     report_type: c.reportType,
+    rule_pack_name: c.rulePackName ?? null,
+    rule_pack_version: c.rulePackVersion ?? null,
     generated_at: model.generatedAtIso,
     period: c.periodLabel,
     filters: {

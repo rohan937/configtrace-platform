@@ -13,8 +13,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 
 import { getProviderMeta } from "@/lib/providers";
-import { getSecurityRuleSettings, updateSecurityRuleSetting } from "@/lib/api";
+import type { SecurityRulePack, SecurityRulePackRule } from "@/types";
+import { getSecurityRuleSettings, updateSecurityRuleSetting, getSecurityRulePack } from "@/lib/api";
 import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { canManageSecurityRules } from "@/lib/workspacePermissions";
 import { formatAbsoluteTime } from "@/lib/utils";
 import {
   DEFERRED_RULES,
@@ -34,6 +37,8 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 
 export default function SecurityRulesPage() {
   const { getToken } = useAuth();
+  const { role, roleLoaded } = useWorkspace();
+  const canManage = canManageSecurityRules(role);
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
@@ -47,6 +52,27 @@ export default function SecurityRulesPage() {
   const [updatedByKey, setUpdatedByKey] = useState<Record<string, string | null>>({});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // M63.3: active rule pack + per-rule version metadata.
+  const [pack, setPack] = useState<SecurityRulePack | null>(null);
+  const packByKey = useMemo(() => {
+    const m: Record<string, SecurityRulePackRule> = {};
+    for (const r of pack?.rules ?? []) m[r.rule_key] = r;
+    return m;
+  }, [pack]);
+
+  const loadPack = useCallback(async () => {
+    try {
+      const token = await getToken();
+      setPack(await getSecurityRulePack(token));
+    } catch {
+      // Non-fatal: rules remain visible without version metadata.
+    }
+  }, [getToken]);
+
+  useEffect(() => {
+    void loadPack();
+  }, [loadPack]);
 
   const loadSettings = useCallback(async () => {
     try {
@@ -169,6 +195,43 @@ export default function SecurityRulesPage() {
         states. They do not claim breach detection or inspect payloads or secrets.
       </p>
 
+      {/* M63.3 — active rule pack badge */}
+      {pack ? (
+        <div
+          className="bg-surface1 border border-border"
+          style={{
+            display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap",
+            borderRadius: "10px", padding: "10px 14px", marginBottom: "20px",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "11px", fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase",
+              color: "#6b9cf8", background: "rgba(107,156,248,0.12)", border: "1px solid rgba(107,156,248,0.4)",
+              borderRadius: "6px", padding: "2px 8px", whiteSpace: "nowrap",
+            }}
+          >
+            Rule pack
+          </span>
+          <span style={{ fontSize: "12.5px", color: "#c4c8d4" }}>
+            ConfigTrace Security Exposure · version {pack.version}
+            <span style={{ color: "#565b6e" }}>
+              {" "}· {pack.rule_count} rules{pack.released_at ? ` · released ${pack.released_at}` : ""}
+            </span>
+          </span>
+        </div>
+      ) : null}
+
+      {/* M63.5 — non-admin notice (only once role is known and is not admin). */}
+      {roleLoaded && !canManage ? (
+        <div
+          className="bg-surface1 border border-border"
+          style={{ borderRadius: "10px", padding: "10px 14px", marginBottom: "20px", fontSize: "12.5px", color: "#8b90a0" }}
+        >
+          Only workspace admins can change rule settings. Members can still view rule coverage.
+        </div>
+      ) : null}
+
       {/* Metrics */}
       <div
         style={{
@@ -282,12 +345,14 @@ export default function SecurityRulesPage() {
                 <RuleCard
                   key={r.key}
                   rule={r}
+                  packRule={packByKey[r.key] ?? null}
                   expanded={expanded.has(r.key)}
                   onToggle={() => toggle(r.key)}
                   enabled={isEnabled(r.key)}
                   saving={savingKey === r.key}
                   updatedAt={updatedByKey[r.key] ?? null}
                   onToggleEnabled={(next) => handleToggleEnabled(r.key, next)}
+                  canManage={canManage}
                 />
               ))}
             </div>
@@ -417,20 +482,24 @@ export default function SecurityRulesPage() {
 
 function RuleCard({
   rule,
+  packRule,
   expanded,
   onToggle,
   enabled,
   saving,
   updatedAt,
   onToggleEnabled,
+  canManage,
 }: {
   rule: SecurityRuleMeta;
+  packRule: SecurityRulePackRule | null;
   expanded: boolean;
   onToggle: () => void;
   enabled: boolean;
   saving: boolean;
   updatedAt: string | null;
   onToggleEnabled: (next: boolean) => void;
+  canManage: boolean;
 }) {
   const meta = getProviderMeta(rule.provider);
 
@@ -480,6 +549,18 @@ function RuleCard({
             <span>{rule.category}</span>
             <span style={{ color: "#3a3d4a" }}>·</span>
             <span>confidence: {rule.confidence}</span>
+            {packRule ? (
+              <>
+                <span style={{ color: "#3a3d4a" }}>·</span>
+                <span>v{packRule.rule_version}</span>
+                <span style={{ color: "#3a3d4a" }}>·</span>
+                <span>introduced {packRule.introduced_in}</span>
+                <span style={{ color: "#3a3d4a" }}>·</span>
+                <span style={{ color: packRule.status === "active" ? "#3ccf7e" : "#8b90a0" }}>
+                  {packRule.status}
+                </span>
+              </>
+            ) : null}
             {!enabled && updatedAt ? (
               <>
                 <span style={{ color: "#3a3d4a" }}>·</span>
@@ -492,7 +573,7 @@ function RuleCard({
         </button>
 
         <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
-          <EnableToggle enabled={enabled} saving={saving} onToggleEnabled={onToggleEnabled} />
+          <EnableToggle enabled={enabled} saving={saving} onToggleEnabled={onToggleEnabled} canManage={canManage} />
           <button
             type="button"
             onClick={onToggle}
@@ -550,24 +631,29 @@ function EnableToggle({
   enabled,
   saving,
   onToggleEnabled,
+  canManage,
 }: {
   enabled: boolean;
   saving: boolean;
   onToggleEnabled: (next: boolean) => void;
+  canManage: boolean;
 }) {
   const color = enabled ? "#3ccf7e" : "#8b90a0";
   const bg = enabled ? "rgba(60,207,126,0.14)" : "rgba(148,163,184,0.10)";
   const border = enabled ? "rgba(60,207,126,0.4)" : "#2a2d38";
+  const disabled = saving || !canManage;
   return (
     <button
       type="button"
-      disabled={saving}
+      disabled={disabled}
       aria-pressed={enabled}
       onClick={() => onToggleEnabled(!enabled)}
       title={
-        enabled
-          ? "Disable this rule — stops future findings; does not resolve existing ones."
-          : "Enable this rule — resumes normal evaluation."
+        !canManage
+          ? "Only workspace admins can change rule settings."
+          : enabled
+            ? "Disable this rule — stops future findings; does not resolve existing ones."
+            : "Enable this rule — resumes normal evaluation."
       }
       style={{
         fontSize: "11px",
@@ -579,8 +665,8 @@ function EnableToggle({
         border: `1px solid ${border}`,
         borderRadius: "7px",
         padding: "4px 10px",
-        cursor: saving ? "wait" : "pointer",
-        opacity: saving ? 0.6 : 1,
+        cursor: disabled ? (saving ? "wait" : "not-allowed") : "pointer",
+        opacity: disabled ? 0.6 : 1,
         whiteSpace: "nowrap",
         fontFamily: "inherit",
       }}
