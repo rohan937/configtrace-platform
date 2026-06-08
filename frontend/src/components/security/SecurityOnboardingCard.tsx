@@ -32,9 +32,13 @@ import {
 } from "@/lib/securityOnboarding";
 import { SectionLabel } from "@/components/security/previews";
 import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { canManageDemoData } from "@/lib/workspacePermissions";
 
 export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () => void }) {
   const { getToken } = useAuth();
+  const { role } = useWorkspace();
+  const canManageDemo = canManageDemoData(role);
   const [summary, setSummary] = useState<OnboardingSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
@@ -160,7 +164,7 @@ export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () =
 
       <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
         {summary.items.map((item) => (
-          <ChecklistRow key={item.id} item={item} seeding={seeding} onLoadDemo={handleLoadDemo} onCtaClick={handleCtaClick} />
+          <ChecklistRow key={item.id} item={item} seeding={seeding} onLoadDemo={handleLoadDemo} onCtaClick={handleCtaClick} canManageDemo={canManageDemo} />
         ))}
       </div>
     </div>
@@ -172,11 +176,13 @@ function ChecklistRow({
   seeding,
   onLoadDemo,
   onCtaClick,
+  canManageDemo,
 }: {
   item: ChecklistItem;
   seeding: boolean;
   onLoadDemo: () => void;
   onCtaClick: (itemId: string) => void;
+  canManageDemo: boolean;
 }) {
   return (
     <div
@@ -209,19 +215,25 @@ function ChecklistRow({
         {item.complete ? (
           <span style={{ fontSize: "12px", color: "#3ccf7e", fontWeight: 600 }}>Done</span>
         ) : item.action === "load_demo" ? (
-          <button
-            type="button"
-            onClick={onLoadDemo}
-            disabled={seeding}
-            style={{
-              fontSize: "12.5px", fontWeight: 600, color: "#6b9cf8",
-              background: "rgba(107,156,248,0.12)", border: "1px solid rgba(107,156,248,0.4)",
-              borderRadius: "8px", padding: "6px 12px",
-              cursor: seeding ? "wait" : "pointer", opacity: seeding ? 0.6 : 1, fontFamily: "inherit",
-            }}
-          >
-            {seeding ? "Loading…" : item.ctaLabel}
-          </button>
+          canManageDemo ? (
+            <button
+              type="button"
+              onClick={onLoadDemo}
+              disabled={seeding}
+              style={{
+                fontSize: "12.5px", fontWeight: 600, color: "#6b9cf8",
+                background: "rgba(107,156,248,0.12)", border: "1px solid rgba(107,156,248,0.4)",
+                borderRadius: "8px", padding: "6px 12px",
+                cursor: seeding ? "wait" : "pointer", opacity: seeding ? 0.6 : 1, fontFamily: "inherit",
+              }}
+            >
+              {seeding ? "Loading…" : item.ctaLabel}
+            </button>
+          ) : (
+            <span style={{ fontSize: "11.5px", color: "#8b90a0", maxWidth: "180px", textAlign: "right" }}>
+              Ask a workspace admin to load demo data.
+            </span>
+          )
         ) : (
           <Link
             href={item.ctaHref}

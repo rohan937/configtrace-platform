@@ -30,6 +30,8 @@ import {
 } from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
 import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { canManageSecurityActions } from "@/lib/workspacePermissions";
 import { formatAbsoluteTime } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader";
@@ -131,6 +133,8 @@ function ExposureBody({
   finding: SecurityFinding;
   onUpdated: (f: SecurityFinding) => void;
 }) {
+  const { role } = useWorkspace();
+  const canManage = canManageSecurityActions(role); // M63.5: accept risk + snooze are admin/owner only
   const provider = getProviderMeta(finding.provider);
   const c = sevColor(finding.severity);
   const duration = formatExposureDuration(finding);
@@ -444,8 +448,8 @@ function ExposureBody({
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           <AcknowledgeAction finding={finding} onUpdated={onUpdated} />
-          <SnoozeAction finding={finding} onUpdated={onUpdated} />
-          <AcceptRiskAction finding={finding} onUpdated={onUpdated} />
+          <SnoozeAction finding={finding} onUpdated={onUpdated} canManage={canManage} />
+          <AcceptRiskAction finding={finding} onUpdated={onUpdated} canManage={canManage} />
         </div>
       </Panel>
 
@@ -467,9 +471,11 @@ function defaultAcceptedUntil(): string {
 function AcceptRiskAction({
   finding,
   onUpdated,
+  canManage,
 }: {
   finding: SecurityFinding;
   onUpdated: (f: SecurityFinding) => void;
+  canManage: boolean;
 }) {
   const { getToken } = useAuth();
   const isAccepted = finding.status === "accepted_risk";
@@ -547,12 +553,18 @@ function AcceptRiskAction({
   if (!open) {
     return (
       <div style={{ marginTop: "8px" }}>
-        <button type="button" style={btnPrimary} onClick={() => { setOpen(true); setErr(null); }}>
+        <button
+          type="button"
+          style={canManage ? btnPrimary : { ...btnPrimary, cursor: "not-allowed", opacity: 0.5 }}
+          disabled={!canManage}
+          onClick={() => { setOpen(true); setErr(null); }}
+        >
           {isAccepted ? "Update accepted risk" : "Accept risk"}
         </button>
         <p style={{ fontSize: "12px", color: "#8b90a0", margin: "10px 0 0", lineHeight: 1.6 }}>
-          Accepting risk does not mark the exposure fixed. It records that the team
-          is intentionally carrying this risk until the chosen date.
+          {canManage
+            ? "Accepting risk does not mark the exposure fixed. It records that the team is intentionally carrying this risk until the chosen date."
+            : "Only workspace admins can accept risk."}
         </p>
       </div>
     );
@@ -761,9 +773,11 @@ function plusHoursLocal(hours: number): string {
 function SnoozeAction({
   finding,
   onUpdated,
+  canManage,
 }: {
   finding: SecurityFinding;
   onUpdated: (f: SecurityFinding) => void;
+  canManage: boolean;
 }) {
   const { getToken } = useAuth();
   const [open, setOpen] = useState(false);
@@ -829,12 +843,18 @@ function SnoozeAction({
   if (!open) {
     return (
       <div>
-        <button type="button" style={btn} onClick={() => { setOpen(true); setErr(null); }}>
+        <button
+          type="button"
+          style={canManage ? btn : { ...btn, cursor: "not-allowed", opacity: 0.5 }}
+          disabled={!canManage}
+          onClick={() => { setOpen(true); setErr(null); }}
+        >
           Snooze
         </button>
         <p style={{ fontSize: "12px", color: "#8b90a0", margin: "8px 0 0", lineHeight: 1.6 }}>
-          Pauses active attention until the selected time. It does not accept the
-          risk or mark it fixed.
+          {canManage
+            ? "Pauses active attention until the selected time. It does not accept the risk or mark it fixed."
+            : "Only workspace admins can snooze exposures."}
         </p>
       </div>
     );

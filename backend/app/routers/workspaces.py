@@ -71,6 +71,7 @@ from app.schemas.workspace import (
     WorkspaceInviteResponse,
     WorkspaceListResponse,
     WorkspaceMemberResponse,
+    WorkspaceMembershipMeResponse,
     WorkspaceResponse,
     WorkspaceUpdateRequest,
 )
@@ -217,6 +218,33 @@ def update_workspace(
 
 
 # ── Members ───────────────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/{workspace_id}/membership/me",
+    response_model=WorkspaceMembershipMeResponse,
+)
+def get_my_workspace_membership(
+    workspace_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkspaceMembershipMeResponse:
+    """Return the current user's role in a workspace (M63.5, read-only).
+
+    Drives frontend permission gating so non-admins see disabled high-impact
+    Security Exposure actions instead of clicking into a backend 403. Returns
+    404 if the user is not a member (never leaks other workspaces).
+    """
+    membership = workspace_service.get_membership(workspace_id, current_user.id, db)
+    if membership is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return WorkspaceMembershipMeResponse(
+        workspace_id=workspace_id,
+        user_id=current_user.id,
+        role=membership.role,
+        is_admin=membership.role in ("admin", "owner"),
+        is_owner=membership.role == "owner",
+    )
 
 
 @router.get("/{workspace_id}/members", response_model=MemberListResponse)

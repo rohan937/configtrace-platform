@@ -58,6 +58,16 @@ class WorkspaceMemberResponse(BaseModel):
     updated_at: datetime
 
 
+class WorkspaceMembershipMeResponse(BaseModel):
+    """Current user's role in a workspace (M63.5) — drives frontend gating."""
+
+    workspace_id: UUID
+    user_id: UUID
+    role: WorkspaceRole
+    is_admin: bool  # admin or owner
+    is_owner: bool
+
+
 class MemberUpdateRequest(BaseModel):
     role: WorkspaceRole
 

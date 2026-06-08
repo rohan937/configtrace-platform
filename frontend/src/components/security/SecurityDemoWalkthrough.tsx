@@ -26,6 +26,8 @@ import {
   getSecurityFindings,
 } from "@/lib/api";
 import { trackSecurityBetaEvent, normalizeSecurityPath } from "@/lib/securityBetaEvents";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { canManageDemoData } from "@/lib/workspacePermissions";
 
 // ── Pure step builder (exported for testing) ──────────────────────────────────
 
@@ -136,6 +138,8 @@ export default function SecurityDemoWalkthrough() {
   const pathname = usePathname();
   const router = useRouter();
   const { getToken, isLoaded } = useAuth();
+  const { role } = useWorkspace();
+  const canManage = canManageDemoData(role);
 
   const [hydrated, setHydrated] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
@@ -397,7 +401,13 @@ export default function SecurityDemoWalkthrough() {
 
       {/* Demo data controls */}
       <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px solid #1f2229" }}>
-        {demoLoaded ? (
+        {!canManage ? (
+          <span style={{ fontSize: "11.5px", color: "#8b90a0", lineHeight: 1.5 }}>
+            {demoLoaded
+              ? "Sample findings — not from connected providers. Ask a workspace admin to clear demo data."
+              : "Ask a workspace admin to load or clear demo data."}
+          </span>
+        ) : demoLoaded ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", flexWrap: "wrap" }}>
             <span style={{ fontSize: "11.5px", color: "#8b90a0" }}>
               Sample findings — not from connected providers.

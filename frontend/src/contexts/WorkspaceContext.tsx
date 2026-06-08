@@ -19,8 +19,8 @@ import React, {
   useState,
 } from "react";
 import { useAuth } from "@clerk/nextjs";
-import type { Workspace } from "@/types";
-import { getWorkspaces } from "@/lib/api";
+import type { Workspace, WorkspaceRole } from "@/types";
+import { getWorkspaces, getMyWorkspaceMembership } from "@/lib/api";
 
 const STORAGE_KEY = "ct_workspace_id";
 
@@ -31,6 +31,12 @@ interface WorkspaceContextValue {
   selectedWorkspace: Workspace | null;
   /** Whether the initial workspace list load is in progress. */
   loading: boolean;
+  /** Current user's role in the selected workspace (M63.5). Null until resolved. */
+  role: WorkspaceRole | null;
+  /** True once the role lookup has completed (success or failure). */
+  roleLoaded: boolean;
+  /** Convenience: role is admin or owner. */
+  isAdmin: boolean;
   /** Select a workspace by ID and persist the choice. */
   selectWorkspace: (id: string) => void;
   /** Re-fetch the workspace list (call after create/join/rename). */
@@ -41,6 +47,9 @@ const WorkspaceContext = createContext<WorkspaceContextValue>({
   workspaces: [],
   selectedWorkspace: null,
   loading: true,
+  role: null,
+  roleLoaded: false,
+  isAdmin: false,
   selectWorkspace: () => undefined,
   refreshWorkspaces: async () => undefined,
 });
@@ -50,6 +59,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<WorkspaceRole | null>(null);
+  const [roleLoaded, setRoleLoaded] = useState(false);
 
   const loadWorkspaces = useCallback(async () => {
     if (!isLoaded || !isSignedIn) return;
@@ -85,12 +96,44 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const selectedWorkspace =
     workspaces.find((w) => w.id === selectedId) ?? null;
 
+  // M63.5: resolve the current user's role in the selected workspace so the UI
+  // can disable high-impact Security Exposure actions for non-admins.
+  useEffect(() => {
+    let cancelled = false;
+    if (!isLoaded || !isSignedIn || !selectedId) {
+      setRole(null);
+      setRoleLoaded(false);
+      return;
+    }
+    setRoleLoaded(false);
+    (async () => {
+      try {
+        const token = await getToken();
+        const m = await getMyWorkspaceMembership(selectedId, token);
+        if (!cancelled) setRole(m.role);
+      } catch {
+        // Non-fatal: leave role null (high-impact actions fail safe to disabled).
+        if (!cancelled) setRole(null);
+      } finally {
+        if (!cancelled) setRoleLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoaded, isSignedIn, selectedId, getToken]);
+
+  const isAdmin = role === "admin" || role === "owner";
+
   return (
     <WorkspaceContext.Provider
       value={{
         workspaces,
         selectedWorkspace,
         loading,
+        role,
+        roleLoaded,
+        isAdmin,
         selectWorkspace,
         refreshWorkspaces: loadWorkspaces,
       }}

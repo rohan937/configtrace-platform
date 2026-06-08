@@ -21,6 +21,8 @@ import {
   seedSecurityDemoData,
   clearSecurityDemoData,
 } from "@/lib/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { canManageDemoData } from "@/lib/workspacePermissions";
 
 export default function SecurityDemoBanner({
   findingsEmpty,
@@ -32,6 +34,8 @@ export default function SecurityDemoBanner({
   onChanged?: () => void;
 }) {
   const { getToken } = useAuth();
+  const { role } = useWorkspace();
+  const canManage = canManageDemoData(role);
   const [status, setStatus] = useState<SecurityDemoDataStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -129,25 +133,31 @@ export default function SecurityDemoBanner({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           {error ? <span style={{ fontSize: "12px", color: "#e07a5f" }}>{error}</span> : null}
-          <button
-            type="button"
-            onClick={clear}
-            disabled={busy}
-            style={{
-              fontSize: "13px",
-              fontWeight: 600,
-              color: "#8b90a0",
-              background: "transparent",
-              border: "1px solid #2a2d38",
-              borderRadius: "8px",
-              padding: "6px 12px",
-              cursor: busy ? "wait" : "pointer",
-              opacity: busy ? 0.6 : 1,
-              fontFamily: "inherit",
-            }}
-          >
-            {busy ? "Working…" : "Clear demo data"}
-          </button>
+          {!canManage ? (
+            <span style={{ fontSize: "12px", color: "#8b90a0" }}>
+              Ask a workspace admin to clear demo data.
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={clear}
+              disabled={busy}
+              style={{
+                fontSize: "13px",
+                fontWeight: 600,
+                color: "#8b90a0",
+                background: "transparent",
+                border: "1px solid #2a2d38",
+                borderRadius: "8px",
+                padding: "6px 12px",
+                cursor: busy ? "wait" : "pointer",
+                opacity: busy ? 0.6 : 1,
+                fontFamily: "inherit",
+              }}
+            >
+              {busy ? "Working…" : "Clear demo data"}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -172,25 +182,31 @@ export default function SecurityDemoBanner({
       {error ? (
         <p style={{ fontSize: "12px", color: "#e07a5f", margin: "0 0 10px" }}>{error}</p>
       ) : null}
-      <button
-        type="button"
-        onClick={seed}
-        disabled={busy}
-        style={{
-          fontSize: "13px",
-          fontWeight: 600,
-          color: "#fff",
-          background: "#6b9cf8",
-          border: "1px solid #6b9cf8",
-          borderRadius: "8px",
-          padding: "8px 16px",
-          cursor: busy ? "wait" : "pointer",
-          opacity: busy ? 0.6 : 1,
-          fontFamily: "inherit",
-        }}
-      >
-        {busy ? "Loading…" : "Load demo data"}
-      </button>
+      {canManage ? (
+        <button
+          type="button"
+          onClick={seed}
+          disabled={busy}
+          style={{
+            fontSize: "13px",
+            fontWeight: 600,
+            color: "#fff",
+            background: "#6b9cf8",
+            border: "1px solid #6b9cf8",
+            borderRadius: "8px",
+            padding: "8px 16px",
+            cursor: busy ? "wait" : "pointer",
+            opacity: busy ? 0.6 : 1,
+            fontFamily: "inherit",
+          }}
+        >
+          {busy ? "Loading…" : "Load demo data"}
+        </button>
+      ) : (
+        <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: 0 }}>
+          Ask a workspace admin to load demo data.
+        </p>
+      )}
     </div>
   );
 }
