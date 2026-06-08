@@ -85,6 +85,9 @@ def subscribe(
     user_agent: Optional[str],
     browser_name: Optional[str],
     db: Session,
+    drift_push_enabled: bool = True,
+    security_push_enabled: bool = False,
+    security_resolved_push_enabled: bool = False,
 ) -> WorkspacePushSubscription:
     """Create or update a Web Push subscription.
 
@@ -121,6 +124,9 @@ def subscribe(
         device_label=device_label,
         enabled=True,
         min_risk_level=min_risk_level,
+        drift_push_enabled=drift_push_enabled,
+        security_push_enabled=security_push_enabled,
+        security_resolved_push_enabled=security_resolved_push_enabled,
         created_at=now,
         updated_at=now,
     )
@@ -390,6 +396,9 @@ def dispatch_push_for_sync(
 
     for sub in subscriptions:
         try:
+            # M60.13: per-device drift opt-out (defaults True → backward-compat).
+            if getattr(sub, "drift_push_enabled", True) is False:
+                continue
             sub_levels = _alertable_push_levels(sub.min_risk_level)
             sub_changes = [c for c in changes if c.risk_level in sub_levels]
             if not sub_changes:
@@ -409,6 +418,150 @@ def dispatch_push_for_sync(
         "push: dispatch complete  workspace=%s  sync_run=%s  sent=%d  total=%d",
         workspace_id, sync_run_id, sent, len(subscriptions),
     )
+    return sent
+
+
+def update_push_subscription_prefs(
+    *,
+    workspace_id: uuid.UUID,
+    subscription_id: uuid.UUID,
+    db: Session,
+    min_risk_level: Optional[str] = None,
+    drift_push_enabled: Optional[bool] = None,
+    security_push_enabled: Optional[bool] = None,
+    security_resolved_push_enabled: Optional[bool] = None,
+) -> Optional[WorkspacePushSubscription]:
+    """Update per-device push preferences without requiring a re-subscribe.
+
+    Only the fields explicitly passed (non-None) are changed. Returns the
+    updated row, or None when the subscription is not found in the workspace.
+    """
+    sub = (
+        db.query(WorkspacePushSubscription)
+        .filter(
+            WorkspacePushSubscription.id == subscription_id,
+            WorkspacePushSubscription.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if sub is None:
+        return None
+    if min_risk_level is not None:
+        sub.min_risk_level = min_risk_level
+    if drift_push_enabled is not None:
+        sub.drift_push_enabled = drift_push_enabled
+    if security_push_enabled is not None:
+        sub.security_push_enabled = security_push_enabled
+    if security_resolved_push_enabled is not None:
+        sub.security_resolved_push_enabled = security_resolved_push_enabled
+    db.add(sub)
+    db.commit()
+    db.refresh(sub)
+    return sub
+
+
+def _build_security_push_payload(event: Any, base_url: str) -> dict:
+    """Build a metadata-only Web Push payload for a security exposure event.
+
+    No evidence/remediation, secrets, payloads, or raw rules. Careful wording —
+    "security exposure opened/resolved", never "breach".
+    """
+    severity = (event.severity or "").lower()
+    sev_label = "Critical" if severity == "critical" else "High"
+    verb = {
+        "security_exposure_opened": "opened",
+        "security_exposure_reopened": "re-opened",
+        "security_exposure_resolved": "resolved",
+    }.get(event.event_type, "opened")
+    title = f"{sev_label} security exposure {verb}"
+    provider = (event.provider or "").upper()
+    body = f"{provider}: {event.title}".strip(": ")
+    return {
+        "title": title,
+        "body": body[:160],
+        "url": f"{base_url}{event.detail_path}",
+        "tag": f"configtrace-exposure-{event.finding_id}",
+        "risk_level": severity,
+        "provider": event.provider or "",
+    }
+
+
+def dispatch_security_push_for_event(
+    *,
+    workspace_id: uuid.UUID,
+    event: Any,
+    db: Session,
+) -> int:
+    """Send Web Push for a single security exposure lifecycle event.
+
+    Per-device opt-in (M60.13): a subscription receives the push only when its
+    preference for the event's category is enabled AND the event severity meets
+    the subscription's ``min_risk_level``:
+      * opened / reopened → requires ``security_push_enabled`` + ``is_alertable``
+      * resolved          → requires ``security_resolved_push_enabled`` + alertable
+
+    Medium/low/info never push. Returns the count of successful sends. Never
+    raises (callers must still guard, but this is fail-safe).
+    """
+    from app.config import settings as _settings
+
+    if not _settings.is_web_push_configured:
+        return 0
+    # Only critical/high exposures are alertable.
+    if not getattr(event, "is_alertable", False):
+        return 0
+
+    is_resolved = event.event_type == "security_exposure_resolved"
+
+    try:
+        subscriptions = (
+            db.query(WorkspacePushSubscription)
+            .filter(
+                WorkspacePushSubscription.workspace_id == workspace_id,
+                WorkspacePushSubscription.enabled == True,  # noqa: E712
+            )
+            .all()
+        )
+    except Exception:
+        logger.exception(
+            "security_push_alerts: failed to query subscriptions  workspace=%s",
+            workspace_id,
+        )
+        return 0
+
+    if not subscriptions:
+        return 0
+
+    base_url = _settings.APP_BASE_URL.rstrip("/")
+    severity = (event.severity or "").lower()
+    sent = 0
+    for sub in subscriptions:
+        try:
+            # Category opt-in gate.
+            if is_resolved:
+                if getattr(sub, "security_resolved_push_enabled", False) is not True:
+                    continue
+            else:
+                if getattr(sub, "security_push_enabled", False) is not True:
+                    continue
+            # Per-device severity floor (critical_only vs high+critical).
+            if severity not in _alertable_push_levels(sub.min_risk_level):
+                continue
+
+            payload = _build_security_push_payload(event, base_url)
+            if send_push(sub, payload, db):
+                sent += 1
+        except Exception:
+            logger.exception(
+                "security_push_alerts: per-subscription dispatch failed  id=%s",
+                getattr(sub, "id", "?"),
+            )
+
+    if sent:
+        logger.info(
+            "security_push_alerts: sent=%d workspace=%s finding_id=%s event=%s",
+            sent, workspace_id, event.finding_id, event.event_type,
+        )
     return sent
 
 

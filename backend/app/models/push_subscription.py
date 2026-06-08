@@ -63,6 +63,21 @@ class WorkspacePushSubscription(BaseMixin, Base):
         Text, nullable=False, default="high", server_default="high"
     )
 
+    # ── M60.13 — per-device push preferences by event category ─────────────────
+    # Drift critical/high push defaults ON (preserves existing behavior for
+    # current subscriptions). Security exposure push is OPT-IN (default off) so
+    # no device is surprised by new security notifications. Resolved-exposure
+    # push is also off by default (low-noise).
+    drift_push_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    security_push_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    security_resolved_push_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     # Timestamps.
     last_used_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True

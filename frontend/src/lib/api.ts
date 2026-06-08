@@ -935,6 +935,29 @@ export async function subscribePush(
 }
 
 /**
+ * Update per-device push preferences (M60.13) without re-subscribing.
+ *
+ * Lets a user toggle which alert categories (Drift critical, Security
+ * exposure critical, resolved-exposure) can reach this browser. Only the
+ * fields provided are changed. Returns the updated subscription metadata.
+ */
+export async function updatePushSubscription(
+  workspaceId: string,
+  subscriptionId: string,
+  body: import("@/types").PushSubscriptionUpdateRequest,
+  token?: string | null,
+): Promise<import("@/types").PushSubscriptionResponse> {
+  return apiFetch(
+    `/workspaces/${workspaceId}/notifications/push/subscriptions/${subscriptionId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      token,
+    },
+  );
+}
+
+/**
  * List all push subscriptions for a workspace.
  *
  * Returned records do NOT include endpoint URL or encryption keys.

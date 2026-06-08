@@ -810,6 +810,23 @@ export interface PushSubscribeRequest {
   device_label?: string;
   /** Defaults to "high" on the backend (high + critical). */
   min_risk_level?: PushMinRiskLevel;
+  /** Drift Detection critical/high push for this device (default true). */
+  drift_push_enabled?: boolean;
+  /** Security Exposure critical/high push for this device (opt-in, default false). */
+  security_push_enabled?: boolean;
+  /** Resolved-exposure push for this device (default false). */
+  security_resolved_push_enabled?: boolean;
+}
+
+/**
+ * Request body for PATCH /notifications/push/subscriptions/{id} (M60.13).
+ * All fields optional — omitted fields are left unchanged.
+ */
+export interface PushSubscriptionUpdateRequest {
+  min_risk_level?: PushMinRiskLevel;
+  drift_push_enabled?: boolean;
+  security_push_enabled?: boolean;
+  security_resolved_push_enabled?: boolean;
 }
 
 /**
@@ -824,6 +841,10 @@ export interface PushSubscriptionResponse {
   user_agent: string | null;
   enabled: boolean;
   min_risk_level: PushMinRiskLevel;
+  /** M60.13 per-device category preferences. */
+  drift_push_enabled: boolean;
+  security_push_enabled: boolean;
+  security_resolved_push_enabled: boolean;
   last_used_at: string | null;
   last_error: string | null;
   created_at: string;

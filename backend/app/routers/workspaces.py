@@ -87,6 +87,7 @@ from app.schemas.notification_settings import (
     PushSubscribeRequest,
     PushSubscriptionListResponse,
     PushSubscriptionResponse,
+    PushSubscriptionUpdateRequest,
     PushTestResponse,
 )
 from app.schemas.policy import (
@@ -967,12 +968,58 @@ def create_push_subscription(
         auth=body.subscription.keys.auth,
         device_label=body.device_label,
         min_risk_level=body.min_risk_level,
+        drift_push_enabled=body.drift_push_enabled,
+        security_push_enabled=body.security_push_enabled,
+        security_resolved_push_enabled=body.security_resolved_push_enabled,
         user_agent=None,
         browser_name=None,
         db=db,
     )
     db.commit()
     db.refresh(sub)
+    return PushSubscriptionResponse.model_validate(sub)
+
+
+@router.patch(
+    "/{workspace_id}/notifications/push/subscriptions/{subscription_id}",
+    response_model=PushSubscriptionResponse,
+    summary="Update per-device push preferences",
+)
+def update_push_subscription(
+    workspace_id: uuid.UUID,
+    subscription_id: uuid.UUID,
+    body: PushSubscriptionUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PushSubscriptionResponse:
+    """Update a browser push subscription's per-device preferences (M60.13).
+
+    Lets a user toggle which alert categories (Drift critical, Security
+    exposure critical, resolved-exposure) can reach this browser — without
+    re-subscribing. Only the fields provided are changed.
+
+    Requires workspace member role.
+    """
+    try:
+        workspace_service.require_role(workspace_id, current_user.id, "member", db)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    from app.services.push_notification_service import update_push_subscription_prefs
+
+    sub = update_push_subscription_prefs(
+        workspace_id=workspace_id,
+        subscription_id=subscription_id,
+        db=db,
+        min_risk_level=body.min_risk_level,
+        drift_push_enabled=body.drift_push_enabled,
+        security_push_enabled=body.security_push_enabled,
+        security_resolved_push_enabled=body.security_resolved_push_enabled,
+    )
+    if sub is None:
+        raise HTTPException(status_code=404, detail="Push subscription not found.")
     return PushSubscriptionResponse.model_validate(sub)
 
 

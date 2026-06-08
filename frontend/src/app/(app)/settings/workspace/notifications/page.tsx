@@ -14,6 +14,7 @@ import {
   disconnectSlackApp,
   getPushPublicKey,
   subscribePush,
+  updatePushSubscription,
   listPushSubscriptions,
   deletePushSubscription,
   testPushNotifications,
@@ -631,6 +632,9 @@ function BrowserPushCard({
   const [unsubscribing, setUnsubscribing] = useState(false);
   const [testing, setTesting] = useState(false);
   const [minRiskLevel, setMinRiskLevel] = useState<PushMinRiskLevel>("high");
+  // M60.13: which alert categories may reach this browser. Defaults mirror the
+  // backend: drift on, security exposure opt-in, resolved-exposure off.
+  const [savingPref, setSavingPref] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -831,7 +835,47 @@ function BrowserPushCard({
     }
   }
 
+  // ── Update this device's category preferences (M60.13) ───────────────────
+  async function handleTogglePref(
+    field:
+      | "drift_push_enabled"
+      | "security_push_enabled"
+      | "security_resolved_push_enabled",
+    value: boolean,
+  ) {
+    if (!currentSubId) return;
+    setSavingPref(field);
+    setError(null);
+    setSuccess(null);
+    // Optimistic update.
+    setSubscriptions((prev) =>
+      prev.map((s) => (s.id === currentSubId ? { ...s, [field]: value } : s)),
+    );
+    try {
+      const token = await getToken();
+      const updated = await updatePushSubscription(
+        workspaceId,
+        currentSubId,
+        { [field]: value },
+        token,
+      );
+      setSubscriptions((prev) =>
+        prev.map((s) => (s.id === updated.id ? updated : s)),
+      );
+    } catch (err) {
+      // Revert on failure.
+      setSubscriptions((prev) =>
+        prev.map((s) => (s.id === currentSubId ? { ...s, [field]: !value } : s)),
+      );
+      setError(err instanceof Error ? err.message : "Failed to update push preference.");
+    } finally {
+      setSavingPref(null);
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
+
+  const currentSub = subscriptions.find((s) => s.id === currentSubId) ?? null;
 
   const rowStyle: React.CSSProperties = {
     display: "flex",
@@ -899,7 +943,8 @@ function BrowserPushCard({
         <div>
           <p style={{ fontSize: "13px", color: "#8b90a0", margin: "0 0 14px", lineHeight: 1.6 }}>
             Receive real-time alerts in this browser when high or critical
-            configuration changes are detected. No extra app needed.
+            configuration changes are detected. No extra app needed. Subscribe
+            once, then choose which alert types can reach this browser.
           </p>
 
           {/* Risk level selector */}
@@ -969,6 +1014,86 @@ function BrowserPushCard({
               Browser notifications enabled for this device.
             </span>
           </div>
+
+          {/* ── Browser push preferences (M60.13) ───────────────────────── */}
+          {currentSub && (
+            <div
+              style={{
+                border: "1px solid #2a2d38",
+                borderRadius: "6px",
+                padding: "12px 14px",
+                marginBottom: "14px",
+              }}
+            >
+              <p
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  color: "#565b6e",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.04em",
+                  margin: "0 0 4px",
+                }}
+              >
+                Browser push preferences
+              </p>
+              <p style={{ fontSize: "12px", color: "#8b90a0", margin: "0 0 12px", lineHeight: 1.6 }}>
+                Subscribe once, then choose which alert types can reach this
+                browser.
+              </p>
+
+              {([
+                {
+                  field: "drift_push_enabled" as const,
+                  label: "Drift Detection",
+                  hint: "Critical and high configuration drift.",
+                  checked: currentSub.drift_push_enabled,
+                },
+                {
+                  field: "security_push_enabled" as const,
+                  label: "Security Exposure",
+                  hint: "When a critical or high security exposure is opened.",
+                  checked: currentSub.security_push_enabled,
+                },
+                {
+                  field: "security_resolved_push_enabled" as const,
+                  label: "Security Exposure resolved",
+                  hint: "When a security exposure is resolved. Off by default.",
+                  checked: currentSub.security_resolved_push_enabled,
+                },
+              ]).map((pref) => (
+                <label
+                  key={pref.field}
+                  htmlFor={`pref-${pref.field}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "9px",
+                    marginBottom: "10px",
+                    cursor: savingPref ? "wait" : "pointer",
+                  }}
+                >
+                  <input
+                    id={`pref-${pref.field}`}
+                    type="checkbox"
+                    checked={pref.checked}
+                    disabled={savingPref !== null}
+                    onChange={(e) => handleTogglePref(pref.field, e.target.checked)}
+                    style={{ marginTop: "2px", cursor: "inherit", flexShrink: 0 }}
+                  />
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ fontSize: "13px", color: "#c4c8d4", display: "block" }}>
+                      {pref.label}
+                    </span>
+                    <span style={{ fontSize: "11px", color: "#565b6e", display: "block" }}>
+                      {pref.hint}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             {isAdmin && (
               <button

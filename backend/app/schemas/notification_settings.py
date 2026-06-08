@@ -190,11 +190,41 @@ class PushSubscribeRequest(BaseModel):
         default="high",
         description="Minimum risk level for push: 'high' (high+critical) or 'critical_only'.",
     )
+    # ── M60.13 per-device category preferences ────────────────────────────────
+    drift_push_enabled: bool = Field(
+        default=True, description="Receive Drift Detection critical/high push."
+    )
+    security_push_enabled: bool = Field(
+        default=False, description="Receive Security Exposure critical/high push (opt-in)."
+    )
+    security_resolved_push_enabled: bool = Field(
+        default=False, description="Receive resolved-exposure push (off by default)."
+    )
 
     @field_validator("min_risk_level")
     @classmethod
     def validate_min_risk_level(cls, v: str) -> str:
         if v not in _VALID_PUSH_RISK_LEVELS:
+            raise ValueError(
+                f"min_risk_level must be one of: {sorted(_VALID_PUSH_RISK_LEVELS)}"
+            )
+        return v
+
+
+class PushSubscriptionUpdateRequest(BaseModel):
+    """Body for PATCH a push subscription's per-device preferences (M60.13).
+
+    All fields optional — omitted fields are unchanged.
+    """
+    min_risk_level: Optional[str] = None
+    drift_push_enabled: Optional[bool] = None
+    security_push_enabled: Optional[bool] = None
+    security_resolved_push_enabled: Optional[bool] = None
+
+    @field_validator("min_risk_level")
+    @classmethod
+    def validate_min_risk_level(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_PUSH_RISK_LEVELS:
             raise ValueError(
                 f"min_risk_level must be one of: {sorted(_VALID_PUSH_RISK_LEVELS)}"
             )
@@ -210,6 +240,10 @@ class PushSubscriptionResponse(BaseModel):
     device_label: Optional[str] = None
     browser_name: Optional[str] = None
     min_risk_level: str
+    # M60.13 per-device category preferences.
+    drift_push_enabled: bool = True
+    security_push_enabled: bool = False
+    security_resolved_push_enabled: bool = False
     created_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None
     last_error: Optional[str] = None

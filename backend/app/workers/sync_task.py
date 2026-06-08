@@ -423,11 +423,33 @@ def sync_integration(
                         from app.config import settings as _cfg
                         _base_url = _cfg.APP_BASE_URL.rstrip("/")
                         _sec_slack_sent = 0
+                        _sec_push_sent = 0
                         for _ev in _sec_events:
                             _decision = _routing.route_security_event(
                                 event=_ev, settings=_routing_settings
                             )
                             _routing.log_security_routing(_ev, _decision)
+
+                            # M60.13: per-device browser push for security
+                            # exposures. The push service gates per-subscription
+                            # by category opt-in + severity floor. Guarded so a
+                            # push failure never affects the sync.
+                            if integration.workspace_id is not None:
+                                try:
+                                    from app.services.push_notification_service import (
+                                        dispatch_security_push_for_event,
+                                    )
+                                    _sec_push_sent += dispatch_security_push_for_event(
+                                        workspace_id=integration.workspace_id,
+                                        event=_ev,
+                                        db=db,
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "security_push_alerts: dispatch failed  "
+                                        "finding_id=%s",
+                                        _ev.finding_id,
+                                    )
                             # M60.12: dispatch to Slack when the workspace opted
                             # in and a channel resolved. Each send is guarded so
                             # a Slack failure never affects the sync.
@@ -457,6 +479,12 @@ def sync_integration(
                             logger.info(
                                 "security_slack_alerts: sent=%d sync_run_id=%s",
                                 _sec_slack_sent,
+                                sync_run_id,
+                            )
+                        if _sec_push_sent:
+                            logger.info(
+                                "security_push_alerts: total_sent=%d sync_run_id=%s",
+                                _sec_push_sent,
                                 sync_run_id,
                             )
                     except Exception:
