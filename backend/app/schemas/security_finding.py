@@ -37,6 +37,8 @@ class SecurityFindingResponse(BaseModel):
     last_seen_at: datetime
     resolved_at: Optional[datetime]
     accepted_until: Optional[datetime]
+    # M61.2 — when a snooze expires (NULL when not snoozed).
+    snoozed_until: Optional[datetime] = None
     reviewed_by_user_id: Optional[UUID4]
     reviewed_at: Optional[datetime]
     # M61.1 — rationale captured when the finding was marked accepted_risk.
@@ -88,4 +90,25 @@ class AcceptRiskRequest(BaseModel):
         aware = v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
         if aware <= datetime.now(timezone.utc):
             raise ValueError("accepted_until must be in the future.")
+        return aware
+
+
+class SnoozeRequest(BaseModel):
+    """Body for POST /security/findings/{id}/snooze (M61.2).
+
+    Snoozing pauses active attention on an exposure until ``snoozed_until``. It
+    does NOT accept the risk and does NOT mark the exposure fixed.
+    """
+
+    snoozed_until: datetime = Field(
+        ...,
+        description="When the snooze expires (must be in the future, UTC).",
+    )
+
+    @field_validator("snoozed_until")
+    @classmethod
+    def _must_be_future(cls, v: datetime) -> datetime:
+        aware = v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
+        if aware <= datetime.now(timezone.utc):
+            raise ValueError("snoozed_until must be in the future.")
         return aware

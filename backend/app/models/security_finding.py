@@ -138,6 +138,12 @@ class SecurityFinding(BaseMixin, Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # When a snooze expires (M61.2). NULL = not currently snooze-bound.
+    # Snooze is inherently temporary, so a NULL here is treated as "not
+    # actively snoozed" by the evaluator (it never indefinitely hides a risk).
+    snoozed_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # When an accepted-risk acceptance expires (NULL = indefinite).
     accepted_until: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True

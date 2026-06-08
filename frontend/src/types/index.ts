@@ -1496,6 +1496,8 @@ export interface SecurityFinding {
   last_seen_at: string;
   resolved_at: string | null;
   accepted_until: string | null;
+  /** M61.2 — when a snooze expires (null when not snoozed). */
+  snoozed_until: string | null;
   reviewed_by_user_id: string | null;
   reviewed_at: string | null;
   /** M61.1 — rationale captured when the finding was marked accepted_risk. */
@@ -1510,4 +1512,10 @@ export interface AcceptRiskRequest {
   reason: string;
   /** ISO 8601 datetime when the acceptance expires (must be in the future). */
   accepted_until: string;
+}
+
+/** Body for POST /security/findings/{id}/snooze (M61.2). */
+export interface SecuritySnoozeRequest {
+  /** ISO 8601 datetime when the snooze expires (must be in the future). */
+  snoozed_until: string;
 }

@@ -38,6 +38,7 @@ from app.schemas.security_finding import (
     AcceptRiskRequest,
     SecurityFindingListResponse,
     SecurityFindingResponse,
+    SnoozeRequest,
 )
 from app.services import security_finding_service
 
@@ -150,6 +151,88 @@ def accept_security_finding_risk(
             actor_user_id=current_user.id,
             reason=body.reason,
             accepted_until=body.accepted_until,
+        )
+    except security_finding_service.FindingNotAcceptableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return SecurityFindingResponse.model_validate(updated)
+
+
+@router.post(
+    "/findings/{finding_id}/acknowledge",
+    response_model=SecurityFindingResponse,
+)
+def acknowledge_security_finding(
+    finding_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityFindingResponse:
+    """Acknowledge an active security finding (M61.2).
+
+    Records that the team has reviewed the exposure and is tracking it. The
+    finding stays ACTIVE — acknowledging does NOT mark it fixed or resolved, and
+    it sends no notifications.
+
+    * 404 — finding not found, or not in the user's workspace (never 403).
+    * 400 — the finding cannot be acknowledged (resolved, accepted risk, or
+      snoozed — those are already explicit review states).
+    """
+    finding = security_finding_service.get_finding_for_user(
+        finding_id=finding_id,
+        user_id=current_user.id,
+        db=db,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Security finding not found.")
+
+    try:
+        updated = security_finding_service.acknowledge_finding(
+            db=db,
+            finding=finding,
+            actor_user_id=current_user.id,
+        )
+    except security_finding_service.FindingNotAcceptableError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return SecurityFindingResponse.model_validate(updated)
+
+
+@router.post(
+    "/findings/{finding_id}/snooze",
+    response_model=SecurityFindingResponse,
+)
+def snooze_security_finding(
+    finding_id: UUID4,
+    body: SnoozeRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityFindingResponse:
+    """Snooze an active security finding until ``snoozed_until`` (M61.2).
+
+    Snoozing pauses active attention on the exposure temporarily. It does NOT
+    accept the risk and does NOT mark the exposure fixed or resolved, and it
+    sends no notifications. While snoozed, the evaluator will not re-open an
+    active duplicate; once the snooze expires and the risky state persists, a
+    fresh active finding opens.
+
+    * 404 — finding not found, or not in the user's workspace (never 403).
+    * 400 — the finding cannot be snoozed (resolved, or accepted risk).
+    * 422 — the request body is invalid (missing or past ``snoozed_until``).
+    """
+    finding = security_finding_service.get_finding_for_user(
+        finding_id=finding_id,
+        user_id=current_user.id,
+        db=db,
+    )
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Security finding not found.")
+
+    try:
+        updated = security_finding_service.snooze_finding(
+            db=db,
+            finding=finding,
+            actor_user_id=current_user.id,
+            snoozed_until=body.snoozed_until,
         )
     except security_finding_service.FindingNotAcceptableError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

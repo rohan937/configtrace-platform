@@ -489,6 +489,40 @@ export async function acceptSecurityFindingRisk(
   });
 }
 
+/**
+ * Acknowledge a security finding (M61.2).
+ *
+ * Records that the team has reviewed the exposure and is tracking it. The
+ * finding stays active — this does NOT mark it fixed or resolved.
+ */
+export async function acknowledgeSecurityFinding(
+  findingId: string,
+  token?: string | null,
+): Promise<SecurityFinding> {
+  return apiFetch(`/security/findings/${findingId}/acknowledge`, {
+    method: "POST",
+    token,
+  });
+}
+
+/**
+ * Snooze a security finding until a future time (M61.2).
+ *
+ * Pauses active attention on the exposure temporarily. This does NOT accept the
+ * risk and does NOT mark the exposure fixed or resolved.
+ */
+export async function snoozeSecurityFinding(
+  findingId: string,
+  body: import("@/types").SecuritySnoozeRequest,
+  token?: string | null,
+): Promise<SecurityFinding> {
+  return apiFetch(`/security/findings/${findingId}/snooze`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+
 // ── M57.3: Needs Review queue ─────────────────────────────────────────────────
 
 export interface GetNeedsReviewParams {

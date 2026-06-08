@@ -15,7 +15,12 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 
 import type { SecurityFinding } from "@/types";
-import { getSecurityFinding, acceptSecurityFindingRisk } from "@/lib/api";
+import {
+  getSecurityFinding,
+  acceptSecurityFindingRisk,
+  acknowledgeSecurityFinding,
+  snoozeSecurityFinding,
+} from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
 import { formatAbsoluteTime } from "@/lib/utils";
 
@@ -116,6 +121,7 @@ function ExposureBody({
   const duration = formatExposureDuration(finding);
   const resourceLabel = finding.resource_id ?? "—";
   const isAccepted = finding.status === "accepted_risk";
+  const isSnoozed = finding.status === "snoozed";
 
   return (
     <div>
@@ -191,6 +197,9 @@ function ExposureBody({
         ) : null}
         {isAccepted && finding.accepted_until ? (
           <Fact label="Accepted until" value={formatAbsoluteTime(finding.accepted_until)} />
+        ) : null}
+        {isSnoozed && finding.snoozed_until ? (
+          <Fact label="Snoozed until" value={formatAbsoluteTime(finding.snoozed_until)} />
         ) : null}
       </div>
 
@@ -358,33 +367,41 @@ function ExposureBody({
         </Panel>
       ) : null}
 
+      {/* 7b. Snoozed record (shown while a finding is snoozed) */}
+      {isSnoozed ? (
+        <Panel>
+          <SectionLabel>Snoozed</SectionLabel>
+          <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: "8px 0 12px", lineHeight: 1.6 }}>
+            Active attention on this exposure is paused until the time below.
+            Snoozing does not accept the risk or mark the exposure fixed.
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: "10px",
+            }}
+          >
+            {finding.snoozed_until ? (
+              <Fact label="Snoozed until" value={formatAbsoluteTime(finding.snoozed_until)} inset />
+            ) : null}
+            {finding.reviewed_at ? (
+              <Fact label="Snoozed at" value={formatAbsoluteTime(finding.reviewed_at)} inset />
+            ) : null}
+          </div>
+        </Panel>
+      ) : null}
+
       {/* 8. Review actions */}
       <Panel>
         <SectionLabel>Review actions</SectionLabel>
-        <AcceptRiskAction finding={finding} onUpdated={onUpdated} />
-        <p style={{ fontSize: "12px", color: "#565b6e", margin: "14px 0 0", lineHeight: 1.6 }}>
-          Acknowledge and Snooze arrive in a later milestone.
+        <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: "8px 0 14px", lineHeight: 1.6 }}>
+          None of these mark the exposure fixed or resolved.
         </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", marginTop: "8px" }}>
-          {["Acknowledge", "Snooze"].map((label) => (
-            <span
-              key={label}
-              aria-disabled="true"
-              title="This review action arrives in a later milestone."
-              style={{
-                fontSize: "13px",
-                fontWeight: 600,
-                color: "#565b6e",
-                background: "rgba(148,163,184,0.06)",
-                border: "1px solid #2a2d38",
-                borderRadius: "8px",
-                padding: "8px 14px",
-                cursor: "not-allowed",
-              }}
-            >
-              {label}
-            </span>
-          ))}
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          <AcknowledgeAction finding={finding} onUpdated={onUpdated} />
+          <SnoozeAction finding={finding} onUpdated={onUpdated} />
+          <AcceptRiskAction finding={finding} onUpdated={onUpdated} />
         </div>
       </Panel>
     </div>
@@ -560,6 +577,260 @@ function AcceptRiskAction({
             padding: "8px 14px",
             cursor: "pointer",
             fontFamily: "inherit",
+          }}
+          onClick={() => { setOpen(false); setErr(null); }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Acknowledge action ────────────────────────────────────────────────────────
+
+function AcknowledgeAction({
+  finding,
+  onUpdated,
+}: {
+  finding: SecurityFinding;
+  onUpdated: (f: SecurityFinding) => void;
+}) {
+  const { getToken } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Acknowledge applies only to active findings (accepted_risk / snoozed /
+  // resolved are already explicit states — the backend rejects them).
+  if (finding.status !== "active") return null;
+
+  const alreadyAcknowledged = finding.reviewed_at != null;
+
+  async function submit() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = await getToken();
+      const updated = await acknowledgeSecurityFinding(finding.id, token);
+      onUpdated(updated);
+      setOpen(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to acknowledge.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const btn: React.CSSProperties = {
+    fontSize: "13px",
+    fontWeight: 600,
+    color: "#3ccf7e",
+    background: "rgba(60,207,126,0.12)",
+    border: "1px solid rgba(60,207,126,0.4)",
+    borderRadius: "8px",
+    padding: "8px 14px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
+
+  if (!open) {
+    return (
+      <div>
+        <button type="button" style={btn} onClick={() => { setOpen(true); setErr(null); }}>
+          {alreadyAcknowledged ? "Re-acknowledge" : "Acknowledge"}
+        </button>
+        {alreadyAcknowledged && finding.reviewed_at ? (
+          <p style={{ fontSize: "12px", color: "#3ccf7e", margin: "8px 0 0" }}>
+            ✓ Acknowledged {formatAbsoluteTime(finding.reviewed_at)} — still active.
+          </p>
+        ) : (
+          <p style={{ fontSize: "12px", color: "#8b90a0", margin: "8px 0 0", lineHeight: 1.6 }}>
+            Records that your team has reviewed the exposure. It does not mark the
+            exposure fixed.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        background: "#1a1d28",
+        border: "1px solid #3a3d4a",
+        borderRadius: "8px",
+        padding: "14px",
+      }}
+    >
+      <p style={{ fontSize: "13px", color: "#c4c8d4", margin: "0 0 4px", fontWeight: 600 }}>
+        Acknowledge this exposure?
+      </p>
+      <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: "0 0 12px", lineHeight: 1.6 }}>
+        This records that your team has reviewed the exposure. It does not mark the
+        exposure fixed. The exposure stays active.
+      </p>
+      {err ? <p style={{ fontSize: "12px", color: "#e07a5f", margin: "0 0 10px" }}>{err}</p> : null}
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button
+          type="button"
+          style={{ ...btn, opacity: busy ? 0.5 : 1, cursor: busy ? "not-allowed" : "pointer" }}
+          disabled={busy}
+          onClick={submit}
+        >
+          {busy ? "Saving…" : "Confirm acknowledge"}
+        </button>
+        <button
+          type="button"
+          style={{
+            fontSize: "13px", fontWeight: 600, color: "#8b90a0", background: "none",
+            border: "1px solid #2a2d38", borderRadius: "8px", padding: "8px 14px",
+            cursor: "pointer", fontFamily: "inherit",
+          }}
+          onClick={() => { setOpen(false); setErr(null); }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Snooze action ─────────────────────────────────────────────────────────────
+
+function plusHoursLocal(hours: number): string {
+  // Returns a value suitable for <input type="datetime-local"> (local, no tz).
+  const d = new Date();
+  d.setHours(d.getHours() + hours);
+  d.setSeconds(0, 0);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function SnoozeAction({
+  finding,
+  onUpdated,
+}: {
+  finding: SecurityFinding;
+  onUpdated: (f: SecurityFinding) => void;
+}) {
+  const { getToken } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [until, setUntil] = useState(() => plusHoursLocal(24 * 7));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Snooze applies only to active findings (the backend rejects resolved and
+  // accepted_risk; a snoozed finding already shows its snooze elsewhere).
+  if (finding.status !== "active") return null;
+
+  const untilValid = (() => {
+    if (!until) return false;
+    const t = new Date(until).getTime();
+    return !Number.isNaN(t) && t > Date.now();
+  })();
+
+  async function submit() {
+    if (!untilValid) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const token = await getToken();
+      const snoozedUntilIso = new Date(until).toISOString();
+      const updated = await snoozeSecurityFinding(
+        finding.id,
+        { snoozed_until: snoozedUntilIso },
+        token,
+      );
+      onUpdated(updated);
+      setOpen(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to snooze.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const btn: React.CSSProperties = {
+    fontSize: "13px",
+    fontWeight: 600,
+    color: "#8b90a0",
+    background: "rgba(148,163,184,0.08)",
+    border: "1px solid #3a3d4a",
+    borderRadius: "8px",
+    padding: "8px 14px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+  };
+  const quick: React.CSSProperties = {
+    fontSize: "12px", fontWeight: 600, color: "#8b90a0", background: "none",
+    border: "1px solid #2a2d38", borderRadius: "6px", padding: "5px 10px",
+    cursor: "pointer", fontFamily: "inherit",
+  };
+  const inputStyle: React.CSSProperties = {
+    background: "#1c1e26", border: "1px solid #3a3d4a", borderRadius: "6px",
+    padding: "8px 10px", fontSize: "13px", color: "#e2e5ef", fontFamily: "inherit",
+    width: "100%", boxSizing: "border-box",
+  };
+
+  if (!open) {
+    return (
+      <div>
+        <button type="button" style={btn} onClick={() => { setOpen(true); setErr(null); }}>
+          Snooze
+        </button>
+        <p style={{ fontSize: "12px", color: "#8b90a0", margin: "8px 0 0", lineHeight: 1.6 }}>
+          Pauses active attention until the selected time. It does not accept the
+          risk or mark it fixed.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        background: "#1a1d28", border: "1px solid #3a3d4a", borderRadius: "8px",
+        padding: "14px",
+      }}
+    >
+      <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: "0 0 12px", lineHeight: 1.6 }}>
+        Snoozing pauses active attention on this exposure until the selected time.
+        It does not accept the risk or mark it fixed.
+      </p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginBottom: "10px" }}>
+        <button type="button" style={quick} onClick={() => setUntil(plusHoursLocal(24))}>24 hours</button>
+        <button type="button" style={quick} onClick={() => setUntil(plusHoursLocal(24 * 7))}>7 days</button>
+        <button type="button" style={quick} onClick={() => setUntil(plusHoursLocal(24 * 30))}>30 days</button>
+      </div>
+      <label style={{ display: "block", fontSize: "12px", color: "#8b90a0", marginBottom: "5px" }}>
+        Snooze until <span style={{ color: "#8b90a0" }}>*</span>
+      </label>
+      <input
+        type="datetime-local"
+        value={until}
+        onChange={(e) => setUntil(e.target.value)}
+        style={{ ...inputStyle, marginBottom: "4px" }}
+      />
+      <p style={{ fontSize: "11px", color: untilValid ? "#565b6e" : "#e07a5f", margin: "0 0 12px" }}>
+        Must be a future time.
+      </p>
+      {err ? <p style={{ fontSize: "12px", color: "#e07a5f", margin: "0 0 10px" }}>{err}</p> : null}
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button
+          type="button"
+          style={{ ...btn, opacity: busy || !untilValid ? 0.5 : 1, cursor: busy || !untilValid ? "not-allowed" : "pointer" }}
+          disabled={busy || !untilValid}
+          onClick={submit}
+        >
+          {busy ? "Saving…" : "Confirm snooze"}
+        </button>
+        <button
+          type="button"
+          style={{
+            fontSize: "13px", fontWeight: 600, color: "#8b90a0", background: "none",
+            border: "1px solid #2a2d38", borderRadius: "8px", padding: "8px 14px",
+            cursor: "pointer", fontFamily: "inherit",
           }}
           onClick={() => { setOpen(false); setErr(null); }}
         >

@@ -43,7 +43,7 @@ import {
 
 const PAGE_SIZE = 25;
 
-type StatusFilter = "active" | "resolved" | "accepted_risk" | "all";
+type StatusFilter = "active" | "resolved" | "accepted_risk" | "snoozed" | "all";
 
 // Severity/status tokens, masking, and the Evidence/Remediation/badge
 // renderers are shared with the Exposure Detail page (M60.6) — see
@@ -278,6 +278,7 @@ export default function ActiveExposuresPage() {
           options={[
             { value: "active", label: "Active" },
             { value: "accepted_risk", label: "Accepted risk" },
+            { value: "snoozed", label: "Snoozed" },
             { value: "resolved", label: "Resolved" },
             { value: "all", label: "All" },
           ]}
@@ -671,6 +672,12 @@ function DetailGrid({
   }
   if (finding.status === "accepted_risk" && finding.accepted_until) {
     rows.push({ label: "Accepted until", value: formatAbsoluteTime(finding.accepted_until) });
+  }
+  if (finding.status === "snoozed" && finding.snoozed_until) {
+    rows.push({ label: "Snoozed until", value: formatAbsoluteTime(finding.snoozed_until) });
+  }
+  if (finding.status === "active" && finding.reviewed_at) {
+    rows.push({ label: "Acknowledged", value: formatAbsoluteTime(finding.reviewed_at) });
   }
   return (
     <div>

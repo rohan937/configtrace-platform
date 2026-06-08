@@ -284,6 +284,21 @@ def record_active_finding(
     if accepted is not None:
         return accepted, False
 
+    # M61.2: same suppression for a currently-snoozed finding — while the snooze
+    # has not expired we do not re-open an active duplicate. Once the snooze
+    # expires (snoozed_until in the past) this returns None and a fresh active
+    # finding opens. A snoozed row with NULL snoozed_until is treated as "not
+    # actively snoozed" (snooze never indefinitely hides a risk).
+    snoozed = find_currently_snoozed_finding(
+        db=db,
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        resource_id=resource_id,
+        finding_key=finding_key,
+    )
+    if snoozed is not None:
+        return snoozed, False
+
     created = create_finding(
         db=db,
         workspace_id=workspace_id,
@@ -547,6 +562,135 @@ def accept_finding_risk(
     finding.reviewed_by_user_id = actor_user_id
     finding.reviewed_at = now
     finding.acceptance_reason = reason
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return finding
+
+
+# ── Acknowledge + Snooze workflow (M61.2) ─────────────────────────────────────
+
+
+def find_currently_snoozed_finding(
+    *,
+    db: Session,
+    workspace_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    resource_id: Optional[uuid.UUID],
+    finding_key: str,
+    now: Optional[datetime] = None,
+) -> Optional[SecurityFinding]:
+    """Return a non-expired ``snoozed`` finding for this logical key.
+
+    "Currently snoozed" means status is ``snoozed`` AND ``snoozed_until`` is in
+    the future. Unlike accepted-risk, a NULL ``snoozed_until`` is NOT treated as
+    indefinite — snooze is temporary by nature, so a row without an expiry is
+    considered not-actively-snoozed and does NOT suppress a fresh active finding.
+
+    Returns None when no such snooze exists (including expired ones), so the
+    caller may open a fresh active finding.
+    """
+    now = now or _utcnow()
+    query = db.query(SecurityFinding).filter(
+        SecurityFinding.workspace_id == workspace_id,
+        SecurityFinding.integration_id == integration_id,
+        SecurityFinding.finding_key == finding_key,
+        SecurityFinding.status == "snoozed",
+    )
+    if resource_id is not None:
+        query = query.filter(SecurityFinding.resource_id == resource_id)
+    else:
+        query = query.filter(SecurityFinding.resource_id.is_(None))
+
+    for finding in query.all():
+        if finding.snoozed_until is not None and _aware(finding.snoozed_until) > now:
+            return finding
+    return None
+
+
+def acknowledge_finding(
+    *,
+    db: Session,
+    finding: SecurityFinding,
+    actor_user_id: uuid.UUID,
+) -> SecurityFinding:
+    """Acknowledge an active finding (M61.2).
+
+    Records that the team has reviewed the exposure and is tracking it — it
+    stays ACTIVE (acknowledge is not a fix or a resolution).
+
+    Lifecycle contract:
+    * Allowed only from ``active``. ``resolved`` / ``accepted_risk`` / ``snoozed``
+      raise :class:`FindingNotAcceptableError` (→ 400): a resolved finding has
+      nothing to acknowledge, and accepted_risk / snoozed are already stronger,
+      explicit review states.
+    * Sets ``reviewed_by_user_id`` and ``reviewed_at`` (now). Status STAYS
+      ``active`` — "acknowledged" is derived in the UI as active + reviewed_at.
+      No new status value is introduced.
+    * NEVER sets ``resolved_at`` / ``snoozed_until`` and NEVER changes
+      ``first_detected_at``, ``last_seen_at``, ``evidence``, or ``remediation``.
+    * Emits NO lifecycle event and sends NO Slack/push.
+    """
+    if finding.status == "resolved":
+        raise FindingNotAcceptableError(
+            "A resolved exposure cannot be acknowledged."
+        )
+    if finding.status != "active":
+        raise FindingNotAcceptableError(
+            f"A finding with status {finding.status!r} cannot be acknowledged; "
+            "it is already in an explicit review state."
+        )
+
+    finding.reviewed_by_user_id = actor_user_id
+    finding.reviewed_at = _utcnow()
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return finding
+
+
+def snooze_finding(
+    *,
+    db: Session,
+    finding: SecurityFinding,
+    actor_user_id: uuid.UUID,
+    snoozed_until: datetime,
+) -> SecurityFinding:
+    """Snooze an active finding until ``snoozed_until`` (M61.2).
+
+    Pauses active attention on the exposure temporarily. Snooze does NOT accept
+    the risk and does NOT mark the exposure fixed or resolved.
+
+    Lifecycle contract:
+    * Allowed only from ``active``. ``resolved`` rejects (nothing to snooze) and
+      ``accepted_risk`` rejects (accepted risk is a stronger, time-bound state) —
+      both raise :class:`FindingNotAcceptableError` (→ 400).
+    * Sets ``status='snoozed'``, ``snoozed_until``, ``reviewed_by_user_id``,
+      ``reviewed_at`` (now).
+    * NEVER sets ``resolved_at`` and NEVER changes ``first_detected_at``,
+      ``last_seen_at``, ``evidence``, or ``remediation``.
+    * Emits NO lifecycle event and sends NO Slack/push.
+    """
+    if finding.status == "resolved":
+        raise FindingNotAcceptableError("A resolved exposure cannot be snoozed.")
+    if finding.status == "accepted_risk":
+        raise FindingNotAcceptableError(
+            "This exposure is marked accepted risk; clear that first to snooze it."
+        )
+    if finding.status != "active":
+        raise FindingNotAcceptableError(
+            f"A finding with status {finding.status!r} cannot be snoozed."
+        )
+
+    now = _utcnow()
+    snoozed_until = _aware(snoozed_until)
+    if snoozed_until <= now:
+        raise FindingNotAcceptableError("snoozed_until must be in the future.")
+
+    finding.status = "snoozed"
+    finding.snoozed_until = snoozed_until
+    finding.reviewed_by_user_id = actor_user_id
+    finding.reviewed_at = now
     db.add(finding)
     db.commit()
     db.refresh(finding)

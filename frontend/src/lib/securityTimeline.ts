@@ -11,9 +11,11 @@
  *   still_active  ← last_seen_at            (active findings, seen after open)
  *   resolved      ← resolved_at             (resolved findings)
  *   accepted_risk ← reviewed_at             (M61.1: accepted_risk findings)
+ *   acknowledged  ← reviewed_at             (M61.2: active findings with a review)
+ *   snoozed       ← reviewed_at             (M61.2: snoozed findings)
  *
- * We deliberately do NOT derive "Acknowledged", "Snoozed", or "Alert sent" —
- * those require review/alert data that does not exist yet.
+ * We deliberately do NOT derive "Alert sent" — that requires alert data that
+ * does not exist yet (deferred to the M61.3 audit trail).
  */
 
 import type { SecurityFinding } from "@/types";
@@ -24,7 +26,9 @@ export type TimelineEventType =
   | "reopened"
   | "still_active"
   | "resolved"
-  | "accepted_risk";
+  | "accepted_risk"
+  | "acknowledged"
+  | "snoozed";
 
 export interface TimelineEvent {
   /** Stable key: `${finding.id}:${type}`. */
@@ -41,6 +45,8 @@ export const EVENT_LABEL: Record<TimelineEventType, string> = {
   still_active: "Still active",
   resolved: "Exposure resolved",
   accepted_risk: "Risk accepted",
+  acknowledged: "Acknowledged",
+  snoozed: "Snoozed",
 };
 
 /** Filter value for the event-type control. "opened" includes "reopened". */
@@ -49,7 +55,9 @@ export type EventTypeFilter =
   | "opened"
   | "still_active"
   | "resolved"
-  | "accepted_risk";
+  | "accepted_risk"
+  | "acknowledged"
+  | "snoozed";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -118,6 +126,26 @@ export function buildTimelineEvents(findings: SecurityFinding[]): TimelineEvent[
       events.push({
         key: `${f.id}:accepted_risk`,
         type: "accepted_risk",
+        at: f.reviewed_at,
+        finding: f,
+      });
+    }
+
+    // Acknowledged (M61.2): an active finding that carries a review timestamp.
+    if (f.status === "active" && f.reviewed_at && !Number.isNaN(ts(f.reviewed_at))) {
+      events.push({
+        key: `${f.id}:acknowledged`,
+        type: "acknowledged",
+        at: f.reviewed_at,
+        finding: f,
+      });
+    }
+
+    // Snoozed (M61.2): derived from reviewed_at on snoozed findings.
+    if (f.status === "snoozed" && f.reviewed_at && !Number.isNaN(ts(f.reviewed_at))) {
+      events.push({
+        key: `${f.id}:snoozed`,
+        type: "snoozed",
         at: f.reviewed_at,
         finding: f,
       });
