@@ -1583,3 +1583,20 @@ export interface SecurityRuleSettingsListResponse {
   items: SecurityRuleSetting[];
   total: number;
 }
+
+/** Security Exposure demo-data status (M62.2). */
+export interface SecurityDemoDataStatus {
+  exists: boolean;
+  finding_count: number;
+  active_count: number;
+  resolved_count: number;
+  accepted_count: number;
+  snoozed_count: number;
+}
+
+/** Result of clearing demo data (M62.2). */
+export interface SecurityDemoClearResponse {
+  cleared: boolean;
+  findings_deleted: number;
+  notes_deleted: number;
+}

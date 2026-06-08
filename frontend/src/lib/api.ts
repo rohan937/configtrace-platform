@@ -579,6 +579,27 @@ export async function updateSecurityRuleSetting(
   });
 }
 
+/** Whether Security Exposure demo data exists in the workspace (M62.2). */
+export async function getSecurityDemoDataStatus(
+  token?: string | null,
+): Promise<import("@/types").SecurityDemoDataStatus> {
+  return apiFetch(`/security/demo-data/status`, { token });
+}
+
+/** Seed a safe Security Exposure demo dataset (opt-in, idempotent). */
+export async function seedSecurityDemoData(
+  token?: string | null,
+): Promise<import("@/types").SecurityDemoDataStatus> {
+  return apiFetch(`/security/demo-data/seed`, { method: "POST", token });
+}
+
+/** Remove the demo-created Security Exposure rows for the workspace. */
+export async function clearSecurityDemoData(
+  token?: string | null,
+): Promise<import("@/types").SecurityDemoClearResponse> {
+  return apiFetch(`/security/demo-data`, { method: "DELETE", token });
+}
+
 // ── M57.3: Needs Review queue ─────────────────────────────────────────────────
 
 export interface GetNeedsReviewParams {

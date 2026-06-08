@@ -28,6 +28,7 @@ import { formatRelativeTime, formatAbsoluteTime } from "@/lib/utils";
 import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
+import SecurityDemoBanner from "@/components/security/SecurityDemoBanner";
 import { ExposureRow, PreviewBanner, SectionLabel } from "@/components/security/previews";
 import {
   SEVERITY_LABEL,
@@ -244,6 +245,15 @@ export default function ActiveExposuresPage() {
         configuration. Drift Detection shows what changed. Active Exposures shows
         what is still dangerous right now.
       </p>
+
+      {/* M62.2: opt-in demo data control. */}
+      <SecurityDemoBanner
+        findingsEmpty={!loading && findings.length === 0}
+        onChanged={() => {
+          void loadFindings();
+          void loadMetrics();
+        }}
+      />
 
       {/* Summary metrics */}
       <div

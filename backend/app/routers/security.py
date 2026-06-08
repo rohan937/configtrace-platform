@@ -52,9 +52,14 @@ from app.schemas.security_rule_setting import (
     SecurityRuleSettingItem,
     SecurityRuleSettingsListResponse,
 )
+from app.schemas.security_demo_data import (
+    SecurityDemoClearResponse,
+    SecurityDemoDataStatus,
+)
 from app.services import security_finding_service
 from app.services import security_finding_note_service
 from app.services import security_rule_settings_service
+from app.services import security_demo_data_service
 from app.services import workspace_service
 from app.services.security_rule_registry import is_known_rule_key
 
@@ -416,3 +421,49 @@ def update_security_rule_setting(
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     return SecurityRuleSettingItem(**item)
+
+
+# ── Demo data (M62.2) ─────────────────────────────────────────────────────────
+
+
+@router.get("/demo-data/status", response_model=SecurityDemoDataStatus)
+def get_security_demo_data_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityDemoDataStatus:
+    """Return whether Security Exposure demo data exists for the workspace."""
+    workspace_id = _current_workspace_id(current_user, db)
+    return SecurityDemoDataStatus(
+        **security_demo_data_service.get_status(workspace_id, db)
+    )
+
+
+@router.post("/demo-data/seed", response_model=SecurityDemoDataStatus)
+def seed_security_demo_data(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityDemoDataStatus:
+    """Seed a safe Security Exposure demo dataset for the current workspace.
+
+    Opt-in and idempotent: if demo data already exists, the current counts are
+    returned without duplicating. Inserts rows directly — no evaluator run and
+    no Slack/email/push notifications.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    return SecurityDemoDataStatus(
+        **security_demo_data_service.seed(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
+    )
+
+
+@router.delete("/demo-data", response_model=SecurityDemoClearResponse)
+def clear_security_demo_data(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityDemoClearResponse:
+    """Remove only the demo-created Security Exposure rows for the workspace."""
+    workspace_id = _current_workspace_id(current_user, db)
+    return SecurityDemoClearResponse(
+        **security_demo_data_service.clear(workspace_id=workspace_id, db=db)
+    )
