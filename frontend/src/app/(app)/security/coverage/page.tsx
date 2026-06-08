@@ -12,12 +12,14 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 
 import type {
   SecurityCoverageProvider,
   SecurityCoverageResponse,
   SecurityCoverageStatus,
+  SecurityDiagnosticStatus,
 } from "@/types";
 import { getSecurityCoverage, getSecurityDemoDataStatus } from "@/lib/api";
 import { getProviderMeta } from "@/lib/providers";
@@ -36,6 +38,40 @@ const STATUS_META: Record<SecurityCoverageStatus, { label: string; color: string
   needs_attention: { label: "Needs attention", color: "#f5632a" },
   not_connected: { label: "Not connected", color: "#8b90a0" },
 };
+
+const DIAGNOSTIC_META: Record<SecurityDiagnosticStatus, { label: string; color: string }> = {
+  ok: { label: "Diagnostics OK", color: "#3ccf7e" },
+  needs_sync: { label: "Needs sync", color: "#6b9cf8" },
+  missing_metadata: { label: "Missing metadata", color: "#f5a623" },
+  permissions_likely_limited: { label: "Permissions likely limited", color: "#f5632a" },
+  provider_not_connected: { label: "Not connected", color: "#8b90a0" },
+  provider_attention_needed: { label: "Attention needed", color: "#f5632a" },
+};
+
+const CONF_LABEL: Record<string, string> = {
+  high: "High-confidence diagnostic",
+  medium: "Medium-confidence diagnostic",
+  low: "Low-confidence diagnostic",
+};
+
+/** CTA links per diagnostic status (read-only navigation only). */
+function diagnosticCtas(status: SecurityDiagnosticStatus): { label: string; href: string }[] {
+  switch (status) {
+    case "provider_not_connected":
+      return [{ label: "Connect provider", href: "/integrations" }];
+    case "needs_sync":
+    case "provider_attention_needed":
+      return [{ label: "View integrations", href: "/integrations" }];
+    case "missing_metadata":
+    case "permissions_likely_limited":
+      return [
+        { label: "View integrations", href: "/integrations" },
+        { label: "View rules", href: "/security/rules" },
+      ];
+    default:
+      return [];
+  }
+}
 
 export default function SecurityCoveragePage() {
   const { getToken } = useAuth();
@@ -118,6 +154,22 @@ export default function SecurityCoveragePage() {
             <Metric label="Limited coverage" value={summary.limited_coverage} accent="#f5a623" />
             <Metric label="Needs sync / connect" value={needsSyncOrConnect} accent="#f5632a" />
             <Metric label="Disabled rules" value={summary.disabled_rules} accent="#8b90a0" />
+          </div>
+
+          {/* Diagnostics summary */}
+          <SectionLabel>Diagnostics</SectionLabel>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+              gap: "14px",
+              margin: "10px 0 22px",
+            }}
+          >
+            <Metric label="Providers OK" value={summary.diagnostics_ok} accent="#3ccf7e" />
+            <Metric label="Needs sync" value={summary.diagnostics_needs_sync} accent="#6b9cf8" />
+            <Metric label="Missing metadata" value={summary.diagnostics_missing_metadata} accent="#f5a623" />
+            <Metric label="Permissions likely limited" value={summary.diagnostics_permissions_likely_limited} accent="#f5632a" />
           </div>
 
           {summary.connected_providers === 0 ? (
@@ -242,6 +294,9 @@ function ProviderCard({ p }: { p: SecurityCoverageProvider }) {
         {p.recommendation}
       </div>
 
+      {/* M62.8 — Permission diagnostics */}
+      <Diagnostics p={p} />
+
       {/* Rule coverage */}
       {p.rules.length > 0 ? (
         <div style={{ marginTop: "12px" }}>
@@ -287,6 +342,122 @@ function RuleTag({ label, color }: { label: string; color: string }) {
     >
       {label}
     </span>
+  );
+}
+
+function DiagnosticPill({ status }: { status: SecurityDiagnosticStatus }) {
+  const m = DIAGNOSTIC_META[status];
+  return (
+    <span
+      style={{
+        fontSize: "11px", fontWeight: 700, letterSpacing: "0.03em", textTransform: "uppercase",
+        color: m.color, background: `${m.color}1f`, border: `1px solid ${m.color}55`,
+        borderRadius: "6px", padding: "2px 8px", whiteSpace: "nowrap",
+      }}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+function Diagnostics({ p }: { p: SecurityCoverageProvider }) {
+  const ctas = diagnosticCtas(p.diagnostic_status);
+
+  // For an OK diagnostic, keep it to a single subtle line (no "secure" claims).
+  if (p.diagnostic_status === "ok") {
+    return (
+      <div style={{ marginTop: "12px" }}>
+        <SectionLabel>Diagnostics</SectionLabel>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px", flexWrap: "wrap" }}>
+          <DiagnosticPill status={p.diagnostic_status} />
+          <span style={{ fontSize: "12.5px", color: "#8b90a0" }}>
+            Coverage data looks sufficient for currently supported rules.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid #1f2229" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <SectionLabel>Diagnostics</SectionLabel>
+        <DiagnosticPill status={p.diagnostic_status} />
+        <span style={{ fontSize: "11px", color: "#565b6e" }}>
+          {CONF_LABEL[p.diagnostic_confidence] ?? p.diagnostic_confidence}
+        </span>
+      </div>
+
+      {/* Diagnostic messages */}
+      {p.diagnostic_messages.length > 0 ? (
+        <ul style={{ margin: "8px 0 0", paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "3px" }}>
+          {p.diagnostic_messages.map((m, i) => (
+            <li key={i} style={{ fontSize: "12.5px", color: "#c4c8d4", lineHeight: 1.5 }}>{m}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      {/* Permission hints */}
+      {p.permission_hints.length > 0 ? (
+        <div style={{ marginTop: "10px" }}>
+          <div style={{ fontSize: "11px", color: "#565b6e", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Permission hints
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "6px" }}>
+            {p.permission_hints.map((h) => (
+              <span
+                key={h}
+                style={{
+                  fontSize: "11.5px", color: "#c4c8d4",
+                  background: "rgba(148,163,184,0.08)", border: "1px solid #2a2d38",
+                  borderRadius: "6px", padding: "2px 8px",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                }}
+              >
+                {h}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Recommended actions */}
+      {p.recommended_actions.length > 0 ? (
+        <div style={{ marginTop: "10px" }}>
+          <div style={{ fontSize: "11px", color: "#565b6e", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+            Recommended action
+          </div>
+          <ul style={{ margin: "6px 0 0", paddingLeft: "16px", display: "flex", flexDirection: "column", gap: "3px" }}>
+            {p.recommended_actions.map((a, i) => (
+              <li key={i} style={{ fontSize: "12.5px", color: "#c4c8d4", lineHeight: 1.5 }}>{a}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {/* Docs hint */}
+      {p.docs_hint ? (
+        <div style={{ fontSize: "12px", color: "#8b90a0", marginTop: "8px" }}>{p.docs_hint}</div>
+      ) : null}
+
+      {/* CTAs */}
+      {ctas.length > 0 ? (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "12px" }}>
+          {ctas.map((c) => (
+            <Link
+              key={c.href + c.label}
+              href={c.href}
+              style={{
+                fontSize: "12px", fontWeight: 600, color: "#6b9cf8", textDecoration: "none",
+                border: "1px solid #2a2d38", borderRadius: "8px", padding: "5px 12px", whiteSpace: "nowrap",
+              }}
+            >
+              {c.label} →
+            </Link>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

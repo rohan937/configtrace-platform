@@ -94,6 +94,7 @@ export interface CoverageRow {
   active_rules: number;
   disabled_rules: number;
   recommendation: string;
+  diagnostic_status: string; // M62.8
 }
 
 export interface ReportModel {
@@ -268,6 +269,7 @@ export function buildReportModel(
       active_rules: p.active_rules ?? 0,
       disabled_rules: p.disabled_rules ?? 0,
       recommendation: p.recommendation ?? "",
+      diagnostic_status: p.diagnostic_status ?? "ok",
     }))
     .sort((a, b) => a.provider.localeCompare(b.provider));
 
@@ -391,6 +393,17 @@ function coverageLabel(status: string): string {
     not_synced: "Not synced",
     needs_attention: "Needs attention",
     not_connected: "Not connected",
+  };
+  return map[status] ?? status;
+}
+function diagnosticLabel(status: string): string {
+  const map: Record<string, string> = {
+    ok: "OK",
+    needs_sync: "Needs sync",
+    missing_metadata: "Missing metadata",
+    permissions_likely_limited: "Permissions likely limited",
+    provider_not_connected: "Not connected",
+    provider_attention_needed: "Attention needed",
   };
   return map[status] ?? status;
 }
@@ -606,11 +619,11 @@ export function generateMarkdown(model: ReportModel): string {
     if (model.coverage.length === 0) {
       L.push("No provider coverage data is available for this scope.");
     } else {
-      L.push(`| Provider | Coverage | Observed types | Missing types | Active rules | Disabled rules | Recommendation |`);
-      L.push(`| --- | --- | --- | --- | ---: | ---: | --- |`);
+      L.push(`| Provider | Coverage | Diagnostic | Observed types | Missing types | Active rules | Disabled rules | Recommendation |`);
+      L.push(`| --- | --- | --- | --- | --- | ---: | ---: | --- |`);
       for (const p of model.coverage) {
         L.push(
-          `| ${mdCell(provLabel(p.provider))} | ${mdCell(coverageLabel(p.coverage_status))} | ${mdCell(p.observed_record_types.join(", "))} | ${mdCell(p.missing_record_types.join(", "))} | ${p.active_rules} | ${p.disabled_rules} | ${mdCell(p.recommendation)} |`,
+          `| ${mdCell(provLabel(p.provider))} | ${mdCell(coverageLabel(p.coverage_status))} | ${mdCell(diagnosticLabel(p.diagnostic_status))} | ${mdCell(p.observed_record_types.join(", "))} | ${mdCell(p.missing_record_types.join(", "))} | ${p.active_rules} | ${p.disabled_rules} | ${mdCell(p.recommendation)} |`,
         );
       }
     }
@@ -742,6 +755,7 @@ export function generateJSON(model: ReportModel): string {
       ? model.coverage.map((p) => ({
           provider: p.provider,
           coverage_status: p.coverage_status,
+          diagnostic_status: p.diagnostic_status,
           observed_record_types: p.observed_record_types,
           missing_record_types: p.missing_record_types,
           active_rules: p.active_rules,

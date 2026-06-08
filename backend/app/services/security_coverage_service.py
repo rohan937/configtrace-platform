@@ -100,6 +100,225 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
 }
 
 
+# ── M62.8 diagnostics ────────────────────────────────────────────────────────
+#
+# Per record_type, a careful human message + any provider permission hints to
+# show when ConfigTrace has NOT observed that metadata. These are diagnostics
+# (help users understand/fix coverage gaps), never findings, and never claim a
+# provider is misconfigured — wording stays in "may need / could indicate /
+# ConfigTrace has not observed / check provider permissions".
+RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
+    # GitHub
+    "github_branch_protection": {
+        "message": "ConfigTrace has not observed default-branch protection metadata.",
+        "hints": ["Check that the GitHub App has repository administration/metadata access where required."],
+    },
+    "github_webhook": {
+        "message": "Webhook metadata was not observed for this repository/resource.",
+        "hints": [],
+    },
+    "github_deploy_key": {
+        "message": "Deploy key metadata may require repository-level access.",
+        "hints": [],
+    },
+    "github_environment_protection": {
+        "message": "Environment protection metadata may require repository-level access.",
+        "hints": [],
+    },
+    # AWS
+    "aws_security_group_rule": {
+        "message": "EC2 security group rule metadata was not observed.",
+        "hints": ["ec2:DescribeSecurityGroups"],
+    },
+    "aws_s3_bucket": {
+        "message": "S3 bucket public-access metadata was not observed.",
+        "hints": ["s3:GetBucketPolicyStatus", "s3:GetBucketAcl", "s3:GetPublicAccessBlock"],
+    },
+    "aws_iam_policy_attachment": {
+        "message": "IAM policy attachment metadata was not observed.",
+        "hints": ["iam:ListAttachedUserPolicies", "iam:ListAttachedRolePolicies"],
+    },
+    "aws_iam_access_key": {
+        "message": "IAM access key metadata was not observed.",
+        "hints": ["iam:ListAccessKeys", "iam:GetAccessKeyLastUsed"],
+    },
+    # Cloudflare
+    "cloudflare_zone_setting": {
+        "message": "Zone setting metadata was not observed.",
+        "hints": ["Zone settings read access"],
+    },
+    "cloudflare_waf_rule": {
+        "message": "WAF rule metadata was not observed.",
+        "hints": ["WAF / rulesets read access"],
+    },
+    "A": {"message": "DNS A record metadata was not observed.", "hints": []},
+    "AAAA": {"message": "DNS AAAA record metadata was not observed.", "hints": []},
+    # Supabase
+    "supabase_rls_status": {
+        "message": "Table RLS metadata was not observed.",
+        "hints": [],
+    },
+    "supabase_auth_config": {
+        "message": "Auth configuration metadata was not observed.",
+        "hints": [],
+    },
+    # Firebase
+    "firebase_firestore_ruleset": {
+        "message": "Firestore ruleset metadata was not observed.",
+        "hints": [],
+    },
+    "firebase_storage_ruleset": {
+        "message": "Storage ruleset metadata was not observed.",
+        "hints": [],
+    },
+    "firebase_auth_config": {
+        "message": "Auth configuration metadata was not observed.",
+        "hints": [],
+    },
+    # Stripe
+    "stripe_webhook_endpoint": {
+        "message": "Webhook endpoint metadata was not observed.",
+        "hints": ["Verify the API key can list webhook endpoints."],
+    },
+    # Vercel
+    "vercel_deployment_protection": {
+        "message": "Deployment protection metadata was not observed.",
+        "hints": ["Verify project/team API access."],
+    },
+    # Shopify
+    "shopify_webhook_subscription": {
+        "message": "Webhook subscription metadata was not observed.",
+        "hints": ["Verify the app/admin API can read webhook subscriptions."],
+    },
+}
+
+# Provider-level permission hints appended once when any surface is missing.
+PROVIDER_PERMISSION_HINT: dict[str, str] = {
+    "supabase": "Verify the project credentials/API access used by the connector.",
+    "firebase": "Verify Firebase project credentials and ruleset/auth read access.",
+}
+
+
+def _diagnose(
+    provider: str,
+    *,
+    connected: bool,
+    integration_status: Optional[str],
+    last_synced_at: Any,
+    expected: set[str],
+    observed: set[str],
+) -> dict[str, Any]:
+    """Read-only diagnosis of why coverage may be limited. No provider calls."""
+    ok_payload = {
+        "diagnostic_status": "ok",
+        "diagnostic_messages": ["Coverage data looks sufficient for currently supported rules."],
+        "recommended_actions": [],
+        "permission_hints": [],
+        "docs_hint": None,
+        "diagnostic_confidence": "high",
+    }
+
+    if not connected:
+        return {
+            "diagnostic_status": "provider_not_connected",
+            "diagnostic_messages": ["ConfigTrace has no active connection for this provider."],
+            "recommended_actions": ["Connect this provider to collect security metadata."],
+            "permission_hints": [],
+            "docs_hint": None,
+            "diagnostic_confidence": "high",
+        }
+
+    if integration_status in ("needs_reconnect", "error"):
+        return {
+            "diagnostic_status": "provider_attention_needed",
+            "diagnostic_messages": [
+                "This provider connection may need attention; recent syncs could indicate incomplete access.",
+            ],
+            "recommended_actions": ["Reconnect the provider or check its credentials, then run a sync."],
+            "permission_hints": [],
+            "docs_hint": None,
+            "diagnostic_confidence": "high",
+        }
+
+    if last_synced_at is None:
+        return {
+            "diagnostic_status": "needs_sync",
+            "diagnostic_messages": [
+                "ConfigTrace has not yet synced this provider, so no metadata has been observed.",
+            ],
+            "recommended_actions": ["Run a sync to collect provider metadata."],
+            "permission_hints": [],
+            "docs_hint": None,
+            "diagnostic_confidence": "high",
+        }
+
+    if not expected:
+        return ok_payload
+
+    observed_expected = expected & observed
+    missing = sorted(expected - observed)
+
+    if not missing:
+        return ok_payload
+
+    messages: list[str] = []
+    actions: list[str] = []
+    hints: list[str] = []
+
+    if not observed_expected:
+        status = "permissions_likely_limited"
+        messages.append(
+            "ConfigTrace has not observed expected security metadata for this provider after syncing."
+        )
+        messages.append(
+            "This could indicate limited permissions, unavailable provider APIs, or provider setup gaps."
+        )
+        actions.append("Check provider permissions, then re-run a sync.")
+    else:
+        status = "missing_metadata"
+        messages.append(
+            "ConfigTrace has observed some provider metadata, but not all expected surfaces."
+        )
+        actions.append("Re-run a sync, and check provider permissions for the missing surfaces.")
+
+    # Per-missing-surface messages + permission hints (deterministic order).
+    for rt in missing:
+        diag = RECORD_TYPE_DIAGNOSTICS.get(rt)
+        if not diag:
+            continue
+        msg = diag.get("message")
+        if msg and msg not in messages:
+            messages.append(msg)
+        for h in diag.get("hints", []):
+            if h not in hints:
+                hints.append(h)
+
+    prov_hint = PROVIDER_PERMISSION_HINT.get(provider)
+    if prov_hint and prov_hint not in hints:
+        hints.append(prov_hint)
+
+    actions.append("Review which rules apply on the Security Rules page.")
+
+    # AWS account structures may intentionally omit services — keep the
+    # diagnostic conservative (lower confidence, explicit caveat).
+    if provider == "aws":
+        messages.append(
+            "AWS account structure may intentionally omit some services, so missing surfaces are not always a permission gap."
+        )
+        confidence = "low"
+    else:
+        confidence = "medium"
+
+    return {
+        "diagnostic_status": status,
+        "diagnostic_messages": messages,
+        "recommended_actions": actions,
+        "permission_hints": hints,
+        "docs_hint": None,
+        "diagnostic_confidence": confidence,
+    }
+
+
 def _provider_of(rule_key: str) -> str:
     return rule_key.split("_", 1)[0]
 
@@ -178,6 +397,10 @@ def get_coverage(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         "limited_coverage": 0,
         "not_connected": 0,
         "disabled_rules": 0,
+        "diagnostics_ok": 0,
+        "diagnostics_needs_sync": 0,
+        "diagnostics_missing_metadata": 0,
+        "diagnostics_permissions_likely_limited": 0,
     }
 
     for provider in PROVIDERS:
@@ -223,6 +446,25 @@ def get_coverage(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
 
         missing = sorted(expected - observed)
 
+        # M62.8 — permission diagnostics (read-only; inspects only the data
+        # already gathered above, never calls a provider).
+        diag = _diagnose(
+            provider,
+            connected=bool(integs),
+            integration_status=integration_status,
+            last_synced_at=last_synced_at,
+            expected=expected,
+            observed=observed,
+        )
+        if diag["diagnostic_status"] == "ok":
+            summary["diagnostics_ok"] += 1
+        elif diag["diagnostic_status"] == "needs_sync":
+            summary["diagnostics_needs_sync"] += 1
+        elif diag["diagnostic_status"] == "missing_metadata":
+            summary["diagnostics_missing_metadata"] += 1
+        elif diag["diagnostic_status"] == "permissions_likely_limited":
+            summary["diagnostics_permissions_likely_limited"] += 1
+
         # Per-rule coverage: enabled + supported-by-observed-records.
         rules_out = []
         for rk in rule_keys:
@@ -253,6 +495,12 @@ def get_coverage(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
                 "supported_rules": supported_total,
                 "recommendation": _recommendation(status),
                 "rules": rules_out,
+                "diagnostic_status": diag["diagnostic_status"],
+                "diagnostic_messages": diag["diagnostic_messages"],
+                "recommended_actions": diag["recommended_actions"],
+                "permission_hints": diag["permission_hints"],
+                "docs_hint": diag["docs_hint"],
+                "diagnostic_confidence": diag["diagnostic_confidence"],
             }
         )
 

@@ -1635,7 +1635,22 @@ export interface SecurityCoverageProvider {
   supported_rules: number;
   recommendation: string;
   rules: SecurityCoverageRule[];
+  // M62.8 — provider permission diagnostics (read-only, metadata-only).
+  diagnostic_status: SecurityDiagnosticStatus;
+  diagnostic_messages: string[];
+  recommended_actions: string[];
+  permission_hints: string[];
+  docs_hint: string | null;
+  diagnostic_confidence: "high" | "medium" | "low";
 }
+
+export type SecurityDiagnosticStatus =
+  | "ok"
+  | "needs_sync"
+  | "missing_metadata"
+  | "permissions_likely_limited"
+  | "provider_not_connected"
+  | "provider_attention_needed";
 
 export interface SecurityCoverageSummary {
   connected_providers: number;
@@ -1643,6 +1658,11 @@ export interface SecurityCoverageSummary {
   limited_coverage: number;
   not_connected: number;
   disabled_rules: number;
+  // M62.8 — diagnostic rollups
+  diagnostics_ok: number;
+  diagnostics_needs_sync: number;
+  diagnostics_missing_metadata: number;
+  diagnostics_permissions_likely_limited: number;
 }
 
 export interface SecurityCoverageResponse {

@@ -31,6 +31,16 @@ class SecurityCoverageProvider(BaseModel):
     supported_rules: int
     recommendation: str
     rules: List[SecurityCoverageRule]
+    # M62.8 — provider permission diagnostics (read-only; metadata-only).
+    # ok | needs_sync | missing_metadata | permissions_likely_limited
+    # | provider_not_connected | provider_attention_needed
+    diagnostic_status: str = "ok"
+    diagnostic_messages: List[str] = []
+    recommended_actions: List[str] = []
+    permission_hints: List[str] = []
+    docs_hint: Optional[str] = None
+    # Confidence in the DIAGNOSTIC itself (separate from finding confidence).
+    diagnostic_confidence: str = "high"  # high | medium | low
 
 
 class SecurityCoverageSummary(BaseModel):
@@ -39,6 +49,11 @@ class SecurityCoverageSummary(BaseModel):
     limited_coverage: int
     not_connected: int
     disabled_rules: int
+    # M62.8 — diagnostic rollups
+    diagnostics_ok: int = 0
+    diagnostics_needs_sync: int = 0
+    diagnostics_missing_metadata: int = 0
+    diagnostics_permissions_likely_limited: int = 0
 
 
 class SecurityCoverageResponse(BaseModel):
