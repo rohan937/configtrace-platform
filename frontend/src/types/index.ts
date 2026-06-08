@@ -1515,8 +1515,61 @@ export interface SecurityFinding {
   confidence: "high" | "medium" | "low";
   confidence_reason: string | null;
   false_positive_guard: string | null;
+  /** M63.3 — rule pack versioning (null-safe for pre-M63.3 findings). */
+  rule_pack_name: string | null;
+  rule_pack_version: string | null;
+  rule_version: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface SecurityRulePackRule {
+  rule_key: string;
+  provider: string;
+  rule_version: string;
+  introduced_in: string;
+  status: string;
+  confidence: "high" | "medium" | "low";
+  severity: string;
+  category: string;
+}
+
+export interface SecurityRulePack {
+  name: string;
+  version: string;
+  released_at: string | null;
+  description: string;
+  rule_count: number;
+  providers: string[];
+  rules: SecurityRulePackRule[];
+}
+
+// ── M63.4 — beta analytics summary ────────────────────────────────────────────
+export interface BetaRecentEvent {
+  event_name: string;
+  page_path: string | null;
+  metadata: Record<string, string | number | boolean>;
+  created_at: string;
+  user_id: string | null;
+}
+
+export interface SecurityBetaSummary {
+  period_start: string;
+  period_end: string;
+  days: number;
+  total_events: number;
+  unique_users: number;
+  events_by_name: Record<string, number>;
+  events_by_route_group: Record<string, number>;
+  events_by_day: { day: string; count: number }[];
+  top_actions: { action: string; count: number }[];
+  report_exports: number;
+  demo_seeds: number;
+  walkthrough_opens: number;
+  exposure_actions: number;
+  rule_toggles: number;
+  page_views: number;
+  recent_events: BetaRecentEvent[];
 }
 
 /** Body for POST /security/findings/{id}/accept-risk (M61.1). */

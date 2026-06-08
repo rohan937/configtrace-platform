@@ -562,6 +562,21 @@ export async function getSecurityRuleSettings(
   return apiFetch(`/security/rules/settings`, { token });
 }
 
+/** Active Security Exposure rule pack + per-rule version manifest (M63.3). */
+export async function getSecurityRulePack(
+  token?: string | null,
+): Promise<import("@/types").SecurityRulePack> {
+  return apiFetch(`/security/rules/pack`, { token });
+}
+
+/** Beta analytics summary over first-party usage events (M63.4, admin-only). */
+export async function getSecurityBetaEventsSummary(
+  params: { days?: number; event_name?: string; route_group?: string } = {},
+  token?: string | null,
+): Promise<import("@/types").SecurityBetaSummary> {
+  return apiFetch(`/security/beta-events/summary${buildQuery(params)}`, { token });
+}
+
 /**
  * Enable or disable a security rule for the current workspace (M61.7).
  * Disabling stops future findings from that rule; it does not resolve existing

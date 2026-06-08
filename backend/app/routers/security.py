@@ -60,6 +60,11 @@ from app.schemas.security_coverage import SecurityCoverageResponse
 from app.schemas.security_beta_event import (
     SecurityBetaEventCreate,
     SecurityBetaEventResponse,
+    SecurityBetaSummaryResponse,
+)
+from app.schemas.security_rule_pack import (
+    SecurityRulePackResponse,
+    SecurityRulePackRule,
 )
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -67,6 +72,7 @@ from app.services import security_rule_settings_service
 from app.services import security_demo_data_service
 from app.services import security_coverage_service
 from app.services import security_beta_event_service
+from app.services import security_rule_pack
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -398,6 +404,28 @@ def _current_workspace_id(current_user: User, db: Session):
     return ws.id
 
 
+@router.get("/rules/pack", response_model=SecurityRulePackResponse)
+def get_security_rule_pack(
+    current_user: User = Depends(get_current_user),
+) -> SecurityRulePackResponse:
+    """Return the active Security Exposure rule pack + per-rule version (M63.3).
+
+    Read-only and workspace-independent: the rule pack is a static manifest of
+    which rules ship in the current pack version. Authenticated like every other
+    security endpoint.
+    """
+    summary = security_rule_pack.pack_summary()
+    return SecurityRulePackResponse(
+        name=summary["name"],
+        version=summary["version"],
+        released_at=summary["released_at"],
+        description=summary["description"],
+        rule_count=summary["rule_count"],
+        providers=summary["providers"],
+        rules=[SecurityRulePackRule(**r) for r in summary["rules"]],
+    )
+
+
 @router.get("/rules/settings", response_model=SecurityRuleSettingsListResponse)
 def list_security_rule_settings(
     db: Session = Depends(get_db),
@@ -557,3 +585,33 @@ def create_security_beta_event(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return SecurityBetaEventResponse(id=str(event.id), ok=True)
+
+
+@router.get("/beta-events/summary", response_model=SecurityBetaSummaryResponse)
+def get_security_beta_events_summary(
+    days: int = Query(7, description="Window length in days (1, 7, 30, or 90)."),
+    event_name: Optional[str] = Query(None, description="Filter to a single event name."),
+    route_group: Optional[str] = Query(None, description="Filter to a single route group."),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityBetaSummaryResponse:
+    """Read-only, workspace-scoped beta usage analytics (M63.4).
+
+    Admin/owner only (a member of the workspace gets 403). First-party and
+    metadata-only — reuses the already-sanitized security_beta_events rows and
+    never exposes other workspaces.
+    """
+    if days not in security_beta_event_service.ALLOWED_SUMMARY_DAYS:
+        raise HTTPException(status_code=422, detail="days must be one of 1, 7, 30, 90.")
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    data = security_beta_event_service.summarize(
+        workspace_id=workspace_id,
+        days=days,
+        event_name=event_name,
+        route_group=route_group,
+        db=db,
+    )
+    return SecurityBetaSummaryResponse(**data)

@@ -18,6 +18,7 @@ Privacy contract:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -124,3 +125,118 @@ def record_event(
     db.commit()
     db.refresh(event)
     return event
+
+
+# ── Analytics summary (M63.4) ─────────────────────────────────────────────────
+
+ALLOWED_SUMMARY_DAYS = (1, 7, 30, 90)
+RECENT_EVENTS_LIMIT = 20
+TOP_ACTIONS_LIMIT = 10
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def summarize(
+    *,
+    workspace_id: uuid.UUID,
+    days: int,
+    db: Session,
+    event_name: Optional[str] = None,
+    route_group: Optional[str] = None,
+) -> dict[str, Any]:
+    """Read-only, workspace-scoped analytics over security_beta_events (M63.4).
+
+    Aggregates in Python over the workspace's rows in the window (datasets are
+    small and workspace-bounded). Returns only allowlisted, already-sanitized
+    metadata — no evidence/remediation/secrets/note bodies are ever read.
+    """
+    if days not in ALLOWED_SUMMARY_DAYS:
+        days = 7
+    period_end = _utcnow()
+    period_start = period_end - timedelta(days=days)
+
+    q = (
+        db.query(SecurityBetaEvent)
+        .filter(
+            SecurityBetaEvent.workspace_id == workspace_id,
+            SecurityBetaEvent.created_at >= period_start,
+        )
+    )
+    if event_name:
+        q = q.filter(SecurityBetaEvent.event_name == event_name)
+    rows = q.order_by(SecurityBetaEvent.created_at.desc()).all()
+
+    def _rg(ev: SecurityBetaEvent) -> Optional[str]:
+        md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+        rg = md.get("route_group")
+        return rg if isinstance(rg, str) else None
+
+    if route_group:
+        rows = [ev for ev in rows if _rg(ev) == route_group]
+
+    events_by_name: dict[str, int] = {}
+    events_by_route_group: dict[str, int] = {}
+    events_by_day_map: dict[str, int] = {}
+    actions_map: dict[str, int] = {}
+    users: set[str] = set()
+
+    for ev in rows:
+        events_by_name[ev.event_name] = events_by_name.get(ev.event_name, 0) + 1
+        rg = _rg(ev)
+        if rg:
+            events_by_route_group[rg] = events_by_route_group.get(rg, 0) + 1
+        day = ev.created_at.astimezone(timezone.utc).strftime("%Y-%m-%d")
+        events_by_day_map[day] = events_by_day_map.get(day, 0) + 1
+        if ev.user_id is not None:
+            users.add(str(ev.user_id))
+        md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+        action = md.get("action")
+        if isinstance(action, str) and action:
+            actions_map[action] = actions_map.get(action, 0) + 1
+
+    def _count(name: str) -> int:
+        return events_by_name.get(name, 0)
+
+    top_actions = sorted(
+        ({"action": a, "count": c} for a, c in actions_map.items()),
+        key=lambda x: (-x["count"], x["action"]),
+    )[:TOP_ACTIONS_LIMIT]
+
+    events_by_day = [
+        {"day": d, "count": events_by_day_map[d]} for d in sorted(events_by_day_map)
+    ]
+
+    recent_events = [
+        {
+            "event_name": ev.event_name,
+            "page_path": ev.page_path,
+            # Re-sanitize defensively even though writes are already allowlisted.
+            "metadata": sanitize_metadata(
+                ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+            ),
+            "created_at": ev.created_at,
+            "user_id": str(ev.user_id) if ev.user_id is not None else None,
+        }
+        for ev in rows[:RECENT_EVENTS_LIMIT]
+    ]
+
+    return {
+        "period_start": period_start,
+        "period_end": period_end,
+        "days": days,
+        "total_events": len(rows),
+        "unique_users": len(users),
+        "events_by_name": events_by_name,
+        "events_by_route_group": events_by_route_group,
+        "events_by_day": events_by_day,
+        "top_actions": top_actions,
+        "report_exports": _count("security_report_exported"),
+        "demo_seeds": _count("security_demo_seed_completed"),
+        "walkthrough_opens": _count("security_walkthrough_opened"),
+        "exposure_actions": _count("security_exposure_action_completed"),
+        "rule_toggles": _count("security_rule_toggled"),
+        "page_views": _count("security_page_viewed"),
+        "recent_events": recent_events,
+    }

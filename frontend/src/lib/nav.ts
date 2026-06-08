@@ -63,6 +63,7 @@ export const SECURITY_NAV: NavItem[] = [
   { label: "Reports", href: "/security/reports" },
   { label: "Coverage", href: "/security/coverage" },
   { label: "Security Rules", href: "/security/rules" },
+  { label: "Beta Analytics", href: "/security/beta-analytics" },
   // Shared platform pages — reuse existing routes (no duplication).
   { label: "Integrations", href: "/integrations", shared: true },
   { label: "Alerts", href: "/settings/workspace/notifications", shared: true },
