@@ -38,6 +38,7 @@ import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import SecurityDemoBanner from "@/components/security/SecurityDemoBanner";
+import SecurityOnboardingCard from "@/components/security/SecurityOnboardingCard";
 import { PreviewBanner, SectionLabel } from "@/components/security/previews";
 
 // How many recent changes to pull into the security window.
@@ -168,6 +169,9 @@ export default function SecurityOverviewPage() {
         findingsEmpty={liveActiveCount === 0}
         onChanged={() => window.location.reload()}
       />
+
+      {/* M62.5: Security Exposure onboarding checklist. */}
+      <SecurityOnboardingCard onChanged={() => window.location.reload()} />
 
       {liveActiveCount !== null && liveActiveCount > 0 ? (
         <div
