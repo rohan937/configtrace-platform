@@ -1511,6 +1511,10 @@ export interface SecurityFinding {
   reviewed_at: string | null;
   /** M61.1 — rationale captured when the finding was marked accepted_risk. */
   acceptance_reason: string | null;
+  /** M62.4 — rule confidence + false-positive safeguard (metadata-only). */
+  confidence: "high" | "medium" | "low";
+  confidence_reason: string | null;
+  false_positive_guard: string | null;
   created_at: string;
   updated_at: string;
 }

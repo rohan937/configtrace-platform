@@ -38,6 +38,8 @@ import { SectionLabel } from "@/components/security/previews";
 import {
   EvidenceBlock,
   FindingStatusBadge,
+  ConfidenceBadge,
+  CONFIDENCE_LABEL,
   RemediationBlock,
   SeverityBadge,
   formatExposureDuration,
@@ -241,6 +243,29 @@ function ExposureBody({
         <p style={{ fontSize: "12px", color: "#565b6e", lineHeight: 1.6, marginTop: "12px" }}>
           ConfigTrace reports security-relevant configuration exposure from provider
           settings. This is a risky current state, not a confirmed compromise.
+        </p>
+      </Panel>
+
+      {/* 2b. Confidence & safeguards (M62.4) */}
+      <Panel>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <SectionLabel>Confidence &amp; safeguards</SectionLabel>
+          <ConfidenceBadge confidence={finding.confidence} />
+        </div>
+        <p style={{ fontSize: "13px", color: "#c4c8d4", lineHeight: 1.6, marginTop: "10px" }}>
+          {CONFIDENCE_LABEL[finding.confidence] ?? finding.confidence}.{" "}
+          {finding.confidence_reason ||
+            "Backed by provider configuration metadata."}
+        </p>
+        {finding.false_positive_guard ? (
+          <p style={{ fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6, marginTop: "8px" }}>
+            <span style={{ color: "#565b6e" }}>How this rule avoids noisy cases: </span>
+            {finding.false_positive_guard}
+          </p>
+        ) : null}
+        <p style={{ fontSize: "12px", color: "#565b6e", lineHeight: 1.6, marginTop: "10px" }}>
+          Confidence describes how ConfigTrace reached this finding from provider
+          metadata. It is not a measure of severity and not proof of an exploit.
         </p>
       </Panel>
 

@@ -164,10 +164,24 @@ def create_finding(
         evidence=evidence,
         remediation=remediation,
     )
+    _apply_confidence(finding)
     db.add(finding)
     db.commit()
     db.refresh(finding)
     return finding
+
+
+def _apply_confidence(finding: SecurityFinding) -> None:
+    """Set rule-derived confidence metadata on a finding (M62.4).
+
+    Deterministic from ``finding_key`` — safe to re-apply on every refresh.
+    """
+    from app.services.security_rule_confidence import confidence_for
+
+    confidence, reason, guard = confidence_for(finding.finding_key)
+    finding.confidence = confidence
+    finding.confidence_reason = reason
+    finding.false_positive_guard = guard or None
 
 
 def refresh_active_finding(
@@ -207,6 +221,8 @@ def refresh_active_finding(
         finding.remediation = remediation
     if linked_change_id is not None:
         finding.linked_change_id = linked_change_id
+    # M62.4: keep confidence metadata current (rule-derived, deterministic).
+    _apply_confidence(finding)
     db.add(finding)
     db.commit()
     db.refresh(finding)

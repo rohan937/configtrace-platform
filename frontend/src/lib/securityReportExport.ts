@@ -289,11 +289,11 @@ export function generateMarkdown(model: ReportModel): string {
   if (model.findings.length === 0) {
     L.push("No findings match this report configuration.");
   } else {
-    L.push(`| Severity | Status | Provider | Title | First detected | Last seen | Detail |`);
-    L.push(`| --- | --- | --- | --- | --- | --- | --- |`);
+    L.push(`| Severity | Confidence | Status | Provider | Title | First detected | Last seen | Detail |`);
+    L.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
     for (const f of model.findings) {
       L.push(
-        `| ${mdCell(sevLabel(f.severity))} | ${mdCell(statusLabel(f.status))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | /security/exposures/${f.id} |`,
+        `| ${mdCell(sevLabel(f.severity))} | ${mdCell(f.confidence)} | ${mdCell(statusLabel(f.status))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | /security/exposures/${f.id} |`,
       );
     }
   }
@@ -420,6 +420,7 @@ export function generateJSON(model: ReportModel): string {
     findings: model.findings.map((f) => ({
       id: f.id,
       severity: f.severity,
+      confidence: f.confidence,
       status: f.status,
       provider: f.provider,
       title: f.title,
@@ -456,6 +457,7 @@ function csvCell(v: string | null | undefined): string {
 export function generateFindingsCSV(model: ReportModel): string {
   const header = [
     "severity",
+    "confidence",
     "status",
     "provider",
     "title",
@@ -470,6 +472,7 @@ export function generateFindingsCSV(model: ReportModel): string {
   const rows = model.findings.map((f) =>
     [
       f.severity,
+      f.confidence,
       f.status,
       f.provider,
       f.title,

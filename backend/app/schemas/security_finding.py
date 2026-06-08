@@ -43,6 +43,10 @@ class SecurityFindingResponse(BaseModel):
     reviewed_at: Optional[datetime]
     # M61.1 — rationale captured when the finding was marked accepted_risk.
     acceptance_reason: Optional[str] = None
+    # M62.4 — rule confidence + false-positive safeguard (metadata-only).
+    confidence: str = "high"
+    confidence_reason: Optional[str] = None
+    false_positive_guard: Optional[str] = None
 
     created_at: datetime
     updated_at: datetime

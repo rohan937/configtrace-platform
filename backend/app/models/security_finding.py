@@ -162,6 +162,15 @@ class SecurityFinding(BaseMixin, Base):
     # NULL for findings that have never been through the accept-risk workflow.
     acceptance_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # ── M62.4 — rule confidence + false-positive safeguard ─────────────────────
+    # Rule-derived trust metadata (how the rule reached its conclusion, not how
+    # severe it is). Defaults to "high" so existing rows are unchanged.
+    confidence: Mapped[str] = mapped_column(
+        Text, nullable=False, default="high", server_default="high"
+    )
+    confidence_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    false_positive_guard: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return (
             f"<SecurityFinding id={self.id} key={self.finding_key!r} "

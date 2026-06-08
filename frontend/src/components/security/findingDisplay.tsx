@@ -165,6 +165,40 @@ export function FindingStatusBadge({ status }: { status: string }) {
   );
 }
 
+// ── Confidence (M62.4) ───────────────────────────────────────────────────────
+
+export const CONFIDENCE_LABEL: Record<string, string> = {
+  high: "High confidence",
+  medium: "Medium confidence",
+  low: "Low confidence",
+};
+
+/** A small chip showing rule confidence (metadata-only; not proof of exploit). */
+export function ConfidenceBadge({ confidence }: { confidence: string }) {
+  const map: Record<string, { bg: string; fg: string }> = {
+    high: { bg: "rgba(60,207,126,0.14)", fg: "#3ccf7e" },
+    medium: { bg: "rgba(245,166,35,0.14)", fg: "#f5a623" },
+    low: { bg: "rgba(139,144,160,0.14)", fg: "#8b90a0" },
+  };
+  const c = map[confidence] ?? map.high;
+  return (
+    <span
+      title="How ConfigTrace reached this finding — not a measure of severity."
+      style={{
+        fontSize: "11px",
+        fontWeight: 600,
+        color: c.fg,
+        background: c.bg,
+        borderRadius: "6px",
+        padding: "2px 8px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {CONFIDENCE_LABEL[confidence] ?? confidence}
+    </span>
+  );
+}
+
 // ── Evidence / remediation rendering ─────────────────────────────────────────
 
 export function KeyValueList({

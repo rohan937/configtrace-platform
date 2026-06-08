@@ -91,9 +91,13 @@ def _demo_findings(workspace_id: uuid.UUID, integ_id: uuid.UUID, actor_user_id):
     # status-specific timestamps applied below.
     rows: list[SecurityFinding] = []
 
+    from app.services.security_rule_confidence import confidence_for
+
     def add(rule, record, provider, severity, status, title, remediation, *,
             opened, last_seen=None, resolved_at=None, accepted_until=None,
             snoozed_until=None, reviewed_at=None, acceptance_reason=None):
+        finding_key = f"{rule}:{record}"
+        conf, conf_reason, guard = confidence_for(finding_key)
         rows.append(
             SecurityFinding(
                 workspace_id=workspace_id,
@@ -101,7 +105,7 @@ def _demo_findings(workspace_id: uuid.UUID, integ_id: uuid.UUID, actor_user_id):
                 resource_id=None,
                 linked_change_id=None,
                 provider=provider,
-                finding_key=f"{rule}:{record}",
+                finding_key=finding_key,
                 severity=severity,
                 status=status,
                 title=title,
@@ -116,6 +120,9 @@ def _demo_findings(workspace_id: uuid.UUID, integ_id: uuid.UUID, actor_user_id):
                 reviewed_by_user_id=actor_user_id if reviewed_at else None,
                 reviewed_at=reviewed_at,
                 acceptance_reason=acceptance_reason,
+                confidence=conf,
+                confidence_reason=conf_reason,
+                false_positive_guard=guard or None,
             )
         )
 

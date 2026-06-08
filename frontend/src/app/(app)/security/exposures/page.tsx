@@ -36,6 +36,7 @@ import {
   sevColor,
   SeverityBadge,
   FindingStatusBadge,
+  ConfidenceBadge,
   EvidenceBlock,
   RemediationBlock,
 } from "@/components/security/findingDisplay";
@@ -562,6 +563,7 @@ function FindingCard({
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "10px", flexShrink: 0 }}>
+              <ConfidenceBadge confidence={finding.confidence} />
               <FindingStatusBadge status={finding.status} />
               <span style={{ fontSize: "16px", color: "#565b6e" }}>
                 {expanded ? "▾" : "▸"}
