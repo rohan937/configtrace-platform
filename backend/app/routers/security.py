@@ -77,6 +77,12 @@ from app.schemas.security_activity_event import (
     SecurityActivitySyncRequest,
     SecurityActivitySyncResponse,
 )
+from app.schemas.security_incident_signal import (
+    SecurityIncidentSignalListResponse,
+    SecurityIncidentSignalResponse,
+    SecuritySignalGenerateRequest,
+    SecuritySignalGenerateResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -88,6 +94,7 @@ from app.services import security_beta_feedback_service
 from app.services import security_rule_pack
 from app.services import security_activity_event_service
 from app.services import github_activity_ingestion_service
+from app.services import security_incident_signal_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -754,3 +761,106 @@ def list_security_activity_events(
         page=page,
         page_size=page_size,
     )
+
+
+# ── Incident Signals (M66.3) ──────────────────────────────────────────────────
+#
+# First control-plane Incident Signal layer, generated from normalized GitHub
+# audit activity (M66.2). Signals are REVIEW signals — they do NOT confirm a
+# breach, identify an attacker, or confirm compromise/access. Severity reflects
+# review priority; evidence_level is "activity". Exposure×activity correlation is
+# a later milestone.
+
+VALID_SIGNAL_STATUSES = {"open", "acknowledged", "dismissed", "resolved"}
+VALID_SIGNAL_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+
+@router.post("/signals/generate", response_model=SecuritySignalGenerateResponse)
+def generate_security_signals(
+    body: Optional[SecuritySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecuritySignalGenerateResponse:
+    """Generate incident signals from recent activity events (M66.3).
+
+    Admin/owner only. GitHub-only for now; an unsupported provider yields an empty
+    summary (no error). Idempotent — re-running creates no duplicates.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    provider = (body.provider if body and body.provider else "github").lower()
+    if provider != "github":
+        # Only GitHub signal rules exist this milestone — return an empty summary.
+        return SecuritySignalGenerateResponse(
+            provider=provider,
+            activity_events_scanned=0,
+            signals_created=0,
+            signals_skipped=0,
+        )
+
+    summary = security_incident_signal_service.generate_github_incident_signals(
+        workspace_id=workspace_id, db=db
+    )
+    return SecuritySignalGenerateResponse(**summary)
+
+
+@router.get("/signals", response_model=SecurityIncidentSignalListResponse)
+def list_security_signals(
+    provider: Optional[str] = Query(None, description="Filter by provider."),
+    status: Optional[str] = Query(None, description="Filter by status."),
+    severity: Optional[str] = Query(None, description="Filter by severity."),
+    signal_type: Optional[str] = Query(None, description="Filter by signal_type."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityIncidentSignalListResponse:
+    """List incident signals for the user's workspace (M66.3).
+
+    Authenticated member access. Strictly workspace-scoped — never returns another
+    workspace's signals.
+    """
+    if status is not None and status not in VALID_SIGNAL_STATUSES:
+        raise HTTPException(status_code=422, detail=f"Invalid status: {status!r}")
+    if severity is not None and severity not in VALID_SIGNAL_SEVERITIES:
+        raise HTTPException(status_code=422, detail=f"Invalid severity: {severity!r}")
+
+    workspace_id = _current_workspace_id(current_user, db)
+    items, total = security_incident_signal_service.list_incident_signals(
+        workspace_id=workspace_id,
+        db=db,
+        provider=provider,
+        status=status,
+        severity=severity,
+        signal_type=signal_type,
+        page=page,
+        page_size=page_size,
+    )
+    return SecurityIncidentSignalListResponse(
+        items=[SecurityIncidentSignalResponse.from_model(s) for s in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/signals/{signal_id}", response_model=SecurityIncidentSignalResponse)
+def get_security_signal(
+    signal_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityIncidentSignalResponse:
+    """Return a single workspace-scoped incident signal (M66.3).
+
+    Cross-workspace access returns 404 (never leaks existence).
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    signal = security_incident_signal_service.get_incident_signal(
+        signal_id=signal_id, workspace_id=workspace_id, db=db
+    )
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Incident signal not found.")
+    return SecurityIncidentSignalResponse.from_model(signal)
