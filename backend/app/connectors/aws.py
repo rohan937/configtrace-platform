@@ -2285,6 +2285,94 @@ class AWSConnector(BaseConnector):
         )
         return True
 
+    # ── Provider security alerts (M67.1) ──────────────────────────────────────
+    #
+    # GuardDuty / Access Analyzer are provider-ADJUDICATED security findings.
+    # These methods fetch them for ingestion as Incident-Signal evidence. They do
+    # NOT confirm breach/attacker/compromise — they surface provider-reported
+    # findings for review. Errors are translated by ``_call_aws`` (403 →
+    # ConnectorError(status_code=403) → caller treats as permission-limited).
+
+    def list_guardduty_findings(
+        self,
+        credentials: dict,
+        *,
+        region: str | None = None,
+        max_findings: int = 50,
+    ) -> list[dict]:
+        """Return recent GuardDuty findings (raw dicts) for the default region.
+
+        Returns ``[]`` when no detector exists (GuardDuty not enabled). Region
+        handling is intentionally simple: the integration default region only —
+        this milestone does not scan every region.
+
+        Raises (translated by ``_call_aws``): AuthenticationError (401),
+        ConnectorError(403) on AccessDenied, RateLimitError, ConnectorError(503),
+        NetworkError.
+        """
+        region = region or self._default_region(credentials)
+        client = self._make_client("guardduty", credentials, region)
+
+        detectors = self._call_aws(client.list_detectors).get("DetectorIds", [])
+        if not detectors:
+            return []  # GuardDuty not enabled in this region — not an error.
+        detector_id = detectors[0]
+
+        listed = self._call_aws(
+            client.list_findings,
+            DetectorId=detector_id,
+            MaxResults=min(max_findings, 50),
+        )
+        finding_ids = listed.get("FindingIds", [])
+        if not finding_ids:
+            return []
+
+        got = self._call_aws(
+            client.get_findings, DetectorId=detector_id, FindingIds=finding_ids[:50]
+        )
+        findings = got.get("Findings", [])
+        # Stamp the region/detector so the normalizer has them even if absent.
+        for f in findings:
+            if isinstance(f, dict):
+                f.setdefault("Region", region)
+                f.setdefault("_DetectorId", detector_id)
+        return findings
+
+    def list_access_analyzer_findings(
+        self,
+        credentials: dict,
+        *,
+        region: str | None = None,
+        max_findings: int = 50,
+    ) -> list[dict]:
+        """Return IAM Access Analyzer findings (raw dicts) for the default region.
+
+        Returns ``[]`` when no analyzer exists. Same error-translation as
+        ``list_guardduty_findings``.
+        """
+        region = region or self._default_region(credentials)
+        client = self._make_client("accessanalyzer", credentials, region)
+
+        analyzers = self._call_aws(client.list_analyzers).get("analyzers", [])
+        active = [a for a in analyzers if a.get("status") in (None, "ACTIVE")] or analyzers
+        if not active:
+            return []
+        analyzer_arn = active[0].get("arn")
+        if not analyzer_arn:
+            return []
+
+        listed = self._call_aws(
+            client.list_findings,
+            analyzerArn=analyzer_arn,
+            maxResults=min(max_findings, 50),
+        )
+        findings = listed.get("findings", [])
+        for f in findings:
+            if isinstance(f, dict):
+                f.setdefault("region", region)
+                f.setdefault("_AnalyzerArn", analyzer_arn)
+        return findings
+
     def fetch(self, credentials: dict) -> list[dict]:
         """Fetch all AWS account/inventory, S3, network, IAM, and secrets records.
 

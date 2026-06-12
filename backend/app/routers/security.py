@@ -105,6 +105,11 @@ from app.schemas.security_incident_demo import (
     IncidentDemoSeedResponse,
     IncidentDemoClearResponse,
 )
+from app.schemas.security_aws_alerts import (
+    AwsAlertSyncRequest,
+    AwsAlertSyncResponse,
+    AwsSignalGenerateResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -121,6 +126,7 @@ from app.services import security_signal_correlation_service
 from app.services import security_case_service
 from app.services import security_case_report_service
 from app.services import security_incident_demo_service
+from app.services import aws_security_alert_ingestion_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1297,3 +1303,80 @@ def incident_demo_clear(
     return IncidentDemoClearResponse(
         **security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
     )
+
+
+# ── AWS security alerts (M67.1) ───────────────────────────────────────────────
+#
+# Ingests provider-ADJUDICATED AWS security findings (GuardDuty / Access Analyzer)
+# into activity events, and generates AWS Incident Signals from them. This
+# surfaces provider-reported findings as evidence for review — it does NOT confirm
+# a breach, attacker, or unauthorized access. AWS-specific endpoints (rather than
+# extending the GitHub-coupled /activity/sync + /signals/generate) keep each
+# provider's ingestion/generation independent and testable.
+
+
+@router.post("/aws-alerts/sync", response_model=AwsAlertSyncResponse)
+def sync_aws_security_alerts(
+    body: Optional[AwsAlertSyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsAlertSyncResponse:
+    """Ingest GuardDuty/Access Analyzer findings for an AWS integration (M67.1).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "aws",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="AWS integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return AwsAlertSyncResponse(
+                attempted=False, succeeded=False, provider="aws",
+                source="security_alert",
+                error_message="No active AWS integration found.",
+            )
+
+    summary = aws_security_alert_ingestion_service.ingest_aws_security_alerts(
+        integration=integration, workspace_id=workspace_id, db=db
+    )
+    return AwsAlertSyncResponse(**summary)
+
+
+@router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)
+def generate_aws_security_signals(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsSignalGenerateResponse:
+    """Generate AWS Incident Signals from AWS security-alert events (M67.1).
+
+    Admin/owner only. Idempotent — re-running creates no duplicates.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    summary = security_incident_signal_service.generate_aws_incident_signals(
+        workspace_id=workspace_id, db=db
+    )
+    return AwsSignalGenerateResponse(**summary)

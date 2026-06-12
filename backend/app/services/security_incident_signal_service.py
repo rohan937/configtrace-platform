@@ -46,6 +46,12 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "alert_number",
         "actor",
         "event_type",
+        # AWS provider-alert fields (M67.1).
+        "finding_type",
+        "severity_label",
+        "account_id",
+        "region",
+        "service_name",
     }
 )
 
@@ -393,3 +399,124 @@ def get_incident_signal(
         )
         .first()
     )
+
+
+# ── AWS provider-alert signals (M67.1) ────────────────────────────────────────
+#
+# AWS GuardDuty / Access Analyzer findings are provider-ADJUDICATED security
+# findings. They are stronger evidence than a simple configuration risk, but they
+# still do NOT confirm a breach/attacker/compromise — they are "evidence for
+# review" Incident Signals with evidence_level="provider_alert".
+
+PROVIDER_AWS = "aws"
+SOURCE_SECURITY_ALERT = "security_alert"
+_AWS_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+_AWS_GD_SUMMARY = (
+    "AWS GuardDuty reported a security finding that may require review. "
+    "ConfigTrace surfaces this as a provider-reported Incident Signal. This does "
+    "not automatically confirm compromise or unauthorized access."
+)
+_AWS_AA_SUMMARY = (
+    "AWS IAM Access Analyzer reported a finding that may require review. "
+    "ConfigTrace surfaces this as a provider-reported Incident Signal. This does "
+    "not automatically confirm compromise or unauthorized access."
+)
+
+
+def build_aws_signal_from_activity_event(ev: SecurityActivityEvent) -> Optional[dict[str, Any]]:
+    """Map an AWS security-alert activity event → a provider-alert signal dict."""
+    if ev.provider != PROVIDER_AWS or ev.source != SOURCE_SECURITY_ALERT:
+        return None
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    severity = md.get("severity_label")
+    if severity not in _AWS_SEVERITIES:
+        severity = "medium"
+
+    is_access_analyzer = isinstance(ev.event_type, str) and ev.event_type.startswith(
+        "aws.access_analyzer"
+    )
+    if is_access_analyzer:
+        signal_key = "aws_access_analyzer_finding"
+        signal_type = "aws_access_analyzer"
+        label = md.get("finding_type") or "external access"
+        title = f"Access Analyzer finding: {label}"
+        summary = _AWS_AA_SUMMARY
+    else:
+        signal_key = "aws_guardduty_finding"
+        signal_type = "aws_guardduty"
+        label = md.get("title") or md.get("finding_type") or ev.event_type
+        title = f"GuardDuty finding: {label}"
+        summary = _AWS_GD_SUMMARY
+
+    when = ev.occurred_at or ev.ingested_at
+    metadata = sanitize_signal_metadata(
+        {
+            "event_type": ev.event_type,
+            "finding_type": md.get("finding_type"),
+            "severity_label": severity,
+            "account_id": md.get("account_id"),
+            "region": md.get("region"),
+            "service_name": md.get("service_name"),
+        }
+    )
+
+    return {
+        "provider": PROVIDER_AWS,
+        "integration_id": ev.integration_id,
+        "signal_key": signal_key,
+        "signal_type": signal_type,
+        "severity": severity,
+        "status": "open",
+        "title": title[:240],
+        "summary": summary,
+        "evidence_level": "provider_alert",   # stronger than config risk, not proof
+        "confidence": "high",                  # the provider adjudicated the finding
+        "first_seen_at": when,
+        "last_seen_at": when,
+        "linked_activity_event_id": ev.id,
+        "metadata": metadata,
+    }
+
+
+def generate_aws_incident_signals(
+    *, workspace_id: uuid.UUID, db: Session, scan_limit: int = 1000
+) -> dict[str, Any]:
+    """Generate AWS Incident Signals from AWS security-alert activity events.
+
+    Idempotent: re-running creates no duplicates. Returns a generation summary.
+    """
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_AWS,
+            SecurityActivityEvent.source == SOURCE_SECURITY_ALERT,
+        )
+        .order_by(
+            SecurityActivityEvent.occurred_at.desc().nullslast(),
+            SecurityActivityEvent.created_at.desc(),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    created = 0
+    skipped = 0
+    for ev in events:
+        signal = build_aws_signal_from_activity_event(ev)
+        if signal is None:
+            continue
+        outcome, _row = upsert_incident_signal(
+            workspace_id=workspace_id, signal=signal, db=db
+        )
+        if outcome == "created":
+            created += 1
+        else:
+            skipped += 1
+
+    return {
+        "provider": PROVIDER_AWS,
+        "activity_events_scanned": len(events),
+        "signals_created": created,
+        "signals_skipped": skipped,
+    }

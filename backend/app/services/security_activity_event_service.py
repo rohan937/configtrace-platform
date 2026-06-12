@@ -42,6 +42,17 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "target_login",      # affected collaborator login (control-plane)
         "ruleset_name",      # ruleset name
         "transport",         # http/https for a webhook target
+        # AWS provider security-alert fields (M67.1) — GuardDuty / Access Analyzer.
+        "finding_type",      # GuardDuty Type / Access Analyzer finding type
+        "severity_label",    # critical/high/medium/low (derived)
+        "severity_score",    # numeric provider severity
+        "title",             # safe provider finding title
+        "account_id",        # AWS account id
+        "region",            # AWS region
+        "service_name",      # GuardDuty service name
+        "detector_id",       # GuardDuty detector id
+        "analyzer_arn",      # Access Analyzer analyzer ARN
+        "finding_status",    # ACTIVE/ARCHIVED/RESOLVED
     }
 )
 
