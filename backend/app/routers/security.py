@@ -982,6 +982,9 @@ def generate_security_correlations(
     M66.6 (github): Configuration Risk × GitHub audit activity.
     M67.3 (aws): AWS Configuration Risk × AWS provider alerts (GuardDuty /
     Access Analyzer), matched on the SAME bucket / IAM principal name.
+    M68.2/68.3/68.6 (cloudflare): Configuration Risk × BOTH Cloudflare audit
+    activity AND Cloudflare WAF/security-event activity, matched on the same
+    zone + risk-area join key (host / sensitive path / setting).
 
     Idempotent — re-running creates no duplicates. An unsupported provider yields
     an empty summary.

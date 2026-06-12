@@ -42,6 +42,12 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "cloudflare_tls_change",
     "cloudflare_access_policy_change",
     "cloudflare_zone_setting_change",
+    // M68.6 — Configuration Risk × WAF/security-event activity.
+    "cloudflare_waf_risk_activity",
+    "cloudflare_zone_security_activity",
+    "cloudflare_dns_origin_activity",
+    "cloudflare_access_policy_activity",
+    "cloudflare_tls_activity",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
@@ -238,7 +244,7 @@ function GenerateBar({
 }) {
   const blurb =
     provider === "cloudflare"
-      ? "Correlate Cloudflare configuration risks with Cloudflare audit activity for the same zone and risk area (DNS, WAF, TLS)."
+      ? "Correlate Cloudflare configuration risks with Cloudflare audit activity and WAF/security activity for the same zone, host, or risk area (DNS, WAF, TLS, Access, zone settings)."
       : provider === "aws"
         ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
         : "Matches configuration risks to GitHub audit activity on the same repository.";
