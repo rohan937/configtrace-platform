@@ -45,6 +45,7 @@ from app.services import security_incident_signal_service as signal_svc
 
 PROVIDER_GITHUB = "github"
 PROVIDER_AWS = "aws"
+PROVIDER_CLOUDFLARE = "cloudflare"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -62,6 +63,12 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "resource",
         "region",
         "account_id",
+        # Cloudflare correlation context (M68.2) — non-sensitive identifiers.
+        "zone_id",
+        "zone_name",
+        "action",
+        "resource_type",
+        "resource_id",
     }
 )
 
@@ -666,6 +673,228 @@ def generate_aws_correlations(
 
     return {
         "provider": PROVIDER_AWS,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Cloudflare correlations (M68.2)
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# Cloudflare Configuration Risk findings (``security_findings`` provider=cloudflare,
+# produced by ``security_rules/cloudflare.py``) are correlated with Cloudflare
+# audit activity (``security_activity_events`` provider=cloudflare, source=
+# "audit_log" — ingested in M68.1) ONLY when they share the SAME zone AND the SAME
+# logical risk area within the finding's review window.
+#
+# ZONE MATCH: a Cloudflare integration is ZONE-SCOPED (one ``zone_id`` per
+# credential), so a finding and an audit event that share the same
+# ``integration_id`` are guaranteed to be the same zone — used here as the
+# decryption-free zone gate. The event's zone_id/zone_name are stored for evidence.
+#
+# RISK-AREA GATE (avoids vague matching): a finding only correlates with audit
+# events whose ``event_type`` is in the finding's risk area. Same zone is NOT
+# enough — a TLS finding never matches a DNS event, etc.
+#
+# Safely matchable today (the config-risk finding rule exists):
+#   * DNS  : cloudflare_dns_private_origin       ↔ cloudflare.dns_record.changed
+#   * WAF  : cloudflare_waf_rule_disabled        ↔ cloudflare.waf_rule.changed
+#   * TLS  : cloudflare_ssl_mode_weak /
+#            cloudflare_always_https_off /
+#            cloudflare_min_tls_weak             ↔ cloudflare.ssl_tls.changed
+#
+# DEFERRED (reported, never faked):
+#   * Access policy (Candidate D) and API-token (Candidate E): NO Cloudflare
+#     config-risk finding rule exists today (only drift classifiers), so there is
+#     nothing to match against.
+#   * cloudflare_hsts_disabled / _security_level_low / _development_mode_on: their
+#     audit change is the GENERIC ``cloudflare.zone_setting.changed`` event, whose
+#     event_type does not identify the specific setting — matching it would risk
+#     cross-setting false positives, so these are intentionally not correlated.
+
+_CF_DNS_RULE = {
+    "correlation_key": "cloudflare_dns_risk_activity",
+    "correlation_type": "cloudflare_dns_change",
+    "event_types": frozenset({"cloudflare.dns_record.changed"}),
+    "phrase": "Cloudflare DNS risk aligned with DNS audit activity",
+    "area": "DNS",
+}
+_CF_WAF_RULE = {
+    "correlation_key": "cloudflare_waf_risk_activity",
+    "correlation_type": "cloudflare_waf_change",
+    "event_types": frozenset({"cloudflare.waf_rule.changed"}),
+    "phrase": "Cloudflare WAF risk aligned with WAF audit activity",
+    "area": "WAF",
+}
+_CF_TLS_RULE = {
+    "correlation_key": "cloudflare_tls_risk_activity",
+    "correlation_type": "cloudflare_tls_change",
+    "event_types": frozenset({"cloudflare.ssl_tls.changed"}),
+    "phrase": "Cloudflare TLS risk aligned with SSL/TLS audit activity",
+    "area": "TLS",
+}
+
+# finding base rule → correlation rule descriptor.
+CLOUDFLARE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    "cloudflare_dns_private_origin": _CF_DNS_RULE,
+    "cloudflare_waf_rule_disabled": _CF_WAF_RULE,
+    "cloudflare_ssl_mode_weak": _CF_TLS_RULE,
+    "cloudflare_always_https_off": _CF_TLS_RULE,
+    "cloudflare_min_tls_weak": _CF_TLS_RULE,
+}
+
+_CF_SEVERITIES = {"critical", "high", "medium", "low", "info"}
+
+
+def build_cloudflare_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a Cloudflare correlation dict (not persisted) from a matched pair."""
+    severity = finding.severity if finding.severity in _CF_SEVERITIES else "medium"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    meta = event.event_metadata if isinstance(event.event_metadata, dict) else {}
+    zone = meta.get("zone_name") or meta.get("zone_id")
+
+    title = rule["phrase"]
+    if isinstance(zone, str) and zone:
+        title = f"{rule['phrase']} ({zone})"
+    summary = (
+        f"A Cloudflare configuration risk (\"{finding.title}\") and related audit "
+        f"activity (\"{event.event_type}\") were observed for the same zone/resource "
+        f"within the review window. {_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": event.event_type,
+        "action": meta.get("action") if isinstance(meta.get("action"), str) else None,
+        "actor": meta.get("actor") if isinstance(meta.get("actor"), str) else None,
+        "zone_id": meta.get("zone_id") if isinstance(meta.get("zone_id"), str) else None,
+        "zone_name": meta.get("zone_name") if isinstance(meta.get("zone_name"), str) else None,
+        "resource_type": event.resource_type if isinstance(event.resource_type, str) else None,
+        "resource_id": event.resource_id if isinstance(event.resource_id, str) else None,
+        "account_id": meta.get("account_id") if isinstance(meta.get("account_id"), str) else None,
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_CLOUDFLARE,
+        "correlation_key": rule["correlation_key"],
+        "correlation_type": rule["correlation_type"],
+        "severity": severity,
+        # Same zone + same risk area + window is circumstantial co-occurrence,
+        # not an exact-rule match — calibrated to "medium".
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        # carried for signal creation (not a column):
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_cloudflare_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active Cloudflare findings with Cloudflare audit activity.
+
+    Conservative: a finding only matches an audit event from the SAME integration
+    (= same zone-scoped credential), in the SAME risk area, within the finding's
+    review window. Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_CLOUDFLARE,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in CLOUDFLARE_CORRELATION_RULES
+    ]
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_CLOUDFLARE,
+            SecurityActivityEvent.source == "audit_log",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    # Index audit events by integration (the zone-scoped credential).
+    events_by_integ: dict[Any, list[SecurityActivityEvent]] = {}
+    for ev in events:
+        if ev.integration_id is not None:
+            events_by_integ.setdefault(ev.integration_id, []).append(ev)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.integration_id is None:
+            continue  # no zone scope to match on
+        rule = CLOUDFLARE_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        for ev in events_by_integ.get(finding.integration_id, []):
+            if ev.event_type not in rule["event_types"]:
+                continue  # risk-area gate — never cross areas
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            correlation = build_cloudflare_correlation(
+                finding=finding, event=ev, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_CLOUDFLARE,
         "findings_scanned": len(findings),
         "events_scanned": len(events),
         "correlations_created": created,

@@ -32,10 +32,11 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: ["webhook_change", "branch_protection_change", "deploy_key_added"],
   aws: ["aws_s3_public_access_alert", "aws_iam_credential_alert"],
+  cloudflare: ["cloudflare_dns_change", "cloudflare_waf_change", "cloudflare_tls_change"],
 };
 const HIGH = new Set(["critical", "high"]);
 
@@ -182,9 +183,10 @@ export default function CorrelationsPage() {
       <p style={{ margin: "26px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
         A correlation means a configuration risk and provider activity were
         observed for the same resource within a review window — a GitHub
-        repository, or an AWS bucket / IAM principal matched to a GuardDuty or
-        Access Analyzer finding. Correlations are evidence for review. They do not
-        by themselves confirm compromise or unauthorized access.
+        repository, an AWS bucket / IAM principal matched to a GuardDuty or
+        Access Analyzer finding, or a Cloudflare zone matched to DNS / WAF / TLS
+        audit activity. Correlations are evidence for review. They do not by
+        themselves confirm compromise or unauthorized access.
       </p>
     </div>
   );
@@ -199,7 +201,7 @@ function Hero() {
         style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "20px" }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub + AWS beta</span>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub + AWS + Cloudflare beta</span>
           <Badge>Beta</Badge>
         </div>
         <p style={{ margin: 0, fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>
@@ -229,9 +231,11 @@ function GenerateBar({
   onGenerate: () => void;
 }) {
   const blurb =
-    provider === "aws"
-      ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
-      : "Matches configuration risks to GitHub audit activity on the same repository.";
+    provider === "cloudflare"
+      ? "Correlate Cloudflare configuration risks with Cloudflare audit activity for the same zone and risk area (DNS, WAF, TLS)."
+      : provider === "aws"
+        ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
+        : "Matches configuration risks to GitHub audit activity on the same repository.";
   return (
     <div
       className="bg-surface1 border border-border"

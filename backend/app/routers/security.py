@@ -994,6 +994,10 @@ def generate_security_correlations(
         summary = security_signal_correlation_service.generate_aws_correlations(
             workspace_id=workspace_id, db=db
         )
+    elif provider == "cloudflare":
+        summary = security_signal_correlation_service.generate_cloudflare_correlations(
+            workspace_id=workspace_id, db=db
+        )
     else:
         return SecurityCorrelationGenerateResponse(provider=provider)
 
