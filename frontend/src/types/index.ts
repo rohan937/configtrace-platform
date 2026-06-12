@@ -1761,6 +1761,90 @@ export interface SecurityCaseLinkCreateRequest {
   linked_object_id: string;
 }
 
+// Case Evidence Report (M66.9) — metadata-only investigation packet.
+export interface CaseReportSignal {
+  id: string;
+  title: string;
+  signal_type: string;
+  severity: string;
+  confidence: string;
+  status: string;
+  evidence_level: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+}
+export interface CaseReportRisk {
+  id: string;
+  title: string;
+  rule: string;
+  severity: string;
+  status: string;
+  confidence: string;
+  first_detected_at: string | null;
+  last_seen_at: string | null;
+}
+export interface CaseReportActivity {
+  id: string;
+  event_type: string;
+  provider: string;
+  source: string;
+  actor_id: string | null;
+  actor_type: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  provider_event_id: string | null;
+  raw_ref: string | null;
+  source_ip_hash: string | null;
+  occurred_at: string | null;
+  ingested_at: string | null;
+  metadata: Record<string, unknown>;
+}
+export interface CaseReportCorrelation {
+  id: string;
+  title: string;
+  correlation_type: string;
+  severity: string;
+  confidence: string;
+  status: string;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+}
+export interface CaseReportTimelineItem {
+  at: string | null;
+  label: string;
+}
+export interface CaseReportCase {
+  id: string;
+  title: string;
+  summary: string | null;
+  status: SecurityCaseStatus;
+  severity: string;
+  confidence: string;
+  provider: string | null;
+  opened_by_user_id: string | null;
+  confirmed_by_user_id: string | null;
+  confirmed_at: string | null;
+  dismissed_by_user_id: string | null;
+  dismissed_at: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface SecurityCaseReport {
+  title: string;
+  generated_at: string;
+  executive_summary: string;
+  claim_note: string;
+  case: CaseReportCase;
+  signals: CaseReportSignal[];
+  risks: CaseReportRisk[];
+  activity_events: CaseReportActivity[];
+  correlations: CaseReportCorrelation[];
+  timeline: CaseReportTimelineItem[];
+  review_checklist: string[];
+  limitations: string;
+}
+
 export interface SecurityRulePack {
   name: string;
   version: string;

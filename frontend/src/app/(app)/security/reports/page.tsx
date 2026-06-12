@@ -23,6 +23,7 @@ import type { SecurityRulePack, SecurityBetaFeedbackRating } from "@/types";
 import { trackSecurityBetaEvent } from "@/lib/securityBetaEvents";
 import { getProviderMeta } from "@/lib/providers";
 import { SEVERITY_LABEL } from "@/components/security/findingDisplay";
+import Link from "next/link";
 import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
@@ -620,6 +621,25 @@ export default function SecurityReportsPage() {
           period, provider, or severity for a focused report.
         </p>
       ) : null}
+
+      {/* Case Evidence Reports (M66.9) */}
+      <div
+        className="bg-surface1 border border-border"
+        style={{ borderRadius: "12px", padding: "16px 18px", marginTop: "28px" }}
+      >
+        <div style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0", marginBottom: "4px" }}>
+          Case Evidence Reports
+        </div>
+        <p style={{ margin: "0 0 8px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
+          Investigation packets are generated from a case in{" "}
+          <Link href="/security/cases" style={{ color: "#6b9cf8", textDecoration: "none" }}>
+            Cases
+          </Link>
+          . Open a case and use Export Markdown / Export JSON to download a
+          metadata-only evidence report grouping its signals, configuration risks,
+          activity events, and correlations.
+        </p>
+      </div>
 
       <p style={{ marginTop: "24px", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
         Reports are metadata-only: they exclude evidence blobs, secrets, payloads, and

@@ -99,6 +99,7 @@ from app.schemas.security_case import (
     SecurityCaseLinkResponse,
     SecurityCaseLinkListResponse,
 )
+from app.schemas.security_case_report import SecurityCaseReportResponse
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -113,6 +114,7 @@ from app.services import github_activity_ingestion_service
 from app.services import security_incident_signal_service
 from app.services import security_signal_correlation_service
 from app.services import security_case_service
+from app.services import security_case_report_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1222,3 +1224,19 @@ def create_case_from_correlation_endpoint(
     return SecurityCaseResponse.from_model(
         case, link_count=security_case_service.count_links(case.id, db)
     )
+
+
+@router.get("/cases/{case_id}/report", response_model=SecurityCaseReportResponse)
+def get_security_case_report(
+    case_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseReportResponse:
+    """Return a metadata-only Case Evidence Report (M66.9). Member; 404 cross-ws.
+
+    Structured packet (not a file) — the frontend formats it as Markdown/JSON.
+    Only allowlisted safe fields are emitted; no raw payloads/IPs/secrets/tokens.
+    """
+    _ws, case = _case_or_404(case_id, current_user, db)
+    report = security_case_report_service.build_case_report(case=case, db=db)
+    return SecurityCaseReportResponse(**report)

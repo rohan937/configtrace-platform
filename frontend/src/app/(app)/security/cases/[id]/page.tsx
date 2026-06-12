@@ -27,6 +27,7 @@ import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 import { SeverityBadge, ConfidenceBadge } from "@/components/security/findingDisplay";
 import { CaseStatusBadge } from "@/components/security/signalDisplay";
+import CaseReportExport from "@/components/security/CaseReportExport";
 
 const LINK_ROUTE: Record<string, string> = {
   signal: "/security/signals",
@@ -187,6 +188,9 @@ function Body({
           </div>
         )}
       </div>
+
+      {/* Evidence report export (M66.9) */}
+      <CaseReportExport caseId={c.id} />
 
       {/* Linked evidence, grouped */}
       {grouped.length === 0 ? (

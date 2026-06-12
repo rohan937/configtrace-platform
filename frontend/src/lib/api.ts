@@ -46,6 +46,7 @@ import type {
   SecurityCaseDetail,
   SecurityCaseLink,
   SecurityCaseLinkCreateRequest,
+  SecurityCaseReport,
   SecurityCaseUpdateRequest,
   SecurityCorrelationGenerateRequest,
   SecurityCorrelationGenerateResponse,
@@ -656,6 +657,14 @@ export async function createCaseFromCorrelation(
   token?: string | null,
 ): Promise<SecurityCase> {
   return apiFetch(`/security/correlations/${correlationId}/create-case`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+/** Fetch a metadata-only Case Evidence Report payload (M66.9). */
+export async function getSecurityCaseReport(
+  caseId: string,
+  token?: string | null,
+): Promise<SecurityCaseReport> {
+  return apiFetch(`/security/cases/${caseId}/report`, { token });
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
