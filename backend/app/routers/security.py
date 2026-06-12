@@ -121,6 +121,10 @@ from app.schemas.security_aws_security_hub import (
     AwsSecurityHubSyncResponse,
     AwsSecurityHubSignalGenerateResponse,
 )
+from app.schemas.security_aws_s3_data_events import (
+    AwsS3DataEventSyncRequest,
+    AwsS3DataEventSyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -141,6 +145,7 @@ from app.services import aws_security_alert_ingestion_service
 from app.services import aws_cloudtrail_ingestion_service
 from app.services import aws_iam_behavior_service
 from app.services import aws_security_hub_ingestion_service
+from app.services import aws_s3_data_event_ingestion_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1562,6 +1567,62 @@ def generate_aws_security_hub_signals(
         workspace_id=workspace_id, db=db
     )
     return AwsSecurityHubSignalGenerateResponse(**summary)
+
+
+@router.post("/aws-s3-data-events/sync", response_model=AwsS3DataEventSyncResponse)
+def sync_aws_s3_data_events(
+    body: AwsS3DataEventSyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsS3DataEventSyncResponse:
+    """Ingest S3 object-level data events from bounded CloudTrail trail logs (M67.8).
+
+    Admin/owner only. ``trail_bucket`` is required — CloudTrail S3 data events are
+    only available from a configured trail's delivery bucket. Non-fatal:
+    permission/availability limits are reported in the summary, never raised.
+    Members can view the resulting events via
+    ``GET /security/activity/events?provider=aws``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "aws",
+    )
+    requested_id = body.integration_id
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="AWS integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return AwsS3DataEventSyncResponse(
+                attempted=False, succeeded=False, provider="aws",
+                source="s3_data_event",
+                error_message="No active AWS integration found.",
+            )
+
+    max_files = min(body.max_files, 200) if body.max_files else 20
+    max_events = min(body.max_events, 20000) if body.max_events else 1000
+
+    summary = aws_s3_data_event_ingestion_service.ingest_aws_s3_data_events(
+        integration=integration, workspace_id=workspace_id, db=db,
+        trail_bucket=body.trail_bucket, trail_prefix=body.trail_prefix,
+        max_files=max_files, max_events=max_events,
+    )
+    return AwsS3DataEventSyncResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

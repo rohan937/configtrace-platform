@@ -80,6 +80,11 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "generator_id",      # ASFF GeneratorId (safe rule/control id)
         "created_at",        # ASFF CreatedAt (ISO string)
         "updated_at",        # ASFF UpdatedAt (ISO string)
+        # AWS S3 object-level data-event fields (M67.8) — CloudTrail data events.
+        "bucket_name",       # S3 bucket name (a resource identifier, not data)
+        "object_key_hash",   # salted hash of the object key (NEVER the raw key)
+        "object_key_prefix", # sanitized, truncated top-level prefix (or omitted)
+        "bytes_transferred", # additionalEventData bytes in+out (int)
     }
 )
 

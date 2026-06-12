@@ -84,6 +84,15 @@ const AWS_EVENT_TYPES = [
   "aws.security_hub.inspector_finding",
   "aws.security_hub.macie_finding",
   "aws.security_hub.finding",
+  // S3 object-level data events (M67.8)
+  "aws.s3.data.get_object",
+  "aws.s3.data.put_object",
+  "aws.s3.data.delete_object",
+  "aws.s3.data.copy_object",
+  "aws.s3.data.list_bucket",
+  "aws.s3.data.head_object",
+  "aws.s3.data.put_object_acl",
+  "aws.s3.data.event",
 ];
 const LIMIT_OPTIONS = [25, 50, 100];
 
@@ -363,7 +372,7 @@ function SyncBar({
   const isAws = provider === "aws";
   const label = isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
   const desc = isAws
-    ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, and Security Hub findings. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
+    ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, Security Hub findings, and S3 data events when configured. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
     : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div

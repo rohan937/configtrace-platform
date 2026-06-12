@@ -2486,6 +2486,94 @@ class AWSConnector(BaseConnector):
                 break
         return events
 
+    # ── S3 CloudTrail data-event trail logs (M67.8) ────────────────────────────
+    #
+    # CloudTrail ``LookupEvents`` does NOT return S3 object-level DATA events —
+    # those are only delivered to a configured trail's S3 bucket. This milestone
+    # ingests a BOUNDED set of those trail-log objects (gzipped CloudTrail JSON)
+    # so the caller can extract S3 data events. These are object-level ACTIVITY
+    # events for review, not breach detection. Everything is capped: a small
+    # file count, a per-object byte cap, and prefix filtering.
+
+    def list_cloudtrail_log_objects(
+        self,
+        credentials: dict,
+        *,
+        bucket: str,
+        prefix: str | None = None,
+        max_files: int = 20,
+        region: str | None = None,
+    ) -> list[str]:
+        """List up to ``max_files`` CloudTrail trail-log object keys in a bucket.
+
+        Bounded by design: never an unbounded bucket scan. Returns the keys of
+        gzipped/JSON log objects under the (optional) prefix. ``[]`` if empty.
+
+        Raises (translated by ``_call_aws``): AuthenticationError (401),
+        ConnectorError(403) on AccessDenied, ConnectorError(404)-style on missing
+        bucket, RateLimitError, NetworkError.
+        """
+        region = region or self._default_region(credentials)
+        client = self._make_client("s3", credentials, region)
+
+        cap = max(1, min(int(max_files or 20), 200))
+        keys: list[str] = []
+        token: str | None = None
+        # At most a few list pages — bounded by ``cap``.
+        for _ in range(10):
+            kwargs: dict[str, Any] = {"Bucket": bucket, "MaxKeys": min(cap, 1000)}
+            if prefix:
+                kwargs["Prefix"] = prefix
+            if token:
+                kwargs["ContinuationToken"] = token
+            resp = self._call_aws(client.list_objects_v2, **kwargs)
+            for obj in resp.get("Contents", []) or []:
+                k = obj.get("Key")
+                if isinstance(k, str) and (
+                    k.endswith(".json.gz") or k.endswith(".gz") or k.endswith(".json")
+                ):
+                    keys.append(k)
+                    if len(keys) >= cap:
+                        return keys
+            if not resp.get("IsTruncated"):
+                break
+            token = resp.get("NextContinuationToken")
+            if not token:
+                break
+        return keys[:cap]
+
+    def read_cloudtrail_log_object(
+        self,
+        credentials: dict,
+        *,
+        bucket: str,
+        key: str,
+        region: str | None = None,
+        max_bytes: int = 5_000_000,
+    ) -> bytes:
+        """Return up to ``max_bytes`` of a single trail-log object's raw bytes.
+
+        The caller is responsible for gzip-decompressing and JSON-parsing; this
+        method only performs the bounded S3 read. Same error translation as
+        ``list_cloudtrail_log_objects``.
+        """
+        region = region or self._default_region(credentials)
+        client = self._make_client("s3", credentials, region)
+        cap = max(1, min(int(max_bytes or 5_000_000), 25_000_000))
+
+        resp = self._call_aws(client.get_object, Bucket=bucket, Key=key)
+        body = resp.get("Body") if isinstance(resp, dict) else None
+        if body is None:
+            return b""
+        # boto3 returns a StreamingBody with .read(amt); tolerate raw bytes too.
+        if hasattr(body, "read"):
+            raw = body.read(cap)
+        else:
+            raw = body
+        if isinstance(raw, (bytes, bytearray)):
+            return bytes(raw[:cap])
+        return b""
+
     def fetch(self, credentials: dict) -> list[dict]:
         """Fetch all AWS account/inventory, S3, network, IAM, and secrets records.
 
