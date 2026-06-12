@@ -1830,6 +1830,19 @@ export interface CaseReportCase {
   created_at: string;
   updated_at: string;
 }
+// GitHub Incident Workflow demo (M66.10)
+export interface IncidentDemoStatus {
+  seeded: boolean;
+  case_id: string | null;
+  link_count: number;
+}
+export interface IncidentDemoSeedResponse {
+  seeded: boolean;
+  created: boolean;
+  case_id: string | null;
+  link_count: number;
+}
+
 export interface SecurityCaseReport {
   title: string;
   generated_at: string;

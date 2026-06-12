@@ -667,6 +667,26 @@ export async function getSecurityCaseReport(
   return apiFetch(`/security/cases/${caseId}/report`, { token });
 }
 
+/* ── GitHub Incident Workflow demo (M66.10) — admin-only seed/clear ────────── */
+
+export async function getIncidentDemoStatus(
+  token?: string | null,
+): Promise<import("@/types").IncidentDemoStatus> {
+  return apiFetch(`/security/incident-demo/status`, { token });
+}
+
+export async function seedIncidentDemo(
+  token?: string | null,
+): Promise<import("@/types").IncidentDemoSeedResponse> {
+  return apiFetch(`/security/incident-demo/seed`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+export async function clearIncidentDemo(
+  token?: string | null,
+): Promise<{ cleared: boolean }> {
+  return apiFetch(`/security/incident-demo/clear`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    Correlations (M66.6)
 

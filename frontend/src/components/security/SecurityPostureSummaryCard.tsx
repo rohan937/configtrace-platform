@@ -119,7 +119,7 @@ export default function SecurityPostureSummaryCard() {
           Configuration Risk is not set up yet.
         </p>
         <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: "0 0 14px", lineHeight: 1.6 }}>
-          Connect providers or load demo data to preview security exposure workflows.
+          Connect providers or load demo data to preview configuration risk workflows.
         </p>
         <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
           <Link href="/integrations" style={ctaButton}>Connect provider</Link>
@@ -159,7 +159,7 @@ export default function SecurityPostureSummaryCard() {
         >
           <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#e84040", flexShrink: 0 }} />
           <span style={{ fontSize: "12.5px", color: "#e2e5ef" }}>
-            Critical or high security exposures need review.
+            Critical or high configuration risks need review.
           </span>
           <Link href="/security/risks" style={{ ...ctaLink, marginLeft: "auto" }}>Review →</Link>
         </div>

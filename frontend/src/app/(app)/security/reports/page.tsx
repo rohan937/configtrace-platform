@@ -729,7 +729,7 @@ function EmptyNoFindings() {
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "40px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4c8d4" }}>No findings available for this report.</div>
       <p style={{ fontSize: "13px", color: "#8b90a0", marginTop: "8px", lineHeight: 1.6, maxWidth: "520px", marginLeft: "auto", marginRight: "auto" }}>
-        Connect providers and run a sync. Security exposure findings will appear in
+        Connect providers and run a sync. Configuration risk findings will appear in
         reports after detection.
       </p>
     </div>

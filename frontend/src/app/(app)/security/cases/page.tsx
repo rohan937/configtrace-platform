@@ -18,7 +18,13 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 
 import type { SecurityCase } from "@/types";
-import { getSecurityCases, createSecurityCase } from "@/lib/api";
+import {
+  getSecurityCases,
+  createSecurityCase,
+  seedIncidentDemo,
+  clearIncidentDemo,
+} from "@/lib/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader";
@@ -33,7 +39,11 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 
 export default function CasesPage() {
   const { getToken } = useAuth();
+  const { isAdmin } = useWorkspace();
   const router = useRouter();
+
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [demoNote, setDemoNote] = useState<string | null>(null);
 
   const [cases, setCases] = useState<SecurityCase[]>([]);
   const [total, setTotal] = useState(0);
@@ -83,9 +93,73 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
+  const onSeedDemo = useCallback(async () => {
+    setDemoBusy(true);
+    setDemoNote(null);
+    try {
+      const token = await getToken();
+      const res = await seedIncidentDemo(token);
+      if (res.case_id) {
+        router.push(`/security/cases/${res.case_id}`);
+      } else {
+        setDemoNote("Demo seeded.");
+        await load();
+        setDemoBusy(false);
+      }
+    } catch {
+      setDemoNote("Could not load the demo. Please try again.");
+      setDemoBusy(false);
+    }
+  }, [getToken, router, load]);
+
+  const onClearDemo = useCallback(async () => {
+    setDemoBusy(true);
+    setDemoNote(null);
+    try {
+      const token = await getToken();
+      await clearIncidentDemo(token);
+      setDemoNote("Demo data cleared.");
+      await load();
+    } catch {
+      setDemoNote("Could not clear the demo. Please try again.");
+    } finally {
+      setDemoBusy(false);
+    }
+  }, [getToken, load]);
+
   return (
     <div>
       <Hero />
+
+      {/* Admin-only: load/clear the GitHub incident-workflow demo (M66.10) */}
+      {isAdmin && (
+        <div
+          className="bg-surface1 border border-border"
+          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
+        >
+          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
+            <strong style={{ color: "#e8eaf0" }}>Try the GitHub incident demo:</strong>{" "}
+            seeds a sample risk → activity → signal → correlation → case (clearly
+            marked demo, no real provider sync).
+          </span>
+          <button
+            onClick={onSeedDemo}
+            disabled={demoBusy}
+            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#6b9cf8", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
+          >
+            {demoBusy ? "Working…" : "Load GitHub incident demo"}
+          </button>
+          <button
+            onClick={onClearDemo}
+            disabled={demoBusy}
+            className="bg-surface1 border border-border"
+            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
+          >
+            Clear demo
+          </button>
+          {demoNote && <span style={{ fontSize: "12px", color: "#3ccf7e", width: "100%" }}>{demoNote}</span>}
+        </div>
+      )}
 
       {/* Create case */}
       <div

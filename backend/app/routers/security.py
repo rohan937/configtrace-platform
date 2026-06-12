@@ -100,6 +100,11 @@ from app.schemas.security_case import (
     SecurityCaseLinkListResponse,
 )
 from app.schemas.security_case_report import SecurityCaseReportResponse
+from app.schemas.security_incident_demo import (
+    IncidentDemoStatusResponse,
+    IncidentDemoSeedResponse,
+    IncidentDemoClearResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -115,6 +120,7 @@ from app.services import security_incident_signal_service
 from app.services import security_signal_correlation_service
 from app.services import security_case_service
 from app.services import security_case_report_service
+from app.services import security_incident_demo_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1240,3 +1246,54 @@ def get_security_case_report(
     _ws, case = _case_or_404(case_id, current_user, db)
     report = security_case_report_service.build_case_report(case=case, db=db)
     return SecurityCaseReportResponse(**report)
+
+
+# ── GitHub Incident Workflow demo (M66.10) ────────────────────────────────────
+#
+# Seeds/clears a clearly-labelled, demo-only end-to-end chain (configuration risk
+# → activity event → incident signal → correlation → case) so the workflow is
+# easy to demo. Demo data never notifies, never syncs real providers, and never
+# touches real findings. Seed/clear are admin/owner only.
+
+
+@router.get("/incident-demo/status", response_model=IncidentDemoStatusResponse)
+def incident_demo_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IncidentDemoStatusResponse:
+    """Whether the GitHub incident-workflow demo is seeded (M66.10)."""
+    workspace_id = _current_workspace_id(current_user, db)
+    return IncidentDemoStatusResponse(
+        **security_incident_demo_service.get_status(workspace_id, db)
+    )
+
+
+@router.post("/incident-demo/seed", response_model=IncidentDemoSeedResponse)
+def incident_demo_seed(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IncidentDemoSeedResponse:
+    """Seed the GitHub incident-workflow demo chain (M66.10). Admin/owner only."""
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    summary = security_incident_demo_service.seed(
+        workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+    )
+    return IncidentDemoSeedResponse(**summary)
+
+
+@router.post("/incident-demo/clear", response_model=IncidentDemoClearResponse)
+def incident_demo_clear(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> IncidentDemoClearResponse:
+    """Remove the GitHub incident-workflow demo chain (M66.10). Admin/owner only."""
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    return IncidentDemoClearResponse(
+        **security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
+    )

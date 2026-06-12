@@ -264,6 +264,70 @@ export const DEMO_SCRIPT_5MIN: DemoStep[] = [
   },
 ];
 
+/**
+ * GitHub incident-workflow flow (M66.10): Activity Events → Incident Signals →
+ * Correlations → Cases → Reports. The spine: ConfigTrace does not claim a breach
+ * from a risky setting alone — it sees the configuration risk, connects it to
+ * GitHub audit activity, then creates a review signal and a human-reviewed case.
+ */
+export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
+  {
+    id: "incident-activity",
+    title: "Activity Events",
+    href: "/security/activity",
+    cta: "Open Activity Events",
+    talkTrack:
+      "This is normalized GitHub audit activity — control-plane events like a webhook or branch protection changing. It's evidence for review, not detection. Source IPs are stored only as hashes.",
+    whatToClick: "Open Activity Events and one event to show the metadata-only evidence.",
+    emphasize: "Control-plane audit activity, metadata-only.",
+    avoid: "Don't say this proves anyone did anything malicious.",
+  },
+  {
+    id: "incident-signals",
+    title: "Incident Signals",
+    href: "/security/signals",
+    cta: "Open Incident Signals",
+    talkTrack:
+      "From that activity, ConfigTrace raises a control-plane review signal. Severity reflects review priority — it never asserts compromise. Confidence is high only because the audit event states the action happened.",
+    whatToClick: "Open a signal and read the calibrated review wording.",
+    emphasize: "Review signal — may require review, not a confirmed incident.",
+    avoid: "Avoid 'breach detected' / 'attacker found' — these are review signals.",
+  },
+  {
+    id: "incident-correlations",
+    title: "Correlations",
+    href: "/security/correlations",
+    cta: "Open Correlations",
+    talkTrack:
+      "Here's the differentiator: ConfigTrace connects the configuration risk to GitHub audit activity on the same repository within a review window. A risky setting plus activity that followed it is stronger evidence for review.",
+    whatToClick: "Open a correlation to show the linked risk + activity and the timeline.",
+    emphasize: "Configuration risk aligned with audit activity — potential security impact.",
+    avoid: "Don't call a correlation a confirmed compromise.",
+  },
+  {
+    id: "incident-cases",
+    title: "Cases",
+    href: "/security/cases",
+    cta: "Open Cases",
+    talkTrack:
+      "A person groups the evidence into a human-reviewed case. Confirm or dismiss is a human action — 'Confirmed by user' is a workflow status, never a 'confirmed breach'. Admins can load a sample demo here.",
+    whatToClick: "Open a case (or load the GitHub incident demo) to show grouped evidence + status.",
+    emphasize: "Human-reviewed investigation; confirmation is a human decision.",
+    avoid: "Don't say ConfigTrace auto-confirms anything.",
+  },
+  {
+    id: "incident-report",
+    title: "Case Evidence Report",
+    href: "/security/cases",
+    cta: "Export from a case",
+    talkTrack:
+      "Finally, export the case as a metadata-only evidence packet — Markdown or JSON — for review or a customer conversation. No raw payloads, IPs, secrets, or tokens.",
+    whatToClick: "On a case, use Export Markdown / Export JSON.",
+    emphasize: "Defensible, metadata-only evidence for review.",
+    avoid: "Don't promise it certifies compliance or proves a breach.",
+  },
+];
+
 export interface ObjectionAnswer {
   question: string;
   answer: string;

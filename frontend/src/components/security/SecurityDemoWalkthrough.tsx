@@ -98,7 +98,7 @@ export function buildWalkthroughSteps(sampleFindingId: string | null): WalkStep[
       id: "reports",
       href: "/security/reports",
       title: "Export a review packet",
-      copy: "Generate a metadata-only security exposure report for internal review or customer feedback.",
+      copy: "Generate a metadata-only configuration risk report for internal review or customer feedback.",
       cta: "Open reports",
     },
   ];

@@ -205,12 +205,12 @@ function SignalBody({ signal }: { signal: SecurityIncidentSignal }) {
           <LinkFact
             label="Linked configuration risk"
             value={signal.linked_finding_id ?? null}
-            empty="Not linked — correlation coming soon"
+            empty="Not linked"
           />
           <LinkFact
             label="Linked change"
             value={signal.linked_change_id ?? null}
-            empty="Not linked — correlation coming soon"
+            empty="Not linked"
           />
         </div>
       </div>
