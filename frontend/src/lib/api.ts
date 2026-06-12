@@ -697,6 +697,12 @@ export async function generateCloudflareSignals(
   return apiFetch(`/security/cloudflare-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateCloudflareWafSignals(
+  token?: string | null,
+): Promise<import("@/types").CloudflareWafSignalGenerateResponse> {
+  return apiFetch(`/security/cloudflare-waf-events/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsIncidentSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

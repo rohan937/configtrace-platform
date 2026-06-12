@@ -74,6 +74,12 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "rule_name",          # WAF/firewall rule name
         "outcome",            # audit action result (success / failure)
         "severity",           # provider-reported severity label
+        # Cloudflare WAF-signal aggregate fields (M68.5) — counts only.
+        "host",               # request host
+        "ruleset_id",         # firewall ruleset id
+        "path_prefix",        # sanitized leading path segment (or omitted)
+        "actions",            # comma-joined distinct actions in the group
+        "client_country_count",  # distinct country count (aggregate)
         # AWS S3 object-access-spike fields (M67.9) — safe aggregate counts only.
         "bucket_name",        # S3 bucket name (resource identifier)
         "unique_object_count",  # distinct object_key_hash count

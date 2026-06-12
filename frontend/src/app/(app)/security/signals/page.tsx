@@ -28,6 +28,7 @@ import {
   generateAwsS3AccessSignals,
   generateAwsVpcFlowSignals,
   generateCloudflareSignals,
+  generateCloudflareWafSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -44,7 +45,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 type Provider = "github" | "aws" | "cloudflare";
 
-const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity"];
+const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity", "cloudflare_waf_activity_signal"];
 const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
@@ -220,6 +221,24 @@ export default function IncidentSignalsPage() {
     }
   }, [getToken, load]);
 
+  const onGenerateWaf = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setBehaviorNote(null);
+    try {
+      const token = await getToken();
+      const res = await generateCloudflareWafSignals(token);
+      setBehaviorNote(
+        `Cloudflare WAF: scanned ${res.events_scanned} WAF/security event(s) across ${res.groups_scanned} group(s) · ${res.signals_created} signal(s) created · ${res.signals_skipped} skipped.`,
+      );
+      await load();
+    } catch {
+      setGenError("Could not generate Cloudflare WAF signals. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const open = signals.filter((s) => s.status === "open").length;
     const high = signals.filter((s) => HIGH_SEVERITIES.has(s.severity)).length;
@@ -251,6 +270,7 @@ export default function IncidentSignalsPage() {
         onGenerateSecurityHub={onGenerateSecurityHub}
         onGenerateS3Access={onGenerateS3Access}
         onGenerateVpcFlow={onGenerateVpcFlow}
+        onGenerateWaf={onGenerateWaf}
       />
 
       {/* Summary cards */}
@@ -380,6 +400,7 @@ function GenerateBar({
   onGenerateSecurityHub,
   onGenerateS3Access,
   onGenerateVpcFlow,
+  onGenerateWaf,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -393,6 +414,7 @@ function GenerateBar({
   onGenerateSecurityHub: () => void;
   onGenerateS3Access: () => void;
   onGenerateVpcFlow: () => void;
+  onGenerateWaf: () => void;
 }) {
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
@@ -533,6 +555,26 @@ function GenerateBar({
             }}
           >
             Generate VPC flow signals
+          </button>
+        )}
+        {isCloudflare && (
+          <button
+            onClick={onGenerateWaf}
+            disabled={!isAdmin || generating}
+            title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+              opacity: generating ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate Cloudflare WAF signals
           </button>
         )}
       </div>

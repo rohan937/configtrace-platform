@@ -59,3 +59,26 @@ class CloudflareWafEventSyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class CloudflareWafSignalGenerateRequest(BaseModel):
+    """POST /security/cloudflare-waf-events/generate-signals body (all optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+    block_threshold: Optional[int] = Field(default=None, ge=2, le=1_000_000)
+    challenge_threshold: Optional[int] = Field(default=None, ge=2, le=1_000_000)
+    sensitive_path_threshold: Optional[int] = Field(default=None, ge=2, le=1_000_000)
+    rule_trigger_threshold: Optional[int] = Field(default=None, ge=2, le=1_000_000)
+    skip_allow_threshold: Optional[int] = Field(default=None, ge=2, le=1_000_000)
+
+
+class CloudflareWafSignalGenerateResponse(BaseModel):
+    """Cloudflare WAF/security-event Incident Signal generation summary."""
+
+    provider: str
+    source: str
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

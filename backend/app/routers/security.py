@@ -22,7 +22,7 @@ exposure. It is not breach or threat detection.
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import UUID4
@@ -139,6 +139,8 @@ from app.schemas.security_cloudflare_activity import (
     CloudflareSignalGenerateResponse,
     CloudflareWafEventSyncRequest,
     CloudflareWafEventSyncResponse,
+    CloudflareWafSignalGenerateRequest,
+    CloudflareWafSignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -166,6 +168,7 @@ from app.services import aws_vpc_flow_log_ingestion_service
 from app.services import aws_vpc_flow_signal_service
 from app.services import cloudflare_security_activity_ingestion_service
 from app.services import cloudflare_waf_event_ingestion_service
+from app.services import cloudflare_waf_signal_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1899,6 +1902,49 @@ def sync_cloudflare_waf_events(
         lookback_hours=lookback_hours, max_events=max_events,
     )
     return CloudflareWafEventSyncResponse(**summary)
+
+
+@router.post(
+    "/cloudflare-waf-events/generate-signals",
+    response_model=CloudflareWafSignalGenerateResponse,
+)
+def generate_cloudflare_waf_signals(
+    body: Optional[CloudflareWafSignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CloudflareWafSignalGenerateResponse:
+    """Generate Cloudflare WAF/security-event Incident Signals (M68.5).
+
+    Admin/owner only. Surfaces review-worthy WAF activity patterns (block /
+    challenge bursts, sensitive-path activity, repeated-rule activity, skip/allow)
+    as activity-level signals. Idempotent — re-running creates no duplicates.
+    These are review signals; they do not confirm an attack, exploit, or
+    unauthorized access.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+        if body.block_threshold is not None:
+            kwargs["block_threshold"] = body.block_threshold
+        if body.challenge_threshold is not None:
+            kwargs["challenge_threshold"] = body.challenge_threshold
+        if body.sensitive_path_threshold is not None:
+            kwargs["sensitive_path_threshold"] = body.sensitive_path_threshold
+        if body.rule_trigger_threshold is not None:
+            kwargs["rule_trigger_threshold"] = body.rule_trigger_threshold
+        if body.skip_allow_threshold is not None:
+            kwargs["skip_allow_threshold"] = body.skip_allow_threshold
+    summary = cloudflare_waf_signal_service.generate_cloudflare_waf_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return CloudflareWafSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)
