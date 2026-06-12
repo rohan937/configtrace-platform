@@ -24,6 +24,7 @@ import {
   DEMO_SCRIPT_3MIN,
   DEMO_SCRIPT_5MIN,
   DEMO_SCRIPT_AWS_INCIDENT,
+  DEMO_SCRIPT_CLOUDFLARE_INCIDENT,
   DEMO_OBJECTIONS,
   DEMO_WORDING_GUIDE,
   DEMO_QUICK_LINKS,
@@ -166,6 +167,14 @@ export default function SecurityDemoScriptPage() {
       <SectionLabel>AWS incident evidence demo script</SectionLabel>
       <div style={{ display: "flex", flexDirection: "column", gap: "10px", margin: "10px 0 24px" }}>
         {DEMO_SCRIPT_AWS_INCIDENT.map((s, i) => (
+          <StepCard key={s.id} step={s} index={i + 1} />
+        ))}
+      </div>
+
+      {/* 3c. Cloudflare incident evidence script */}
+      <SectionLabel>Cloudflare incident evidence demo script</SectionLabel>
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px", margin: "10px 0 24px" }}>
+        {DEMO_SCRIPT_CLOUDFLARE_INCIDENT.map((s, i) => (
           <StepCard key={s.id} step={s} index={i + 1} />
         ))}
       </div>

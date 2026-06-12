@@ -408,6 +408,86 @@ export const DEMO_SCRIPT_AWS_INCIDENT: DemoStep[] = [
   },
 ];
 
+export const DEMO_SCRIPT_CLOUDFLARE_INCIDENT: DemoStep[] = [
+  {
+    id: "cf-config-risk",
+    title: "Start with Cloudflare configuration risk",
+    href: "/security/risks?provider=cloudflare",
+    cta: "Open Configuration Risk (Cloudflare)",
+    talkTrack:
+      "ConfigTrace starts with Cloudflare configuration risk — here, a protective WAF rule that has been disabled for a zone. This is a risky current state read from Cloudflare metadata, not an alert that something happened.",
+    whatToClick: "Open the Cloudflare 'WAF rule disabled' configuration risk.",
+    emphasize: "Configuration risk first — the risky current state of the zone.",
+    avoid: "Don't say the zone was attacked or breached.",
+  },
+  {
+    id: "cf-audit-activity",
+    title: "Add Cloudflare account audit activity",
+    href: "/security/activity?provider=cloudflare",
+    cta: "Open Activity Events (Cloudflare)",
+    talkTrack:
+      "Then ConfigTrace adds Cloudflare account audit activity — control-plane changes from the audit log, like the WAF rule being changed on the same zone. This shows who changed what, as evidence for review.",
+    whatToClick: "On Activity Events choose Cloudflare; open a cloudflare.waf_rule.changed audit event.",
+    emphasize: "Account audit activity — control-plane changes, metadata only.",
+    avoid: "Don't say a change proves compromise or unauthorized access.",
+  },
+  {
+    id: "cf-waf-activity",
+    title: "Add Cloudflare WAF/security activity",
+    href: "/security/activity?provider=cloudflare",
+    cta: "Filter Cloudflare WAF events",
+    talkTrack:
+      "When the plan and token expose it, ConfigTrace also adds Cloudflare WAF/security activity — blocked and challenged requests for the same zone and rule. Raw client IPs and URLs are never stored: only hashes, a safe path prefix, and counts.",
+    whatToClick: "Filter Cloudflare event types: cloudflare.waf_event.block / .challenge.",
+    emphasize: "WAF/security activity — blocked/challenged requests, metadata only.",
+    avoid: "Don't claim an attack, exploit, or that an endpoint was accessed.",
+  },
+  {
+    id: "cf-incident-signals",
+    title: "Turn review-worthy activity into Incident Signals",
+    href: "/security/signals?provider=cloudflare",
+    cta: "Open Incident Signals (Cloudflare)",
+    talkTrack:
+      "ConfigTrace turns review-worthy activity into Cloudflare Incident Signals: an audit-activity signal for the control-plane change, and a WAF/security activity signal for the repeated blocked-request pattern. Severity reflects review priority — it never asserts compromise or that someone has access.",
+    whatToClick: "Open the Cloudflare audit and WAF signals and read the evidence levels.",
+    emphasize: "Review signals — evidence for review, not a confirmed incident.",
+    avoid: "Avoid 'breach detected' / 'attacker found' — these are review signals.",
+  },
+  {
+    id: "cf-incident-correlations",
+    title: "Correlate configuration risk with activity",
+    href: "/security/correlations?provider=cloudflare",
+    cta: "Open Correlations (Cloudflare)",
+    talkTrack:
+      "Here's the differentiator: ConfigTrace connects the configuration risk — the disabled WAF rule — to related Cloudflare activity for the same zone: the audit change and the WAF/security events. A risky setting aligned with related activity is stronger evidence for review.",
+    whatToClick: "Open a Cloudflare risk × audit/WAF activity correlation and read the timeline.",
+    emphasize: "Configuration risk aligned with audit and WAF/security activity.",
+    avoid: "Don't call a correlation a confirmed compromise or unauthorized access.",
+  },
+  {
+    id: "cf-incident-cases",
+    title: "Group into a human-reviewed case",
+    href: "/security/cases",
+    cta: "Load Cloudflare security demo",
+    talkTrack:
+      "A person groups the evidence into one human-reviewed case. Admins can load a sample Cloudflare evidence chain here spanning configuration risk, audit activity, WAF/security activity, Incident Signals, and correlations. Confirm or dismiss is a human action, never an automatic 'confirmed breach'.",
+    whatToClick: "Use 'Load Cloudflare security demo' (admin-only) to seed and open the grouped case.",
+    emphasize: "Human-reviewed investigation; confirmation is a human decision.",
+    avoid: "Don't say ConfigTrace auto-confirms anything or identifies attackers.",
+  },
+  {
+    id: "cf-incident-report",
+    title: "Export the evidence report",
+    href: "/security/cases",
+    cta: "Export from the Cloudflare case",
+    talkTrack:
+      "Finally, export the Cloudflare case as a metadata-only evidence packet — Markdown or JSON. It summarizes the configuration risk, the audit_log and waf_security_event activity, the review signals, and the correlations. This is evidence for review, not automatic proof of compromise, unauthorized access, an attack, or an exploit. No raw IPs, URLs, paths, query strings, secrets, or tokens.",
+    whatToClick: "On the Cloudflare case, use Export Markdown / Export JSON.",
+    emphasize: "Defensible, metadata-only evidence for review.",
+    avoid: "Don't promise it certifies compliance or proves a breach.",
+  },
+];
+
 export interface ObjectionAnswer {
   question: string;
   answer: string;

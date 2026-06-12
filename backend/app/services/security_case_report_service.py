@@ -181,7 +181,9 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
                     counts[p] = counts.get(p, 0) + 1
         if counts:
             provider_key = max(counts, key=counts.get)
-    provider_label = {"github": "GitHub", "aws": "AWS"}.get(provider_key, provider_key)
+    provider_label = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare"}.get(
+        provider_key, provider_key
+    )
     evidence_label = f"{provider_label} incident evidence".strip()
     executive_summary = (
         f"Investigation case \"{case.title}\" (status: {status_label}) groups "

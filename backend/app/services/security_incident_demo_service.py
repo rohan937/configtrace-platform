@@ -47,6 +47,7 @@ from app.services import security_signal_correlation_service as corr_svc
 from app.services import aws_iam_behavior_service as behavior_svc
 from app.services import aws_s3_access_signal_service as s3_spike_svc
 from app.services import aws_vpc_flow_signal_service as vpc_flow_svc
+from app.services import cloudflare_waf_signal_service as cf_waf_signal_svc
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,24 @@ AWS_DEMO_REGION = "us-east-1"
 AWS_DEMO_ACCOUNT_ID = "000000000000"  # RFC-style placeholder, not a real account
 AWS_DEMO_PRINCIPAL = "configtrace-demo-deploy"  # sample IAM principal name
 AWS_DEMO_ENI = "eni-0configtracedemo"           # sample network interface id
+
+# ── Cloudflare incident demo (M68.7) — a SEPARATE hidden demo integration + case
+# source so "Clear Cloudflare demo" removes only Cloudflare demo objects and never
+# touches the GitHub or AWS demos. Same safety rules: clearly marked demo, no real
+# sync, no notifications, never touches a real Cloudflare integration, idempotent.
+# The chain is one coherent Cloudflare story anchored on a disabled WAF rule:
+#   Config risk (WAF rule disabled) → audit activity (waf_rule.changed) → WAF
+#   security activity (waf_event.block) → audit-activity signal + WAF-activity
+#   signal → audit correlation (cloudflare_waf_change) + WAF correlation
+#   (cloudflare_waf_risk_activity) → human-reviewed case → report.
+CF_DEMO_INTEGRATION_NAME = "ConfigTrace Cloudflare incident demo (sample data)"
+CF_DEMO_CASE_SOURCE = "demo_cloudflare_incident"
+CF_DEMO_ZONE_ID = "configtrace-demo-zone"             # sample zone id (not real)
+CF_DEMO_ZONE_NAME = "demo.configtrace.test"           # sample zone (RFC test TLD)
+CF_DEMO_HOST = "app.demo.configtrace.test"            # sample request host
+CF_DEMO_RULE_ID = "configtrace-demo-waf-rule"         # sample WAF rule id
+CF_DEMO_RULE_NAME = "Block SQL injection (demo)"      # sample WAF rule name
+CF_DEMO_RULESET_ID = "configtrace-demo-ruleset"       # sample ruleset id
 
 
 def _utcnow() -> datetime:
@@ -287,6 +306,339 @@ def clear(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         ).delete(synchronize_session=False)
         # Bulk delete (not ORM db.delete) to avoid a relationship-cascade re-delete
         # of the already-removed resources.
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Cloudflare incident demo (M68.7)
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+def get_cloudflare_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == CF_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_cf_demo_case(workspace_id: uuid.UUID, db: Session) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == CF_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_cloudflare_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_cf_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_cloudflare(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Cloudflare demo incident chain (idempotent). No real sync.
+
+    One coherent Cloudflare story anchored on a disabled protective WAF rule:
+      Configuration Risk (WAF rule disabled) → Cloudflare audit activity
+      (cloudflare.waf_rule.changed) → Cloudflare WAF/security activity
+      (cloudflare.waf_event.block) → Cloudflare audit-activity Incident Signal +
+      Cloudflare WAF/security Incident Signal → Cloudflare risk × audit-activity
+      correlation + Cloudflare risk × WAF/security-activity correlation → Case.
+
+    All objects are anchored on a hidden demo integration so ``clear_cloudflare``
+    removes them and nothing else. Evidence is built directly for the demo objects
+    (never by scanning the real workspace).
+    """
+    existing = _existing_cf_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" → never shown / never synced).
+    integ = get_cloudflare_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({"demo": True, "dataset": "cloudflare_incident_demo_v1"})
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=CF_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    # 2. Demo Cloudflare zone resource.
+    resource = Resource(
+        integration_id=integ.id,
+        user_id=actor_user_id,
+        provider_resource_type="cloudflare_zone",
+        provider_resource_id=CF_DEMO_ZONE_ID,
+        display_name=CF_DEMO_ZONE_NAME,
+        is_active=True,
+    )
+    db.add(resource)
+    db.flush()
+
+    # 3. Configuration Risk finding: a protective WAF rule is disabled.
+    finding = finding_svc.upsert_active_finding(
+        db=db,
+        workspace_id=workspace_id,
+        integration_id=integ.id,
+        provider="cloudflare",
+        finding_key=f"cloudflare_waf_rule_disabled:{CF_DEMO_ZONE_ID}#demo",
+        severity="high",
+        title="Demo: Cloudflare WAF rule is disabled",
+        resource_id=resource.id,
+        description="Sample Cloudflare configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "cloudflare_waf_rule_disabled",
+            "demo": True,
+            "description": CF_DEMO_RULE_NAME,
+            "action": "block",
+            "enabled": False,
+            "ruleset_id": CF_DEMO_RULESET_ID,
+        },
+        remediation={"summary": "Re-enable the protective WAF rule if it should be active."},
+    )
+
+    # 4. Cloudflare audit activity: the WAF rule was changed (control-plane).
+    audit_norm = activity_svc.normalize_activity_event(
+        provider="cloudflare",
+        source="audit_log",
+        event_type="cloudflare.waf_rule.changed",
+        occurred_at=_utcnow(),
+        provider_event_id=f"demo-cf-audit-{uuid.uuid4().hex[:8]}",
+        actor_id="demo-admin@configtrace.test",
+        actor_type="user",
+        resource_type="cloudflare_zone",
+        resource_id=CF_DEMO_ZONE_ID,
+        metadata={
+            "zone_id": CF_DEMO_ZONE_ID,
+            "zone_name": CF_DEMO_ZONE_NAME,
+            "rule_id": CF_DEMO_RULE_ID,
+            "rule_name": CF_DEMO_RULE_NAME,
+            "ruleset_id": CF_DEMO_RULESET_ID,
+            "action": "disable",
+            "actor": "demo-admin@configtrace.test",
+            "outcome": "success",
+        },
+    )
+    _ao, audit_event = activity_svc.upsert_activity_event(
+        workspace_id=workspace_id, integration_id=integ.id, normalized=audit_norm, db=db
+    )
+
+    # 5. Cloudflare audit-activity Incident Signal from the audit event.
+    audit_signal = None
+    audit_sig_dict = signal_svc.build_cloudflare_signal_from_activity_event(audit_event)
+    if audit_sig_dict is not None:
+        _aso, audit_signal = signal_svc.upsert_incident_signal(
+            workspace_id=workspace_id, signal=audit_sig_dict, db=db
+        )
+
+    # 6. Cloudflare WAF/security activity: a burst of blocked requests for the same
+    #    rule/host (a small representative set — not noise).
+    def _waf_event(idx: int):
+        norm = activity_svc.normalize_activity_event(
+            provider="cloudflare",
+            source="waf_security_event",
+            event_type="cloudflare.waf_event.block",
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-cfwaf-{uuid.uuid4().hex[:12]}",
+            actor_id=None,
+            actor_type="waf_event",
+            resource_type="cloudflare_zone",
+            resource_id=CF_DEMO_ZONE_ID,
+            metadata={
+                "action": "block",
+                "rule_id": CF_DEMO_RULE_ID,
+                "rule_name": CF_DEMO_RULE_NAME,
+                "ruleset_id": CF_DEMO_RULESET_ID,
+                "host": CF_DEMO_HOST,
+                "path_prefix": "login",
+                "method": "POST",
+                "client_country": "US",
+                "service": "waf",
+                "outcome": "block",
+                "event_source": "cloudflare_waf",
+                "zone_id": CF_DEMO_ZONE_ID,
+                "zone_name": CF_DEMO_ZONE_NAME,
+            },
+        )
+        _wo, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    waf_events = [_waf_event(i) for i in range(6)]
+
+    # 7. Cloudflare WAF/security-activity Incident Signal (built directly).
+    waf_signal = None
+    waf_sig_dict = cf_waf_signal_svc.build_waf_signal(match={
+        "pattern": "repeated_rule_activity",
+        "signal_key": "cloudflare.waf.repeated_rule_activity",
+        "severity": "medium",
+        "phrase": "Repeated Cloudflare WAF rule activity",
+        "summary_core": (
+            "Cloudflare WAF events show repeated blocked-request activity for one "
+            "WAF rule."
+        ),
+        "trigger_events": waf_events,
+    })
+    if waf_sig_dict is not None:
+        _wso, waf_signal = signal_svc.upsert_incident_signal(
+            workspace_id=workspace_id, signal=waf_sig_dict, db=db
+        )
+
+    # 8. Cloudflare risk × audit-activity correlation (M68.2).
+    audit_rule = corr_svc.CLOUDFLARE_CORRELATION_RULES["cloudflare_waf_rule_disabled"]
+    audit_corr_dict = corr_svc.build_cloudflare_correlation(
+        finding=finding, event=audit_event, rule=audit_rule
+    )
+    _aco, audit_corr = corr_svc.upsert_correlation(
+        workspace_id=workspace_id, correlation=audit_corr_dict, db=db
+    )
+
+    # 9. Cloudflare risk × WAF/security-activity correlation (M68.6).
+    waf_rule = corr_svc.CLOUDFLARE_WAF_CORRELATION_RULES["cloudflare_waf_rule_disabled"]
+    waf_corr_dict = corr_svc.build_cloudflare_waf_correlation(
+        finding=finding, anchor=waf_events[0], matched=waf_events, rule=waf_rule
+    )
+    _wco, waf_corr = corr_svc.upsert_correlation(
+        workspace_id=workspace_id, correlation=waf_corr_dict, db=db
+    )
+
+    # 10. Case linking all the evidence (marked demo via metadata.source).
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Cloudflare incident investigation",
+        summary=(
+            "Demo investigation case. It groups Cloudflare security evidence: a "
+            "configuration risk (a disabled protective WAF rule), Cloudflare account "
+            "audit activity showing the control-plane change, and Cloudflare "
+            "WAF/security activity (blocked requests) for the same zone and rule — "
+            "turned into review signals and correlations. This is a human-reviewed "
+            "case presenting evidence for review — ConfigTrace does not automatically "
+            "confirm compromise, unauthorized access, an attack, or an exploit."
+        ),
+        severity=waf_corr.severity,
+        provider="cloudflare",
+        metadata={"source": CF_DEMO_CASE_SOURCE, "repository": CF_DEMO_ZONE_NAME},
+        db=db,
+    )
+    case_svc.link_object_to_case(case=case, object_type="correlation", object_id=audit_corr.id, actor_user_id=actor_user_id, db=db)
+    case_svc.link_object_to_case(case=case, object_type="correlation", object_id=waf_corr.id, actor_user_id=actor_user_id, db=db)
+    case_svc.link_object_to_case(case=case, object_type="finding", object_id=finding.id, actor_user_id=actor_user_id, db=db)
+    case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=audit_event.id, actor_user_id=actor_user_id, db=db)
+    case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=waf_events[0].id, actor_user_id=actor_user_id, db=db)
+    if audit_signal is not None:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=audit_signal.id, actor_user_id=actor_user_id, db=db)
+    if waf_signal is not None:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=waf_signal.id, actor_user_id=actor_user_id, db=db)
+    # Correlation-evidence signals (auto-created by upsert_correlation) complete the
+    # signal layer (evidence_level="correlation").
+    for corr in (audit_corr, waf_corr):
+        if corr.linked_signal_id is not None:
+            case_svc.link_object_to_case(case=case, object_type="signal", object_id=corr.linked_signal_id, actor_user_id=actor_user_id, db=db)
+
+    logger.info("cloudflare_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_cloudflare(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Cloudflare demo incident objects (and nothing else)."""
+    # 1. Cloudflare demo cases (+ their links).
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == CF_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    # 2. Cloudflare demo evidence anchored on the hidden Cloudflare demo integration.
+    integ = get_cloudflare_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_finding_id.in_(finding_ids))
+        if activity_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids))
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids))
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
         db.query(Integration).filter(
             Integration.id == integ.id
         ).delete(synchronize_session=False)

@@ -1326,10 +1326,16 @@ def incident_demo_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IncidentDemoStatusResponse:
-    """Whether the incident-workflow demo is seeded (M66.10 github / M67.4 aws)."""
+    """Whether the incident-workflow demo is seeded.
+
+    M66.10 github / M67.4 aws / M68.7 cloudflare.
+    """
     workspace_id = _current_workspace_id(current_user, db)
-    if (provider or "github").lower() == "aws":
+    prov = (provider or "github").lower()
+    if prov == "aws":
         status = security_incident_demo_service.get_aws_status(workspace_id, db)
+    elif prov == "cloudflare":
+        status = security_incident_demo_service.get_cloudflare_status(workspace_id, db)
     else:
         status = security_incident_demo_service.get_status(workspace_id, db)
     return IncidentDemoStatusResponse(**status)
@@ -1345,13 +1351,20 @@ def incident_demo_seed(
 
     provider=github (M66.10): Configuration Risk × GitHub audit activity.
     provider=aws (M67.4): S3 public-policy risk × Access Analyzer provider alert.
+    provider=cloudflare (M68.7): WAF-rule-disabled risk × Cloudflare audit +
+    WAF/security activity.
     """
     workspace_id = _current_workspace_id(current_user, db)
     workspace_permission_service.require_workspace_admin(
         workspace_id, current_user.id, db
     )
-    if (provider or "github").lower() == "aws":
+    prov = (provider or "github").lower()
+    if prov == "aws":
         summary = security_incident_demo_service.seed_aws(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
+    elif prov == "cloudflare":
+        summary = security_incident_demo_service.seed_cloudflare(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
         )
     else:
@@ -1369,15 +1382,18 @@ def incident_demo_clear(
 ) -> IncidentDemoClearResponse:
     """Remove the incident-workflow demo chain. Admin/owner only.
 
-    Scoped per provider — clearing aws removes only AWS demo objects, and clearing
-    github removes only GitHub demo objects.
+    Scoped per provider — clearing one provider's demo removes only that
+    provider's demo objects (github / aws / cloudflare are isolated).
     """
     workspace_id = _current_workspace_id(current_user, db)
     workspace_permission_service.require_workspace_admin(
         workspace_id, current_user.id, db
     )
-    if (provider or "github").lower() == "aws":
+    prov = (provider or "github").lower()
+    if prov == "aws":
         result = security_incident_demo_service.clear_aws(workspace_id=workspace_id, db=db)
+    elif prov == "cloudflare":
+        result = security_incident_demo_service.clear_cloudflare(workspace_id=workspace_id, db=db)
     else:
         result = security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
     return IncidentDemoClearResponse(**result)
