@@ -23,6 +23,7 @@ import {
   syncSecurityActivity,
   syncAwsSecurityAlerts,
   syncAwsCloudTrail,
+  syncAwsSecurityHub,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -74,6 +75,15 @@ const AWS_EVENT_TYPES = [
   "aws.kms.disable_key",
   "aws.kms.schedule_key_deletion",
   "aws.cloudtrail.event",
+  // Security Hub findings (M67.7)
+  "aws.security_hub.iam_finding",
+  "aws.security_hub.s3_finding",
+  "aws.security_hub.ec2_finding",
+  "aws.security_hub.kms_finding",
+  "aws.security_hub.guardduty_finding",
+  "aws.security_hub.inspector_finding",
+  "aws.security_hub.macie_finding",
+  "aws.security_hub.finding",
 ];
 const LIMIT_OPTIONS = [25, 50, 100];
 
@@ -182,6 +192,27 @@ export default function ActivityEventsPage() {
     }
   }, [getToken, load]);
 
+  const onSyncSecurityHub = useCallback(async () => {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncNote(null);
+    try {
+      const token = await getToken();
+      const r = await syncAwsSecurityHub(token);
+      setSyncWarn(r.permission_limited);
+      setSyncNote(
+        `${r.permission_limited ? "AWS Security Hub access is limited for these credentials. " : ""}` +
+          `Security Hub: seen ${r.findings_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+          `${r.error_message ? ` (${r.error_message})` : ""}`,
+      );
+      await load();
+    } catch {
+      setSyncError("Could not sync AWS Security Hub. Please try again.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const types = new Set(events.map((e) => e.event_type)).size;
     const latest = events.reduce<string | null>((acc, e) => {
@@ -209,6 +240,7 @@ export default function ActivityEventsPage() {
         syncError={syncError}
         onSync={onSync}
         onSyncCloudTrail={onSyncCloudTrail}
+        onSyncSecurityHub={onSyncSecurityHub}
       />
 
       <div
@@ -315,6 +347,7 @@ function SyncBar({
   syncError,
   onSync,
   onSyncCloudTrail,
+  onSyncSecurityHub,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -325,11 +358,12 @@ function SyncBar({
   syncError: string | null;
   onSync: () => void;
   onSyncCloudTrail: () => void;
+  onSyncSecurityHub: () => void;
 }) {
   const isAws = provider === "aws";
   const label = isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
   const desc = isAws
-    ? "AWS events may include GuardDuty, Access Analyzer, and CloudTrail management events. Sync provider-reported security findings, or CloudTrail control-plane activity, as normalized activity events."
+    ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, and Security Hub findings. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
     : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
@@ -394,6 +428,26 @@ function SyncBar({
             }}
           >
             Sync AWS CloudTrail
+          </button>
+        )}
+        {isAws && (
+          <button
+            onClick={onSyncSecurityHub}
+            disabled={!isAdmin || syncing}
+            title={!isAdmin ? "Only workspace admins can sync." : undefined}
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || syncing ? "not-allowed" : "pointer",
+              opacity: syncing ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Sync AWS Security Hub
           </button>
         )}
       </div>

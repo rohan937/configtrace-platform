@@ -1868,6 +1868,18 @@ export interface AwsBehaviorSignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface AwsSecurityHubSyncResponse {
+  attempted: boolean;
+  succeeded: boolean;
+  provider: string;
+  integration_id: string | null;
+  source: string;
+  findings_seen: number;
+  events_inserted: number;
+  events_skipped: number;
+  permission_limited: boolean;
+  error_message: string | null;
+}
 
 // GitHub Incident Workflow demo (M66.10)
 export interface IncidentDemoStatus {

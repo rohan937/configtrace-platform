@@ -62,6 +62,11 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "principal_hash",     # salted hash of the IAM principalId (never raw)
         "policy_name",        # safe policy hint (e.g. "AdministratorAccess")
         "resource_name",      # safe resource identifier
+        # AWS Security Hub fields (M67.7).
+        "finding_title",      # ASFF Title
+        "product_name",       # ASFF ProductName
+        "workflow_status",    # ASFF Workflow.Status
+        "compliance_status",  # ASFF Compliance.Status
     }
 )
 
@@ -514,6 +519,107 @@ def generate_aws_incident_signals(
     skipped = 0
     for ev in events:
         signal = build_aws_signal_from_activity_event(ev)
+        if signal is None:
+            continue
+        outcome, _row = upsert_incident_signal(
+            workspace_id=workspace_id, signal=signal, db=db
+        )
+        if outcome == "created":
+            created += 1
+        else:
+            skipped += 1
+
+    return {
+        "provider": PROVIDER_AWS,
+        "activity_events_scanned": len(events),
+        "signals_created": created,
+        "signals_skipped": skipped,
+    }
+
+
+# ── AWS Security Hub Incident Signals (M67.7) ──────────────────────────────────
+
+SOURCE_SECURITY_HUB = "security_hub"
+
+_AWS_SH_SUMMARY = (
+    "AWS Security Hub reported a security finding that may require review. "
+    "ConfigTrace surfaces this as provider-reported evidence. This does not "
+    "automatically confirm compromise or unauthorized access."
+)
+
+
+def build_aws_security_hub_signal_from_activity_event(
+    ev: SecurityActivityEvent,
+) -> Optional[dict[str, Any]]:
+    """Map an AWS Security Hub activity event → a provider-alert signal dict."""
+    if ev.provider != PROVIDER_AWS or ev.source != SOURCE_SECURITY_HUB:
+        return None
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    severity = md.get("severity_label")
+    if severity not in _AWS_SEVERITIES:
+        severity = "medium"
+
+    label = md.get("finding_title") or md.get("finding_type") or ev.event_type
+    title = f"Security Hub finding: {label}"
+
+    when = ev.occurred_at or ev.ingested_at
+    metadata = sanitize_signal_metadata(
+        {
+            "event_type": ev.event_type,
+            "finding_type": md.get("finding_type"),
+            "finding_title": md.get("finding_title"),
+            "severity_label": severity,
+            "product_name": md.get("product_name"),
+            "account_id": md.get("account_id"),
+            "region": md.get("region"),
+            "workflow_status": md.get("workflow_status"),
+            "compliance_status": md.get("compliance_status"),
+        }
+    )
+
+    return {
+        "provider": PROVIDER_AWS,
+        "integration_id": ev.integration_id,
+        "signal_key": "aws_security_hub_finding",
+        "signal_type": "aws_security_hub_finding",
+        "severity": severity,
+        "status": "open",
+        "title": title[:240],
+        "summary": _AWS_SH_SUMMARY,
+        "evidence_level": "provider_alert",   # provider-adjudicated, not proof
+        "confidence": "high",
+        "first_seen_at": when,
+        "last_seen_at": when,
+        "linked_activity_event_id": ev.id,
+        "metadata": metadata,
+    }
+
+
+def generate_aws_security_hub_signals(
+    *, workspace_id: uuid.UUID, db: Session, scan_limit: int = 1000
+) -> dict[str, Any]:
+    """Generate AWS Incident Signals from Security Hub activity events.
+
+    Idempotent: re-running creates no duplicates. Returns a generation summary.
+    """
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_AWS,
+            SecurityActivityEvent.source == SOURCE_SECURITY_HUB,
+        )
+        .order_by(
+            SecurityActivityEvent.occurred_at.desc().nullslast(),
+            SecurityActivityEvent.created_at.desc(),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    created = 0
+    skipped = 0
+    for ev in events:
+        signal = build_aws_security_hub_signal_from_activity_event(ev)
         if signal is None:
             continue
         outcome, _row = upsert_incident_signal(

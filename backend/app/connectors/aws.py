@@ -2373,6 +2373,56 @@ class AWSConnector(BaseConnector):
                 f.setdefault("_AnalyzerArn", analyzer_arn)
         return findings
 
+    # ── Security Hub findings (M67.7) ──────────────────────────────────────────
+    #
+    # Security Hub aggregates provider-reported (ASFF) security findings across
+    # AWS security services. These are provider-ADJUDICATED findings surfaced as
+    # Incident-Signal evidence — they do NOT confirm breach/attacker/compromise.
+    # Errors are translated by ``_call_aws`` (403 → ConnectorError(403) → caller
+    # treats as permission-limited; "not enabled" surfaces as a non-fatal error).
+
+    def list_security_hub_findings(
+        self,
+        credentials: dict,
+        *,
+        region: str | None = None,
+        max_findings: int = 50,
+        max_pages: int = 2,
+    ) -> list[dict]:
+        """Return recent ACTIVE Security Hub findings (raw ASFF dicts) for a region.
+
+        Conservative: the integration default region only, active findings only,
+        a small page cap. Returns ``[]`` when there are no active findings.
+
+        Raises (translated by ``_call_aws``): AuthenticationError (401),
+        ConnectorError(403) on AccessDenied, RateLimitError, ConnectorError(503),
+        ConnectorError on "not subscribed"/other API errors, NetworkError.
+        """
+        region = region or self._default_region(credentials)
+        client = self._make_client("securityhub", credentials, region)
+
+        per_page = max(1, min(int(max_findings or 50), 100))
+        pages_cap = max(1, min(int(max_pages or 1), 5))
+        # Only currently-active findings (archived ones are historical noise).
+        filters = {"RecordState": [{"Value": "ACTIVE", "Comparison": "EQUALS"}]}
+
+        findings: list[dict] = []
+        next_token: str | None = None
+        for _ in range(pages_cap):
+            kwargs: dict[str, Any] = {"MaxResults": per_page, "Filters": filters}
+            if next_token:
+                kwargs["NextToken"] = next_token
+            resp = self._call_aws(client.get_findings, **kwargs)
+            page = resp.get("Findings", []) or []
+            for f in page:
+                if isinstance(f, dict):
+                    f.setdefault("_Region", region)
+                    findings.append(f)
+            next_token = resp.get("NextToken")
+            if not next_token:
+                break
+        return findings
+
     # ── CloudTrail management events (M67.5) ───────────────────────────────────
     #
     # CloudTrail ``LookupEvents`` returns MANAGEMENT (control-plane) events only —

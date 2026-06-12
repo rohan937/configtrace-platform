@@ -68,6 +68,18 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "event_category",    # "Management" (data events are out of scope)
         "management_event",  # whether CloudTrail flagged this a management event
         "recipient_account_id",  # account the event was delivered to
+        # AWS Security Hub (ASFF) fields (M67.7) — provider-reported findings.
+        "finding_title",     # ASFF Title
+        "finding_description",  # ASFF Description (truncated)
+        "severity_normalized",  # ASFF Severity.Normalized (0-100)
+        "workflow_status",   # ASFF Workflow.Status (NEW/NOTIFIED/RESOLVED/…)
+        "record_state",      # ASFF RecordState (ACTIVE/ARCHIVED)
+        "compliance_status", # ASFF Compliance.Status (PASSED/FAILED/…)
+        "product_name",      # ASFF ProductName (GuardDuty/Inspector/Macie/…)
+        "company_name",      # ASFF CompanyName
+        "generator_id",      # ASFF GeneratorId (safe rule/control id)
+        "created_at",        # ASFF CreatedAt (ISO string)
+        "updated_at",        # ASFF UpdatedAt (ISO string)
     }
 )
 

@@ -24,6 +24,7 @@ import {
   generateSecurityIncidentSignals,
   generateAwsIncidentSignals,
   generateAwsIamBehaviorSignals,
+  generateAwsSecurityHubSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -151,6 +152,24 @@ export default function IncidentSignalsPage() {
     }
   }, [getToken, load]);
 
+  const onGenerateSecurityHub = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setBehaviorNote(null);
+    try {
+      const token = await getToken();
+      const res = await generateAwsSecurityHubSignals(token);
+      setBehaviorNote(
+        `Security Hub: scanned ${res.activity_events_scanned} finding event(s) · ${res.signals_created} signal(s) created · ${res.signals_skipped} skipped.`,
+      );
+      await load();
+    } catch {
+      setGenError("Could not generate Security Hub signals. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const open = signals.filter((s) => s.status === "open").length;
     const high = signals.filter((s) => HIGH_SEVERITIES.has(s.severity)).length;
@@ -179,6 +198,7 @@ export default function IncidentSignalsPage() {
         onGenerate={onGenerate}
         behaviorNote={behaviorNote}
         onGenerateBehavior={onGenerateBehavior}
+        onGenerateSecurityHub={onGenerateSecurityHub}
       />
 
       {/* Summary cards */}
@@ -305,6 +325,7 @@ function GenerateBar({
   onGenerate,
   behaviorNote,
   onGenerateBehavior,
+  onGenerateSecurityHub,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -315,11 +336,12 @@ function GenerateBar({
   onGenerate: () => void;
   behaviorNote: string | null;
   onGenerateBehavior: () => void;
+  onGenerateSecurityHub: () => void;
 }) {
   const isAws = provider === "aws";
   const label = isAws ? "Generate AWS signals" : "Generate signals";
   const desc = isAws
-    ? "Generate Incident Signals from provider-reported AWS security findings, or review signals from CloudTrail IAM, KMS, and S3 management activity."
+    ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM, KMS, and S3 management activity."
     : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
@@ -392,6 +414,26 @@ function GenerateBar({
             }}
           >
             Generate IAM behavior signals
+          </button>
+        )}
+        {isAws && (
+          <button
+            onClick={onGenerateSecurityHub}
+            disabled={!isAdmin || generating}
+            title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+              opacity: generating ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate Security Hub signals
           </button>
         )}
       </div>

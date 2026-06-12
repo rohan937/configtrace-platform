@@ -673,6 +673,12 @@ export async function syncAwsCloudTrail(
   return apiFetch(`/security/aws-cloudtrail/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function syncAwsSecurityHub(
+  token?: string | null,
+): Promise<import("@/types").AwsSecurityHubSyncResponse> {
+  return apiFetch(`/security/aws-security-hub/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsIncidentSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {
@@ -683,6 +689,12 @@ export async function generateAwsIamBehaviorSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsBehaviorSignalGenerateResponse> {
   return apiFetch(`/security/aws-cloudtrail/generate-behavior-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+export async function generateAwsSecurityHubSignals(
+  token?: string | null,
+): Promise<import("@/types").AwsSignalGenerateResponse> {
+  return apiFetch(`/security/aws-security-hub/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
 /** Fetch a metadata-only Case Evidence Report payload (M66.9). */
