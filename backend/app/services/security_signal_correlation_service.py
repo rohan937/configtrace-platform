@@ -438,10 +438,19 @@ def list_correlations(
     status: Optional[str] = None,
     severity: Optional[str] = None,
     correlation_type: Optional[str] = None,
+    linked_signal_id: Optional[uuid.UUID] = None,
+    linked_finding_id: Optional[uuid.UUID] = None,
+    linked_activity_event_id: Optional[uuid.UUID] = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[SecuritySignalCorrelation], int]:
-    """Paginated, workspace-scoped correlation list. Never crosses workspaces."""
+    """Paginated, workspace-scoped correlation list. Never crosses workspaces.
+
+    The ``linked_*`` filters power evidence backlinks (M66.7): list the
+    correlations attached to a given signal / finding / activity event. All
+    filters compose with the mandatory workspace scope, so cross-workspace
+    objects are never leaked even if a caller passes another workspace's id.
+    """
     page = max(1, page)
     page_size = max(1, min(page_size, 100))
 
@@ -456,6 +465,14 @@ def list_correlations(
         q = q.filter(SecuritySignalCorrelation.severity == severity)
     if correlation_type:
         q = q.filter(SecuritySignalCorrelation.correlation_type == correlation_type)
+    if linked_signal_id is not None:
+        q = q.filter(SecuritySignalCorrelation.linked_signal_id == linked_signal_id)
+    if linked_finding_id is not None:
+        q = q.filter(SecuritySignalCorrelation.linked_finding_id == linked_finding_id)
+    if linked_activity_event_id is not None:
+        q = q.filter(
+            SecuritySignalCorrelation.linked_activity_event_id == linked_activity_event_id
+        )
 
     total = q.count()
     items = (

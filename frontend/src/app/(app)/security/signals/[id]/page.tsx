@@ -30,6 +30,7 @@ import {
   maskSensitiveValue,
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
+import RelatedCorrelationsPanel from "@/components/security/RelatedCorrelationsPanel";
 
 export default function IncidentSignalDetailPage() {
   const params = useParams();
@@ -207,6 +208,13 @@ function SignalBody({ signal }: { signal: SecurityIncidentSignal }) {
           />
         </div>
       </div>
+
+      {/* Related correlations (M66.7) */}
+      <RelatedCorrelationsPanel
+        filter={{ linked_signal_id: signal.id }}
+        emptyText="No configuration-risk correlation has been linked to this signal yet."
+        hide="signal"
+      />
 
       {/* Claim-discipline note */}
       <div

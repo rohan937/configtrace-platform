@@ -589,6 +589,10 @@ export interface GetSecurityCorrelationsParams {
   status?: string;
   severity?: string;
   correlation_type?: string;
+  /** Evidence backlinks (M66.7): correlations linked to a given object. */
+  linked_signal_id?: string;
+  linked_finding_id?: string;
+  linked_activity_event_id?: string;
   page?: number;
   page_size?: number;
 }

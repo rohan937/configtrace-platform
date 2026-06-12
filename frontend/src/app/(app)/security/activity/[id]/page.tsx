@@ -24,6 +24,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 import { humanizeKey, maskSensitiveValue } from "@/components/security/findingDisplay";
+import RelatedCorrelationsPanel from "@/components/security/RelatedCorrelationsPanel";
 
 export default function ActivityEventDetailPage() {
   const params = useParams();
@@ -159,17 +160,12 @@ function EventBody({ event }: { event: SecurityActivityEvent }) {
         )}
       </div>
 
-      {/* Related signal placeholder */}
-      <div style={{ marginBottom: "22px" }}>
-        <SectionLabel>Related Incident Signal</SectionLabel>
-        <div style={{ fontSize: "12.5px", color: "#565b6e", marginTop: "6px" }}>
-          Signals generated from this event appear in{" "}
-          <Link href="/security/signals" style={{ color: "#6b9cf8", textDecoration: "none" }}>
-            Incident Signals
-          </Link>
-          . Direct signal back-links land in a future update.
-        </div>
-      </div>
+      {/* Related correlations (M66.7) */}
+      <RelatedCorrelationsPanel
+        filter={{ linked_activity_event_id: event.id }}
+        emptyText="No configuration-risk correlation has been linked to this activity event yet."
+        hide="activity"
+      />
 
       {/* Claim-discipline note */}
       <div

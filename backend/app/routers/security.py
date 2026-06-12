@@ -936,14 +936,24 @@ def list_security_correlations(
     status: Optional[str] = Query(None, description="Filter by status."),
     severity: Optional[str] = Query(None, description="Filter by severity."),
     correlation_type: Optional[str] = Query(None, description="Filter by correlation_type."),
+    linked_signal_id: Optional[UUID4] = Query(
+        None, description="Only correlations linked to this incident signal (M66.7)."
+    ),
+    linked_finding_id: Optional[UUID4] = Query(
+        None, description="Only correlations linked to this configuration risk (M66.7)."
+    ),
+    linked_activity_event_id: Optional[UUID4] = Query(
+        None, description="Only correlations linked to this activity event (M66.7)."
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SecuritySignalCorrelationListResponse:
-    """List correlations for the user's workspace (M66.6). Member access.
+    """List correlations for the user's workspace (M66.6/M66.7). Member access.
 
-    Strictly workspace-scoped — never returns another workspace's correlations.
+    Strictly workspace-scoped — never returns another workspace's correlations,
+    even when a ``linked_*`` filter references another workspace's object.
     """
     if status is not None and status not in VALID_SIGNAL_STATUSES:
         raise HTTPException(status_code=422, detail=f"Invalid status: {status!r}")
@@ -958,6 +968,9 @@ def list_security_correlations(
         status=status,
         severity=severity,
         correlation_type=correlation_type,
+        linked_signal_id=linked_signal_id,
+        linked_finding_id=linked_finding_id,
+        linked_activity_event_id=linked_activity_event_id,
         page=page,
         page_size=page_size,
     )

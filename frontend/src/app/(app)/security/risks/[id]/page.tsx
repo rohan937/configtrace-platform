@@ -38,6 +38,7 @@ import PageHeader from "@/components/common/PageHeader";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
+import RelatedCorrelationsPanel from "@/components/security/RelatedCorrelationsPanel";
 import {
   EvidenceBlock,
   FindingStatusBadge,
@@ -380,6 +381,15 @@ function ExposureBody({
             existed at baseline or no matching change was available.
           </p>
         )}
+      </Panel>
+
+      {/* 6b. Related correlations (M66.7) — audit-activity aligned with this risk */}
+      <Panel>
+        <RelatedCorrelationsPanel
+          filter={{ linked_finding_id: finding.id }}
+          emptyText="No audit-activity correlation has been linked to this configuration risk yet."
+          hide="risk"
+        />
       </Panel>
 
       {/* 7. Accepted risk record (shown once a risk has been accepted) */}
