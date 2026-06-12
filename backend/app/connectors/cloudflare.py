@@ -576,6 +576,137 @@ class CloudflareConnector(BaseConnector):
                 page += 1
             return events[:cap]
 
+    # ── WAF / security events (M68.4) ──────────────────────────────────────────
+    #
+    # Cloudflare exposes per-request WAF / firewall / security events only through
+    # the GraphQL Analytics API (``firewallEventsAdaptive`` dataset), which
+    # requires an analytics-capable token and an ELIGIBLE plan/zone. This is the
+    # "what security-relevant traffic did Cloudflare observe?" layer — these are
+    # WAF/security events FOR REVIEW, never confirmed attacks. Everything fails
+    # soft: missing GraphQL access / unsupported plan / no permission / ineligible
+    # zone / rate limit / malformed response NEVER breaks the normal sync.
+    #
+    # Live-API validation is intentionally DEFERRED (no eligible test token here);
+    # the query is small, isolated, and fully mockable, and the parser is tested
+    # against mocked GraphQL-shaped responses.
+
+    def graphql_query(
+        self,
+        credentials: dict,
+        query: str,
+        variables: dict,
+    ) -> dict:
+        """POST a GraphQL query to Cloudflare's Analytics API. Returns parsed JSON.
+
+        Raises (same translation style as ``_get``): AuthenticationError (401/403),
+        RateLimitError (429), ConnectorError (other non-2xx), NetworkError.
+        The raw response body is NEVER logged or returned to storage.
+        """
+        api_token, _zone_id = self._extract_credentials(credentials)
+        headers = self._auth_headers(api_token)
+        url = f"{_BASE_URL}/graphql"
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            try:
+                response = client.post(
+                    url, headers=headers, json={"query": query, "variables": variables}
+                )
+            except httpx.TimeoutException as exc:
+                raise NetworkError(f"GraphQL request timed out: {exc}") from exc
+            except httpx.RequestError as exc:
+                raise NetworkError(f"GraphQL network error: {exc}") from exc
+
+            if response.status_code == 429:
+                raise RateLimitError("Cloudflare GraphQL rate limit exceeded.")
+            if response.status_code in (401, 403):
+                raise AuthenticationError(
+                    "Cloudflare GraphQL access denied "
+                    f"(HTTP {response.status_code}). The token may lack analytics / "
+                    "security-event permission.",
+                    status_code=response.status_code,
+                )
+            if not response.is_success:
+                raise ConnectorError(
+                    f"Cloudflare GraphQL error (HTTP {response.status_code}).",
+                    status_code=response.status_code,
+                )
+            try:
+                return response.json()
+            except Exception as exc:  # noqa: BLE001
+                raise ConnectorError("Cloudflare GraphQL returned invalid JSON.") from exc
+
+    def list_waf_security_events(
+        self,
+        credentials: dict,
+        *,
+        lookback_hours: int = 24,
+        max_events: int = 200,
+    ) -> list[dict]:
+        """Return recent Cloudflare WAF / firewall security events for the zone.
+
+        Uses the ``firewallEventsAdaptive`` GraphQL dataset, bounded by a recent
+        time window and a small result cap (never unbounded pagination). Returns
+        ``[]`` when the zone has no events in the window.
+
+        Raises (translated): AuthenticationError (401/403 — token/plan ineligible),
+        ConnectorError (incl. 403 when GraphQL reports errors / dataset missing),
+        RateLimitError, NetworkError.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        _api_token, zone_id = self._extract_credentials(credentials)
+        hours = max(1, min(int(lookback_hours or 24), 168))
+        cap = max(1, min(int(max_events or 200), 1000))
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=hours)
+
+        query = (
+            "query($zoneTag: String!, $start: Time!, $end: Time!, $limit: Int!) {"
+            "  viewer { zones(filter: {zoneTag: $zoneTag}) {"
+            "    firewallEventsAdaptive("
+            "      filter: {datetime_geq: $start, datetime_leq: $end},"
+            "      limit: $limit, orderBy: [datetime_DESC]"
+            "    ) {"
+            "      action source ruleId rulesetId datetime rayName"
+            "      clientCountryName clientRequestHTTPMethodName"
+            "      clientRequestHTTPHost clientRequestPath clientIP description"
+            "    }"
+            "  } }"
+            "}"
+        )
+        variables = {
+            "zoneTag": zone_id,
+            "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "limit": cap,
+        }
+        body = self.graphql_query(credentials, query, variables)
+
+        # GraphQL reports plan/permission/dataset issues as a top-level ``errors``
+        # array (often with HTTP 200) — treat as a permission-limited skip.
+        if isinstance(body, dict) and body.get("errors"):
+            raise ConnectorError(
+                "Cloudflare GraphQL security-event dataset is unavailable for this "
+                "token/plan.",
+                status_code=403,
+            )
+
+        data = body.get("data") if isinstance(body, dict) else None
+        viewer = (data or {}).get("viewer") if isinstance(data, dict) else None
+        zones = (viewer or {}).get("zones") if isinstance(viewer, dict) else None
+        if not isinstance(zones, list) or not zones:
+            return []
+        events = zones[0].get("firewallEventsAdaptive") if isinstance(zones[0], dict) else None
+        if not isinstance(events, list):
+            return []
+        out: list[dict] = []
+        for e in events:
+            if isinstance(e, dict):
+                e.setdefault("_zone_id", zone_id)
+                out.append(e)
+                if len(out) >= cap:
+                    break
+        return out
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # M59.7 — Additional Cloudflare surface fetchers

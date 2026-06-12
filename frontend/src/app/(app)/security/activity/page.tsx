@@ -25,6 +25,7 @@ import {
   syncAwsCloudTrail,
   syncAwsSecurityHub,
   syncCloudflareActivity,
+  syncCloudflareWafEvents,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -44,6 +45,15 @@ const CLOUDFLARE_EVENT_TYPES = [
   "cloudflare.api_token.activity",
   "cloudflare.zone_setting.changed",
   "cloudflare.audit_event",
+  // WAF / security events (M68.4)
+  "cloudflare.waf_event.block",
+  "cloudflare.waf_event.challenge",
+  "cloudflare.waf_event.managed_challenge",
+  "cloudflare.waf_event.js_challenge",
+  "cloudflare.waf_event.log",
+  "cloudflare.waf_event.skip",
+  "cloudflare.waf_event.allow",
+  "cloudflare.waf_event.event",
 ];
 
 const GITHUB_EVENT_TYPES = [
@@ -247,6 +257,27 @@ export default function ActivityEventsPage() {
     }
   }, [getToken, load]);
 
+  const onSyncCloudflareWaf = useCallback(async () => {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncNote(null);
+    try {
+      const token = await getToken();
+      const r = await syncCloudflareWafEvents(token);
+      setSyncWarn(r.permission_limited);
+      setSyncNote(
+        `${r.permission_limited ? "Cloudflare WAF/security events are unavailable for this token/plan. " : ""}` +
+          `WAF events: seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+          `${r.error_message ? ` (${r.error_message})` : ""}`,
+      );
+      await load();
+    } catch {
+      setSyncError("Could not sync Cloudflare WAF events. Please try again.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const types = new Set(events.map((e) => e.event_type)).size;
     const latest = events.reduce<string | null>((acc, e) => {
@@ -278,6 +309,7 @@ export default function ActivityEventsPage() {
         onSync={onSync}
         onSyncCloudTrail={onSyncCloudTrail}
         onSyncSecurityHub={onSyncSecurityHub}
+        onSyncCloudflareWaf={onSyncCloudflareWaf}
       />
 
       <div
@@ -385,6 +417,7 @@ function SyncBar({
   onSync,
   onSyncCloudTrail,
   onSyncSecurityHub,
+  onSyncCloudflareWaf,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -396,6 +429,7 @@ function SyncBar({
   onSync: () => void;
   onSyncCloudTrail: () => void;
   onSyncSecurityHub: () => void;
+  onSyncCloudflareWaf: () => void;
 }) {
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
@@ -403,7 +437,7 @@ function SyncBar({
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
   const desc = isCloudflare
-    ? "Ingests Cloudflare account audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity) into normalized activity events. Requires an account-scoped token with Audit Logs Read."
+    ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
     : isAws
       ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, Security Hub findings, S3 data events, and VPC Flow Logs when configured. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
       : "Ingests recent GitHub audit-log activity into normalized events.";
@@ -490,6 +524,30 @@ function SyncBar({
             }}
           >
             Sync AWS Security Hub
+          </button>
+        )}
+        {isCloudflare && (
+          <button
+            onClick={onSyncCloudflareWaf}
+            disabled={!isAdmin || syncing}
+            title={
+              !isAdmin
+                ? "Only workspace admins can sync."
+                : "Available when the Cloudflare plan/token exposes security events."
+            }
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || syncing ? "not-allowed" : "pointer",
+              opacity: syncing ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Sync Cloudflare WAF events
           </button>
         )}
       </div>

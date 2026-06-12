@@ -42,6 +42,16 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "setting_name",      # zone setting key (M68.3) — e.g. "security_level"
         "policy_id",         # Access policy id (M68.3)
         "policy_name",       # Access policy name (M68.3)
+        # Cloudflare WAF/security-event fields (M68.4) — request-defense events.
+        "ruleset_id",        # firewall ruleset id
+        "ruleset_name",      # firewall ruleset name
+        "client_country",    # 2-letter country code (not the IP)
+        "method",            # HTTP method
+        "host",              # request host (zone hostname, not a full URL)
+        "path_hash",         # salted hash of the request path (NEVER the raw path)
+        "path_prefix",       # sanitized, truncated leading path segment (or omitted)
+        "ray_id",            # Cloudflare ray id (request identifier)
+        "service",           # event source/service (e.g. "waf", "firewallrules")
         "severity",          # provider-reported severity label
         "outcome",           # action result (success / failure)
         "repository",        # "owner/repo"

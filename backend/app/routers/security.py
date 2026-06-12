@@ -137,6 +137,8 @@ from app.schemas.security_cloudflare_activity import (
     CloudflareActivitySyncRequest,
     CloudflareActivitySyncResponse,
     CloudflareSignalGenerateResponse,
+    CloudflareWafEventSyncRequest,
+    CloudflareWafEventSyncResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -163,6 +165,7 @@ from app.services import aws_s3_access_signal_service
 from app.services import aws_vpc_flow_log_ingestion_service
 from app.services import aws_vpc_flow_signal_service
 from app.services import cloudflare_security_activity_ingestion_service
+from app.services import cloudflare_waf_event_ingestion_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1843,6 +1846,59 @@ def generate_cloudflare_signals(
         workspace_id=workspace_id, db=db
     )
     return CloudflareSignalGenerateResponse(**summary)
+
+
+@router.post("/cloudflare-waf-events/sync", response_model=CloudflareWafEventSyncResponse)
+def sync_cloudflare_waf_events(
+    body: Optional[CloudflareWafEventSyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CloudflareWafEventSyncResponse:
+    """Ingest Cloudflare WAF/security events (M68.4).
+
+    Admin/owner only. Reads the GraphQL ``firewallEventsAdaptive`` dataset; non-
+    fatal: missing GraphQL access / unsupported plan / ineligible zone are
+    reported as ``permission_limited``, never raised. Members can view the
+    resulting events via ``GET /security/activity/events?provider=cloudflare``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "cloudflare",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="Cloudflare integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return CloudflareWafEventSyncResponse(
+                attempted=False, succeeded=False, provider="cloudflare",
+                source="waf_security_event",
+                error_message="No active Cloudflare integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 200
+    summary = cloudflare_waf_event_ingestion_service.ingest_cloudflare_waf_events(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_events=max_events,
+    )
+    return CloudflareWafEventSyncResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

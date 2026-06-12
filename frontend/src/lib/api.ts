@@ -685,6 +685,12 @@ export async function syncCloudflareActivity(
   return apiFetch(`/security/cloudflare-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function syncCloudflareWafEvents(
+  token?: string | null,
+): Promise<import("@/types").CloudflareActivitySyncResponse> {
+  return apiFetch(`/security/cloudflare-waf-events/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {
