@@ -99,7 +99,7 @@ export default function SecurityBetaAnalyticsPage() {
     <div>
       <PageHeader
         title="Beta Analytics"
-        description="Understand how beta users interact with Security Exposure."
+        description="Understand how beta users interact with Configuration Risk."
       />
 
       <p style={{ margin: "-12px 0 22px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, maxWidth: "820px" }}>
@@ -145,7 +145,7 @@ export default function SecurityBetaAnalyticsPage() {
             <Metric label="Page views" value={data.page_views} accent="#3ccf7e" />
             <Metric label="Demo seeds" value={data.demo_seeds} accent="#3ccf7e" />
             <Metric label="Walkthrough opens" value={data.walkthrough_opens} accent="#f5a623" />
-            <Metric label="Exposure actions" value={data.exposure_actions} accent="#f5632a" />
+            <Metric label="Risk actions" value={data.exposure_actions} accent="#f5632a" />
             <Metric label="Reports exported" value={data.report_exports} accent="#f5a623" />
             <Metric label="Rule toggles" value={data.rule_toggles} accent="#8b90a0" />
           </div>
@@ -283,7 +283,7 @@ function EmptyState() {
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "40px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#c4c8d4" }}>No beta events recorded yet.</div>
       <p style={{ fontSize: "13px", color: "#8b90a0", marginTop: "8px", lineHeight: 1.6, maxWidth: "520px", marginLeft: "auto", marginRight: "auto" }}>
-        Events will appear here after users interact with Security Exposure pages and actions.
+        Events will appear here after users interact with Configuration Risk pages and actions.
       </p>
     </div>
   );

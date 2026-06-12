@@ -3,7 +3,7 @@
 /**
  * SecurityDemoWalkthrough (M62.9).
  *
- * A lightweight, dismissible guided tour of the Security Exposure workflow.
+ * A lightweight, dismissible guided tour of the Configuration Risk workflow.
  * Floats bottom-right on Security pages only, so a prospect can preview the
  * full workflow in 2–3 minutes even when real findings already exist.
  *
@@ -47,19 +47,19 @@ export function buildWalkthroughSteps(sampleFindingId: string | null): WalkStep[
       id: "overview",
       href: "/security",
       title: "Start with Security Overview",
-      copy: "See active exposures, provider coverage, and setup progress in one place.",
+      copy: "See active risks, provider coverage, and setup progress in one place.",
       cta: "Open overview",
     },
     {
       id: "exposures",
-      href: "/security/exposures",
-      title: "Review active exposures",
+      href: "/security/risks",
+      title: "Review active risks",
       copy: "Find risky current states across cloud and SaaS configuration.",
       cta: "View exposures",
     },
     {
       id: "detail",
-      href: sampleFindingId ? `/security/exposures/${sampleFindingId}` : "/security/exposures",
+      href: sampleFindingId ? `/security/risks/${sampleFindingId}` : "/security/risks",
       title: "Inspect one exposure",
       copy: "Open a finding to review status, confidence, safeguards, remediation, notes, and actions.",
       cta: "Open sample exposure",
@@ -89,7 +89,7 @@ export function buildWalkthroughSteps(sampleFindingId: string | null): WalkStep[
     },
     {
       id: "incident-review",
-      href: "/security/incident-review",
+      href: "/security/cases",
       title: "Investigate a time window",
       copy: "Connect exposures and drift events around a selected period.",
       cta: "Open Incident Review",

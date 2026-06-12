@@ -1401,7 +1401,7 @@ export default function DashboardPage() {
       )}
 
       <div className="px-6 py-6">
-        {/* M62.6: Security Exposure posture summary — visible in every state,
+        {/* M62.6: Configuration Risk posture summary — visible in every state,
             self-contained, and non-blocking to the rest of the dashboard. */}
         <SecurityPostureSummaryCard />
 

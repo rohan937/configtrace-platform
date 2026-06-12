@@ -1,7 +1,7 @@
 /**
  * workspacePermissions.ts — frontend mirror of the M63.2 backend policy (M63.5).
  *
- * Pure helpers that turn a workspace role into Security Exposure UI capability
+ * Pure helpers that turn a workspace role into Configuration Risk UI capability
  * flags, so non-admins see disabled high-impact actions instead of clicking
  * into a backend 403. The backend remains the source of truth — these only
  * drive affordances + helper copy.

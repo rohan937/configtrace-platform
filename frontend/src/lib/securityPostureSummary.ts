@@ -1,5 +1,5 @@
 /**
- * securityPostureSummary.ts — derive the dashboard Security Exposure summary (M62.6).
+ * securityPostureSummary.ts — derive the dashboard Configuration Risk summary (M62.6).
  *
  * Pure and deterministic: given data already fetched from existing APIs, it
  * returns compact posture metrics + flags for the main dashboard card. No

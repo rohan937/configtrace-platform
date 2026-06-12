@@ -3,7 +3,7 @@
 /**
  * Security Rules (M60.9 catalog + M61.7 enable/disable).
  *
- * A catalog of the Security Exposure rules ConfigTrace evaluates, mirroring the
+ * A catalog of the Configuration Risk rules ConfigTrace evaluates, mirroring the
  * backend rules in security_rules/* (see lib/securityRuleCatalog). M61.7 adds
  * per-workspace enable/disable controls: disabling a rule stops FUTURE findings
  * from it — it does not resolve or remove existing findings.
@@ -177,8 +177,8 @@ export default function SecurityRulesPage() {
   return (
     <div>
       <PageHeader
-        title="Security Rules"
-        description="See the configuration exposure rules ConfigTrace evaluates across connected providers."
+        title="Risk Rules"
+        description="See the configuration risk rules ConfigTrace evaluates across connected providers."
       />
 
       <p
@@ -190,7 +190,7 @@ export default function SecurityRulesPage() {
           maxWidth: "780px",
         }}
       >
-        Security Rules shows the current checks used by the Security Exposure engine.
+        Security Rules shows the current checks used by the Configuration Risk engine.
         These rules evaluate provider configuration snapshots for risky current
         states. They do not claim breach detection or inspect payloads or secrets.
       </p>
@@ -214,7 +214,7 @@ export default function SecurityRulesPage() {
             Rule pack
           </span>
           <span style={{ fontSize: "12.5px", color: "#c4c8d4" }}>
-            ConfigTrace Security Exposure · version {pack.version}
+            ConfigTrace Configuration Risk · version {pack.version}
             <span style={{ color: "#565b6e" }}>
               {" "}· {pack.rule_count} rules{pack.released_at ? ` · released ${pack.released_at}` : ""}
             </span>

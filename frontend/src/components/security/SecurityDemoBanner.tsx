@@ -3,7 +3,7 @@
 /**
  * SecurityDemoBanner (M62.2).
  *
- * Opt-in Security Exposure demo-data control. Renders:
+ * Opt-in Configuration Risk demo-data control. Renders:
  *   • a "Load demo data" CTA when the workspace has no findings and no demo data;
  *   • a "Demo data loaded" banner with a "Clear demo data" action when demo data
  *     exists.
@@ -172,7 +172,7 @@ export default function SecurityDemoBanner({
       style={{ borderRadius: "12px", padding: "20px 22px", marginBottom: "16px" }}
     >
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>
-        Explore Security Exposure with demo data
+        Explore Configuration Risk with demo data
       </div>
       <p style={{ fontSize: "13px", color: "#8b90a0", margin: "8px 0 14px", lineHeight: 1.6, maxWidth: "640px" }}>
         Load a safe demo dataset to preview findings, assets, timelines, review

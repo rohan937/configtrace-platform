@@ -1,7 +1,7 @@
 /**
  * securityTimeline.ts — derive a lifecycle timeline from security findings.
  *
- * The Exposure Timeline (M60.8) turns persisted security_findings into ordered
+ * The Risk Timeline (M60.8) turns persisted security_findings into ordered
  * lifecycle events. Every event is derived ONLY from fields the finding already
  * carries — no invented event types:
  *
@@ -40,10 +40,10 @@ export interface TimelineEvent {
 }
 
 export const EVENT_LABEL: Record<TimelineEventType, string> = {
-  opened: "Exposure opened",
+  opened: "Configuration risk opened",
   reopened: "Re-opened",
   still_active: "Still active",
-  resolved: "Exposure resolved",
+  resolved: "Configuration risk resolved",
   accepted_risk: "Risk accepted",
   acknowledged: "Acknowledged",
   snoozed: "Snoozed",

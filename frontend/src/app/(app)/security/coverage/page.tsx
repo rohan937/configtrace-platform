@@ -4,7 +4,7 @@
  * Security Coverage (M62.3).
  *
  * A trust view: for each provider, shows whether ConfigTrace is collecting the
- * metadata needed to evaluate Security Exposure rules. Read-only, backed by
+ * metadata needed to evaluate Configuration Risk rules. Read-only, backed by
  * GET /security/coverage (which inspects stored snapshots only).
  *
  * Conservative wording: "Good coverage" never means "safe". Limited coverage
@@ -121,13 +121,13 @@ export default function SecurityCoveragePage() {
   return (
     <div>
       <PageHeader
-        title="Security Coverage"
-        description="See which provider surfaces are monitored and which security rules have enough data to run."
+        title="Data Sources"
+        description="Provider configuration-metadata coverage is live today. Audit-log and activity coverage arrive with the future Incident Signals area."
       />
 
       <p style={{ margin: "-12px 0 20px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, maxWidth: "800px" }}>
         Coverage checks help verify that ConfigTrace is collecting the metadata
-        needed to evaluate Security Exposure rules. Limited coverage does not mean
+        needed to evaluate Configuration Risk rules. Limited coverage does not mean
         a system is safe; it means ConfigTrace may need more data or permissions.
       </p>
 
@@ -188,7 +188,7 @@ export default function SecurityCoveragePage() {
                 No providers connected yet.
               </div>
               <p style={{ fontSize: "13px", color: "#8b90a0", marginTop: "8px", lineHeight: 1.6 }}>
-                Connect a provider and run a sync to see Security Exposure coverage.
+                Connect a provider and run a sync to see Configuration Risk coverage.
               </p>
             </div>
           ) : null}

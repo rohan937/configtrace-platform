@@ -225,12 +225,12 @@ export default function IncidentReviewPage() {
   return (
     <div>
       <PageHeader
-        title="Incident Review"
+        title="Cases"
         description="Investigate security-relevant configuration activity around a time window."
       />
 
       <p style={{ margin: "-12px 0 24px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, maxWidth: "800px" }}>
-        Incident Review helps connect exposure findings, drift events, and affected
+        Cases helps connect configuration risk findings, drift events, and affected
         assets so teams can understand what changed around a suspected incident.
         It is an investigation workspace for configuration drift and security
         exposures — not breach detection.
@@ -292,7 +292,7 @@ export default function IncidentReviewPage() {
               trackSecurityBetaEvent(
                 "security_incident_review_run",
                 { action: "refresh", provider: providerFilter, severity: severityFilter },
-                { getToken, pagePath: "/security/incident-review" },
+                { getToken, pagePath: "/security/cases" },
               );
               void load();
             }}
@@ -320,7 +320,7 @@ export default function IncidentReviewPage() {
           marginBottom: "24px",
         }}
       >
-        <Metric label="Exposures opened" value={summary.openedInWindow} accent="#f5632a" />
+        <Metric label="Risks opened" value={summary.openedInWindow} accent="#f5632a" />
         <Metric label="Critical / high" value={summary.criticalHighInWindow} accent="#e84040" />
         <Metric label="Resolved in window" value={summary.resolvedInWindow} accent="#3ccf7e" />
         <Metric label="Drift events" value={summary.driftInWindow} accent="#6b9cf8" />
@@ -420,7 +420,7 @@ export default function IncidentReviewPage() {
       ) : null}
 
       <p style={{ marginTop: "26px", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-        Incident Review correlates configuration exposure and drift around a window.
+        Cases correlates configuration risk and drift around a window.
         ConfigTrace reports configuration activity; it does not detect breaches or
         monitor live traffic.
       </p>
@@ -512,7 +512,7 @@ function TimelineRow({ event, first }: { event: IncidentEvent; first: boolean })
           <span style={{ fontSize: "13px", fontWeight: 600, color: "#e2e5ef" }}>
             {event.label}
             <span style={{ fontSize: "11px", fontWeight: 500, color: "#565b6e", marginLeft: "8px" }}>
-              {event.kind === "drift" ? "Drift" : "Exposure"}
+              {event.kind === "drift" ? "Drift" : "Risk"}
             </span>
           </span>
           <span style={{ fontSize: "11px", color: "#565b6e", flexShrink: 0 }}>{formatAbsoluteTime(event.at)}</span>
@@ -535,7 +535,7 @@ function FindingRow({ finding }: { finding: SecurityFinding }) {
   const provider = getProviderMeta(finding.provider);
   return (
     <Link
-      href={`/security/exposures/${finding.id}`}
+      href={`/security/risks/${finding.id}`}
       className="bg-surface1 border border-border"
       style={{
         display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px",

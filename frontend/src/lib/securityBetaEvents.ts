@@ -1,7 +1,7 @@
 /**
  * securityBetaEvents.ts — first-party beta usage instrumentation (M63.1).
  *
- * A tiny, fire-and-forget client helper that records coarse Security Exposure
+ * A tiny, fire-and-forget client helper that records coarse Configuration Risk
  * usage events to our own backend (POST /security/beta-events). No third-party
  * analytics SDK, no blocking UI, and failures are swallowed silently so product
  * actions NEVER depend on tracking success.
@@ -82,7 +82,7 @@ export interface TrackOptions {
 }
 
 /**
- * Fire-and-forget: record a Security Exposure beta event. Never throws, never
+ * Fire-and-forget: record a Configuration Risk beta event. Never throws, never
  * blocks, and returns immediately (the network call runs in the background).
  */
 export function trackSecurityBetaEvent(
@@ -116,12 +116,12 @@ export function routeGroupFor(pathname: string | null): string | null {
   if (!pathname) return null;
   if (pathname === "/security") return "overview";
   if (/^\/security\/exposures\/[^/]+$/.test(pathname)) return "detail";
-  if (pathname === "/security/exposures") return "exposures";
+  if (pathname === "/security/risks") return "exposures";
   if (pathname === "/security/assets") return "assets";
   if (pathname === "/security/timeline") return "timeline";
   if (pathname === "/security/rules") return "rules";
   if (pathname === "/security/coverage") return "coverage";
-  if (pathname === "/security/incident-review") return "incident-review";
+  if (pathname === "/security/cases") return "incident-review";
   if (pathname === "/security/reports") return "reports";
   return null;
 }
@@ -130,7 +130,7 @@ export function routeGroupFor(pathname: string | null): string | null {
 export function normalizeSecurityPath(pathname: string | null): string | null {
   if (!pathname) return null;
   if (/^\/security\/exposures\/[^/]+$/.test(pathname)) {
-    return "/security/exposures/[id]";
+    return "/security/risks/[id]";
   }
   return pathname;
 }

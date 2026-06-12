@@ -71,7 +71,7 @@ export interface IncidentEvent {
   href: string;
 }
 
-// Exposure lifecycle event types we surface in Incident Review. "still_active"
+// Risk lifecycle event types we surface in Incident Review. "still_active"
 // is intentionally excluded — it is noise for an incident investigation.
 const EXPOSURE_EVENT_TYPES = new Set([
   "opened",
@@ -104,7 +104,7 @@ export function exposureEvents(
       provider: f.provider,
       title: f.title,
       description: f.description,
-      href: `/security/exposures/${f.id}`,
+      href: `/security/risks/${f.id}`,
     });
   }
   return out;

@@ -97,7 +97,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     workspaces.find((w) => w.id === selectedId) ?? null;
 
   // M63.5: resolve the current user's role in the selected workspace so the UI
-  // can disable high-impact Security Exposure actions for non-admins.
+  // can disable high-impact Configuration Risk actions for non-admins.
   useEffect(() => {
     let cancelled = false;
     if (!isLoaded || !isSignedIn || !selectedId) {

@@ -40,6 +40,9 @@ import type {
   ResourceDetail,
   ResourceListItem,
   SecurityFinding,
+  SecurityIncidentSignal,
+  SecuritySignalGenerateRequest,
+  SecuritySignalGenerateResponse,
   SnapshotListItem,
   SyncRun,
   SyncRunListResponse,
@@ -450,7 +453,7 @@ export async function getChange(
   return apiFetch(`/changes/${changeId}`, { token });
 }
 
-// ── M60.3: Security Exposure findings (read-only) ─────────────────────────────
+// ── M60.3: Configuration Risk findings (read-only) ─────────────────────────────
 
 export interface GetSecurityFindingsParams {
   status?: string;
@@ -476,6 +479,53 @@ export async function getSecurityFinding(
   token?: string | null,
 ): Promise<SecurityFinding> {
   return apiFetch(`/security/findings/${findingId}`, { token });
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Incident Signals (M66.3 backend / M66.4 UI)
+
+   Control-plane review signals from normalized GitHub audit activity. These are
+   NOT breach/attacker/compromise confirmations — they may require review.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface GetSecurityIncidentSignalsParams {
+  provider?: string;
+  status?: string;
+  severity?: string;
+  signal_type?: string;
+  page?: number;
+  page_size?: number;
+}
+
+/** List incident signals for the current user's workspace (M66.3). */
+export async function getSecurityIncidentSignals(
+  params: GetSecurityIncidentSignalsParams = {},
+  token?: string | null,
+): Promise<PaginatedResponse<SecurityIncidentSignal>> {
+  return apiFetch(`/security/signals${buildQuery(params)}`, { token });
+}
+
+/** Fetch a single workspace-scoped incident signal (404 cross-workspace). */
+export async function getSecurityIncidentSignal(
+  signalId: string,
+  token?: string | null,
+): Promise<SecurityIncidentSignal> {
+  return apiFetch(`/security/signals/${signalId}`, { token });
+}
+
+/**
+ * Generate incident signals from recent activity events (M66.3). Admin/owner
+ * only; GitHub-only for now. Idempotent — re-running creates no duplicates.
+ */
+export async function generateSecurityIncidentSignals(
+  body: SecuritySignalGenerateRequest = {},
+  token?: string | null,
+): Promise<SecuritySignalGenerateResponse> {
+  return apiFetch(`/security/signals/generate`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
 }
 
 /**
@@ -570,7 +620,7 @@ export async function getSecurityRuleSettings(
   return apiFetch(`/security/rules/settings`, { token });
 }
 
-/** Active Security Exposure rule pack + per-rule version manifest (M63.3). */
+/** Active Configuration Risk rule pack + per-rule version manifest (M63.3). */
 export async function getSecurityRulePack(
   token?: string | null,
 ): Promise<import("@/types").SecurityRulePack> {
@@ -615,28 +665,28 @@ export async function updateSecurityRuleSetting(
   });
 }
 
-/** Whether Security Exposure demo data exists in the workspace (M62.2). */
+/** Whether Configuration Risk demo data exists in the workspace (M62.2). */
 export async function getSecurityDemoDataStatus(
   token?: string | null,
 ): Promise<import("@/types").SecurityDemoDataStatus> {
   return apiFetch(`/security/demo-data/status`, { token });
 }
 
-/** Seed a safe Security Exposure demo dataset (opt-in, idempotent). */
+/** Seed a safe Configuration Risk demo dataset (opt-in, idempotent). */
 export async function seedSecurityDemoData(
   token?: string | null,
 ): Promise<import("@/types").SecurityDemoDataStatus> {
   return apiFetch(`/security/demo-data/seed`, { method: "POST", token });
 }
 
-/** Remove the demo-created Security Exposure rows for the workspace. */
+/** Remove the demo-created Configuration Risk rows for the workspace. */
 export async function clearSecurityDemoData(
   token?: string | null,
 ): Promise<import("@/types").SecurityDemoClearResponse> {
   return apiFetch(`/security/demo-data`, { method: "DELETE", token });
 }
 
-/** Record a lightweight Security Exposure beta usage event (M63.1).
+/** Record a lightweight Configuration Risk beta usage event (M63.1).
  *  Metadata is allowlisted + truncated server-side. */
 export async function postSecurityBetaEvent(
   body: { event_name: string; page_path?: string | null; metadata?: Record<string, unknown> },
@@ -650,7 +700,7 @@ export async function postSecurityBetaEvent(
   });
 }
 
-/** Provider coverage-quality report for Security Exposure (M62.3). */
+/** Provider coverage-quality report for Configuration Risk (M62.3). */
 export async function getSecurityCoverage(
   token?: string | null,
 ): Promise<import("@/types").SecurityCoverageResponse> {

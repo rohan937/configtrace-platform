@@ -1,5 +1,5 @@
 /**
- * securityOnboarding.ts — derive the Security Exposure onboarding checklist (M62.5).
+ * securityOnboarding.ts — derive the Configuration Risk onboarding checklist (M62.5).
  *
  * Pure and deterministic: given data already fetched from existing APIs, it
  * returns a checklist of setup steps with completion state. No backend, no
@@ -136,15 +136,15 @@ export function buildOnboarding(inp: OnboardingInputs): OnboardingSummary {
     {
       id: "review",
       title: "Review exposures",
-      description: "Look at active exposures and acknowledge, snooze, or accept risk.",
+      description: "Look at active risks and acknowledge, snooze, or accept risk.",
       complete: reviewComplete,
       optional: false,
       ctaLabel: "Review exposures",
-      ctaHref: "/security/exposures",
+      ctaHref: "/security/risks",
       statusText: !connected
         ? "Connect a provider first"
         : (inp.activeCount ?? 0) === 0
-          ? "No active exposures to review"
+          ? "No active risks to review"
           : anyReviewed
             ? "Findings reviewed"
             : `${inp.activeCount} active exposure${(inp.activeCount ?? 0) === 1 ? "" : "s"} to review`,
@@ -153,7 +153,7 @@ export function buildOnboarding(inp: OnboardingInputs): OnboardingSummary {
     {
       id: "alerts",
       title: "Route alerts",
-      description: "Turn on Security Exposure alerts over Slack, email, or browser push.",
+      description: "Turn on Configuration Risk alerts over Slack, email, or browser push.",
       complete: alertsComplete,
       optional: false,
       ctaLabel: "Route alerts",
@@ -205,7 +205,7 @@ export function buildOnboarding(inp: OnboardingInputs): OnboardingSummary {
       complete: demoLoaded,
       optional: true,
       ctaLabel: demoLoaded ? "Demo data loaded" : "Load demo data",
-      ctaHref: "/security/exposures",
+      ctaHref: "/security/risks",
       statusText: demoLoaded ? "Demo data loaded" : "Optional",
       action: "load_demo",
       visible: showDemo || demoLoaded,

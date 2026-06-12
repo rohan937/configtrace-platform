@@ -1,5 +1,5 @@
 /**
- * securityReportExport.ts — build a shareable Security Exposure review packet
+ * securityReportExport.ts — build a shareable Configuration Risk review packet
  * (M61.6, expanded in M62.7).
  *
  * Deterministic, frontend-only report generation from existing data:
@@ -42,7 +42,7 @@ import { getProviderMeta } from "@/lib/providers";
 export type ReportType = "summary" | "review_packet" | "rule_coverage_appendix";
 
 export const REPORT_TYPE_LABEL: Record<ReportType, string> = {
-  summary: "Security Exposure Summary",
+  summary: "Configuration Risk Summary",
   review_packet: "Review Packet",
   rule_coverage_appendix: "Rule Coverage Appendix",
 };
@@ -306,7 +306,7 @@ export function buildReportModel(
 
   // ── Deterministic, context-aware follow-up checklist ───────────────────────
   const followUps: string[] = [];
-  if (summary.critical + summary.high > 0) followUps.push("Review critical/high active exposures.");
+  if (summary.critical + summary.high > 0) followUps.push("Review critical/high active risks.");
   if (summary.acceptedRisks > 0) followUps.push("Confirm accepted risks still have owners and valid expiry dates.");
   if (summary.snoozed > 0) followUps.push("Revisit snoozed findings before expiry.");
   if (providersLimitedCoverage > 0) followUps.push("Review provider coverage gaps.");
@@ -412,7 +412,7 @@ function diagnosticLabel(status: string): string {
 
 function header(model: ReportModel, L: string[]): void {
   const c = model.config;
-  L.push("# ConfigTrace — Security Exposure Report");
+  L.push("# ConfigTrace — Configuration Risk Report");
   L.push("");
   L.push(`_${REPORT_TYPE_LABEL[c.reportType]}_`);
   L.push("");
@@ -442,7 +442,7 @@ function executiveSummary(model: ReportModel, L: string[]): void {
   L.push("");
   L.push(`| Metric | Count |`);
   L.push(`| --- | ---: |`);
-  L.push(`| Active exposures | ${s.active} |`);
+  L.push(`| Active risks | ${s.active} |`);
   L.push(`| Critical (active) | ${s.critical} |`);
   L.push(`| High (active) | ${s.high} |`);
   L.push(`| Accepted risks | ${s.acceptedRisks} |`);
@@ -520,7 +520,7 @@ export function generateMarkdown(model: ReportModel): string {
       L.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
       for (const f of list) {
         L.push(
-          `| ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${mdCell(confLabel(f.confidence))} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | ${f.reviewed_at ? "Reviewed" : "Unreviewed"} | /security/exposures/${f.id} |`,
+          `| ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${mdCell(confLabel(f.confidence))} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | ${f.reviewed_at ? "Reviewed" : "Unreviewed"} | /security/risks/${f.id} |`,
         );
       }
     }
@@ -555,7 +555,7 @@ export function generateMarkdown(model: ReportModel): string {
       L.push(`| --- | --- | --- | --- | --- | --- | --- | --- |`);
       for (const f of model.findings) {
         L.push(
-          `| ${mdCell(sevLabel(f.severity))} | ${mdCell(confLabel(f.confidence))} | ${mdCell(statusLabel(f.status))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | /security/exposures/${f.id} |`,
+          `| ${mdCell(sevLabel(f.severity))} | ${mdCell(confLabel(f.confidence))} | ${mdCell(statusLabel(f.status))} | ${mdCell(provLabel(f.provider))} | ${mdCell(f.title)} | ${fmtUtc(f.first_detected_at)} | ${fmtUtc(f.last_seen_at)} | /security/risks/${f.id} |`,
         );
       }
     }
@@ -572,7 +572,7 @@ export function generateMarkdown(model: ReportModel): string {
     L.push(`| Title | Severity | Provider | Accepted until | First detected | Reason | Detail |`);
     L.push(`| --- | --- | --- | --- | --- | --- | --- |`);
     for (const f of accepted) {
-      L.push(`| ${mdCell(f.title)} | ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.accepted_until)} | ${fmtUtc(f.first_detected_at)} | ${mdCell(f.acceptance_reason)} | /security/exposures/${f.id} |`);
+      L.push(`| ${mdCell(f.title)} | ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.accepted_until)} | ${fmtUtc(f.first_detected_at)} | ${mdCell(f.acceptance_reason)} | /security/risks/${f.id} |`);
     }
     L.push("");
   }
@@ -587,7 +587,7 @@ export function generateMarkdown(model: ReportModel): string {
     L.push(`| Title | Severity | Provider | Snoozed until | First detected | Detail |`);
     L.push(`| --- | --- | --- | --- | --- | --- |`);
     for (const f of snoozedList) {
-      L.push(`| ${mdCell(f.title)} | ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.snoozed_until)} | ${fmtUtc(f.first_detected_at)} | /security/exposures/${f.id} |`);
+      L.push(`| ${mdCell(f.title)} | ${mdCell(sevLabel(f.severity))} | ${mdCell(provLabel(f.provider))} | ${fmtUtc(f.snoozed_until)} | ${fmtUtc(f.first_detected_at)} | /security/risks/${f.id} |`);
     }
     L.push("");
   }
@@ -756,7 +756,7 @@ export function generateJSON(model: ReportModel): string {
       accepted_until: f.accepted_until,
       snoozed_until: f.snoozed_until,
       acceptance_reason: f.status === "accepted_risk" ? f.acceptance_reason : null,
-      link_path: `/security/exposures/${f.id}`,
+      link_path: `/security/risks/${f.id}`,
     })),
     provider_coverage: c.includeCoverage
       ? model.coverage.map((p) => ({
@@ -824,7 +824,7 @@ export function generateFindingsCSV(model: ReportModel): string {
       f.reviewed_at ?? "",
       f.accepted_until ?? "",
       f.snoozed_until ?? "",
-      `/security/exposures/${f.id}`,
+      `/security/risks/${f.id}`,
     ]
       .map(csvCell)
       .join(","),

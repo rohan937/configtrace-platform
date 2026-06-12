@@ -830,7 +830,7 @@ export interface PushSubscribeRequest {
   min_risk_level?: PushMinRiskLevel;
   /** Drift Detection critical/high push for this device (default true). */
   drift_push_enabled?: boolean;
-  /** Security Exposure critical/high push for this device (opt-in, default false). */
+  /** Configuration Risk critical/high push for this device (opt-in, default false). */
   security_push_enabled?: boolean;
   /** Resolved-exposure push for this device (default false). */
   security_resolved_push_enabled?: boolean;
@@ -1476,7 +1476,7 @@ export interface GitHubPrCreateResponse {
   suggestion_id: string | null;
 }
 
-// ── Security Exposure findings (M60.3) ──────────────────────────────────────
+// ── Configuration Risk findings (M60.3) ──────────────────────────────────────
 
 export type SecurityFindingSeverity =
   | "critical"
@@ -1492,7 +1492,7 @@ export type SecurityFindingStatus =
   | "snoozed";
 
 /**
- * A persisted Security Exposure finding — a risky *current state* on a
+ * A persisted Configuration Risk finding — a risky *current state* on a
  * connected provider. Read-only in M60.3 (the evaluation engine that produces
  * these arrives in M60.4).
  */
@@ -1541,6 +1541,66 @@ export interface SecurityRulePackRule {
   confidence: "high" | "medium" | "low";
   severity: string;
   category: string;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Incident Signals (M66.3 backend / M66.4 UI)
+
+   Control-plane REVIEW signals generated from normalized GitHub audit activity.
+   These are NOT confirmed breaches/attackers/compromise — ``evidence_level`` is
+   "activity" and ``confidence`` reflects that the audit event states the action
+   happened, not that impact is confirmed.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export type SecuritySignalSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "low"
+  | "info";
+
+export type SecuritySignalStatus =
+  | "open"
+  | "acknowledged"
+  | "dismissed"
+  | "resolved";
+
+export interface SecurityIncidentSignal {
+  id: string;
+  provider: string;
+  signal_key: string;
+  signal_type: string;
+  severity: SecuritySignalSeverity;
+  status: SecuritySignalStatus;
+  title: string;
+  summary: string;
+  /** Evidence tier — "activity" for now (never "confirmed_breach"). */
+  evidence_level: string;
+  /** Confidence the action occurred (audit event states it) — not impact. */
+  confidence: "high" | "medium" | "low";
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  linked_activity_event_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  // Forward-compat / correlation slots — not in the current API response.
+  workspace_id?: string;
+  integration_id?: string | null;
+  linked_finding_id?: string | null;
+  linked_change_id?: string | null;
+  updated_at?: string;
+}
+
+export interface SecuritySignalGenerateRequest {
+  /** Restrict generation to a provider (defaults to GitHub-only for now). */
+  provider?: string;
+}
+
+export interface SecuritySignalGenerateResponse {
+  provider: string;
+  activity_events_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
 }
 
 export interface SecurityRulePack {
@@ -1665,7 +1725,7 @@ export interface SecurityRuleSettingsListResponse {
   total: number;
 }
 
-/** Security Exposure demo-data status (M62.2). */
+/** Configuration Risk demo-data status (M62.2). */
 export interface SecurityDemoDataStatus {
   exists: boolean;
   finding_count: number;

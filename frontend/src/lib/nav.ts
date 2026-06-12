@@ -1,11 +1,13 @@
 /**
  * nav.ts — central navigation config for ConfigTrace's two product modes.
  *
- * M60.1 introduces a second product mode, "Security Exposure", alongside the
- * existing "Drift Detection" experience:
+ * M60.1 introduced a second product mode alongside "Drift Detection". M66.1
+ * repositions that mode from "Security Exposure" to "Configuration Risk" — the
+ * configuration-risk half of a future "Incident Signals" product:
  *
- *   • Drift Detection   → "what changed" (timelines, needs review, blast radius)
- *   • Security Exposure → "what is dangerous right now"
+ *   • Drift Detection    → "what changed" (timelines, needs review, blast radius)
+ *   • Configuration Risk → "which current provider settings are risky right now"
+ *   • Incident Signals   → FUTURE: audit/activity-log correlation (gated, not live)
  *
  * The active mode is derived from the URL so deep links and refreshes are
  * preserved (see resolveMode). Shared platform pages (Integrations, Alerts,
@@ -22,6 +24,16 @@ export interface NavItem {
   sub?: boolean;
   /** Marks a route that is shared across both modes (Integrations/Alerts/etc). */
   shared?: boolean;
+  /**
+   * Future/gated area: rendered non-clickable with a "Soon" badge. Used for the
+   * Incident Signals roadmap entry, which is not yet implemented (M66.1).
+   */
+  comingSoon?: boolean;
+  /**
+   * Small inline badge next to the label (e.g. "Beta"). Used to mark a live but
+   * early surface like Incident Signals (M66.4).
+   */
+  badge?: string;
 }
 
 /** Landing route for each mode (used by the mode switch). */
@@ -50,21 +62,31 @@ export const DRIFT_NAV: NavItem[] = [
 ];
 
 /* ──────────────────────────────────────────────────────────────────────────
-   Security Exposure — MVP nav. Security-specific pages plus SHARED platform
+   Configuration Risk — security nav (repositioned in M66.1). Configuration-risk
+   pages plus a gated "Incident Signals" roadmap entry and SHARED platform
    routes that reuse the existing Drift Detection routes.
+
+   Route notes (M66.1): /security/exposures → /security/risks and
+   /security/incident-review → /security/cases (old routes redirect). The
+   Coverage page keeps its /security/coverage route — that path is also the
+   backend API endpoint — but is relabeled "Data Sources".
    ────────────────────────────────────────────────────────────────────────── */
 
 export const SECURITY_NAV: NavItem[] = [
   { label: "Security Overview", href: "/security" },
-  { label: "Active Exposures", href: "/security/exposures" },
+  { label: "Configuration Risks", href: "/security/risks" },
   { label: "Affected Assets", href: "/security/assets" },
-  { label: "Exposure Timeline", href: "/security/timeline" },
-  { label: "Incident Review", href: "/security/incident-review" },
+  { label: "Risk Timeline", href: "/security/timeline" },
+  { label: "Cases", href: "/security/cases" },
   { label: "Reports", href: "/security/reports" },
-  { label: "Coverage", href: "/security/coverage" },
-  { label: "Security Rules", href: "/security/rules" },
+  { label: "Data Sources", href: "/security/coverage" },
+  { label: "Risk Rules", href: "/security/rules" },
   { label: "Beta Analytics", href: "/security/beta-analytics" },
   { label: "Demo Script", href: "/security/demo-script" },
+  // Incident Signals — live in GitHub beta (M66.4). Control-plane review signals
+  // generated from normalized GitHub audit activity (M66.2/M66.3). Not breach
+  // detection — see the page's claim-discipline copy.
+  { label: "Incident Signals", href: "/security/signals", badge: "Beta" },
   // Shared platform pages — reuse existing routes (no duplication).
   { label: "Integrations", href: "/integrations", shared: true },
   { label: "Alerts", href: "/settings/workspace/notifications", shared: true },
@@ -91,7 +113,7 @@ const DRIFT_PREFIXES = [
  * - A drift-specific URL  → "drift".
  * - A SHARED URL (Integrations/Settings/…) → `null`, meaning "keep whatever
  *   mode the user was last in". The Sidebar falls back to the persisted mode
- *   so clicking a shared item from Security Exposure keeps you in that mode.
+ *   so clicking a shared item from Configuration Risk keeps you in that mode.
  */
 export function resolveMode(pathname: string): ProductMode | null {
   if (pathname === SECURITY_HOME || pathname.startsWith("/security/")) {

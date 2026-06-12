@@ -12,7 +12,7 @@ interface ModeSwitchProps {
 /**
  * ModeSwitch — top-level product mode toggle (M60.1).
  *
- * Two segments: Drift Detection ("what changed") and Security Exposure
+ * Two segments: Drift Detection ("what changed") and Configuration Risk
  * ("what is dangerous right now"). Each segment is a real link to that mode's
  * home route, so switching is a normal navigation that preserves deep links
  * and back/forward behavior. The active segment is highlighted from the
@@ -64,7 +64,7 @@ export default function ModeSwitch({
           href={securityHref}
           active={mode === "security"}
           label="Security"
-          title="Security Exposure — what is dangerous right now"
+          title="Configuration Risk — what is dangerous right now"
         />
       </div>
     </div>

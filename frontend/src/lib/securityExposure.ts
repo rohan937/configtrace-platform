@@ -2,7 +2,7 @@
  * securityExposure.ts — M60.2
  *
  * A frontend-only helper layer that re-interprets EXISTING ConfigTrace change /
- * integration data through a "Security Exposure" lens. It does NOT call any new
+ * integration data through a "Configuration Risk" lens. It does NOT call any new
  * backend, invent findings, or persist anything.
  *
  * Honesty rules (M60.2):

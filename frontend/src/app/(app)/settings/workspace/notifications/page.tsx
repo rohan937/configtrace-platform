@@ -1051,13 +1051,13 @@ function BrowserPushCard({
                 },
                 {
                   field: "security_push_enabled" as const,
-                  label: "Security Exposure",
+                  label: "Configuration Risk",
                   hint: "When a critical or high security exposure is opened.",
                   checked: currentSub.security_push_enabled,
                 },
                 {
                   field: "security_resolved_push_enabled" as const,
-                  label: "Security Exposure resolved",
+                  label: "Configuration Risk resolved",
                   hint: "When a security exposure is resolved. Off by default.",
                   checked: currentSub.security_resolved_push_enabled,
                 },
@@ -1724,7 +1724,7 @@ function SlackRoutingCard({
         </div>
 
         <div>
-          <div style={labelStyle}>Security Exposure alerts channel ID</div>
+          <div style={labelStyle}>Configuration Risk alerts channel ID</div>
           <input
             value={security}
             onChange={(e) => setSecurity(e.target.value)}
@@ -1739,7 +1739,7 @@ function SlackRoutingCard({
             checked={securityEnabled}
             onChange={(e) => setSecurityEnabled(e.target.checked)}
           />
-          Send Security Exposure alerts to Slack (critical/high opened &amp; re-opened)
+          Send Configuration Risk alerts to Slack (critical/high opened &amp; re-opened)
         </label>
 
         <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#c4c8d4" }}>
@@ -1855,7 +1855,7 @@ function EmailRoutingCard({
             checked={securityEnabled}
             onChange={(e) => setSecurityEnabled(e.target.checked)}
           />
-          Send Security Exposure emails (critical/high opened &amp; re-opened)
+          Send Configuration Risk emails (critical/high opened &amp; re-opened)
         </label>
 
         <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "#c4c8d4" }}>

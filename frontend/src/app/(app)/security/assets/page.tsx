@@ -220,7 +220,7 @@ export default function AffectedAssetsPage() {
     <div>
       <PageHeader
         title="Affected Assets"
-        description="Group active exposures by the systems, resources, and provider assets they may affect."
+        description="Group active risks by the systems, resources, and provider assets they may affect."
       />
 
       <p style={{ margin: "-12px 0 24px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, maxWidth: "780px" }}>
@@ -241,7 +241,7 @@ export default function AffectedAssetsPage() {
         <Metric label="Affected assets" value={summary.affected} accent="#f5632a" />
         <Metric label="Critical assets" value={summary.critical} accent="#e84040" />
         <Metric label="High-risk assets" value={summary.high} accent="#f5632a" />
-        <Metric label="Active exposures" value={summary.activeExposures} accent="#6b9cf8" />
+        <Metric label="Active risks" value={summary.activeExposures} accent="#6b9cf8" />
         <Metric label="Providers affected" value={summary.providers} accent="#3ccf7e" />
       </div>
 
@@ -478,7 +478,7 @@ function AssetCard({
             {visibleFindings.map((f) => (
               <Link
                 key={f.id}
-                href={`/security/exposures/${f.id}`}
+                href={`/security/risks/${f.id}`}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   gap: "12px", textDecoration: "none", padding: "8px 10px",

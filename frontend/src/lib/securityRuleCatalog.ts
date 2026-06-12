@@ -1,5 +1,5 @@
 /**
- * securityRuleCatalog.ts — read-only catalog of the Security Exposure rules
+ * securityRuleCatalog.ts — read-only catalog of the Configuration Risk rules
  * ConfigTrace evaluates (M60.9).
  *
  * This is a STATIC mirror of the backend rules implemented in

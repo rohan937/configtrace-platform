@@ -3,7 +3,7 @@
 /**
  * SecurityOnboardingCard (M62.5).
  *
- * A lightweight, deterministic Security Exposure setup checklist for the
+ * A lightweight, deterministic Configuration Risk setup checklist for the
  * /security overview. Completion is derived from real data via existing APIs
  * (see lib/securityOnboarding). No persistence, no AI, no fake completion.
  *
@@ -130,9 +130,9 @@ export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () =
       >
         <CheckIcon done />
         <span style={{ fontSize: "13px", color: "#c4c8d4" }}>
-          Security Exposure is set up. {summary.completed} of {summary.total} steps complete.
+          Configuration Risk is set up. {summary.completed} of {summary.total} steps complete.
         </span>
-        <Link href="/security/exposures" style={{ marginLeft: "auto", fontSize: "12.5px", color: "#6b9cf8", textDecoration: "none" }}>
+        <Link href="/security/risks" style={{ marginLeft: "auto", fontSize: "12.5px", color: "#6b9cf8", textDecoration: "none" }}>
           View exposures →
         </Link>
       </div>
@@ -144,7 +144,7 @@ export default function SecurityOnboardingCard({ onChanged }: { onChanged?: () =
       className="bg-surface1 border border-border"
       style={{ borderRadius: "12px", padding: "18px 20px", marginBottom: "20px" }}
     >
-      <SectionLabel>Security Exposure setup</SectionLabel>
+      <SectionLabel>Configuration Risk setup</SectionLabel>
       <p style={{ fontSize: "13px", color: "#8b90a0", margin: "6px 0 14px", lineHeight: 1.6, maxWidth: "720px" }}>
         A short checklist to get from connected providers to reviewed findings and
         routed alerts.

@@ -1,8 +1,8 @@
 /**
- * findingDisplay.tsx — shared presentational helpers for Security Exposure
+ * findingDisplay.tsx — shared presentational helpers for Configuration Risk
  * findings (M60.6).
  *
- * Used by both the Active Exposures queue (M60.5) and the Exposure Detail page
+ * Used by both the Active Risks queue (M60.5) and the Risk Detail page
  * (M60.6) so severity styling, sensitive-value masking, and evidence/remediation
  * rendering stay consistent and DRY.
  *

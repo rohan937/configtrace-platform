@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Active Exposures (M60.5).
+ * Active Risks (M60.5).
  *
- * The real Security Exposure queue, backed by the M60.3/M60.4 findings API
+ * The real Configuration Risk queue, backed by the M60.3/M60.4 findings API
  * (GET /security/findings via getSecurityFindings). Drift Detection shows what
  * changed; this page shows what is still dangerous right now.
  *
@@ -48,7 +48,7 @@ const PAGE_SIZE = 25;
 type StatusFilter = "active" | "resolved" | "accepted_risk" | "snoozed" | "all";
 
 // Severity/status tokens, masking, and the Evidence/Remediation/badge
-// renderers are shared with the Exposure Detail page (M60.6) — see
+// renderers are shared with the Risk Detail page (M60.6) — see
 // components/security/findingDisplay.tsx.
 const SEVERITY_OPTIONS: SecurityFindingSeverity[] = [
   "critical",
@@ -229,7 +229,7 @@ export default function ActiveExposuresPage() {
   return (
     <div>
       <PageHeader
-        title="Active Exposures"
+        title="Active Risks"
         description="Current risky states that may expose production systems or weaken security controls."
       />
 
@@ -242,8 +242,8 @@ export default function ActiveExposuresPage() {
           maxWidth: "760px",
         }}
       >
-        Security Exposure shows risky current states from connected provider
-        configuration. Drift Detection shows what changed. Active Exposures shows
+        Configuration Risk shows risky current states from connected provider
+        configuration. Drift Detection shows what changed. Active Risks shows
         what is still dangerous right now.
       </p>
 
@@ -265,7 +265,7 @@ export default function ActiveExposuresPage() {
           marginBottom: "24px",
         }}
       >
-        <Metric label="Active exposures" value={metrics.active} accent="#f5632a" />
+        <Metric label="Active risks" value={metrics.active} accent="#f5632a" />
         <Metric label="Critical" value={metrics.critical} accent="#e84040" />
         <Metric label="High" value={metrics.high} accent="#f5632a" />
         <Metric label="Recently opened (7d)" value={metrics.recentlyOpened} accent="#6b9cf8" />
@@ -621,7 +621,7 @@ function FindingCard({
             }}
           >
             <Link
-              href={`/security/exposures/${finding.id}`}
+              href={`/security/risks/${finding.id}`}
               style={{
                 alignSelf: "flex-start",
                 fontSize: "13px",
@@ -804,7 +804,7 @@ function EmptyState({
   // Integrations exist (or unknown) but no findings for the current filter.
   const headline =
     statusFilter === "active"
-      ? "No active exposures found."
+      ? "No active risks found."
       : statusFilter === "resolved"
         ? "No resolved exposures."
         : "No exposures match these filters.";

@@ -3,7 +3,7 @@
 /**
  * Security Demo Script (M63.7).
  *
- * A founder/team presenter talk track for Security Exposure — distinct from the
+ * A founder/team presenter talk track for Configuration Risk — distinct from the
  * user-facing SecurityDemoWalkthrough widget. Frontend-only, deterministic
  * content from lib/securityDemoScript. Read-only except the explicit, opt-in
  * "Load demo data" action (admin/owner only, mirroring M63.5). No AI, no
@@ -90,11 +90,11 @@ export default function SecurityDemoScriptPage() {
     <div>
       <PageHeader
         title="Security Demo Script"
-        description="A guided talk track for presenting Security Exposure."
+        description="A guided talk track for presenting Configuration Risk."
       />
 
       <p style={{ margin: "-12px 0 22px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, maxWidth: "820px" }}>
-        Use this script to walk through Security Exposure with demo data or connected
+        Use this script to walk through Configuration Risk with demo data or connected
         provider data. The script uses careful language and avoids claims of breach
         detection or formal compliance.
       </p>

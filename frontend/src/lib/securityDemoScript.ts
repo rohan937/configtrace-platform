@@ -1,5 +1,5 @@
 /**
- * securityDemoScript.ts — presenter talk track for Security Exposure (M63.7).
+ * securityDemoScript.ts — presenter talk track for Configuration Risk (M63.7).
  *
  * Deterministic, frontend-only content for the founder/team "Demo Script" mode
  * (distinct from the user-facing SecurityDemoWalkthrough widget). Pure data +
@@ -110,16 +110,16 @@ export const DEMO_SCRIPT_3MIN: DemoStep[] = [
     href: "/security",
     cta: "Open Security Overview",
     talkTrack:
-      "Security Exposure shows risky current states from configuration metadata. It does not claim a breach happened. It tells the team what deserves review now.",
-    whatToClick: "Point at the posture summary: active exposures, critical/high, coverage.",
+      "Configuration Risk shows risky current states from configuration metadata. It does not claim a breach happened. It tells the team what deserves review now.",
+    whatToClick: "Point at the posture summary: active risks, critical/high, coverage.",
     emphasize: "One place to see what currently needs review across providers.",
     avoid: "Avoid 'secure/safe' verdicts — this is a review signal, not a guarantee.",
   },
   {
     id: "exposures",
-    title: "Active Exposures",
-    href: "/security/exposures",
-    cta: "View Active Exposures",
+    title: "Active Risks",
+    href: "/security/risks",
+    cta: "View Active Risks",
     talkTrack:
       "These are the risky current states we observe right now — each tied to a specific provider setting, with a severity and a confidence level.",
     whatToClick: "Scan the list; filter by severity or provider to show focus.",
@@ -128,8 +128,8 @@ export const DEMO_SCRIPT_3MIN: DemoStep[] = [
   },
   {
     id: "detail",
-    title: "Exposure Detail",
-    href: "/security/exposures",
+    title: "Risk Detail",
+    href: "/security/risks",
     cta: "Open a sample exposure",
     talkTrack:
       "Opening one finding shows the evidence we read from provider metadata, the confidence and false-positive safeguards, and the review actions the team can take.",
@@ -152,7 +152,7 @@ export const DEMO_SCRIPT_3MIN: DemoStep[] = [
     id: "timeline",
     title: "Timeline",
     href: "/security/timeline",
-    cta: "Open Exposure Timeline",
+    cta: "Open Risk Timeline",
     talkTrack:
       "The timeline shows when exposures opened, resolved, or were acknowledged, snoozed, or accepted — the review history settings usually lack.",
     whatToClick: "Scroll the timeline to show lifecycle, not just a current snapshot.",
@@ -232,7 +232,7 @@ export const DEMO_SCRIPT_5MIN: DemoStep[] = [
   {
     id: "workflow-deep",
     title: "Accepted risk, Snooze, Notes",
-    href: "/security/exposures",
+    href: "/security/risks",
     cta: "Open an exposure",
     talkTrack:
       "Teams can acknowledge, snooze, accept a risk with an owner and expiry, or leave review notes — the collaborative workflow settings usually don't have.",
@@ -257,7 +257,7 @@ export const DEMO_SCRIPT_5MIN: DemoStep[] = [
     href: "/security/beta-analytics",
     cta: "Open Beta Analytics",
     talkTrack:
-      "For workspace admins, first-party beta analytics summarize how the team uses Security Exposure — no third-party trackers, workspace-scoped only.",
+      "For workspace admins, first-party beta analytics summarize how the team uses Configuration Risk — no third-party trackers, workspace-scoped only.",
     whatToClick: "If you're an admin, show the usage summary briefly.",
     emphasize: "First-party, privacy-safe usage insight.",
     avoid: "Skip if not an admin — it's admin-only and will show a permission message.",
@@ -338,7 +338,7 @@ export interface QuickLink {
 
 export const DEMO_QUICK_LINKS: QuickLink[] = [
   { label: "Security Overview", href: "/security" },
-  { label: "Active Exposures", href: "/security/exposures" },
+  { label: "Active Risks", href: "/security/risks" },
   { label: "Affected Assets", href: "/security/assets" },
   { label: "Timeline", href: "/security/timeline" },
   { label: "Rules", href: "/security/rules" },

@@ -1,5 +1,5 @@
 /**
- * previews.tsx — presentational building blocks for the Security Exposure
+ * previews.tsx — presentational building blocks for the Configuration Risk
  * placeholder pages (M60.1).
  *
  * IMPORTANT: nothing here is backed by real data. The security findings engine

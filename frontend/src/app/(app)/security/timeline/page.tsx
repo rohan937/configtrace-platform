@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Exposure Timeline (M60.8).
+ * Risk Timeline (M60.8).
  *
  * Turns persisted security findings (GET /security/findings) into a lifecycle
  * view: when exposures opened, persisted, resolved, and reappeared. Read-only;
@@ -147,8 +147,8 @@ export default function ExposureTimelinePage() {
   return (
     <div>
       <PageHeader
-        title="Exposure Timeline"
-        description="Track when security exposures open, persist, resolve, and reappear."
+        title="Risk Timeline"
+        description="Track when configuration risks open, persist, resolve, and reappear."
       />
 
       <p
@@ -160,7 +160,7 @@ export default function ExposureTimelinePage() {
           maxWidth: "760px",
         }}
       >
-        Exposure Timeline turns current security findings into a lifecycle view. It
+        Risk Timeline turns current security findings into a lifecycle view. It
         helps answer how long a risky state was open and what changed around it.
       </p>
 
@@ -378,7 +378,7 @@ function TimelineRow({ event }: { event: TimelineEvent }) {
 
         <div style={{ display: "flex", gap: "14px", marginTop: "10px" }}>
           <Link
-            href={`/security/exposures/${f.id}`}
+            href={`/security/risks/${f.id}`}
             style={{ fontSize: "12px", color: "#6b9cf8", textDecoration: "none", fontWeight: 600 }}
           >
             View exposure →

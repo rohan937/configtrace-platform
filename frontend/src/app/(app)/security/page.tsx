@@ -3,7 +3,7 @@
 /**
  * Security Overview (M60.2).
  *
- * The landing page for the Security Exposure product mode. M60.1 shipped a
+ * The landing page for the Configuration Risk product mode. M60.1 shipped a
  * static placeholder; M60.2 makes it data-aware by re-interpreting EXISTING
  * change / integration data through a security-exposure lens.
  *
@@ -170,7 +170,7 @@ export default function SecurityOverviewPage() {
         onChanged={() => window.location.reload()}
       />
 
-      {/* M62.5: Security Exposure onboarding checklist. */}
+      {/* M62.5: Configuration Risk onboarding checklist. */}
       <SecurityOnboardingCard onChanged={() => window.location.reload()} />
 
       {liveActiveCount !== null && liveActiveCount > 0 ? (
@@ -198,27 +198,28 @@ export default function SecurityOverviewPage() {
             }}
           />
           <span style={{ fontSize: "13px", color: "#e8eaf0" }}>
-            <strong>{liveActiveCount}</strong> active security{" "}
-            {liveActiveCount === 1 ? "exposure" : "exposures"} detected by the
+            <strong>{liveActiveCount}</strong> active configuration{" "}
+            {liveActiveCount === 1 ? "risk" : "risks"} detected by the
             findings engine.{" "}
             <Link
-              href="/security/exposures"
+              href="/security/risks"
               style={{ color: "#6b9cf8", textDecoration: "none" }}
             >
-              View active exposures →
+              View configuration risks →
             </Link>
           </span>
         </div>
       ) : (
         <PreviewBanner>
-          Active exposure findings arrive in M60.3/M60.4. This overview currently
-          summarizes <strong>security-relevant drift</strong> from your recent
-          change data — not confirmed exposures.
+          This overview summarizes <strong>security-relevant drift</strong> and
+          risky current configuration states. ConfigTrace evaluates provider
+          configuration metadata — it does not assert confirmed breaches
+          automatically.
         </PreviewBanner>
       )}
 
       {/* B. Summary metric cards */}
-      <SectionLabel>Exposure summary</SectionLabel>
+      <SectionLabel>Risk summary</SectionLabel>
       <div
         style={{
           display: "grid",
@@ -304,12 +305,138 @@ export default function SecurityOverviewPage() {
         </div>
       </div>
 
-      {/* F. Preview note */}
-      <div style={{ marginTop: "28px" }}>
-        <p style={{ margin: 0, fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-          Active exposure findings arrive in M60.3/M60.4. This overview currently
-          summarizes security-relevant drift from existing change data — it does
-          not evaluate persistent risky current states yet.
+      {/* F. Product roadmap — Configuration Risk (live) vs Incident Signals (future) */}
+      <div style={{ marginTop: "32px" }}>
+        <SectionLabel>How ConfigTrace Security is evolving</SectionLabel>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+            gap: "14px",
+          }}
+        >
+          {/* Live capability */}
+          <div
+            className="bg-surface1 border border-border"
+            style={{ borderRadius: "12px", padding: "18px 20px" }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                marginBottom: "10px",
+              }}
+            >
+              <span style={{ fontSize: "14px", fontWeight: 600, color: "#e8eaf0" }}>
+                Configuration Risk
+              </span>
+              <span
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  color: "#3ccf7e",
+                  border: "1px solid rgba(60,207,126,0.4)",
+                  borderRadius: "5px",
+                  padding: "1px 6px",
+                }}
+              >
+                Live
+              </span>
+            </div>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: "16px",
+                color: "#8b90a0",
+                fontSize: "12.5px",
+                lineHeight: 1.7,
+              }}
+            >
+              <li>Risky current provider-configuration states</li>
+              <li>Risky configuration drift</li>
+              <li>Provider coverage &amp; data-source diagnostics</li>
+              <li>Review workflow (acknowledge, snooze, accept risk, notes)</li>
+              <li>Metadata-only reports</li>
+            </ul>
+          </div>
+
+          {/* Future capability — gated */}
+          <div
+            className="bg-surface1 border border-border"
+            style={{ borderRadius: "12px", padding: "18px 20px", opacity: 0.92 }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                marginBottom: "10px",
+              }}
+            >
+              <span style={{ fontSize: "14px", fontWeight: 600, color: "#e8eaf0" }}>
+                Incident Signals
+              </span>
+              <span
+                style={{
+                  fontSize: "9px",
+                  fontWeight: 700,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  color: "#6b9cf8",
+                  border: "1px solid rgba(107,156,248,0.4)",
+                  borderRadius: "5px",
+                  padding: "1px 6px",
+                }}
+              >
+                GitHub beta
+              </span>
+            </div>
+            <p
+              style={{
+                margin: "0 0 8px",
+                fontSize: "12.5px",
+                color: "#8b90a0",
+                lineHeight: 1.6,
+              }}
+            >
+              Now in GitHub beta: control-plane review signals from normalized
+              GitHub audit activity.
+            </p>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: "16px",
+                color: "#8b90a0",
+                fontSize: "12.5px",
+                lineHeight: 1.7,
+              }}
+            >
+              <li>GitHub audit-log activity ingestion (live)</li>
+              <li>Control-plane review signals (live)</li>
+              <li>Correlation with configuration risk (next)</li>
+              <li>More providers (next)</li>
+            </ul>
+            <Link
+              href="/security/signals"
+              style={{
+                display: "inline-block",
+                marginTop: "12px",
+                fontSize: "12px",
+                color: "#6b9cf8",
+                textDecoration: "none",
+              }}
+            >
+              View Incident Signals →
+            </Link>
+          </div>
+        </div>
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
+          Incident Signals are review cues from GitHub audit activity. ConfigTrace
+          does not automatically confirm breaches, attacker presence, or
+          unauthorized access. Correlation with configuration risk is next.
         </p>
       </div>
     </div>
@@ -322,7 +449,7 @@ function Hero() {
   return (
     <>
       <PageHeader
-        title="Security Exposure"
+        title="Configuration Risk"
         description="Find risky current states across connected cloud and SaaS tools."
       />
       <div
@@ -331,7 +458,7 @@ function Hero() {
       >
         <p style={{ margin: 0, fontSize: "15px", color: "#c4c8d4", lineHeight: 1.6 }}>
           <span style={{ color: "#e8eaf0", fontWeight: 600 }}>
-            Drift Detection tells you what changed. Security Exposure tells you
+            Drift Detection tells you what changed. Configuration Risk tells you
             what may be dangerous right now.
           </span>{" "}
           ConfigTrace re-reads your existing change history through a security
@@ -612,8 +739,8 @@ function EmptyFeedState({ hasIntegrations }: { hasIntegrations: boolean }) {
         }}
       >
         {hasIntegrations
-          ? "Run a sync to capture new changes. M60.3/M60.4 will add persistent active exposure findings."
-          : "Connect providers and run a sync. M60.3/M60.4 will add persistent active exposure findings."}
+          ? "Run a sync to capture new changes. M60.3/M60.4 will add persistent active configuration-risk findings."
+          : "Connect providers and run a sync. M60.3/M60.4 will add persistent active configuration-risk findings."}
       </p>
       {!hasIntegrations && (
         <Link

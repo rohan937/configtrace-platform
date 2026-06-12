@@ -3,7 +3,7 @@
 /**
  * SecurityPostureSummaryCard (M62.6).
  *
- * A compact Security Exposure summary for the main dashboard so posture is
+ * A compact Configuration Risk summary for the main dashboard so posture is
  * visible without switching into the Security sidebar. Self-contained and
  * non-blocking: its fetches never break the dashboard, and any failure degrades
  * to a small "summary unavailable" fallback.
@@ -116,7 +116,7 @@ export default function SecurityPostureSummaryCard() {
       <div style={CARD}>
         <Header />
         <p style={{ fontSize: "13px", color: "#c4c8d4", margin: "12px 0 4px", fontWeight: 600 }}>
-          Security Exposure is not set up yet.
+          Configuration Risk is not set up yet.
         </p>
         <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: "0 0 14px", lineHeight: 1.6 }}>
           Connect providers or load demo data to preview security exposure workflows.
@@ -161,7 +161,7 @@ export default function SecurityPostureSummaryCard() {
           <span style={{ fontSize: "12.5px", color: "#e2e5ef" }}>
             Critical or high security exposures need review.
           </span>
-          <Link href="/security/exposures" style={{ ...ctaLink, marginLeft: "auto" }}>Review →</Link>
+          <Link href="/security/risks" style={{ ...ctaLink, marginLeft: "auto" }}>Review →</Link>
         </div>
       ) : null}
 
@@ -174,7 +174,7 @@ export default function SecurityPostureSummaryCard() {
           marginTop: "14px",
         }}
       >
-        <Metric label="Active exposures" value={s.activeCount} accent={s.activeCount > 0 ? "#f5632a" : "#3ccf7e"} />
+        <Metric label="Active risks" value={s.activeCount} accent={s.activeCount > 0 ? "#f5632a" : "#3ccf7e"} />
         <Metric label="Critical" value={s.criticalActiveCount} accent={s.criticalActiveCount > 0 ? "#e84040" : "#8b90a0"} />
         <Metric label="High" value={s.highActiveCount} accent={s.highActiveCount > 0 ? "#f5632a" : "#8b90a0"} />
         <Metric label="Accepted risk" value={s.acceptedCount} accent="#f5a623" />
@@ -195,7 +195,7 @@ export default function SecurityPostureSummaryCard() {
       {/* CTAs */}
       <div style={{ display: "flex", gap: "16px", marginTop: "14px", flexWrap: "wrap" }}>
         <Link href="/security" style={ctaLink}>Security Overview →</Link>
-        <Link href="/security/exposures" style={ctaLink}>Active Exposures →</Link>
+        <Link href="/security/risks" style={ctaLink}>Active Risks →</Link>
         <Link href="/security/coverage" style={ctaLink}>Coverage →</Link>
       </div>
     </div>
@@ -223,7 +223,7 @@ const ctaButton: React.CSSProperties = {
 function Header() {
   return (
     <div>
-      <p style={LABEL}>Security Exposure</p>
+      <p style={LABEL}>Configuration Risk</p>
       <p style={{ fontSize: "12.5px", color: "#8b90a0", margin: "4px 0 0" }}>
         Monitor risky current states across connected cloud and SaaS configuration.
       </p>

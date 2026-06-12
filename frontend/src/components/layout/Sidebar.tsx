@@ -24,11 +24,11 @@ export default function Sidebar() {
   const { user, isLoaded } = useUser();
   const { getToken, isLoaded: authLoaded } = useAuth();
 
-  // ── M60.1 — product mode (Drift Detection vs Security Exposure) ────────────
+  // ── M60.1 — product mode (Drift Detection vs Configuration Risk) ───────────
   // Mode is derived from the URL so deep links / refreshes are preserved. On a
   // SHARED page (Integrations/Settings/…) the URL is mode-agnostic, so we fall
   // back to the last mode the user was in (persisted to localStorage). This
-  // keeps you in Security Exposure when you click a shared item from it.
+  // keeps you in the Configuration Risk mode when you click a shared item.
   const urlMode = resolveMode(pathname);
   const [mode, setMode] = useState<ProductMode>(urlMode ?? "drift");
 
@@ -107,7 +107,7 @@ export default function Sidebar() {
         </span>
       </div>
 
-      {/* Product mode switch — M60.1 (Drift Detection · Security Exposure) */}
+      {/* Product mode switch — M60.1 (Drift Detection · Configuration Risk) */}
       <ModeSwitch
         mode={mode}
         driftHref={DRIFT_HOME}
@@ -122,6 +122,40 @@ export default function Sidebar() {
         <ul className="space-y-0.5">
           {navItems.map((item) => {
             const isActive = isNavActive(item.href, pathname);
+
+            // M66.1: gated future area (Incident Signals) — non-clickable.
+            if (item.comingSoon) {
+              return (
+                <li key={item.href}>
+                  <div
+                    aria-disabled="true"
+                    title="Coming soon — audit/activity-log correlation is not live yet"
+                    className="flex items-center justify-between px-6 py-2 text-sm text-textSecondary"
+                    style={{
+                      borderLeft: "2px solid transparent",
+                      opacity: 0.55,
+                      cursor: "default",
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    <span
+                      style={{
+                        fontSize: "9px",
+                        fontWeight: 700,
+                        letterSpacing: "0.05em",
+                        textTransform: "uppercase",
+                        color: "#8b90a0",
+                        border: "1px solid #2a2d38",
+                        borderRadius: "5px",
+                        padding: "1px 5px",
+                      }}
+                    >
+                      Soon
+                    </span>
+                  </div>
+                </li>
+              );
+            }
 
             if (item.sub) {
               return (
@@ -170,7 +204,24 @@ export default function Sidebar() {
                       : "text-textSecondary hover:text-textPrimary hover:bg-surface1",
                   ].join(" ")}
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {item.badge && (
+                    <span
+                      style={{
+                        marginLeft: "8px",
+                        fontSize: "9px",
+                        fontWeight: 700,
+                        letterSpacing: "0.05em",
+                        textTransform: "uppercase",
+                        color: "#6b9cf8",
+                        border: "1px solid rgba(107,156,248,0.4)",
+                        borderRadius: "5px",
+                        padding: "1px 5px",
+                      }}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
                 </Link>
               </li>
             );

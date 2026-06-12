@@ -3,7 +3,7 @@
 /**
  * Security Reports (M61.6).
  *
- * Builds a customer/demo-friendly Security Exposure report from existing
+ * Builds a customer/demo-friendly Configuration Risk report from existing
  * findings + the static rule catalog + securityAssets grouping, and exports it
  * as Markdown (plus optional JSON / findings CSV). Frontend-only, deterministic,
  * metadata-only — see lib/securityReportExport.ts for the privacy invariants.
@@ -334,11 +334,11 @@ export default function SecurityReportsPage() {
     <div>
       <PageHeader
         title="Security Reports"
-        description="Export a security exposure summary from current findings, assets, and rule coverage."
+        description="Export a configuration risk summary from current findings, assets, and rule coverage."
       />
 
       <p style={{ margin: "-12px 0 24px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6, maxWidth: "800px" }}>
-        Security reports summarize configuration exposure findings, affected assets,
+        Security reports summarize configuration risk findings, affected assets,
         and review status. They are designed for internal review and customer
         feedback, not formal compliance certification.
       </p>
@@ -419,7 +419,7 @@ export default function SecurityReportsPage() {
           marginBottom: "22px",
         }}
       >
-        <Metric label="Active exposures" value={model.summary.active} accent="#f5632a" />
+        <Metric label="Active risks" value={model.summary.active} accent="#f5632a" />
         <Metric label="Critical (active)" value={model.summary.critical} accent="#e84040" />
         <Metric label="High (active)" value={model.summary.high} accent="#f5632a" />
         <Metric label="Accepted risk" value={model.summary.acceptedRisks} accent="#f5a623" />
