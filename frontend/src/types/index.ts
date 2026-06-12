@@ -1603,6 +1603,50 @@ export interface SecuritySignalGenerateResponse {
   signals_skipped: number;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Activity Events (M66.2 backend / M66.5 UI)
+
+   Normalized control-plane GitHub audit activity — the evidence behind Incident
+   Signals. These are NOT breach/attacker/compromise claims. ``source_ip_hash``
+   is a salted hash, never a raw IP.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface SecurityActivityEvent {
+  id: string;
+  provider: string;
+  source: string;
+  provider_event_id: string | null;
+  event_type: string;
+  actor_id: string | null;
+  actor_type: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  /** Salted hash of the source IP, if any — never a raw IP. */
+  source_ip_hash: string | null;
+  occurred_at: string | null;
+  ingested_at: string;
+  metadata: Record<string, unknown>;
+  /** Pointer/id reference only (e.g. provider document id). */
+  raw_ref: string | null;
+  // Not in the current API response — kept optional for forward-compat.
+  workspace_id?: string;
+  integration_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SecurityActivitySyncResponse {
+  attempted: boolean;
+  succeeded: boolean;
+  provider: string;
+  integration_id: string | null;
+  events_seen: number;
+  events_inserted: number;
+  events_updated_or_skipped: number;
+  permission_limited: boolean;
+  error_message: string | null;
+}
+
 export interface SecurityRulePack {
   name: string;
   version: string;

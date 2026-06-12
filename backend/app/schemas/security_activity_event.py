@@ -20,6 +20,8 @@ class SecurityActivityEventResponse(BaseModel):
     id: str
     provider: str
     source: str
+    # Provider event id, or a service-supplied "fp:<hash>" fingerprint (M66.5).
+    provider_event_id: Optional[str] = None
     event_type: str
     actor_id: Optional[str] = None
     actor_type: Optional[str] = None
@@ -30,6 +32,8 @@ class SecurityActivityEventResponse(BaseModel):
     occurred_at: Optional[datetime] = None
     ingested_at: datetime
     metadata: Dict[str, Any] = {}
+    # Pointer/id reference only (e.g. provider document id) — never raw payload.
+    raw_ref: Optional[str] = None
 
     # Map the ORM ``event_metadata`` attribute onto the response ``metadata`` field.
     @classmethod
@@ -38,6 +42,7 @@ class SecurityActivityEventResponse(BaseModel):
             id=str(ev.id),
             provider=ev.provider,
             source=ev.source,
+            provider_event_id=ev.provider_event_id,
             event_type=ev.event_type,
             actor_id=ev.actor_id,
             actor_type=ev.actor_type,
@@ -47,6 +52,7 @@ class SecurityActivityEventResponse(BaseModel):
             occurred_at=ev.occurred_at,
             ingested_at=ev.ingested_at,
             metadata=ev.event_metadata if isinstance(ev.event_metadata, dict) else {},
+            raw_ref=ev.raw_ref,
         )
 
 

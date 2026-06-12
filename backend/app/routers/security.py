@@ -763,6 +763,28 @@ def list_security_activity_events(
     )
 
 
+@router.get(
+    "/activity/events/{event_id}", response_model=SecurityActivityEventResponse
+)
+def get_security_activity_event(
+    event_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityActivityEventResponse:
+    """Return a single workspace-scoped normalized activity event (M66.5).
+
+    Authenticated member access. Cross-workspace access returns 404 (never leaks
+    existence). Safe, metadata-only fields; control-plane activity, not detection.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    ev = security_activity_event_service.get_activity_event(
+        event_id=event_id, workspace_id=workspace_id, db=db
+    )
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Activity event not found.")
+    return SecurityActivityEventResponse.from_model(ev)
+
+
 # ── Incident Signals (M66.3) ──────────────────────────────────────────────────
 #
 # First control-plane Incident Signal layer, generated from normalized GitHub

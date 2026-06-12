@@ -285,3 +285,23 @@ def list_activity_events(
         .all()
     )
     return items, total
+
+
+def get_activity_event(
+    *,
+    event_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    db: Session,
+) -> Optional[SecurityActivityEvent]:
+    """Return a single activity event scoped to the workspace, or None (→ 404).
+
+    Strictly workspace-scoped — never returns another workspace's event.
+    """
+    return (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.id == event_id,
+            SecurityActivityEvent.workspace_id == workspace_id,
+        )
+        .first()
+    )

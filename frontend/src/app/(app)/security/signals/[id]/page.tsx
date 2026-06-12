@@ -182,11 +182,19 @@ function SignalBody({ signal }: { signal: SecurityIncidentSignal }) {
       <div style={{ marginBottom: "22px" }}>
         <SectionLabel>Source &amp; correlation</SectionLabel>
         <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
-          <LinkFact
-            label="Linked activity event"
-            value={signal.linked_activity_event_id}
-            empty="—"
-          />
+          {signal.linked_activity_event_id ? (
+            <div style={{ display: "flex", gap: "10px", fontSize: "12.5px", flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ color: "#565b6e", minWidth: "180px" }}>Linked activity event</span>
+              <Link
+                href={`/security/activity/${signal.linked_activity_event_id}`}
+                style={{ color: "#6b9cf8", textDecoration: "none", fontWeight: 500 }}
+              >
+                View source activity event →
+              </Link>
+            </div>
+          ) : (
+            <LinkFact label="Linked activity event" value={null} empty="—" />
+          )}
           <LinkFact
             label="Linked configuration risk"
             value={signal.linked_finding_id ?? null}

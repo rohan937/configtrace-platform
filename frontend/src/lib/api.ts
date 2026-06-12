@@ -39,6 +39,8 @@ import type {
   ProfileUpdateRequest,
   ResourceDetail,
   ResourceListItem,
+  SecurityActivityEvent,
+  SecurityActivitySyncResponse,
   SecurityFinding,
   SecurityIncidentSignal,
   SecuritySignalGenerateRequest,
@@ -479,6 +481,50 @@ export async function getSecurityFinding(
   token?: string | null,
 ): Promise<SecurityFinding> {
   return apiFetch(`/security/findings/${findingId}`, { token });
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Activity Events (M66.2 backend / M66.5 UI)
+
+   Normalized control-plane GitHub audit activity — evidence behind Incident
+   Signals. Not breach/attacker/compromise claims.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface GetSecurityActivityEventsParams {
+  provider?: string;
+  event_type?: string;
+  page?: number;
+  page_size?: number;
+}
+
+/** List normalized activity events for the current user's workspace (M66.2). */
+export async function getSecurityActivityEvents(
+  params: GetSecurityActivityEventsParams = {},
+  token?: string | null,
+): Promise<PaginatedResponse<SecurityActivityEvent>> {
+  return apiFetch(`/security/activity/events${buildQuery(params)}`, { token });
+}
+
+/** Fetch a single workspace-scoped activity event (404 cross-workspace) (M66.5). */
+export async function getSecurityActivityEvent(
+  eventId: string,
+  token?: string | null,
+): Promise<SecurityActivityEvent> {
+  return apiFetch(`/security/activity/events/${eventId}`, { token });
+}
+
+/**
+ * Trigger GitHub audit-log activity ingestion (M66.2). Admin/owner only.
+ * Non-fatal: permission/availability limits are reported in the summary.
+ */
+export async function syncSecurityActivity(
+  token?: string | null,
+): Promise<SecurityActivitySyncResponse> {
+  return apiFetch(`/security/activity/sync`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    token,
+  });
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
