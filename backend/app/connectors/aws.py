@@ -2529,8 +2529,11 @@ class AWSConnector(BaseConnector):
             resp = self._call_aws(client.list_objects_v2, **kwargs)
             for obj in resp.get("Contents", []) or []:
                 k = obj.get("Key")
+                # Accept gzipped/plaintext log objects: CloudTrail (.json.gz),
+                # VPC Flow Logs (.log.gz / .log), and generic .json/.txt logs.
                 if isinstance(k, str) and (
-                    k.endswith(".json.gz") or k.endswith(".gz") or k.endswith(".json")
+                    k.endswith(".json.gz") or k.endswith(".gz")
+                    or k.endswith(".json") or k.endswith(".log") or k.endswith(".txt")
                 ):
                     keys.append(k)
                     if len(keys) >= cap:
@@ -2573,6 +2576,41 @@ class AWSConnector(BaseConnector):
         if isinstance(raw, (bytes, bytearray)):
             return bytes(raw[:cap])
         return b""
+
+    # ── Generic S3 log-object helpers (M67.10) ─────────────────────────────────
+    #
+    # Thin, provider-neutral aliases over the bounded S3 log readers above so any
+    # S3-delivered log source (CloudTrail, VPC Flow Logs, …) can reuse the same
+    # bounded list/read logic without duplicating it.
+
+    def list_log_objects(
+        self,
+        credentials: dict,
+        *,
+        bucket: str,
+        prefix: str | None = None,
+        max_files: int = 20,
+        region: str | None = None,
+    ) -> list[str]:
+        """List up to ``max_files`` log object keys in a bucket (bounded)."""
+        return self.list_cloudtrail_log_objects(
+            credentials, bucket=bucket, prefix=prefix,
+            max_files=max_files, region=region,
+        )
+
+    def read_log_object_bytes(
+        self,
+        credentials: dict,
+        *,
+        bucket: str,
+        key: str,
+        region: str | None = None,
+        max_bytes: int = 5_000_000,
+    ) -> bytes:
+        """Return up to ``max_bytes`` of a single log object's raw bytes."""
+        return self.read_cloudtrail_log_object(
+            credentials, bucket=bucket, key=key, region=region, max_bytes=max_bytes,
+        )
 
     def fetch(self, credentials: dict) -> list[dict]:
         """Fetch all AWS account/inventory, S3, network, IAM, and secrets records.

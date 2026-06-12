@@ -93,6 +93,10 @@ const AWS_EVENT_TYPES = [
   "aws.s3.data.head_object",
   "aws.s3.data.put_object_acl",
   "aws.s3.data.event",
+  // VPC Flow Logs (M67.10)
+  "aws.vpc.flow.accept",
+  "aws.vpc.flow.reject",
+  "aws.vpc.flow.event",
 ];
 const LIMIT_OPTIONS = [25, 50, 100];
 
@@ -372,7 +376,7 @@ function SyncBar({
   const isAws = provider === "aws";
   const label = isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
   const desc = isAws
-    ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, Security Hub findings, and S3 data events when configured. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
+    ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, Security Hub findings, S3 data events, and VPC Flow Logs when configured. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
     : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div

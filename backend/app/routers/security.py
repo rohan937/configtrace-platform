@@ -127,6 +127,10 @@ from app.schemas.security_aws_s3_data_events import (
     AwsS3AccessSignalGenerateRequest,
     AwsS3AccessSignalGenerateResponse,
 )
+from app.schemas.security_aws_vpc_flow_logs import (
+    AwsVpcFlowLogSyncRequest,
+    AwsVpcFlowLogSyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -149,6 +153,7 @@ from app.services import aws_iam_behavior_service
 from app.services import aws_security_hub_ingestion_service
 from app.services import aws_s3_data_event_ingestion_service
 from app.services import aws_s3_access_signal_service
+from app.services import aws_vpc_flow_log_ingestion_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1662,6 +1667,60 @@ def generate_aws_s3_access_signals(
         read_threshold=read_threshold,
     )
     return AwsS3AccessSignalGenerateResponse(**summary)
+
+
+@router.post("/aws-vpc-flow-logs/sync", response_model=AwsVpcFlowLogSyncResponse)
+def sync_aws_vpc_flow_logs(
+    body: AwsVpcFlowLogSyncRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsVpcFlowLogSyncResponse:
+    """Ingest VPC Flow Logs from bounded S3 objects (M67.10).
+
+    Admin/owner only. ``flow_log_bucket`` is required. Non-fatal: permission/
+    availability limits are reported in the summary, never raised. Members can
+    view the resulting events via ``GET /security/activity/events?provider=aws``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "aws",
+    )
+    requested_id = body.integration_id
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="AWS integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return AwsVpcFlowLogSyncResponse(
+                attempted=False, succeeded=False, provider="aws",
+                source="vpc_flow_log",
+                error_message="No active AWS integration found.",
+            )
+
+    max_files = min(body.max_files, 200) if body.max_files else 20
+    max_events = min(body.max_events, 50000) if body.max_events else 2000
+
+    summary = aws_vpc_flow_log_ingestion_service.ingest_aws_vpc_flow_logs(
+        integration=integration, workspace_id=workspace_id, db=db,
+        flow_log_bucket=body.flow_log_bucket, flow_log_prefix=body.flow_log_prefix,
+        max_files=max_files, max_events=max_events,
+    )
+    return AwsVpcFlowLogSyncResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

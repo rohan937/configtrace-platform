@@ -85,6 +85,19 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "object_key_hash",   # salted hash of the object key (NEVER the raw key)
         "object_key_prefix", # sanitized, truncated top-level prefix (or omitted)
         "bytes_transferred", # additionalEventData bytes in+out (int)
+        # AWS VPC Flow Log fields (M67.10) — network flow activity.
+        "version",           # flow log format version
+        "interface_id",      # ENI id (network resource identifier)
+        "src_port",          # source port (int)
+        "dst_port",          # destination port (int)
+        "protocol",          # IANA protocol number (int)
+        "packets",           # packet count (int)
+        "bytes",             # byte count (int)
+        "action",            # ACCEPT / REJECT
+        "log_status",        # OK / NODATA / SKIPDATA
+        "start_time",        # flow start (ISO string)
+        "end_time",          # flow end (ISO string)
+        "destination_ip_hash",  # salted hash of the destination IP (NEVER raw)
     }
 )
 
