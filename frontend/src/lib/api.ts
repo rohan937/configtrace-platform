@@ -703,6 +703,12 @@ export async function generateAwsS3AccessSignals(
   return apiFetch(`/security/aws-s3-data-events/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateAwsVpcFlowSignals(
+  token?: string | null,
+): Promise<import("@/types").AwsVpcFlowSignalGenerateResponse> {
+  return apiFetch(`/security/aws-vpc-flow-logs/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 /** Fetch a metadata-only Case Evidence Report payload (M66.9). */
 export async function getSecurityCaseReport(
   caseId: string,

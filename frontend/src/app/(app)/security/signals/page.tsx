@@ -26,6 +26,7 @@ import {
   generateAwsIamBehaviorSignals,
   generateAwsSecurityHubSignals,
   generateAwsS3AccessSignals,
+  generateAwsVpcFlowSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -189,6 +190,24 @@ export default function IncidentSignalsPage() {
     }
   }, [getToken, load]);
 
+  const onGenerateVpcFlow = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setBehaviorNote(null);
+    try {
+      const token = await getToken();
+      const res = await generateAwsVpcFlowSignals(token);
+      setBehaviorNote(
+        `VPC flow: scanned ${res.events_scanned} flow event(s) across ${res.interfaces_scanned} interface(s) · ${res.signals_created} signal(s) created · ${res.signals_skipped} skipped.`,
+      );
+      await load();
+    } catch {
+      setGenError("Could not generate VPC flow signals. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const open = signals.filter((s) => s.status === "open").length;
     const high = signals.filter((s) => HIGH_SEVERITIES.has(s.severity)).length;
@@ -219,6 +238,7 @@ export default function IncidentSignalsPage() {
         onGenerateBehavior={onGenerateBehavior}
         onGenerateSecurityHub={onGenerateSecurityHub}
         onGenerateS3Access={onGenerateS3Access}
+        onGenerateVpcFlow={onGenerateVpcFlow}
       />
 
       {/* Summary cards */}
@@ -347,6 +367,7 @@ function GenerateBar({
   onGenerateBehavior,
   onGenerateSecurityHub,
   onGenerateS3Access,
+  onGenerateVpcFlow,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -359,11 +380,12 @@ function GenerateBar({
   onGenerateBehavior: () => void;
   onGenerateSecurityHub: () => void;
   onGenerateS3Access: () => void;
+  onGenerateVpcFlow: () => void;
 }) {
   const isAws = provider === "aws";
   const label = isAws ? "Generate AWS signals" : "Generate signals";
   const desc = isAws
-    ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM, KMS, and S3 management activity, or S3 object-level data events."
+    ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM/KMS/S3 management activity, S3 object-level data events, or VPC Flow Log network activity."
     : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
@@ -476,6 +498,26 @@ function GenerateBar({
             }}
           >
             Generate S3 access signals
+          </button>
+        )}
+        {isAws && (
+          <button
+            onClick={onGenerateVpcFlow}
+            disabled={!isAdmin || generating}
+            title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+              opacity: generating ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate VPC flow signals
           </button>
         )}
       </div>

@@ -130,6 +130,8 @@ from app.schemas.security_aws_s3_data_events import (
 from app.schemas.security_aws_vpc_flow_logs import (
     AwsVpcFlowLogSyncRequest,
     AwsVpcFlowLogSyncResponse,
+    AwsVpcFlowSignalGenerateRequest,
+    AwsVpcFlowSignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -154,6 +156,7 @@ from app.services import aws_security_hub_ingestion_service
 from app.services import aws_s3_data_event_ingestion_service
 from app.services import aws_s3_access_signal_service
 from app.services import aws_vpc_flow_log_ingestion_service
+from app.services import aws_vpc_flow_signal_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1721,6 +1724,43 @@ def sync_aws_vpc_flow_logs(
         max_files=max_files, max_events=max_events,
     )
     return AwsVpcFlowLogSyncResponse(**summary)
+
+
+@router.post(
+    "/aws-vpc-flow-logs/generate-signals",
+    response_model=AwsVpcFlowSignalGenerateResponse,
+)
+def generate_aws_vpc_flow_signals(
+    body: Optional[AwsVpcFlowSignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsVpcFlowSignalGenerateResponse:
+    """Generate network-activity signals from VPC Flow Logs (M67.11).
+
+    Admin/owner only. Groups VPC Flow Log activity by interface + destination port
+    and surfaces review-worthy network patterns as Incident Signals. Idempotent —
+    re-running creates no duplicates. Members can view results via
+    ``GET /security/signals?provider=aws``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 200
+    kwargs: dict = {"lookback_hours": lookback_hours, "max_signals": max_signals}
+    if body and body.rejected_threshold:
+        kwargs["rejected_threshold"] = body.rejected_threshold
+    if body and body.sensitive_port_threshold:
+        kwargs["sensitive_port_threshold"] = body.sensitive_port_threshold
+    if body and body.bytes_threshold:
+        kwargs["bytes_threshold"] = body.bytes_threshold
+
+    summary = aws_vpc_flow_signal_service.generate_aws_vpc_flow_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return AwsVpcFlowSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

@@ -73,6 +73,13 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "object_key_prefix",  # sanitized, truncated prefix (or omitted)
         "pattern",            # which spike pattern fired
         "source",             # originating activity source ("s3_data_event")
+        # AWS VPC Flow Log network-signal fields (M67.11) — aggregate counts only.
+        "interface_id",       # ENI id (network resource identifier)
+        "dst_port",           # destination port (int)
+        "protocol",           # IANA protocol number (int)
+        "flow_action",        # ACCEPT / REJECT / mixed
+        "bytes_total",        # summed byte count across the flows (int)
+        "packets_total",      # summed packet count across the flows (int)
     }
 )
 

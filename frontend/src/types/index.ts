@@ -1876,6 +1876,13 @@ export interface AwsS3AccessSignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface AwsVpcFlowSignalGenerateResponse {
+  provider: string;
+  events_scanned: number;
+  interfaces_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface AwsSecurityHubSyncResponse {
   attempted: boolean;
   succeeded: boolean;

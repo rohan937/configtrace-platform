@@ -36,3 +36,23 @@ class AwsVpcFlowLogSyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class AwsVpcFlowSignalGenerateRequest(BaseModel):
+    """POST /security/aws-vpc-flow-logs/generate-signals request (optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+    rejected_threshold: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    sensitive_port_threshold: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    bytes_threshold: Optional[int] = Field(default=None, ge=1, le=1_000_000_000_000)
+
+
+class AwsVpcFlowSignalGenerateResponse(BaseModel):
+    """VPC Flow Log network-signal generation summary (M67.11)."""
+
+    provider: str
+    events_scanned: int = 0
+    interfaces_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0
