@@ -110,6 +110,10 @@ from app.schemas.security_aws_alerts import (
     AwsAlertSyncResponse,
     AwsSignalGenerateResponse,
 )
+from app.schemas.security_aws_cloudtrail import (
+    AwsCloudTrailSyncRequest,
+    AwsCloudTrailSyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -127,6 +131,7 @@ from app.services import security_case_service
 from app.services import security_case_report_service
 from app.services import security_incident_demo_service
 from app.services import aws_security_alert_ingestion_service
+from app.services import aws_cloudtrail_ingestion_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1390,6 +1395,60 @@ def sync_aws_security_alerts(
         integration=integration, workspace_id=workspace_id, db=db
     )
     return AwsAlertSyncResponse(**summary)
+
+
+@router.post("/aws-cloudtrail/sync", response_model=AwsCloudTrailSyncResponse)
+def sync_aws_cloudtrail_events(
+    body: Optional[AwsCloudTrailSyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsCloudTrailSyncResponse:
+    """Ingest CloudTrail management events for an AWS integration (M67.5).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised. Members can view the resulting events via
+    ``GET /security/activity/events?provider=aws``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "aws",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="AWS integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return AwsCloudTrailSyncResponse(
+                attempted=False, succeeded=False, provider="aws",
+                source="cloudtrail",
+                error_message="No active AWS integration found.",
+            )
+
+    # Bound the work regardless of what the client requested.
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_pages = min(body.max_pages, 10) if body and body.max_pages else 2
+
+    summary = aws_cloudtrail_ingestion_service.ingest_aws_cloudtrail_events(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_pages=max_pages,
+    )
+    return AwsCloudTrailSyncResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

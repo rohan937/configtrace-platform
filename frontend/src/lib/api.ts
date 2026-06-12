@@ -667,6 +667,12 @@ export async function syncAwsSecurityAlerts(
   return apiFetch(`/security/aws-alerts/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function syncAwsCloudTrail(
+  token?: string | null,
+): Promise<import("@/types").AwsCloudTrailSyncResponse> {
+  return apiFetch(`/security/aws-cloudtrail/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsIncidentSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

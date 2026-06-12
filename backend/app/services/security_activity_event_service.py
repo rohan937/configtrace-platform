@@ -53,6 +53,21 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "detector_id",       # GuardDuty detector id
         "analyzer_arn",      # Access Analyzer analyzer ARN
         "finding_status",    # ACTIVE/ARCHIVED/RESOLVED
+        # AWS CloudTrail management-event fields (M67.5) — control-plane activity.
+        "event_name",        # CloudTrail EventName (e.g. "CreateAccessKey")
+        "event_source",      # CloudTrail eventSource (e.g. "iam.amazonaws.com")
+        "aws_region",        # CloudTrail awsRegion
+        "user_type",         # userIdentity.type (IAMUser / AssumedRole / Root / …)
+        "principal_id_hash", # salted hash of userIdentity.principalId (never raw)
+        "user_name",         # IAM user name (control-plane identity)
+        "role_name",         # IAM role name (assumed-role session issuer)
+        "resource_name",     # safe resource identifier from event Resources
+        "resource_arn",      # safe resource ARN from event Resources
+        "error_code",        # CloudTrail errorCode (e.g. "AccessDenied")
+        "read_only",         # whether the API call was read-only
+        "event_category",    # "Management" (data events are out of scope)
+        "management_event",  # whether CloudTrail flagged this a management event
+        "recipient_account_id",  # account the event was delivered to
     }
 )
 

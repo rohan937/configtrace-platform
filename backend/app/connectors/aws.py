@@ -2373,6 +2373,69 @@ class AWSConnector(BaseConnector):
                 f.setdefault("_AnalyzerArn", analyzer_arn)
         return findings
 
+    # ── CloudTrail management events (M67.5) ───────────────────────────────────
+    #
+    # CloudTrail ``LookupEvents`` returns MANAGEMENT (control-plane) events only —
+    # data events (S3 object access, Lambda invokes, etc.) are NOT returned by
+    # this API, so this milestone is structurally limited to management activity.
+    # These are control-plane ACTIVITY events for review, not breach detection.
+    # Errors are translated by ``_call_aws`` (403 → ConnectorError(403) →
+    # caller treats as permission-limited).
+
+    def lookup_cloudtrail_events(
+        self,
+        credentials: dict,
+        *,
+        region: str | None = None,
+        lookback_hours: int = 24,
+        max_pages: int = 2,
+        page_size: int = 50,
+    ) -> list[dict]:
+        """Return recent CloudTrail management events (raw dicts) for one region.
+
+        Conservative by design: management events only (the LookupEvents API does
+        not return data events), the integration default region only, a small
+        page limit, and a bounded recent time window. Returns ``[]`` when there is
+        nothing in the window.
+
+        Raises (translated by ``_call_aws``): AuthenticationError (401),
+        ConnectorError(403) on AccessDenied, RateLimitError, ConnectorError(503),
+        NetworkError.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        region = region or self._default_region(credentials)
+        client = self._make_client("cloudtrail", credentials, region)
+
+        # Bound the window and the work: clamp inputs to safe ranges.
+        hours = max(1, min(int(lookback_hours or 24), 168))  # ≤ 7 days
+        pages_cap = max(1, min(int(max_pages or 1), 10))
+        per_page = max(1, min(int(page_size or 50), 50))     # LookupEvents max = 50
+
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=hours)
+
+        events: list[dict] = []
+        next_token: str | None = None
+        for _ in range(pages_cap):
+            kwargs: dict[str, Any] = {
+                "StartTime": start_time,
+                "EndTime": end_time,
+                "MaxResults": per_page,
+            }
+            if next_token:
+                kwargs["NextToken"] = next_token
+            resp = self._call_aws(client.lookup_events, **kwargs)
+            page = resp.get("Events", []) or []
+            for e in page:
+                if isinstance(e, dict):
+                    e.setdefault("_Region", region)
+                    events.append(e)
+            next_token = resp.get("NextToken")
+            if not next_token:
+                break
+        return events
+
     def fetch(self, credentials: dict) -> list[dict]:
         """Fetch all AWS account/inventory, S3, network, IAM, and secrets records.
 
