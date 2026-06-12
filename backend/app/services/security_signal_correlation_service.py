@@ -44,6 +44,7 @@ from app.models.security_signal_correlation import SecuritySignalCorrelation
 from app.services import security_incident_signal_service as signal_svc
 
 PROVIDER_GITHUB = "github"
+PROVIDER_AWS = "aws"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -57,6 +58,10 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "event_type",
         "actor",
         "window_hours",
+        # AWS correlation context (M67.3) — non-sensitive resource identifiers.
+        "resource",
+        "region",
+        "account_id",
     }
 )
 
@@ -310,7 +315,7 @@ def _upsert_correlation_signal(
     sides of the correlation.
     """
     signal = {
-        "provider": PROVIDER_GITHUB,
+        "provider": correlation.get("provider", PROVIDER_GITHUB),
         "integration_id": correlation.get("_integration_id"),
         "signal_key": correlation["correlation_key"],
         "signal_type": correlation["correlation_type"],
@@ -423,6 +428,244 @@ def generate_github_correlations(
 
     return {
         "provider": PROVIDER_GITHUB,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+# ---------------------------------------------------------------------------
+# AWS correlations (M67.3)
+# ---------------------------------------------------------------------------
+#
+# AWS Configuration Risk findings (``security_findings`` provider=aws, produced
+# by ``security_rules/aws.py``) are correlated with AWS provider-reported
+# security alerts (``security_activity_events`` provider=aws, source=
+# "security_alert" — GuardDuty / Access Analyzer, ingested in M67.1) ONLY when
+# both sides reference the SAME concrete resource (an S3 bucket name or an IAM
+# principal/user name). Matching is resource-driven, never account-wide.
+#
+# Safely matchable today (the finding's evidence carries the resource name):
+#   * S3 public-policy / public-ACL findings  → ``evidence["bucket"]``
+#       matched to a GuardDuty S3Bucket alert (resource_id = bucket name) or an
+#       Access Analyzer finding (resource_id = bucket ARN → bucket name).
+#   * IAM AdministratorAccess-attached         → ``evidence["principal_name"]``
+#   * IAM unused-access-key                     → ``evidence["username"]``
+#       matched to a GuardDuty AccessKey alert (resource_id = IAM user name).
+#
+# DEFERRED — security-group public-ingress finding → GuardDuty EC2 instance:
+#   the current data CANNOT link a security group to an EC2 instance. The SG
+#   rule records (``security_rules/aws.py``) carry no attachment / ENI / public-
+#   IP / instance-id context, and GuardDuty Instance findings reference an
+#   InstanceId. There is no safe join key, so we DO NOT correlate them — being
+#   in the same AWS account is not evidence. This rule is intentionally omitted.
+
+# Map a finding's BASE rule key → AWS correlation rule descriptor.
+_AWS_S3_RULE = {
+    "correlation_key": "aws_s3_public_access_alert",
+    "correlation_type": "aws_s3_public_access_alert",
+    "severity": "high",
+    "phrase": "S3 public-access configuration risk aligned with an AWS provider security finding",
+    "summary_subject": "An S3 bucket configuration risk",
+    "summary_provider": "an AWS provider security finding (GuardDuty / Access Analyzer)",
+}
+_AWS_IAM_RULE = {
+    "correlation_key": "aws_iam_credential_alert",
+    "correlation_type": "aws_iam_credential_alert",
+    "severity": "high",
+    "phrase": "IAM configuration risk aligned with an AWS provider credential finding",
+    "summary_subject": "An IAM configuration risk",
+    "summary_provider": "an AWS provider credential finding (GuardDuty)",
+}
+
+# finding base rule → (AWS correlation rule, evidence key holding the resource).
+AWS_CORRELATION_RULES: dict[str, tuple[dict[str, Any], str]] = {
+    "aws_s3_public_policy": (_AWS_S3_RULE, "bucket"),
+    "aws_s3_public_acl": (_AWS_S3_RULE, "bucket"),
+    "aws_iam_admin_policy_attached": (_AWS_IAM_RULE, "principal_name"),
+    "aws_access_key_unused": (_AWS_IAM_RULE, "username"),
+}
+
+
+def _norm_resource(value: Any) -> Optional[str]:
+    """Normalize a resource identifier to a comparable bare name.
+
+    Reduces ARNs to their final segment (``arn:aws:s3:::my-bucket`` → ``my-bucket``;
+    ``arn:aws:iam::123:user/deploy`` → ``deploy``) and lower-cases. Returns None
+    for empty / non-string values so empty keys never match.
+    """
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    if "arn:aws:" in s:
+        if "/" in s:
+            s = s.rsplit("/", 1)[-1]
+        else:
+            s = s.rsplit(":", 1)[-1]
+    s = s.strip()
+    return s.lower() or None
+
+
+def _aws_finding_resource_key(finding: SecurityFinding) -> Optional[str]:
+    """Extract the normalized resource name a finding references (from evidence)."""
+    base = _base_rule(finding.finding_key)
+    mapping = AWS_CORRELATION_RULES.get(base)
+    if mapping is None:
+        return None
+    _rule_desc, evidence_key = mapping
+    evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
+    return _norm_resource(evidence.get(evidence_key))
+
+
+def build_aws_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    resource_key: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build an AWS correlation dict (not persisted) from a matched finding + alert."""
+    severity = rule["severity"]
+    # A provider alert flagged "critical" raises the review priority.
+    meta = event.event_metadata if isinstance(event.event_metadata, dict) else {}
+    if meta.get("severity_label") == "critical":
+        severity = "critical"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['phrase']} ({resource_key})"
+    summary = (
+        f"{rule['summary_subject']} (\"{finding.title}\") and {rule['summary_provider']} "
+        f"(\"{event.event_type}\") were observed for the same resource "
+        f"\"{resource_key}\" within the review window. {_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata(
+        {
+            "resource": resource_key,
+            "finding_rule": _base_rule(finding.finding_key),
+            "finding_severity": finding.severity,
+            "event_type": event.event_type,
+            "region": meta.get("region") if isinstance(meta.get("region"), str) else None,
+            "account_id": meta.get("account_id")
+            if isinstance(meta.get("account_id"), str)
+            else None,
+            "window_hours": int(WINDOW.total_seconds() // 3600),
+        }
+    )
+
+    return {
+        "provider": PROVIDER_AWS,
+        "correlation_key": rule["correlation_key"],
+        "correlation_type": rule["correlation_type"],
+        "severity": severity,
+        # Exact same-resource match between a config risk and a provider-
+        # adjudicated alert is strong (but still circumstantial) evidence.
+        "confidence": "high",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        # carried for signal creation (not a column):
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_aws_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active AWS findings with AWS provider alerts for a workspace.
+
+    Conservative + resource-driven: a finding only matches an alert that
+    references the SAME bucket / IAM principal name within the finding's review
+    window. Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_AWS,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in AWS_CORRELATION_RULES
+    ]
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_AWS,
+            SecurityActivityEvent.source == "security_alert",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    # Index alerts by normalized resource key for cheap, exact lookup.
+    events_by_resource: dict[str, list[SecurityActivityEvent]] = {}
+    for ev in events:
+        key = _norm_resource(ev.resource_id)
+        if key:
+            events_by_resource.setdefault(key, []).append(ev)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        resource_key = _aws_finding_resource_key(finding)
+        if not resource_key:
+            continue  # no safe resource name to match on
+        rule, _evidence_key = AWS_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        for ev in events_by_resource.get(resource_key, []):
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            correlation = build_aws_correlation(
+                finding=finding, event=ev, resource_key=resource_key, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_AWS,
         "findings_scanned": len(findings),
         "events_scanned": len(events),
         "correlations_created": created,

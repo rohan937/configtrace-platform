@@ -935,7 +935,11 @@ def generate_security_correlations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> SecurityCorrelationGenerateResponse:
-    """Generate risk×activity correlations (M66.6). Admin/owner; GitHub-only.
+    """Generate risk×activity correlations. Admin/owner.
+
+    M66.6 (github): Configuration Risk × GitHub audit activity.
+    M67.3 (aws): AWS Configuration Risk × AWS provider alerts (GuardDuty /
+    Access Analyzer), matched on the SAME bucket / IAM principal name.
 
     Idempotent — re-running creates no duplicates. An unsupported provider yields
     an empty summary.
@@ -946,12 +950,17 @@ def generate_security_correlations(
     )
 
     provider = (body.provider if body and body.provider else "github").lower()
-    if provider != "github":
+    if provider == "github":
+        summary = security_signal_correlation_service.generate_github_correlations(
+            workspace_id=workspace_id, db=db
+        )
+    elif provider == "aws":
+        summary = security_signal_correlation_service.generate_aws_correlations(
+            workspace_id=workspace_id, db=db
+        )
+    else:
         return SecurityCorrelationGenerateResponse(provider=provider)
 
-    summary = security_signal_correlation_service.generate_github_correlations(
-        workspace_id=workspace_id, db=db
-    )
     return SecurityCorrelationGenerateResponse(**summary)
 
 

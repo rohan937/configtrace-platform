@@ -190,10 +190,11 @@ function Body({ c }: { c: SecuritySignalCorrelation }) {
         }}
       >
         <p style={{ margin: 0, fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
-          A configuration risk and GitHub audit activity were observed for the same
-          repository within the review window. This is evidence for review. It does
-          not by itself confirm compromise or unauthorized access, and ConfigTrace
-          does not identify attackers.
+          {c.provider === "aws"
+            ? "A configuration risk and an AWS provider security finding (GuardDuty / Access Analyzer) were observed for the same resource within the review window."
+            : "A configuration risk and GitHub audit activity were observed for the same repository within the review window."}{" "}
+          This is evidence for review. It does not by itself confirm compromise or
+          unauthorized access, and ConfigTrace does not identify attackers.
         </p>
       </div>
     </div>
