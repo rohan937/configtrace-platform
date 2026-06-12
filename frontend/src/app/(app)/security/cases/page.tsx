@@ -168,17 +168,17 @@ export default function CasesPage() {
           style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
         >
           <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the AWS incident demo:</strong>{" "}
-            seed a demo AWS evidence chain using a public S3 configuration risk and
-            an Access Analyzer provider finding (clearly marked demo, no real AWS
-            sync).
+            <strong style={{ color: "#e8eaf0" }}>Try the AWS security demo:</strong>{" "}
+            seed a sample AWS evidence chain across configuration risk, provider
+            findings, CloudTrail activity, S3 data events, and VPC Flow Logs
+            (clearly marked demo, no real AWS sync).
           </span>
           <button
             onClick={() => onSeedDemo("aws")}
             disabled={demoBusy}
             style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#f5a623", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
           >
-            {demoBusy ? "Working…" : "Load AWS incident demo"}
+            {demoBusy ? "Working…" : "Load AWS security demo"}
           </button>
           <button
             onClick={() => onClearDemo("aws")}

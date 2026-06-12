@@ -168,9 +168,20 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
 
     # ── Executive summary ──────────────────────────────────────────────────────
     status_label = case.status.replace("_", " ")
-    provider_label = {"github": "GitHub", "aws": "AWS"}.get(
-        (case.provider or "").lower(), case.provider or ""
-    )
+    # Prefer the case's declared provider; otherwise derive the dominant provider
+    # from the linked evidence so an AWS-only case reads as "AWS" even when the
+    # case provider was never set.
+    provider_key = (case.provider or "").lower()
+    if not provider_key:
+        counts: dict[str, int] = {}
+        for grp in (signals, risks, activity_events, correlations):
+            for item in grp:
+                p = (item.get("provider") or "").lower()
+                if p:
+                    counts[p] = counts.get(p, 0) + 1
+        if counts:
+            provider_key = max(counts, key=counts.get)
+    provider_label = {"github": "GitHub", "aws": "AWS"}.get(provider_key, provider_key)
     evidence_label = f"{provider_label} incident evidence".strip()
     executive_summary = (
         f"Investigation case \"{case.title}\" (status: {status_label}) groups "

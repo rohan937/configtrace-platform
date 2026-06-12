@@ -56,7 +56,14 @@ const GITHUB_SIGNAL_TYPES = [
   "ruleset_change",
   "secret_scanning_alert",
 ];
-const AWS_SIGNAL_TYPES = ["aws_guardduty", "aws_access_analyzer"];
+const AWS_SIGNAL_TYPES = [
+  "aws_guardduty",
+  "aws_access_analyzer",
+  "aws_security_hub_finding",
+  "iam_behavior_timeline",
+  "s3_object_access_spike",
+  "vpc_flow_activity_signal",
+];
 
 const HIGH_SEVERITIES = new Set(["critical", "high"]);
 

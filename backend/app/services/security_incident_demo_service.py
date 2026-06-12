@@ -44,6 +44,9 @@ from app.services import security_case_service as case_svc
 from app.services import security_finding_service as finding_svc
 from app.services import security_incident_signal_service as signal_svc
 from app.services import security_signal_correlation_service as corr_svc
+from app.services import aws_iam_behavior_service as behavior_svc
+from app.services import aws_s3_access_signal_service as s3_spike_svc
+from app.services import aws_vpc_flow_signal_service as vpc_flow_svc
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +64,8 @@ AWS_DEMO_BUCKET = "configtrace-demo-public-bucket"
 AWS_DEMO_CASE_SOURCE = "demo_aws_incident"
 AWS_DEMO_REGION = "us-east-1"
 AWS_DEMO_ACCOUNT_ID = "000000000000"  # RFC-style placeholder, not a real account
+AWS_DEMO_PRINCIPAL = "configtrace-demo-deploy"  # sample IAM principal name
+AWS_DEMO_ENI = "eni-0configtracedemo"           # sample network interface id
 
 
 def _utcnow() -> datetime:
@@ -434,17 +439,154 @@ def seed_aws(*, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session) 
         workspace_id=workspace_id, correlation=corr_dict, db=db
     )
 
+    # ── Richer AWS evidence layers (M67.12) — ONE coherent case, a representative
+    # sample from each AWS source (not noise). All are anchored on the hidden demo
+    # integration, so ``clear_aws`` removes them too.
+
+    def _demo_activity(*, source, event_type, metadata, resource_type=None,
+                       resource_id=None, actor_id=None, actor_type=None):
+        norm = activity_svc.normalize_activity_event(
+            provider="aws", source=source, event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-aws-{uuid.uuid4().hex[:12]}",
+            actor_id=actor_id, actor_type=actor_type,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=metadata,
+        )
+        _o2, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    extra_signals: list[Any] = []
+    extra_activity: list[Any] = []
+
+    # (a) Security Hub finding (provider-reported) → Security Hub signal.
+    sh_activity = _demo_activity(
+        source="security_hub", event_type="aws.security_hub.s3_finding",
+        resource_type="AwsS3Bucket", resource_id=f"arn:aws:s3:::{AWS_DEMO_BUCKET}",
+        actor_type="provider_finding",
+        metadata={
+            "finding_type": "Software and Configuration Checks/AWS Security Best Practices",
+            "finding_title": "S3 Block Public Access setting should be enabled",
+            "severity_label": "high", "product_name": "Security Hub",
+            "company_name": "AWS", "account_id": AWS_DEMO_ACCOUNT_ID,
+            "region": AWS_DEMO_REGION, "compliance_status": "FAILED",
+            "workflow_status": "NEW",
+        },
+    )
+    extra_activity.append(sh_activity)
+    sh_dict = signal_svc.build_aws_security_hub_signal_from_activity_event(sh_activity)
+    if sh_dict is not None:
+        _o3, sh_signal = signal_svc.upsert_incident_signal(
+            workspace_id=workspace_id, signal=sh_dict, db=db)
+        extra_signals.append(sh_signal)
+
+    # (b) CloudTrail IAM management activity → IAM behavior signal.
+    ct_events = [
+        _demo_activity(
+            source="cloudtrail", event_type="aws.iam.create_access_key",
+            resource_type="aws_iam", resource_id=AWS_DEMO_PRINCIPAL,
+            actor_id=AWS_DEMO_PRINCIPAL, actor_type="IAMUser",
+            metadata={"event_name": "CreateAccessKey", "event_source": "iam.amazonaws.com",
+                      "aws_region": AWS_DEMO_REGION, "account_id": AWS_DEMO_ACCOUNT_ID,
+                      "user_name": AWS_DEMO_PRINCIPAL},
+        ),
+        _demo_activity(
+            source="cloudtrail", event_type="aws.iam.attach_user_policy",
+            resource_type="aws_iam", resource_id=AWS_DEMO_PRINCIPAL,
+            actor_id=AWS_DEMO_PRINCIPAL, actor_type="IAMUser",
+            metadata={"event_name": "AttachUserPolicy", "event_source": "iam.amazonaws.com",
+                      "aws_region": AWS_DEMO_REGION, "account_id": AWS_DEMO_ACCOUNT_ID,
+                      "user_name": AWS_DEMO_PRINCIPAL, "resource_name": "AdministratorAccess"},
+        ),
+    ]
+    extra_activity.append(ct_events[-1])
+    iam_dict = behavior_svc.build_iam_behavior_signal(events=ct_events, match={
+        "signal_key": "aws.iam_behavior.access_key_policy_chain",
+        "severity": "high",
+        "phrase": "IAM access key creation followed by policy change",
+        "summary_core": (
+            "CloudTrail shows an IAM access key event and a policy change for the "
+            "same principal/resource in the review window."
+        ),
+        "trigger_events": ct_events,
+    })
+    if iam_dict is not None:
+        _o4, iam_signal = signal_svc.upsert_incident_signal(
+            workspace_id=workspace_id, signal=iam_dict, db=db)
+        extra_signals.append(iam_signal)
+
+    # (c) S3 object-level data events → S3 object-access spike signal.
+    s3_events = [
+        _demo_activity(
+            source="s3_data_event", event_type="aws.s3.data.get_object",
+            resource_type="aws_s3_bucket", resource_id=AWS_DEMO_BUCKET,
+            actor_id=AWS_DEMO_PRINCIPAL, actor_type="IAMUser",
+            metadata={"bucket_name": AWS_DEMO_BUCKET, "object_key_hash": f"demohash{i}",
+                      "object_key_prefix": "exports", "event_name": "GetObject"},
+        )
+        for i in range(6)
+    ]
+    extra_activity.append(s3_events[0])
+    s3_dict = s3_spike_svc.build_s3_access_signal(events=s3_events, match={
+        "pattern": "high_read_volume",
+        "signal_key": "aws.s3_access.high_read_volume",
+        "severity": "high",
+        "phrase": "High S3 object read volume by principal",
+        "summary_core": (
+            "CloudTrail S3 data events show elevated object-read activity for one "
+            "principal and bucket."
+        ),
+        "trigger_events": s3_events,
+    })
+    if s3_dict is not None:
+        _o5, s3_signal = signal_svc.upsert_incident_signal(
+            workspace_id=workspace_id, signal=s3_dict, db=db)
+        extra_signals.append(s3_signal)
+
+    # (d) VPC Flow Log network activity → VPC flow signal.
+    vpc_events = [
+        _demo_activity(
+            source="vpc_flow_log", event_type="aws.vpc.flow.accept",
+            resource_type="aws_network_interface", resource_id=AWS_DEMO_ENI,
+            actor_type="network_flow",
+            metadata={"interface_id": AWS_DEMO_ENI, "dst_port": 22, "protocol": 6,
+                      "bytes": 4096, "packets": 12, "action": "ACCEPT",
+                      "aws_region": AWS_DEMO_REGION},
+        )
+        for _ in range(3)
+    ]
+    extra_activity.append(vpc_events[0])
+    vpc_dict = vpc_flow_svc.build_vpc_flow_signal(events=vpc_events, match={
+        "pattern": "sensitive_port_accept",
+        "signal_key": "aws.vpc_flow.sensitive_port_accept",
+        "severity": "high",
+        "phrase": "Accepted network flow to sensitive port",
+        "summary_core": (
+            "VPC Flow Logs show accepted network flow activity to a sensitive "
+            "destination port."
+        ),
+        "trigger_events": vpc_events,
+    })
+    if vpc_dict is not None:
+        _o6, vpc_signal = signal_svc.upsert_incident_signal(
+            workspace_id=workspace_id, signal=vpc_dict, db=db)
+        extra_signals.append(vpc_signal)
+
     # 7. Case linking all the evidence (marked demo via metadata.source).
     case = case_svc.create_case(
         workspace_id=workspace_id,
         user_id=actor_user_id,
         title="[Demo] AWS incident investigation",
         summary=(
-            "Demo investigation case. A configuration risk on an AWS S3 bucket was "
-            "aligned with a provider-reported AWS security finding (Access Analyzer) "
-            "for the same resource. This is a human-reviewed case presenting evidence "
-            "for review — ConfigTrace does not read raw customer data and does not "
-            "automatically confirm compromise or unauthorized access."
+            "Demo investigation case. It groups AWS security evidence across a "
+            "configuration risk, provider-reported findings (Access Analyzer and "
+            "Security Hub), CloudTrail management activity, S3 object-level activity, "
+            "and VPC network-flow activity into review signals. This is a "
+            "human-reviewed case presenting evidence for review — ConfigTrace does "
+            "not read raw customer data and does not automatically confirm "
+            "compromise, exfiltration, or intrusion."
         ),
         severity=correlation.severity,
         provider="aws",
@@ -456,6 +598,12 @@ def seed_aws(*, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session) 
     case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=activity.id, actor_user_id=actor_user_id, db=db)
     if aws_signal is not None:
         case_svc.link_object_to_case(case=case, object_type="signal", object_id=aws_signal.id, actor_user_id=actor_user_id, db=db)
+    # Link the richer AWS evidence (one representative activity event per source +
+    # each derived review signal) so the case + report span every AWS layer.
+    for sig in extra_signals:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=sig.id, actor_user_id=actor_user_id, db=db)
+    for ev in extra_activity:
+        case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=ev.id, actor_user_id=actor_user_id, db=db)
 
     logger.info("aws_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
     return {
