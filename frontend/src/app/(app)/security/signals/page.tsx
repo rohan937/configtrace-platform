@@ -334,10 +334,11 @@ export default function IncidentSignalsPage() {
 
       <p style={{ margin: "26px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
         GitHub signals come from normalized audit activity; AWS signals come from
-        provider-reported GuardDuty / Access Analyzer findings. ConfigTrace does
-        not automatically confirm breaches, attacker presence, or unauthorized
-        access. Signals can be correlated with Configuration Risks and grouped
-        into human-reviewed cases.
+        provider-reported GuardDuty / Access Analyzer findings; Cloudflare signals
+        come from audit activity and WAF/security events. ConfigTrace does not
+        automatically confirm breaches, attacker presence, or unauthorized access.
+        Signals can be correlated with Configuration Risks and grouped into
+        human-reviewed cases.
       </p>
     </div>
   );
@@ -350,7 +351,7 @@ function Hero() {
     <>
       <PageHeader
         title="Incident Signals"
-        description="Review security signals from GitHub audit activity and AWS provider security findings."
+        description="Review security signals from GitHub audit activity, AWS provider security findings, and Cloudflare audit/WAF activity."
       />
       <div
         className="bg-surface1 border border-border"
@@ -358,7 +359,7 @@ function Hero() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
           <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
-            GitHub + AWS beta
+            GitHub + AWS + Cloudflare beta
           </span>
           <span
             style={{
@@ -715,10 +716,15 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
         (isAdmin
           ? " Use “Generate AWS signals” above once AWS alerts have been ingested."
           : " A workspace admin can sync AWS alerts and generate AWS signals.")
-      : "Run GitHub activity sync first, then generate signals." +
-        (isAdmin
-          ? " Use “Generate signals” above once activity has been ingested."
-          : " A workspace admin can ingest activity and generate signals.");
+      : provider === "cloudflare"
+        ? "Sync Cloudflare audit and WAF/security events first, then generate Cloudflare signals." +
+          (isAdmin
+            ? " Use “Generate Cloudflare signals” / “Generate Cloudflare WAF signals” above once events have been ingested."
+            : " A workspace admin can sync Cloudflare events and generate Cloudflare signals.")
+        : "Run GitHub activity sync first, then generate signals." +
+          (isAdmin
+            ? " Use “Generate signals” above once activity has been ingested."
+            : " A workspace admin can ingest activity and generate signals.");
   return (
     <div
       className="bg-surface1 border border-border"

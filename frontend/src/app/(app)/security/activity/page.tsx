@@ -370,10 +370,11 @@ export default function ActivityEventsPage() {
       )}
 
       <p style={{ margin: "26px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-        These are control-plane audit events and provider-reported findings. They
-        do not by themselves confirm breach, attacker presence, or unauthorized
-        access. They are evidence for review and the basis for Incident Signals
-        and Configuration Risk correlations.
+        These are control-plane audit events, provider-reported findings, and
+        Cloudflare audit/WAF security events. They do not by themselves confirm
+        breach, attacker presence, or unauthorized access. They are evidence for
+        review and the basis for Incident Signals and Configuration Risk
+        correlations.
       </p>
     </div>
   );
@@ -386,11 +387,11 @@ function Hero() {
     <>
       <PageHeader
         title="Activity Events"
-        description="Normalized GitHub audit activity and AWS provider security findings, used as evidence for Incident Signals."
+        description="Normalized GitHub audit activity, AWS provider security findings, and Cloudflare audit/WAF events, used as evidence for Incident Signals."
       />
       <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub + AWS beta</span>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub + AWS + Cloudflare beta</span>
           <Badge>Beta</Badge>
         </div>
         <p style={{ margin: 0, fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>

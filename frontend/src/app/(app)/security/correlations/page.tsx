@@ -178,7 +178,7 @@ export default function CorrelationsPage() {
       ) : error ? (
         <ErrorState message={error} />
       ) : rows.length === 0 ? (
-        <EmptyState isAdmin={isAdmin} />
+        <EmptyState isAdmin={isAdmin} provider={provider} />
       ) : (
         <>
           <SectionLabel>
@@ -408,13 +408,19 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function EmptyState({ isAdmin }: { isAdmin: boolean }) {
+function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string }) {
+  const scope =
+    provider === "aws"
+      ? "the same AWS resource (bucket / IAM principal)"
+      : provider === "cloudflare"
+        ? "the same Cloudflare zone, host, or risk area"
+        : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>
       <p style={{ margin: "8px auto 0", maxWidth: "480px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>
-        Correlations appear once you have both Configuration Risks and GitHub
-        activity for the same repository.
+        Correlations appear once you have both Configuration Risks and related
+        activity for {scope}.
         {isAdmin
           ? " Use “Generate correlations” above once both exist."
           : " A workspace admin can generate correlations once both exist."}
