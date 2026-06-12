@@ -124,6 +124,8 @@ from app.schemas.security_aws_security_hub import (
 from app.schemas.security_aws_s3_data_events import (
     AwsS3DataEventSyncRequest,
     AwsS3DataEventSyncResponse,
+    AwsS3AccessSignalGenerateRequest,
+    AwsS3AccessSignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -146,6 +148,7 @@ from app.services import aws_cloudtrail_ingestion_service
 from app.services import aws_iam_behavior_service
 from app.services import aws_security_hub_ingestion_service
 from app.services import aws_s3_data_event_ingestion_service
+from app.services import aws_s3_access_signal_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1623,6 +1626,42 @@ def sync_aws_s3_data_events(
         max_files=max_files, max_events=max_events,
     )
     return AwsS3DataEventSyncResponse(**summary)
+
+
+@router.post(
+    "/aws-s3-data-events/generate-signals",
+    response_model=AwsS3AccessSignalGenerateResponse,
+)
+def generate_aws_s3_access_signals(
+    body: Optional[AwsS3AccessSignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsS3AccessSignalGenerateResponse:
+    """Generate S3 object-access-spike signals from S3 data events (M67.9).
+
+    Admin/owner only. Groups S3 object-level activity by principal + bucket and
+    surfaces review-worthy access spikes as Incident Signals. Idempotent —
+    re-running creates no duplicates. Members can view results via
+    ``GET /security/signals?provider=aws``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 200
+    read_threshold = (
+        min(body.read_threshold, 100000) if body and body.read_threshold
+        else aws_s3_access_signal_service.DEFAULT_READ_THRESHOLD
+    )
+
+    summary = aws_s3_access_signal_service.generate_aws_s3_access_signals(
+        workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_signals=max_signals,
+        read_threshold=read_threshold,
+    )
+    return AwsS3AccessSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

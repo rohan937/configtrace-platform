@@ -25,6 +25,7 @@ import {
   generateAwsIncidentSignals,
   generateAwsIamBehaviorSignals,
   generateAwsSecurityHubSignals,
+  generateAwsS3AccessSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -170,6 +171,24 @@ export default function IncidentSignalsPage() {
     }
   }, [getToken, load]);
 
+  const onGenerateS3Access = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setBehaviorNote(null);
+    try {
+      const token = await getToken();
+      const res = await generateAwsS3AccessSignals(token);
+      setBehaviorNote(
+        `S3 access: scanned ${res.events_scanned} data event(s) across ${res.buckets_scanned} bucket(s) / ${res.actors_scanned} principal(s) · ${res.signals_created} signal(s) created · ${res.signals_skipped} skipped.`,
+      );
+      await load();
+    } catch {
+      setGenError("Could not generate S3 access signals. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const open = signals.filter((s) => s.status === "open").length;
     const high = signals.filter((s) => HIGH_SEVERITIES.has(s.severity)).length;
@@ -199,6 +218,7 @@ export default function IncidentSignalsPage() {
         behaviorNote={behaviorNote}
         onGenerateBehavior={onGenerateBehavior}
         onGenerateSecurityHub={onGenerateSecurityHub}
+        onGenerateS3Access={onGenerateS3Access}
       />
 
       {/* Summary cards */}
@@ -326,6 +346,7 @@ function GenerateBar({
   behaviorNote,
   onGenerateBehavior,
   onGenerateSecurityHub,
+  onGenerateS3Access,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -337,11 +358,12 @@ function GenerateBar({
   behaviorNote: string | null;
   onGenerateBehavior: () => void;
   onGenerateSecurityHub: () => void;
+  onGenerateS3Access: () => void;
 }) {
   const isAws = provider === "aws";
   const label = isAws ? "Generate AWS signals" : "Generate signals";
   const desc = isAws
-    ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM, KMS, and S3 management activity."
+    ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM, KMS, and S3 management activity, or S3 object-level data events."
     : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
@@ -434,6 +456,26 @@ function GenerateBar({
             }}
           >
             Generate Security Hub signals
+          </button>
+        )}
+        {isAws && (
+          <button
+            onClick={onGenerateS3Access}
+            disabled={!isAdmin || generating}
+            title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+              opacity: generating ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate S3 access signals
           </button>
         )}
       </div>

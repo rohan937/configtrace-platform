@@ -1868,6 +1868,14 @@ export interface AwsBehaviorSignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface AwsS3AccessSignalGenerateResponse {
+  provider: string;
+  events_scanned: number;
+  buckets_scanned: number;
+  actors_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface AwsSecurityHubSyncResponse {
   attempted: boolean;
   succeeded: boolean;

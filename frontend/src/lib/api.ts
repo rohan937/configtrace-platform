@@ -697,6 +697,12 @@ export async function generateAwsSecurityHubSignals(
   return apiFetch(`/security/aws-security-hub/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateAwsS3AccessSignals(
+  token?: string | null,
+): Promise<import("@/types").AwsS3AccessSignalGenerateResponse> {
+  return apiFetch(`/security/aws-s3-data-events/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 /** Fetch a metadata-only Case Evidence Report payload (M66.9). */
 export async function getSecurityCaseReport(
   caseId: string,

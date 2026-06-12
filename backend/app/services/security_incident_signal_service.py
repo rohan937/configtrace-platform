@@ -67,6 +67,12 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "product_name",       # ASFF ProductName
         "workflow_status",    # ASFF Workflow.Status
         "compliance_status",  # ASFF Compliance.Status
+        # AWS S3 object-access-spike fields (M67.9) — safe aggregate counts only.
+        "bucket_name",        # S3 bucket name (resource identifier)
+        "unique_object_count",  # distinct object_key_hash count
+        "object_key_prefix",  # sanitized, truncated prefix (or omitted)
+        "pattern",            # which spike pattern fired
+        "source",             # originating activity source ("s3_data_event")
     }
 )
 

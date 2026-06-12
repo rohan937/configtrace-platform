@@ -36,3 +36,22 @@ class AwsS3DataEventSyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class AwsS3AccessSignalGenerateRequest(BaseModel):
+    """POST /security/aws-s3-data-events/generate-signals request (optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+    read_threshold: Optional[int] = Field(default=None, ge=2, le=100000)
+
+
+class AwsS3AccessSignalGenerateResponse(BaseModel):
+    """S3 object-access-spike signal generation summary (M67.9)."""
+
+    provider: str
+    events_scanned: int = 0
+    buckets_scanned: int = 0
+    actors_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0
