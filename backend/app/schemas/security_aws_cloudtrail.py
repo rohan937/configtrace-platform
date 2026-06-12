@@ -28,3 +28,20 @@ class AwsCloudTrailSyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class AwsBehaviorSignalGenerateRequest(BaseModel):
+    """POST /security/aws-cloudtrail/generate-behavior-signals request (optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class AwsBehaviorSignalGenerateResponse(BaseModel):
+    """IAM behavior-timeline signal generation summary (M67.6)."""
+
+    provider: str
+    events_scanned: int = 0
+    principals_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

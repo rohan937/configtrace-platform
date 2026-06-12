@@ -1861,6 +1861,13 @@ export interface AwsSignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface AwsBehaviorSignalGenerateResponse {
+  provider: string;
+  events_scanned: number;
+  principals_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 
 // GitHub Incident Workflow demo (M66.10)
 export interface IncidentDemoStatus {

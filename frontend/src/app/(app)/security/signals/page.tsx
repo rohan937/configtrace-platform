@@ -23,6 +23,7 @@ import {
   getSecurityIncidentSignals,
   generateSecurityIncidentSignals,
   generateAwsIncidentSignals,
+  generateAwsIamBehaviorSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -75,6 +76,7 @@ export default function IncidentSignalsPage() {
   const [generating, setGenerating] = useState(false);
   const [genResult, setGenResult] = useState<SecuritySignalGenerateResponse | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
+  const [behaviorNote, setBehaviorNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -109,6 +111,7 @@ export default function IncidentSignalsPage() {
     setSignalType("");
     setGenResult(null);
     setGenError(null);
+    setBehaviorNote(null);
   }, []);
 
   const onGenerate = useCallback(async () => {
@@ -129,6 +132,24 @@ export default function IncidentSignalsPage() {
       setGenerating(false);
     }
   }, [getToken, provider, load]);
+
+  const onGenerateBehavior = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setBehaviorNote(null);
+    try {
+      const token = await getToken();
+      const res = await generateAwsIamBehaviorSignals(token);
+      setBehaviorNote(
+        `IAM behavior: scanned ${res.events_scanned} CloudTrail events across ${res.principals_scanned} principal(s) · ${res.signals_created} signal(s) created · ${res.signals_skipped} skipped.`,
+      );
+      await load();
+    } catch {
+      setGenError("Could not generate IAM behavior signals. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [getToken, load]);
 
   const metrics = useMemo(() => {
     const open = signals.filter((s) => s.status === "open").length;
@@ -156,6 +177,8 @@ export default function IncidentSignalsPage() {
         genResult={genResult}
         genError={genError}
         onGenerate={onGenerate}
+        behaviorNote={behaviorNote}
+        onGenerateBehavior={onGenerateBehavior}
       />
 
       {/* Summary cards */}
@@ -280,6 +303,8 @@ function GenerateBar({
   genResult,
   genError,
   onGenerate,
+  behaviorNote,
+  onGenerateBehavior,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -288,11 +313,13 @@ function GenerateBar({
   genResult: SecuritySignalGenerateResponse | null;
   genError: string | null;
   onGenerate: () => void;
+  behaviorNote: string | null;
+  onGenerateBehavior: () => void;
 }) {
   const isAws = provider === "aws";
   const label = isAws ? "Generate AWS signals" : "Generate signals";
   const desc = isAws
-    ? "Generate Incident Signals from provider-reported AWS security findings."
+    ? "Generate Incident Signals from provider-reported AWS security findings, or review signals from CloudTrail IAM, KMS, and S3 management activity."
     : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
@@ -320,29 +347,54 @@ function GenerateBar({
             {genResult.signals_created} created · {genResult.signals_skipped} skipped.
           </div>
         )}
+        {behaviorNote && (
+          <div style={{ fontSize: "12px", color: "#3ccf7e", marginTop: "6px" }}>{behaviorNote}</div>
+        )}
         {genError && (
           <div style={{ fontSize: "12px", color: "#e84040", marginTop: "6px" }}>{genError}</div>
         )}
       </div>
-      <button
-        onClick={onGenerate}
-        disabled={!isAdmin || generating}
-        title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
-        style={{
-          fontSize: "13px",
-          fontWeight: 500,
-          color: isAdmin ? "#0b0d12" : "#565b6e",
-          background: isAdmin ? "#6b9cf8" : "#1e2030",
-          border: "none",
-          padding: "8px 16px",
-          borderRadius: "8px",
-          cursor: !isAdmin || generating ? "not-allowed" : "pointer",
-          opacity: generating ? 0.7 : 1,
-          whiteSpace: "nowrap",
-        }}
-      >
-        {generating ? "Generating…" : label}
-      </button>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <button
+          onClick={onGenerate}
+          disabled={!isAdmin || generating}
+          title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
+          style={{
+            fontSize: "13px",
+            fontWeight: 500,
+            color: isAdmin ? "#0b0d12" : "#565b6e",
+            background: isAdmin ? "#6b9cf8" : "#1e2030",
+            border: "none",
+            padding: "8px 16px",
+            borderRadius: "8px",
+            cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+            opacity: generating ? 0.7 : 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {generating ? "Generating…" : label}
+        </button>
+        {isAws && (
+          <button
+            onClick={onGenerateBehavior}
+            disabled={!isAdmin || generating}
+            title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+              opacity: generating ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate IAM behavior signals
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -679,6 +679,12 @@ export async function generateAwsIncidentSignals(
   return apiFetch(`/security/aws-alerts/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateAwsIamBehaviorSignals(
+  token?: string | null,
+): Promise<import("@/types").AwsBehaviorSignalGenerateResponse> {
+  return apiFetch(`/security/aws-cloudtrail/generate-behavior-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 /** Fetch a metadata-only Case Evidence Report payload (M66.9). */
 export async function getSecurityCaseReport(
   caseId: string,

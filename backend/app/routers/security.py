@@ -113,6 +113,8 @@ from app.schemas.security_aws_alerts import (
 from app.schemas.security_aws_cloudtrail import (
     AwsCloudTrailSyncRequest,
     AwsCloudTrailSyncResponse,
+    AwsBehaviorSignalGenerateRequest,
+    AwsBehaviorSignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -132,6 +134,7 @@ from app.services import security_case_report_service
 from app.services import security_incident_demo_service
 from app.services import aws_security_alert_ingestion_service
 from app.services import aws_cloudtrail_ingestion_service
+from app.services import aws_iam_behavior_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1449,6 +1452,37 @@ def sync_aws_cloudtrail_events(
         lookback_hours=lookback_hours, max_pages=max_pages,
     )
     return AwsCloudTrailSyncResponse(**summary)
+
+
+@router.post(
+    "/aws-cloudtrail/generate-behavior-signals",
+    response_model=AwsBehaviorSignalGenerateResponse,
+)
+def generate_aws_iam_behavior_signals(
+    body: Optional[AwsBehaviorSignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsBehaviorSignalGenerateResponse:
+    """Generate IAM behavior-timeline signals from CloudTrail activity (M67.6).
+
+    Admin/owner only. Groups CloudTrail IAM/KMS/S3 management events by principal
+    and surfaces review-worthy behavior chains as Incident Signals. Idempotent —
+    re-running creates no duplicates. Members can view the resulting signals via
+    ``GET /security/signals?provider=aws``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 72
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 200
+
+    summary = aws_iam_behavior_service.generate_aws_iam_behavior_signals(
+        workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_signals=max_signals,
+    )
+    return AwsBehaviorSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

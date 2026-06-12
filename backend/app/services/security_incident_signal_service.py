@@ -52,6 +52,16 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "account_id",
         "region",
         "service_name",
+        # AWS IAM behavior-timeline fields (M67.6) — CloudTrail-derived summary.
+        "event_types",        # comma-joined trigger event types (flat string)
+        "actor_id",           # IAM principal/user identity for the chain
+        "resource_id",        # anchor resource identifier
+        "event_count",        # number of trigger events in the chain
+        "window_start",       # ISO timestamp of the chain window start
+        "window_end",         # ISO timestamp of the chain window end
+        "principal_hash",     # salted hash of the IAM principalId (never raw)
+        "policy_name",        # safe policy hint (e.g. "AdministratorAccess")
+        "resource_name",      # safe resource identifier
     }
 )
 
