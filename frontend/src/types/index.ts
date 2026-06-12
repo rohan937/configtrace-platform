@@ -1647,6 +1647,48 @@ export interface SecurityActivitySyncResponse {
   error_message: string | null;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Correlations (M66.6)
+
+   Configuration Risk × GitHub audit activity. A correlation links a finding to
+   audit activity on the same repository within a review window — evidence for
+   review, NOT a confirmed breach/attacker/compromise.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface SecuritySignalCorrelation {
+  id: string;
+  provider: string;
+  correlation_key: string;
+  correlation_type: string;
+  severity: SecuritySignalSeverity;
+  confidence: "high" | "medium" | "low";
+  status: SecuritySignalStatus;
+  title: string;
+  summary: string;
+  linked_signal_id: string | null;
+  linked_finding_id: string | null;
+  linked_activity_event_id: string | null;
+  linked_change_id: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  first_seen_at: string | null;
+  last_seen_at: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SecurityCorrelationGenerateRequest {
+  provider?: string;
+}
+
+export interface SecurityCorrelationGenerateResponse {
+  provider: string;
+  findings_scanned: number;
+  events_scanned: number;
+  correlations_created: number;
+  correlations_skipped: number;
+}
+
 export interface SecurityRulePack {
   name: string;
   version: string;

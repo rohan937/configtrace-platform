@@ -41,8 +41,11 @@ import type {
   ResourceListItem,
   SecurityActivityEvent,
   SecurityActivitySyncResponse,
+  SecurityCorrelationGenerateRequest,
+  SecurityCorrelationGenerateResponse,
   SecurityFinding,
   SecurityIncidentSignal,
+  SecuritySignalCorrelation,
   SecuritySignalGenerateRequest,
   SecuritySignalGenerateResponse,
   SnapshotListItem,
@@ -568,6 +571,53 @@ export async function generateSecurityIncidentSignals(
   token?: string | null,
 ): Promise<SecuritySignalGenerateResponse> {
   return apiFetch(`/security/signals/generate`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    token,
+  });
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Correlations (M66.6)
+
+   Configuration Risk × GitHub audit activity. Evidence for review — not
+   breach/attacker/compromise confirmations.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface GetSecurityCorrelationsParams {
+  provider?: string;
+  status?: string;
+  severity?: string;
+  correlation_type?: string;
+  page?: number;
+  page_size?: number;
+}
+
+/** List risk×activity correlations for the current user's workspace (M66.6). */
+export async function getSecurityCorrelations(
+  params: GetSecurityCorrelationsParams = {},
+  token?: string | null,
+): Promise<PaginatedResponse<SecuritySignalCorrelation>> {
+  return apiFetch(`/security/correlations${buildQuery(params)}`, { token });
+}
+
+/** Fetch a single workspace-scoped correlation (404 cross-workspace) (M66.6). */
+export async function getSecurityCorrelation(
+  correlationId: string,
+  token?: string | null,
+): Promise<SecuritySignalCorrelation> {
+  return apiFetch(`/security/correlations/${correlationId}`, { token });
+}
+
+/**
+ * Generate risk×activity correlations (M66.6). Admin/owner only; GitHub-only.
+ * Idempotent — re-running creates no duplicates.
+ */
+export async function generateSecurityCorrelations(
+  body: SecurityCorrelationGenerateRequest = {},
+  token?: string | null,
+): Promise<SecurityCorrelationGenerateResponse> {
+  return apiFetch(`/security/correlations/generate`, {
     method: "POST",
     body: JSON.stringify(body),
     token,

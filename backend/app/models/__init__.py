@@ -27,6 +27,7 @@ from app.models.security_beta_event import SecurityBetaEvent  # noqa: F401  (M63
 from app.models.security_beta_feedback import SecurityBetaFeedback  # noqa: F401  (M63.6)
 from app.models.security_activity_event import SecurityActivityEvent  # noqa: F401  (M66.2)
 from app.models.security_incident_signal import SecurityIncidentSignal  # noqa: F401  (M66.3)
+from app.models.security_signal_correlation import SecuritySignalCorrelation  # noqa: F401  (M66.6)
 
 __all__ = [
     "Base",
@@ -55,4 +56,5 @@ __all__ = [
     "SecurityBetaFeedback",
     "SecurityActivityEvent",
     "SecurityIncidentSignal",
+    "SecuritySignalCorrelation",
 ]

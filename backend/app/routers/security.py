@@ -83,6 +83,12 @@ from app.schemas.security_incident_signal import (
     SecuritySignalGenerateRequest,
     SecuritySignalGenerateResponse,
 )
+from app.schemas.security_signal_correlation import (
+    SecuritySignalCorrelationListResponse,
+    SecuritySignalCorrelationResponse,
+    SecurityCorrelationGenerateRequest,
+    SecurityCorrelationGenerateResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -95,6 +101,7 @@ from app.services import security_rule_pack
 from app.services import security_activity_event_service
 from app.services import github_activity_ingestion_service
 from app.services import security_incident_signal_service
+from app.services import security_signal_correlation_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -886,3 +893,99 @@ def get_security_signal(
     if signal is None:
         raise HTTPException(status_code=404, detail="Incident signal not found.")
     return SecurityIncidentSignalResponse.from_model(signal)
+
+
+# ── Correlations (M66.6) ──────────────────────────────────────────────────────
+#
+# Configuration Risk × audit-activity correlation — the core differentiator. A
+# correlation links a GitHub Configuration Risk finding to GitHub audit activity
+# on the same repository within a review window. Correlations are EVIDENCE FOR
+# REVIEW — they do NOT confirm a breach, attacker, compromise, or unauthorized
+# access.
+
+
+@router.post("/correlations/generate", response_model=SecurityCorrelationGenerateResponse)
+def generate_security_correlations(
+    body: Optional[SecurityCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCorrelationGenerateResponse:
+    """Generate risk×activity correlations (M66.6). Admin/owner; GitHub-only.
+
+    Idempotent — re-running creates no duplicates. An unsupported provider yields
+    an empty summary.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    provider = (body.provider if body and body.provider else "github").lower()
+    if provider != "github":
+        return SecurityCorrelationGenerateResponse(provider=provider)
+
+    summary = security_signal_correlation_service.generate_github_correlations(
+        workspace_id=workspace_id, db=db
+    )
+    return SecurityCorrelationGenerateResponse(**summary)
+
+
+@router.get("/correlations", response_model=SecuritySignalCorrelationListResponse)
+def list_security_correlations(
+    provider: Optional[str] = Query(None, description="Filter by provider."),
+    status: Optional[str] = Query(None, description="Filter by status."),
+    severity: Optional[str] = Query(None, description="Filter by severity."),
+    correlation_type: Optional[str] = Query(None, description="Filter by correlation_type."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecuritySignalCorrelationListResponse:
+    """List correlations for the user's workspace (M66.6). Member access.
+
+    Strictly workspace-scoped — never returns another workspace's correlations.
+    """
+    if status is not None and status not in VALID_SIGNAL_STATUSES:
+        raise HTTPException(status_code=422, detail=f"Invalid status: {status!r}")
+    if severity is not None and severity not in VALID_SIGNAL_SEVERITIES:
+        raise HTTPException(status_code=422, detail=f"Invalid severity: {severity!r}")
+
+    workspace_id = _current_workspace_id(current_user, db)
+    items, total = security_signal_correlation_service.list_correlations(
+        workspace_id=workspace_id,
+        db=db,
+        provider=provider,
+        status=status,
+        severity=severity,
+        correlation_type=correlation_type,
+        page=page,
+        page_size=page_size,
+    )
+    return SecuritySignalCorrelationListResponse(
+        items=[SecuritySignalCorrelationResponse.from_model(c) for c in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get(
+    "/correlations/{correlation_id}",
+    response_model=SecuritySignalCorrelationResponse,
+)
+def get_security_correlation(
+    correlation_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecuritySignalCorrelationResponse:
+    """Return a single workspace-scoped correlation (M66.6).
+
+    Cross-workspace access returns 404 (never leaks existence).
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    corr = security_signal_correlation_service.get_correlation(
+        correlation_id=correlation_id, workspace_id=workspace_id, db=db
+    )
+    if corr is None:
+        raise HTTPException(status_code=404, detail="Correlation not found.")
+    return SecuritySignalCorrelationResponse.from_model(corr)

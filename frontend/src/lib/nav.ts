@@ -90,6 +90,9 @@ export const SECURITY_NAV: NavItem[] = [
   // Activity Events — GitHub beta evidence viewer (M66.5). Normalized GitHub
   // audit activity behind the signals; control-plane metadata, not detection.
   { label: "Activity Events", href: "/security/activity", badge: "Beta" },
+  // Correlations — GitHub beta (M66.6). Configuration Risk × audit activity:
+  // evidence for review, not breach detection.
+  { label: "Correlations", href: "/security/correlations", badge: "Beta" },
   // Shared platform pages — reuse existing routes (no duplication).
   { label: "Integrations", href: "/integrations", shared: true },
   { label: "Alerts", href: "/settings/workspace/notifications", shared: true },
