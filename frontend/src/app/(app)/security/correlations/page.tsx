@@ -36,7 +36,13 @@ const PROVIDER_OPTIONS = ["github", "aws", "cloudflare"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: ["webhook_change", "branch_protection_change", "deploy_key_added"],
   aws: ["aws_s3_public_access_alert", "aws_iam_credential_alert"],
-  cloudflare: ["cloudflare_dns_change", "cloudflare_waf_change", "cloudflare_tls_change"],
+  cloudflare: [
+    "cloudflare_dns_change",
+    "cloudflare_waf_change",
+    "cloudflare_tls_change",
+    "cloudflare_access_policy_change",
+    "cloudflare_zone_setting_change",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 

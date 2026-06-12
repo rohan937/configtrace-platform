@@ -39,6 +39,9 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "actor",             # actor email/id who made the change
         "rule_id",           # WAF/firewall/page rule id
         "rule_name",         # WAF/firewall/page rule name
+        "setting_name",      # zone setting key (M68.3) — e.g. "security_level"
+        "policy_id",         # Access policy id (M68.3)
+        "policy_name",       # Access policy name (M68.3)
         "severity",          # provider-reported severity label
         "outcome",           # action result (success / failure)
         "repository",        # "owner/repo"

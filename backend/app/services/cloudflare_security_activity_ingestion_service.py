@@ -116,6 +116,26 @@ def normalize_audit_event(entry: dict[str, Any]) -> Optional[dict[str, Any]]:
     account_id = _safe_str(owner.get("id")) or _safe_str(entry.get("_account_id"))
 
     is_rule = event_type == "cloudflare.waf_rule.changed"
+    is_setting = event_type in (
+        "cloudflare.zone_setting.changed", "cloudflare.ssl_tls.changed"
+    )
+    is_access = event_type == "cloudflare.access_policy.changed"
+
+    # M68.3 — preserve a SAFE setting/policy name so zone-setting and Access
+    # correlations can match exactly (never the oldValue/newValue blobs).
+    md_blob = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+    setting_name = (
+        _safe_str(md_blob.get("setting_name"))
+        or _safe_str(md_blob.get("setting_key"))
+        or _safe_str(md_blob.get("setting_id"))
+    )
+    if not setting_name and is_setting:
+        # For a settings change the audit resource id is the setting key.
+        setting_name = _safe_str(resource_id)
+    policy_name = (
+        _safe_str(resource.get("name")) or _safe_str(md_blob.get("policy_name"))
+    ) if is_access else None
+
     metadata = {
         "zone_id": _safe_str(zone.get("id")),
         "zone_name": _safe_str(zone.get("name")),
@@ -123,6 +143,9 @@ def normalize_audit_event(entry: dict[str, Any]) -> Optional[dict[str, Any]]:
         "actor": actor_label,
         "rule_id": _safe_str(resource_id) if is_rule else None,
         "rule_name": _safe_str(resource.get("name")) if isinstance(resource, dict) else None,
+        "setting_name": setting_name if is_setting else None,
+        "policy_id": _safe_str(resource_id) if is_access else None,
+        "policy_name": policy_name,
         "event_source": EVENT_SOURCE,
         "severity": _safe_str(entry.get("severity")),
         "outcome": _safe_str(action.get("result")),

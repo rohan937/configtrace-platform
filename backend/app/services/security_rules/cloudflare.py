@@ -36,6 +36,7 @@ import ipaddress
 from typing import Any
 
 from app.connectors.cloudflare_schema import (
+    CLOUDFLARE_ACCESS_POLICY,
     CLOUDFLARE_WAF_RULE,
     CLOUDFLARE_ZONE_SETTING,
 )
@@ -54,6 +55,9 @@ _RULE_DEV_MODE_ON = "cloudflare_development_mode_on"
 _RULE_HSTS_DISABLED = "cloudflare_hsts_disabled"
 _RULE_WAF_RULE_DISABLED = "cloudflare_waf_rule_disabled"
 _RULE_DNS_PRIVATE_ORIGIN = "cloudflare_dns_private_origin"
+# M68.3 — Access policy rules (data-backed: decision + enabled, counts only).
+_RULE_ACCESS_POLICY_BYPASS = "cloudflare_access_policy_bypass"
+_RULE_ACCESS_POLICY_DISABLED = "cloudflare_access_policy_disabled"
 
 # DNS record types whose content is an IP address (for the private-origin rule).
 _IP_DNS_TYPES = {"A", "AAAA"}
@@ -71,6 +75,8 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
         return _eval_zone_setting(record)
     if rtype == CLOUDFLARE_WAF_RULE:
         return _eval_waf_rule(record)
+    if rtype == CLOUDFLARE_ACCESS_POLICY:
+        return _eval_access_policy(record)
     if rtype in _IP_DNS_TYPES:
         return _eval_dns_record(record)
     return []
@@ -275,6 +281,86 @@ def _eval_waf_rule(record: dict[str, Any]) -> list[FindingCandidate]:
             record_id=record_id,
         )
     ]
+
+
+# ── Access policy risks (M68.3) ──────────────────────────────────────────────
+#
+# Only fields the connector already exposes are used (decision + enabled). The
+# raw include/exclude/require lists are NEVER fetched (only counts), so an
+# "everyone allowed" rule cannot be inferred — that is intentionally DEFERRED to
+# avoid faking findings from data we do not have.
+
+
+def _eval_access_policy(record: dict[str, Any]) -> list[FindingCandidate]:
+    record_id = get_str(record, "record_id") or None
+    name = get_str(record, "name") or "an Access policy"
+    decision = get_str(record, "decision").lower()
+    app_id = get_str(record, "application_id")
+    out: list[FindingCandidate] = []
+
+    # A "bypass" decision lets matching requests skip Cloudflare Access identity
+    # verification entirely — a precise, reliable risk signal.
+    if decision == "bypass":
+        out.append(
+            FindingCandidate(
+                provider="cloudflare",
+                rule_key=_RULE_ACCESS_POLICY_BYPASS,
+                finding_key=make_finding_key(_RULE_ACCESS_POLICY_BYPASS, record_id),
+                severity="high",
+                title="Cloudflare Access policy uses a bypass decision",
+                description=(
+                    f"The Access policy '{name}' has a 'bypass' decision, so matching "
+                    f"requests skip Cloudflare Access identity verification. This may "
+                    f"reduce protection for the application."
+                ),
+                evidence={
+                    "rule": _RULE_ACCESS_POLICY_BYPASS,
+                    "policy_name": name,
+                    "decision": decision,
+                    "application_id": app_id,
+                },
+                remediation={
+                    "summary": "Review the Access bypass policy.",
+                    "steps": [
+                        "Confirm the bypass is intentional and tightly scoped.",
+                        "Replace a broad bypass with an explicit allow/require policy.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # An explicitly-disabled Access policy no longer enforces its controls.
+    if record.get("enabled") is False:
+        out.append(
+            FindingCandidate(
+                provider="cloudflare",
+                rule_key=_RULE_ACCESS_POLICY_DISABLED,
+                finding_key=make_finding_key(_RULE_ACCESS_POLICY_DISABLED, record_id),
+                severity="medium",
+                title="Cloudflare Access policy is disabled",
+                description=(
+                    f"The Access policy '{name}' is disabled, so its access controls "
+                    f"are not currently enforced. This could reduce protection for the "
+                    f"application."
+                ),
+                evidence={
+                    "rule": _RULE_ACCESS_POLICY_DISABLED,
+                    "policy_name": name,
+                    "enabled": False,
+                    "application_id": app_id,
+                },
+                remediation={
+                    "summary": "Re-enable the Access policy if it should be active.",
+                    "steps": [
+                        "Confirm whether the policy was disabled intentionally.",
+                        "Re-enable it, or document why it is intentionally off.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+    return out
 
 
 # ── DNS A/AAAA pointing at a private/reserved IP ─────────────────────────────

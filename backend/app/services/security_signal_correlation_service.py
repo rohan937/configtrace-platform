@@ -69,6 +69,9 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "action",
         "resource_type",
         "resource_id",
+        # Cloudflare deeper context (M68.3) — exact setting/policy match.
+        "setting_name",
+        "policy_name",
     }
 )
 
@@ -736,6 +739,24 @@ _CF_TLS_RULE = {
     "phrase": "Cloudflare TLS risk aligned with SSL/TLS audit activity",
     "area": "TLS",
 }
+# M68.3 — Access-policy risk ↔ Access audit activity (Candidate D, now unlocked).
+_CF_ACCESS_RULE = {
+    "correlation_key": "cloudflare_access_risk_activity",
+    "correlation_type": "cloudflare_access_policy_change",
+    "event_types": frozenset({"cloudflare.access_policy.changed"}),
+    "phrase": "Cloudflare Access policy risk aligned with Access audit activity",
+    "area": "ACCESS",
+}
+# M68.3 — zone-setting risk ↔ zone-setting audit activity, gated on an EXACT
+# setting-name match (never a generic zone_setting.changed correlation).
+_CF_ZONE_RULE = {
+    "correlation_key": "cloudflare_zone_setting_risk_activity",
+    "correlation_type": "cloudflare_zone_setting_change",
+    "event_types": frozenset({"cloudflare.zone_setting.changed"}),
+    "phrase": "Cloudflare zone-setting risk aligned with zone-setting audit activity",
+    "area": "ZONE_SETTING",
+    "match_setting": True,
+}
 
 # finding base rule → correlation rule descriptor.
 CLOUDFLARE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
@@ -744,7 +765,32 @@ CLOUDFLARE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     "cloudflare_ssl_mode_weak": _CF_TLS_RULE,
     "cloudflare_always_https_off": _CF_TLS_RULE,
     "cloudflare_min_tls_weak": _CF_TLS_RULE,
+    # M68.3 — Access policy risks.
+    "cloudflare_access_policy_bypass": _CF_ACCESS_RULE,
+    "cloudflare_access_policy_disabled": _CF_ACCESS_RULE,
+    # M68.3 — zone-setting risks (exact setting-name gate).
+    "cloudflare_hsts_disabled": _CF_ZONE_RULE,
+    "cloudflare_security_level_low": _CF_ZONE_RULE,
+    "cloudflare_development_mode_on": _CF_ZONE_RULE,
 }
+
+# finding base rule → expected Cloudflare zone-setting key (for the exact gate).
+_CF_FINDING_SETTING: dict[str, str] = {
+    "cloudflare_hsts_disabled": "security_header",
+    "cloudflare_security_level_low": "security_level",
+    "cloudflare_development_mode_on": "development_mode",
+}
+
+
+def _cf_finding_setting(finding: SecurityFinding) -> Optional[str]:
+    """The Cloudflare zone-setting key a finding refers to (rule map → evidence)."""
+    base = _base_rule(finding.finding_key)
+    expected = _CF_FINDING_SETTING.get(base)
+    if expected:
+        return expected
+    ev = finding.evidence if isinstance(finding.evidence, dict) else {}
+    s = ev.get("setting")
+    return s if isinstance(s, str) and s else None
 
 _CF_SEVERITIES = {"critical", "high", "medium", "low", "info"}
 
@@ -790,6 +836,8 @@ def build_cloudflare_correlation(
         "actor": meta.get("actor") if isinstance(meta.get("actor"), str) else None,
         "zone_id": meta.get("zone_id") if isinstance(meta.get("zone_id"), str) else None,
         "zone_name": meta.get("zone_name") if isinstance(meta.get("zone_name"), str) else None,
+        "setting_name": meta.get("setting_name") if isinstance(meta.get("setting_name"), str) else None,
+        "policy_name": meta.get("policy_name") if isinstance(meta.get("policy_name"), str) else None,
         "resource_type": event.resource_type if isinstance(event.resource_type, str) else None,
         "resource_id": event.resource_id if isinstance(event.resource_id, str) else None,
         "account_id": meta.get("account_id") if isinstance(meta.get("account_id"), str) else None,
@@ -876,9 +924,17 @@ def generate_cloudflare_correlations(
         window_start = f_start - WINDOW
         window_end = f_end + WINDOW
 
+        finding_setting = _cf_finding_setting(finding) if rule.get("match_setting") else None
         for ev in events_by_integ.get(finding.integration_id, []):
             if ev.event_type not in rule["event_types"]:
                 continue  # risk-area gate — never cross areas
+            # Exact setting gate: zone-setting correlations only fire when the
+            # audit event's setting_name matches the finding's setting key.
+            if rule.get("match_setting"):
+                ev_meta = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+                ev_setting = ev_meta.get("setting_name")
+                if not finding_setting or ev_setting != finding_setting:
+                    continue
             occurred = _aware(ev.occurred_at)
             if occurred is None or not (window_start <= occurred <= window_end):
                 continue
