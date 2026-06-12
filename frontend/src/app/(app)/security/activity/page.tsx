@@ -1,22 +1,28 @@
 "use client";
 
 /**
- * Activity Events (M66.5).
+ * Activity Events (M66.5 + M67.2 AWS).
  *
- * Evidence viewer for normalized GitHub audit activity (M66.2) — the control-
- * plane events that power Incident Signals.
+ * Evidence viewer for normalized activity:
+ *   • GitHub control-plane audit activity (M66.2)
+ *   • AWS provider security findings — GuardDuty / Access Analyzer (M67.1)
+ * — the events that power Incident Signals.
  *
- * CLAIM DISCIPLINE: these are control-plane audit events / activity metadata.
- * This page must never state that a breach, attacker, compromise, or
- * unauthorized access has been confirmed.
+ * CLAIM DISCIPLINE: these are activity / provider-reported findings. This page
+ * must never state that a breach, attacker, compromise, or unauthorized access
+ * has been confirmed.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 
-import type { SecurityActivityEvent, SecurityActivitySyncResponse } from "@/types";
-import { getSecurityActivityEvents, syncSecurityActivity } from "@/lib/api";
+import type { SecurityActivityEvent } from "@/types";
+import {
+  getSecurityActivityEvents,
+  syncSecurityActivity,
+  syncAwsSecurityAlerts,
+} from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -25,30 +31,43 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-const EVENT_TYPE_OPTIONS = [
+type Provider = "github" | "aws";
+
+const GITHUB_EVENT_TYPES = [
   "github.branch_protection.disabled",
   "github.branch_protection.updated",
-  "github.branch_protection.created",
   "github.deploy_key.added",
-  "github.deploy_key.removed",
   "github.webhook.created",
   "github.webhook.updated",
   "github.webhook.deleted",
   "github.collaborator.added",
-  "github.collaborator.removed",
   "github.app.installed",
   "github.app.permissions_changed",
   "github.ruleset.changed",
   "github.secret_scanning_alert.created",
-  "github.secret_scanning_alert.resolved",
 ];
-
+const AWS_EVENT_TYPES = [
+  "aws.guardduty.unauthorized_access",
+  "aws.guardduty.credential_access",
+  "aws.guardduty.persistence",
+  "aws.guardduty.discovery",
+  "aws.guardduty.exfiltration",
+  "aws.guardduty.privilege_escalation",
+  "aws.guardduty.defense_evasion",
+  "aws.guardduty.impact",
+  "aws.guardduty.execution",
+  "aws.guardduty.finding",
+  "aws.access_analyzer.finding",
+];
 const LIMIT_OPTIONS = [25, 50, 100];
+
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
   const { isAdmin, roleLoaded } = useWorkspace();
 
+  const [provider, setProvider] = useState<Provider>("github");
   const [events, setEvents] = useState<SecurityActivityEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -58,7 +77,8 @@ export default function ActivityEventsPage() {
   const [limit, setLimit] = useState(50);
 
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<SecurityActivitySyncResponse | null>(null);
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+  const [syncWarn, setSyncWarn] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -67,7 +87,7 @@ export default function ActivityEventsPage() {
     try {
       const token = await getToken();
       const res = await getSecurityActivityEvents(
-        { provider: "github", event_type: eventType || undefined, page_size: limit },
+        { provider, event_type: eventType || undefined, page_size: limit },
         token,
       );
       setEvents(res.items ?? []);
@@ -77,30 +97,55 @@ export default function ActivityEventsPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, eventType, limit]);
+  }, [getToken, provider, eventType, limit]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  const onProviderChange = useCallback((p: string) => {
+    setProvider(p as Provider);
+    setEventType("");
+    setSyncNote(null);
+    setSyncError(null);
+  }, []);
+
   const onSync = useCallback(async () => {
     setSyncing(true);
     setSyncError(null);
-    setSyncResult(null);
+    setSyncNote(null);
     try {
       const token = await getToken();
-      const res = await syncSecurityActivity(token);
-      setSyncResult(res);
+      if (provider === "aws") {
+        const r = await syncAwsSecurityAlerts(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "AWS security-alert access is limited for these credentials. " : ""}` +
+            `Seen ${r.findings_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
+      } else {
+        const r = await syncSecurityActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "GitHub audit-log access is limited for this account/plan. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_updated_or_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
+      }
       await load();
     } catch {
-      setSyncError("Could not sync GitHub activity. Please try again.");
+      setSyncError(
+        provider === "aws"
+          ? "Could not sync AWS security alerts. Please try again."
+          : "Could not sync GitHub activity. Please try again.",
+      );
     } finally {
       setSyncing(false);
     }
-  }, [getToken, load]);
+  }, [getToken, provider, load]);
 
   const metrics = useMemo(() => {
-    const github = events.filter((e) => e.provider === "github").length;
     const types = new Set(events.map((e) => e.event_type)).size;
     const latest = events.reduce<string | null>((acc, e) => {
       const t = e.occurred_at ?? e.ingested_at;
@@ -108,18 +153,22 @@ export default function ActivityEventsPage() {
       if (!acc || Date.parse(t) > Date.parse(acc)) return t;
       return acc;
     }, null);
-    return { github, types, latest };
+    return { types, latest };
   }, [events]);
+
+  const eventTypeOptions = provider === "aws" ? AWS_EVENT_TYPES : GITHUB_EVENT_TYPES;
 
   return (
     <div>
       <Hero />
 
       <SyncBar
+        provider={provider}
         isAdmin={isAdmin}
         roleLoaded={roleLoaded}
         syncing={syncing}
-        syncResult={syncResult}
+        syncNote={syncNote}
+        syncWarn={syncWarn}
         syncError={syncError}
         onSync={onSync}
       />
@@ -133,7 +182,7 @@ export default function ActivityEventsPage() {
         }}
       >
         <Metric label="Visible events" value={events.length} accent="#6b9cf8" />
-        <Metric label="GitHub events" value={metrics.github} accent="#6b9cf8" />
+        <Metric label={`${PROVIDER_LABEL[provider]} events`} value={events.length} accent="#6b9cf8" />
         <Metric label="Event types" value={metrics.types} accent="#f5a623" />
         <Metric
           label="Latest activity"
@@ -142,19 +191,9 @@ export default function ActivityEventsPage() {
         />
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: "10px",
-          flexWrap: "wrap",
-          alignItems: "center",
-          marginBottom: "18px",
-        }}
-      >
-        <span style={{ fontSize: "12px", color: "#565b6e" }}>
-          Provider: <strong style={{ color: "#8b90a0" }}>GitHub</strong>
-        </span>
-        <Select label="Event type" value={eventType} onChange={setEventType} options={EVENT_TYPE_OPTIONS} />
+      <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws"]} allowAll={false} />
+        <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
           <select
@@ -177,7 +216,7 @@ export default function ActivityEventsPage() {
       ) : error ? (
         <ErrorState message={error} />
       ) : events.length === 0 ? (
-        <EmptyState isAdmin={isAdmin} />
+        <EmptyState provider={provider} isAdmin={isAdmin} />
       ) : (
         <>
           <SectionLabel>
@@ -192,9 +231,10 @@ export default function ActivityEventsPage() {
       )}
 
       <p style={{ margin: "26px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-        These are control-plane audit events. They do not by themselves confirm
-        breach, attacker presence, or unauthorized access. They are evidence for
-        review and the basis for Incident Signals.
+        These are control-plane audit events and provider-reported findings. They
+        do not by themselves confirm breach, attacker presence, or unauthorized
+        access. They are evidence for review and the basis for Incident Signals.
+        AWS correlations are coming next.
       </p>
     </div>
   );
@@ -207,32 +247,18 @@ function Hero() {
     <>
       <PageHeader
         title="Activity Events"
-        description="Normalized GitHub audit activity used as evidence for Incident Signals."
+        description="Normalized GitHub audit activity and AWS provider security findings, used as evidence for Incident Signals."
       />
-      <div
-        className="bg-surface1 border border-border"
-        style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "20px" }}
-      >
+      <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub beta</span>
-          <span
-            style={{
-              fontSize: "9px",
-              fontWeight: 700,
-              letterSpacing: "0.05em",
-              textTransform: "uppercase",
-              color: "#6b9cf8",
-              border: "1px solid rgba(107,156,248,0.4)",
-              borderRadius: "5px",
-              padding: "1px 6px",
-            }}
-          >
-            Beta
-          </span>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub + AWS beta</span>
+          <Badge>Beta</Badge>
         </div>
         <p style={{ margin: 0, fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>
-          These are control-plane audit events. They do not by themselves confirm
-          breach, attacker presence, or unauthorized access.
+          GitHub events are control-plane audit activity; AWS events are
+          provider-reported security findings (GuardDuty / Access Analyzer). They
+          do not by themselves confirm breach, attacker presence, or unauthorized
+          access.
         </p>
       </div>
     </>
@@ -242,20 +268,29 @@ function Hero() {
 // ── Sync bar ──────────────────────────────────────────────────────────────────
 
 function SyncBar({
+  provider,
   isAdmin,
   roleLoaded,
   syncing,
-  syncResult,
+  syncNote,
+  syncWarn,
   syncError,
   onSync,
 }: {
+  provider: Provider;
   isAdmin: boolean;
   roleLoaded: boolean;
   syncing: boolean;
-  syncResult: SecurityActivitySyncResponse | null;
+  syncNote: string | null;
+  syncWarn: boolean;
   syncError: string | null;
   onSync: () => void;
 }) {
+  const isAws = provider === "aws";
+  const label = isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
+  const desc = isAws
+    ? "Import provider-reported AWS security findings from GuardDuty and Access Analyzer as normalized security activity."
+    : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -271,35 +306,20 @@ function SyncBar({
       }}
     >
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>Sync GitHub activity</div>
+        <div style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>{label}</div>
         <div style={{ fontSize: "12px", color: "#8b90a0", marginTop: "2px" }}>
-          Ingests recent GitHub audit-log activity into normalized events.
-          {!isAdmin && roleLoaded && " Only workspace admins can sync activity."}
+          {desc}
+          {!isAdmin && roleLoaded && " Only workspace admins can sync."}
         </div>
-        {syncResult && (
-          <div
-            style={{
-              fontSize: "12px",
-              color: syncResult.permission_limited ? "#f5a623" : "#3ccf7e",
-              marginTop: "6px",
-            }}
-          >
-            {syncResult.permission_limited
-              ? "GitHub audit-log access is limited for this account/plan. "
-              : ""}
-            Seen {syncResult.events_seen} · inserted {syncResult.events_inserted} · skipped{" "}
-            {syncResult.events_updated_or_skipped}.
-            {syncResult.error_message ? ` (${syncResult.error_message})` : ""}
-          </div>
+        {syncNote && (
+          <div style={{ fontSize: "12px", color: syncWarn ? "#f5a623" : "#3ccf7e", marginTop: "6px" }}>{syncNote}</div>
         )}
-        {syncError && (
-          <div style={{ fontSize: "12px", color: "#e84040", marginTop: "6px" }}>{syncError}</div>
-        )}
+        {syncError && <div style={{ fontSize: "12px", color: "#e84040", marginTop: "6px" }}>{syncError}</div>}
       </div>
       <button
         onClick={onSync}
         disabled={!isAdmin || syncing}
-        title={!isAdmin ? "Only workspace admins can sync activity." : undefined}
+        title={!isAdmin ? "Only workspace admins can sync." : undefined}
         style={{
           fontSize: "13px",
           fontWeight: 500,
@@ -313,7 +333,7 @@ function SyncBar({
           whiteSpace: "nowrap",
         }}
       >
-        {syncing ? "Syncing…" : "Sync GitHub activity"}
+        {syncing ? "Syncing…" : label}
       </button>
     </div>
   );
@@ -323,8 +343,7 @@ function SyncBar({
 
 function EventRow({ event }: { event: SecurityActivityEvent }) {
   const when = event.occurred_at ?? event.ingested_at;
-  const resource =
-    event.resource_id ?? (event.resource_type ? event.resource_type : null);
+  const resource = event.resource_id ?? (event.resource_type ? event.resource_type : null);
   return (
     <Link
       href={`/security/activity/${event.id}`}
@@ -333,14 +352,7 @@ function EventRow({ event }: { event: SecurityActivityEvent }) {
     >
       <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
         <span
-          style={{
-            fontSize: "12.5px",
-            fontWeight: 600,
-            color: "#e8eaf0",
-            fontFamily: "monospace",
-            flex: 1,
-            minWidth: 0,
-          }}
+          style={{ fontSize: "12.5px", fontWeight: 600, color: "#e8eaf0", fontFamily: "monospace", flex: 1, minWidth: 0 }}
         >
           {event.event_type}
         </span>
@@ -419,11 +431,13 @@ function Select({
   value,
   onChange,
   options,
+  allowAll = true,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: string[];
+  allowAll?: boolean;
 }) {
   return (
     <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -434,7 +448,7 @@ function Select({
         className="bg-surface1 border border-border"
         style={{ fontSize: "12px", color: "#c4c8d4", borderRadius: "6px", padding: "5px 8px" }}
       >
-        <option value="">All</option>
+        {allowAll && <option value="">All</option>}
         {options.map((o) => (
           <option key={o} value={o}>
             {o}
@@ -445,18 +459,38 @@ function Select({
   );
 }
 
-function EmptyState({ isAdmin }: { isAdmin: boolean }) {
+function Badge({ children }: { children: React.ReactNode }) {
   return (
-    <div
-      className="bg-surface1 border border-border"
-      style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}
+    <span
+      style={{
+        fontSize: "9px",
+        fontWeight: 700,
+        letterSpacing: "0.05em",
+        textTransform: "uppercase",
+        color: "#6b9cf8",
+        border: "1px solid rgba(107,156,248,0.4)",
+        borderRadius: "5px",
+        padding: "1px 6px",
+      }}
     >
+      {children}
+    </span>
+  );
+}
+
+function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolean }) {
+  const body =
+    provider === "aws"
+      ? isAdmin
+        ? "Run “Sync AWS security alerts” above to ingest GuardDuty and Access Analyzer findings."
+        : "An admin can sync AWS security alerts to ingest GuardDuty and Access Analyzer findings."
+      : isAdmin
+        ? "Run GitHub activity sync above to ingest recent audit activity."
+        : "An admin can run GitHub activity sync to ingest recent audit activity.";
+  return (
+    <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No activity events yet.</div>
-      <p style={{ margin: "8px auto 0", maxWidth: "470px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>
-        {isAdmin
-          ? "Run GitHub activity sync above to ingest recent audit activity."
-          : "An admin can run GitHub activity sync to ingest recent audit activity."}
-      </p>
+      <p style={{ margin: "8px auto 0", maxWidth: "470px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>{body}</p>
     </div>
   );
 }

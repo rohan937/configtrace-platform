@@ -22,6 +22,7 @@ import type {
 import {
   getSecurityIncidentSignals,
   generateSecurityIncidentSignals,
+  generateAwsIncidentSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -36,9 +37,12 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
+type Provider = "github" | "aws";
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS" };
+
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const SIGNAL_TYPE_OPTIONS = [
+const GITHUB_SIGNAL_TYPES = [
   "branch_protection_change",
   "deploy_key_added",
   "webhook_change",
@@ -48,6 +52,7 @@ const SIGNAL_TYPE_OPTIONS = [
   "ruleset_change",
   "secret_scanning_alert",
 ];
+const AWS_SIGNAL_TYPES = ["aws_guardduty", "aws_access_analyzer"];
 
 const HIGH_SEVERITIES = new Set(["critical", "high"]);
 
@@ -55,6 +60,7 @@ export default function IncidentSignalsPage() {
   const { getToken } = useAuth();
   const { isAdmin, roleLoaded } = useWorkspace();
 
+  const [provider, setProvider] = useState<Provider>("github");
   const [signals, setSignals] = useState<SecurityIncidentSignal[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -77,7 +83,7 @@ export default function IncidentSignalsPage() {
       const token = await getToken();
       const res = await getSecurityIncidentSignals(
         {
-          provider: "github",
+          provider,
           severity: severity || undefined,
           status: status || undefined,
           signal_type: signalType || undefined,
@@ -92,11 +98,18 @@ export default function IncidentSignalsPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, severity, status, signalType]);
+  }, [getToken, provider, severity, status, signalType]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const onProviderChange = useCallback((p: string) => {
+    setProvider(p as Provider);
+    setSignalType("");
+    setGenResult(null);
+    setGenError(null);
+  }, []);
 
   const onGenerate = useCallback(async () => {
     setGenerating(true);
@@ -104,7 +117,10 @@ export default function IncidentSignalsPage() {
     setGenResult(null);
     try {
       const token = await getToken();
-      const res = await generateSecurityIncidentSignals({ provider: "github" }, token);
+      const res =
+        provider === "aws"
+          ? await generateAwsIncidentSignals(token)
+          : await generateSecurityIncidentSignals({ provider: "github" }, token);
       setGenResult(res);
       await load();
     } catch {
@@ -112,7 +128,7 @@ export default function IncidentSignalsPage() {
     } finally {
       setGenerating(false);
     }
-  }, [getToken, load]);
+  }, [getToken, provider, load]);
 
   const metrics = useMemo(() => {
     const open = signals.filter((s) => s.status === "open").length;
@@ -133,6 +149,7 @@ export default function IncidentSignalsPage() {
 
       {/* Generate (admin/owner) */}
       <GenerateBar
+        provider={provider}
         isAdmin={isAdmin}
         roleLoaded={roleLoaded}
         generating={generating}
@@ -152,7 +169,7 @@ export default function IncidentSignalsPage() {
       >
         <Metric label="Open signals" value={metrics.open} accent="#f5632a" />
         <Metric label="High severity" value={metrics.high} accent="#e84040" />
-        <Metric label="GitHub signals" value={metrics.github} accent="#6b9cf8" />
+        <Metric label={`${PROVIDER_LABEL[provider]} signals`} value={signals.length} accent="#6b9cf8" />
         <Metric
           label="Latest signal"
           text={metrics.latest ? formatRelativeTime(metrics.latest) : "—"}
@@ -170,12 +187,15 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
-        <Select label="Signal type" value={signalType} onChange={setSignalType} options={SIGNAL_TYPE_OPTIONS} />
-        <span style={{ fontSize: "12px", color: "#565b6e" }}>
-          Provider: <strong style={{ color: "#8b90a0" }}>GitHub</strong>
-        </span>
+        <Select
+          label="Signal type"
+          value={signalType}
+          onChange={setSignalType}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+        />
       </div>
 
       {loading ? (
@@ -183,7 +203,7 @@ export default function IncidentSignalsPage() {
       ) : error ? (
         <ErrorState message={error} />
       ) : signals.length === 0 ? (
-        <EmptyState isAdmin={isAdmin} />
+        <EmptyState provider={provider} isAdmin={isAdmin} />
       ) : (
         <>
           <SectionLabel>
@@ -198,9 +218,10 @@ export default function IncidentSignalsPage() {
       )}
 
       <p style={{ margin: "26px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
-        Signals are generated from normalized GitHub audit activity events.
-        ConfigTrace does not automatically confirm breaches, attacker presence, or
-        unauthorized access. Correlation with configuration risk is next.
+        GitHub signals come from normalized audit activity; AWS signals come from
+        provider-reported GuardDuty / Access Analyzer findings. ConfigTrace does
+        not automatically confirm breaches, attacker presence, or unauthorized
+        access. AWS correlations are coming next.
       </p>
     </div>
   );
@@ -213,7 +234,7 @@ function Hero() {
     <>
       <PageHeader
         title="Incident Signals"
-        description="Review control-plane security signals generated from GitHub audit activity."
+        description="Review security signals from GitHub audit activity and AWS provider security findings."
       />
       <div
         className="bg-surface1 border border-border"
@@ -221,7 +242,7 @@ function Hero() {
       >
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
           <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
-            GitHub beta
+            GitHub + AWS beta
           </span>
           <span
             style={{
@@ -239,9 +260,9 @@ function Hero() {
           </span>
         </div>
         <p style={{ margin: 0, fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>
-          Signals are review cues from audit activity. ConfigTrace does not
-          automatically confirm breaches, attacker presence, or unauthorized
-          access.
+          Signals are review cues from audit activity and provider-reported AWS
+          findings. ConfigTrace does not automatically confirm breaches, attacker
+          presence, or unauthorized access.
         </p>
       </div>
     </>
@@ -251,6 +272,7 @@ function Hero() {
 // ── Generate bar ──────────────────────────────────────────────────────────────
 
 function GenerateBar({
+  provider,
   isAdmin,
   roleLoaded,
   generating,
@@ -258,6 +280,7 @@ function GenerateBar({
   genError,
   onGenerate,
 }: {
+  provider: Provider;
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
@@ -265,6 +288,11 @@ function GenerateBar({
   genError: string | null;
   onGenerate: () => void;
 }) {
+  const isAws = provider === "aws";
+  const label = isAws ? "Generate AWS signals" : "Generate signals";
+  const desc = isAws
+    ? "Generate Incident Signals from provider-reported AWS security findings."
+    : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -280,11 +308,9 @@ function GenerateBar({
       }}
     >
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
-          Generate signals from activity
-        </div>
+        <div style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>{label}</div>
         <div style={{ fontSize: "12px", color: "#8b90a0", marginTop: "2px" }}>
-          Scans recent GitHub audit activity events and creates review signals.
+          {desc}
           {!isAdmin && roleLoaded && " Only workspace admins can generate signals."}
         </div>
         {genResult && (
@@ -314,7 +340,7 @@ function GenerateBar({
           whiteSpace: "nowrap",
         }}
       >
-        {generating ? "Generating…" : "Generate signals"}
+        {generating ? "Generating…" : label}
       </button>
     </div>
   );
@@ -400,11 +426,13 @@ function Select({
   value,
   onChange,
   options,
+  allowAll = true,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: string[];
+  allowAll?: boolean;
 }) {
   return (
     <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
@@ -415,7 +443,7 @@ function Select({
         className="bg-surface1 border border-border"
         style={{ fontSize: "12px", color: "#c4c8d4", borderRadius: "6px", padding: "5px 8px" }}
       >
-        <option value="">All</option>
+        {allowAll && <option value="">All</option>}
         {options.map((o) => (
           <option key={o} value={o}>
             {o}
@@ -444,7 +472,17 @@ function Chip({ children }: { children: React.ReactNode }) {
   );
 }
 
-function EmptyState({ isAdmin }: { isAdmin: boolean }) {
+function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolean }) {
+  const body =
+    provider === "aws"
+      ? "Sync AWS security alerts first, then generate AWS Incident Signals." +
+        (isAdmin
+          ? " Use “Generate AWS signals” above once AWS alerts have been ingested."
+          : " A workspace admin can sync AWS alerts and generate AWS signals.")
+      : "Run GitHub activity sync first, then generate signals." +
+        (isAdmin
+          ? " Use “Generate signals” above once activity has been ingested."
+          : " A workspace admin can ingest activity and generate signals.");
   return (
     <div
       className="bg-surface1 border border-border"
@@ -454,10 +492,7 @@ function EmptyState({ isAdmin }: { isAdmin: boolean }) {
         No incident signals yet.
       </div>
       <p style={{ margin: "8px auto 0", maxWidth: "460px", fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>
-        Run GitHub activity sync first, then generate signals.
-        {isAdmin
-          ? " Use “Generate signals” above once activity has been ingested."
-          : " A workspace admin can ingest activity and generate signals."}
+        {body}
       </p>
     </div>
   );

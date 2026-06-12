@@ -659,6 +659,20 @@ export async function createCaseFromCorrelation(
   return apiFetch(`/security/correlations/${correlationId}/create-case`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/* ── AWS security alerts (M67.2) — admin-only sync + signal generation ─────── */
+
+export async function syncAwsSecurityAlerts(
+  token?: string | null,
+): Promise<import("@/types").AwsAlertSyncResponse> {
+  return apiFetch(`/security/aws-alerts/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+export async function generateAwsIncidentSignals(
+  token?: string | null,
+): Promise<import("@/types").AwsSignalGenerateResponse> {
+  return apiFetch(`/security/aws-alerts/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 /** Fetch a metadata-only Case Evidence Report payload (M66.9). */
 export async function getSecurityCaseReport(
   caseId: string,

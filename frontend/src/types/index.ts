@@ -1830,6 +1830,26 @@ export interface CaseReportCase {
   created_at: string;
   updated_at: string;
 }
+// AWS security alerts (M67.1 backend / M67.2 UI)
+export interface AwsAlertSyncResponse {
+  attempted: boolean;
+  succeeded: boolean;
+  provider: string;
+  integration_id: string | null;
+  source: string;
+  findings_seen: number;
+  events_inserted: number;
+  events_skipped: number;
+  permission_limited: boolean;
+  error_message: string | null;
+}
+export interface AwsSignalGenerateResponse {
+  provider: string;
+  activity_events_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
+
 // GitHub Incident Workflow demo (M66.10)
 export interface IncidentDemoStatus {
   seeded: boolean;
