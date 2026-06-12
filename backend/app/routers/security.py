@@ -21,6 +21,7 @@ exposure. It is not breach or threat detection.
 
 from __future__ import annotations
 
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -70,6 +71,13 @@ from app.schemas.security_beta_feedback import (
     SecurityBetaFeedbackCreate,
     SecurityBetaFeedbackResponse,
 )
+from app.schemas.security_activity_event import (
+    SecurityActivityEventListResponse,
+    SecurityActivityEventResponse,
+    SecurityActivitySyncRequest,
+    SecurityActivitySyncResponse,
+)
+from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
 from app.services import security_rule_settings_service
@@ -78,6 +86,8 @@ from app.services import security_coverage_service
 from app.services import security_beta_event_service
 from app.services import security_beta_feedback_service
 from app.services import security_rule_pack
+from app.services import security_activity_event_service
+from app.services import github_activity_ingestion_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -650,3 +660,97 @@ def create_security_beta_feedback(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return SecurityBetaFeedbackResponse(id=str(feedback.id), ok=True)
+
+
+# ── Activity ingestion (M66.2) ────────────────────────────────────────────────
+#
+# Foundation for the FUTURE Incident Signals product. These endpoints ingest and
+# list normalized GitHub control-plane *activity* events. They do NOT detect
+# breaches, identify attackers, or confirm compromise — correlation that turns
+# activity + configuration risk into incident signals is a later milestone.
+
+
+@router.post("/activity/sync", response_model=SecurityActivitySyncResponse)
+def sync_security_activity(
+    body: Optional[SecurityActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityActivitySyncResponse:
+    """Attempt GitHub audit-log activity ingestion for a workspace integration.
+
+    Admin/owner only — this pulls organization audit logs. Non-fatal: permission
+    or availability limits are reported in the summary, never raised. Ingests
+    control-plane activity only; makes no breach/attacker/compromise claims.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    # Higher-impact action (pulls org audit logs) → admin/owner only.
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "github",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="GitHub integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return SecurityActivitySyncResponse(
+                attempted=False,
+                succeeded=False,
+                provider="github",
+                error_message="No active GitHub integration found.",
+            )
+
+    summary = github_activity_ingestion_service.ingest_github_activity(
+        integration=integration,
+        workspace_id=workspace_id,
+        db=db,
+    )
+    return SecurityActivitySyncResponse(**summary)
+
+
+@router.get("/activity/events", response_model=SecurityActivityEventListResponse)
+def list_security_activity_events(
+    provider: Optional[str] = Query(None, description="Filter by provider."),
+    event_type: Optional[str] = Query(
+        None, description="Filter by normalized event_type."
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityActivityEventListResponse:
+    """List recent normalized activity events for the user's workspace (M66.2).
+
+    Strictly workspace-scoped — never returns another workspace's events. Safe,
+    metadata-only fields; control-plane activity, not incident detection.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    items, total = security_activity_event_service.list_activity_events(
+        workspace_id=workspace_id,
+        db=db,
+        provider=provider,
+        event_type=event_type,
+        page=page,
+        page_size=page_size,
+    )
+    return SecurityActivityEventListResponse(
+        items=[SecurityActivityEventResponse.from_model(ev) for ev in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )

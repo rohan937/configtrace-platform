@@ -223,6 +223,69 @@ class GitHubConnector(BaseConnector):
 
         return True
 
+    # ── Audit-log activity (M66.2) ───────────────────────────────────────────
+
+    def list_audit_log_events(
+        self,
+        credentials: dict,
+        *,
+        per_page: int = 100,
+        max_pages: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Fetch recent GitHub organization audit-log events (control-plane).
+
+        Uses ``GET /orgs/{org}/audit-log``; the org is taken from ``repo_owner``.
+        This is the activity-event source for the FUTURE Incident Signals product.
+        It only returns control-plane activity — it does NOT detect breaches,
+        identify attackers, or confirm compromise.
+
+        GitHub's audit-log API requires organization-owner permissions and is only
+        available for GitHub Enterprise Cloud organizations. For user accounts,
+        non-admin tokens, or unsupported plans GitHub returns 401/403/404 — the
+        ingestion service treats those as *permission-limited*, never fatal.
+
+        Returns a list of raw audit-event dicts (newest first, per GitHub).
+
+        Raises:
+            AuthenticationError: HTTP 401/403 — token lacks org audit-log access.
+            ConnectorError:      HTTP 404 (org audit log unavailable) or other error.
+            RateLimitError / NetworkError: as per ``_get``.
+        """
+        token = credentials.get("github_token", "")
+        org = credentials.get("repo_owner", "")
+        if not token or not org:
+            raise ConnectorError(
+                "GitHub audit-log ingestion needs 'github_token' and 'repo_owner' (org)."
+            )
+        headers = _auth_headers(token)
+        url = f"{_BASE_URL}/orgs/{org}/audit-log"
+
+        events: list[dict[str, Any]] = []
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            page = 1
+            while page <= max_pages:
+                resp = self._get(
+                    client,
+                    url,
+                    headers,
+                    params={"per_page": per_page, "page": page, "include": "all"},
+                    allow_404=True,
+                )
+                if resp.status_code == 404:
+                    raise ConnectorError(
+                        f"GitHub organization audit log is not available for "
+                        f"'{org}' (HTTP 404). Requires an Enterprise Cloud org and "
+                        f"a token with audit-log read permission.",
+                        status_code=404,
+                    )
+                body = resp.json()
+                page_items = body if isinstance(body, list) else []
+                events.extend(page_items)
+                if len(page_items) < per_page:
+                    break
+                page += 1
+        return events
+
     # ── Per-category fetch helpers ───────────────────────────────────────────
 
     def _fetch_repo_settings(
