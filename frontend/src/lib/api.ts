@@ -681,24 +681,27 @@ export async function getSecurityCaseReport(
   return apiFetch(`/security/cases/${caseId}/report`, { token });
 }
 
-/* ── GitHub Incident Workflow demo (M66.10) — admin-only seed/clear ────────── */
+/* ── Incident Workflow demo (M66.10 github / M67.4 aws) — admin-only seed/clear ─ */
 
 export async function getIncidentDemoStatus(
   token?: string | null,
+  provider: "github" | "aws" = "github",
 ): Promise<import("@/types").IncidentDemoStatus> {
-  return apiFetch(`/security/incident-demo/status`, { token });
+  return apiFetch(`/security/incident-demo/status?provider=${provider}`, { token });
 }
 
 export async function seedIncidentDemo(
   token?: string | null,
+  provider: "github" | "aws" = "github",
 ): Promise<import("@/types").IncidentDemoSeedResponse> {
-  return apiFetch(`/security/incident-demo/seed`, { method: "POST", body: JSON.stringify({}), token });
+  return apiFetch(`/security/incident-demo/seed?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }
 
 export async function clearIncidentDemo(
   token?: string | null,
+  provider: "github" | "aws" = "github",
 ): Promise<{ cleared: boolean }> {
-  return apiFetch(`/security/incident-demo/clear`, { method: "POST", body: JSON.stringify({}), token });
+  return apiFetch(`/security/incident-demo/clear?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

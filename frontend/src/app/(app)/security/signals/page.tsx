@@ -221,7 +221,8 @@ export default function IncidentSignalsPage() {
         GitHub signals come from normalized audit activity; AWS signals come from
         provider-reported GuardDuty / Access Analyzer findings. ConfigTrace does
         not automatically confirm breaches, attacker presence, or unauthorized
-        access. AWS correlations are coming next.
+        access. Signals can be correlated with Configuration Risks and grouped
+        into human-reviewed cases.
       </p>
     </div>
   );

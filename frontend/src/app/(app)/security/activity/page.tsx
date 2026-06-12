@@ -233,8 +233,8 @@ export default function ActivityEventsPage() {
       <p style={{ margin: "26px 0 0", fontSize: "12px", color: "#565b6e", lineHeight: 1.6 }}>
         These are control-plane audit events and provider-reported findings. They
         do not by themselves confirm breach, attacker presence, or unauthorized
-        access. They are evidence for review and the basis for Incident Signals.
-        AWS correlations are coming next.
+        access. They are evidence for review and the basis for Incident Signals
+        and Configuration Risk correlations.
       </p>
     </div>
   );

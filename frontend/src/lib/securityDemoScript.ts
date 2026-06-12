@@ -328,6 +328,64 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
   },
 ];
 
+export const DEMO_SCRIPT_AWS_INCIDENT: DemoStep[] = [
+  {
+    id: "aws-incident-activity",
+    title: "AWS Activity Events",
+    href: "/security/activity?provider=aws",
+    cta: "Open Activity Events (AWS)",
+    talkTrack:
+      "Switch the provider to AWS. These are provider-reported AWS security findings — GuardDuty and Access Analyzer — normalized into evidence for review. ConfigTrace is not reading raw customer data and is not claiming a breach.",
+    whatToClick: "On Activity Events, choose AWS and open an Access Analyzer finding.",
+    emphasize: "Provider-reported finding, metadata-only evidence for review.",
+    avoid: "Don't say this proves data was accessed or a breach occurred.",
+  },
+  {
+    id: "aws-incident-signals",
+    title: "AWS Incident Signals",
+    href: "/security/signals?provider=aws",
+    cta: "Open Incident Signals (AWS)",
+    talkTrack:
+      "From that provider finding, ConfigTrace raises an AWS Incident Signal. Severity reflects review priority and mirrors the provider-reported severity — it never asserts compromise or that someone has access.",
+    whatToClick: "Open an AWS signal and read the provider-alert evidence level.",
+    emphasize: "Provider-alert review signal — evidence for review, not a confirmed incident.",
+    avoid: "Avoid 'breach detected' / 'attacker found' — these are review signals.",
+  },
+  {
+    id: "aws-incident-correlations",
+    title: "AWS Correlations",
+    href: "/security/correlations?provider=aws",
+    cta: "Open Correlations (AWS)",
+    talkTrack:
+      "Here's the differentiator for AWS: ConfigTrace connects a configuration risk — a public S3 bucket policy — to a provider-reported AWS security finding for the same bucket. A risky setting aligned with a provider alert is stronger evidence for review.",
+    whatToClick: "Open an AWS correlation to show the linked S3 risk + Access Analyzer finding and the timeline.",
+    emphasize: "Configuration risk aligned with provider alert — potential security impact.",
+    avoid: "Don't call a correlation a confirmed compromise or unauthorized access.",
+  },
+  {
+    id: "aws-incident-cases",
+    title: "AWS Case",
+    href: "/security/cases",
+    cta: "Load AWS incident demo",
+    talkTrack:
+      "A person groups the evidence into a human-reviewed case. Admins can load a sample AWS evidence chain here — a public S3 configuration risk plus an Access Analyzer provider finding. Confirm or dismiss is a human action, never an automatic 'confirmed breach'.",
+    whatToClick: "Use 'Load AWS incident demo' (admin-only) to seed and open the grouped case.",
+    emphasize: "Human-reviewed investigation; confirmation is a human decision.",
+    avoid: "Don't say ConfigTrace auto-confirms anything or identifies attackers.",
+  },
+  {
+    id: "aws-incident-report",
+    title: "AWS Case Evidence Report",
+    href: "/security/cases",
+    cta: "Export from the AWS case",
+    talkTrack:
+      "Finally, export the AWS case as a metadata-only evidence packet — Markdown or JSON. It summarizes the S3 configuration risk, the Access Analyzer finding, the signal, and the correlation. No raw payloads, IPs, secrets, or tokens.",
+    whatToClick: "On the AWS case, use Export Markdown / Export JSON.",
+    emphasize: "Defensible, metadata-only evidence for review.",
+    avoid: "Don't promise it certifies compliance or proves a breach.",
+  },
+];
+
 export interface ObjectionAnswer {
   question: string;
   answer: string;

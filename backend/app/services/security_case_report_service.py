@@ -168,9 +168,13 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
 
     # ── Executive summary ──────────────────────────────────────────────────────
     status_label = case.status.replace("_", " ")
+    provider_label = {"github": "GitHub", "aws": "AWS"}.get(
+        (case.provider or "").lower(), case.provider or ""
+    )
+    evidence_label = f"{provider_label} incident evidence".strip()
     executive_summary = (
         f"Investigation case \"{case.title}\" (status: {status_label}) groups "
-        f"{len(links)} pieces of GitHub incident evidence for review: "
+        f"{len(links)} pieces of {evidence_label} for review: "
         f"{len(signals)} incident signal(s), {len(risks)} configuration risk(s), "
         f"{len(activity_events)} activity event(s), and {len(correlations)} "
         f"correlation(s). This evidence is presented for human review and does not "

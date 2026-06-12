@@ -93,12 +93,12 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async () => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
       const token = await getToken();
-      const res = await seedIncidentDemo(token);
+      const res = await seedIncidentDemo(token, provider);
       if (res.case_id) {
         router.push(`/security/cases/${res.case_id}`);
       } else {
@@ -112,13 +112,13 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async () => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
       const token = await getToken();
-      await clearIncidentDemo(token);
-      setDemoNote("Demo data cleared.");
+      await clearIncidentDemo(token, provider);
+      setDemoNote(provider === "aws" ? "AWS demo data cleared." : "Demo data cleared.");
       await load();
     } catch {
       setDemoNote("Could not clear the demo. Please try again.");
@@ -143,14 +143,14 @@ export default function CasesPage() {
             marked demo, no real provider sync).
           </span>
           <button
-            onClick={onSeedDemo}
+            onClick={() => onSeedDemo("github")}
             disabled={demoBusy}
             style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#6b9cf8", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
           >
             {demoBusy ? "Working…" : "Load GitHub incident demo"}
           </button>
           <button
-            onClick={onClearDemo}
+            onClick={() => onClearDemo("github")}
             disabled={demoBusy}
             className="bg-surface1 border border-border"
             style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
@@ -158,6 +158,36 @@ export default function CasesPage() {
             Clear demo
           </button>
           {demoNote && <span style={{ fontSize: "12px", color: "#3ccf7e", width: "100%" }}>{demoNote}</span>}
+        </div>
+      )}
+
+      {/* Admin-only: load/clear the AWS incident-workflow demo (M67.4) */}
+      {isAdmin && (
+        <div
+          className="bg-surface1 border border-border"
+          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
+        >
+          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
+            <strong style={{ color: "#e8eaf0" }}>Try the AWS incident demo:</strong>{" "}
+            seed a demo AWS evidence chain using a public S3 configuration risk and
+            an Access Analyzer provider finding (clearly marked demo, no real AWS
+            sync).
+          </span>
+          <button
+            onClick={() => onSeedDemo("aws")}
+            disabled={demoBusy}
+            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#f5a623", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
+          >
+            {demoBusy ? "Working…" : "Load AWS incident demo"}
+          </button>
+          <button
+            onClick={() => onClearDemo("aws")}
+            disabled={demoBusy}
+            className="bg-surface1 border border-border"
+            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
+          >
+            Clear AWS demo
+          </button>
         </div>
       )}
 

@@ -1273,45 +1273,65 @@ def get_security_case_report(
 
 @router.get("/incident-demo/status", response_model=IncidentDemoStatusResponse)
 def incident_demo_status(
+    provider: str = "github",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IncidentDemoStatusResponse:
-    """Whether the GitHub incident-workflow demo is seeded (M66.10)."""
+    """Whether the incident-workflow demo is seeded (M66.10 github / M67.4 aws)."""
     workspace_id = _current_workspace_id(current_user, db)
-    return IncidentDemoStatusResponse(
-        **security_incident_demo_service.get_status(workspace_id, db)
-    )
+    if (provider or "github").lower() == "aws":
+        status = security_incident_demo_service.get_aws_status(workspace_id, db)
+    else:
+        status = security_incident_demo_service.get_status(workspace_id, db)
+    return IncidentDemoStatusResponse(**status)
 
 
 @router.post("/incident-demo/seed", response_model=IncidentDemoSeedResponse)
 def incident_demo_seed(
+    provider: str = "github",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IncidentDemoSeedResponse:
-    """Seed the GitHub incident-workflow demo chain (M66.10). Admin/owner only."""
+    """Seed the incident-workflow demo chain. Admin/owner only.
+
+    provider=github (M66.10): Configuration Risk × GitHub audit activity.
+    provider=aws (M67.4): S3 public-policy risk × Access Analyzer provider alert.
+    """
     workspace_id = _current_workspace_id(current_user, db)
     workspace_permission_service.require_workspace_admin(
         workspace_id, current_user.id, db
     )
-    summary = security_incident_demo_service.seed(
-        workspace_id=workspace_id, actor_user_id=current_user.id, db=db
-    )
+    if (provider or "github").lower() == "aws":
+        summary = security_incident_demo_service.seed_aws(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
+    else:
+        summary = security_incident_demo_service.seed(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
     return IncidentDemoSeedResponse(**summary)
 
 
 @router.post("/incident-demo/clear", response_model=IncidentDemoClearResponse)
 def incident_demo_clear(
+    provider: str = "github",
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> IncidentDemoClearResponse:
-    """Remove the GitHub incident-workflow demo chain (M66.10). Admin/owner only."""
+    """Remove the incident-workflow demo chain. Admin/owner only.
+
+    Scoped per provider — clearing aws removes only AWS demo objects, and clearing
+    github removes only GitHub demo objects.
+    """
     workspace_id = _current_workspace_id(current_user, db)
     workspace_permission_service.require_workspace_admin(
         workspace_id, current_user.id, db
     )
-    return IncidentDemoClearResponse(
-        **security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
-    )
+    if (provider or "github").lower() == "aws":
+        result = security_incident_demo_service.clear_aws(workspace_id=workspace_id, db=db)
+    else:
+        result = security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
+    return IncidentDemoClearResponse(**result)
 
 
 # ── AWS security alerts (M67.1) ───────────────────────────────────────────────
