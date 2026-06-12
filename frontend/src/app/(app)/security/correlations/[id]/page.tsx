@@ -29,6 +29,7 @@ import {
   maskSensitiveValue,
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
+import CreateCaseButton from "@/components/security/CreateCaseButton";
 
 export default function CorrelationDetailPage() {
   const params = useParams();
@@ -97,6 +98,11 @@ function Body({ c }: { c: SecuritySignalCorrelation }) {
 
       <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "18px" }}>
         <p style={{ margin: 0, fontSize: "14px", color: "#c4c8d4", lineHeight: 1.6 }}>{c.summary}</p>
+      </div>
+
+      {/* Create case action (M66.8) */}
+      <div style={{ marginBottom: "18px" }}>
+        <CreateCaseButton from="correlation" id={c.id} />
       </div>
 
       {/* Linked evidence */}

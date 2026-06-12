@@ -28,6 +28,7 @@ from app.models.security_beta_feedback import SecurityBetaFeedback  # noqa: F401
 from app.models.security_activity_event import SecurityActivityEvent  # noqa: F401  (M66.2)
 from app.models.security_incident_signal import SecurityIncidentSignal  # noqa: F401  (M66.3)
 from app.models.security_signal_correlation import SecuritySignalCorrelation  # noqa: F401  (M66.6)
+from app.models.security_case import SecurityCase, SecurityCaseLink  # noqa: F401  (M66.8)
 
 __all__ = [
     "Base",
@@ -57,4 +58,6 @@ __all__ = [
     "SecurityActivityEvent",
     "SecurityIncidentSignal",
     "SecuritySignalCorrelation",
+    "SecurityCase",
+    "SecurityCaseLink",
 ]

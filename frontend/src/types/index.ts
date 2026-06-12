@@ -1689,6 +1689,78 @@ export interface SecurityCorrelationGenerateResponse {
   correlations_skipped: number;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Cases / Investigations (M66.8)
+
+   A case is a human-managed investigation container grouping incident evidence.
+   ConfigTrace does NOT auto-confirm breaches; confirmed/dismissed are human
+   actions.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export type SecurityCaseStatus =
+  | "open"
+  | "investigating"
+  | "confirmed_by_user"
+  | "dismissed"
+  | "resolved";
+
+export type SecurityCaseLinkType = "signal" | "correlation" | "finding" | "activity_event";
+
+export interface SecurityCase {
+  id: string;
+  title: string;
+  summary: string | null;
+  status: SecurityCaseStatus;
+  severity: SecuritySignalSeverity;
+  confidence: "high" | "medium" | "low";
+  provider: string | null;
+  opened_by_user_id: string | null;
+  confirmed_by_user_id: string | null;
+  confirmed_at: string | null;
+  dismissed_by_user_id: string | null;
+  dismissed_at: string | null;
+  resolved_at: string | null;
+  link_count: number;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SecurityCaseLink {
+  id: string;
+  case_id: string;
+  linked_object_type: SecurityCaseLinkType;
+  linked_object_id: string;
+  created_by_user_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SecurityCaseDetail {
+  case: SecurityCase;
+  links: SecurityCaseLink[];
+}
+
+export interface SecurityCaseCreateRequest {
+  title: string;
+  summary?: string;
+  severity?: string;
+  provider?: string;
+}
+
+export interface SecurityCaseUpdateRequest {
+  title?: string;
+  summary?: string;
+  severity?: string;
+  confidence?: string;
+  status?: string;
+}
+
+export interface SecurityCaseLinkCreateRequest {
+  linked_object_type: string;
+  linked_object_id: string;
+}
+
 export interface SecurityRulePack {
   name: string;
   version: string;

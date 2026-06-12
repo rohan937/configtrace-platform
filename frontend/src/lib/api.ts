@@ -41,6 +41,12 @@ import type {
   ResourceListItem,
   SecurityActivityEvent,
   SecurityActivitySyncResponse,
+  SecurityCase,
+  SecurityCaseCreateRequest,
+  SecurityCaseDetail,
+  SecurityCaseLink,
+  SecurityCaseLinkCreateRequest,
+  SecurityCaseUpdateRequest,
   SecurityCorrelationGenerateRequest,
   SecurityCorrelationGenerateResponse,
   SecurityFinding,
@@ -575,6 +581,81 @@ export async function generateSecurityIncidentSignals(
     body: JSON.stringify(body),
     token,
   });
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Cases / Investigations (M66.8)
+
+   Human-managed investigation containers grouping incident evidence.
+   ────────────────────────────────────────────────────────────────────────── */
+
+export interface GetSecurityCasesParams {
+  status?: string;
+  provider?: string;
+  severity?: string;
+  page?: number;
+  page_size?: number;
+}
+
+export async function getSecurityCases(
+  params: GetSecurityCasesParams = {},
+  token?: string | null,
+): Promise<PaginatedResponse<SecurityCase>> {
+  return apiFetch(`/security/cases${buildQuery(params)}`, { token });
+}
+
+export async function getSecurityCase(
+  caseId: string,
+  token?: string | null,
+): Promise<SecurityCaseDetail> {
+  return apiFetch(`/security/cases/${caseId}`, { token });
+}
+
+export async function createSecurityCase(
+  body: SecurityCaseCreateRequest,
+  token?: string | null,
+): Promise<SecurityCase> {
+  return apiFetch(`/security/cases`, { method: "POST", body: JSON.stringify(body), token });
+}
+
+export async function updateSecurityCase(
+  caseId: string,
+  body: SecurityCaseUpdateRequest,
+  token?: string | null,
+): Promise<SecurityCase> {
+  return apiFetch(`/security/cases/${caseId}`, { method: "PATCH", body: JSON.stringify(body), token });
+}
+
+export async function addSecurityCaseLink(
+  caseId: string,
+  body: SecurityCaseLinkCreateRequest,
+  token?: string | null,
+): Promise<SecurityCaseLink> {
+  return apiFetch(`/security/cases/${caseId}/links`, { method: "POST", body: JSON.stringify(body), token });
+}
+
+export async function deleteSecurityCaseLink(
+  caseId: string,
+  linkId: string,
+  token?: string | null,
+): Promise<{ ok: boolean }> {
+  return apiFetch(`/security/cases/${caseId}/links/${linkId}`, { method: "DELETE", token });
+}
+
+/** Create a case from a signal, linking the signal + its evidence (M66.8). */
+export async function createCaseFromSignal(
+  signalId: string,
+  token?: string | null,
+): Promise<SecurityCase> {
+  return apiFetch(`/security/signals/${signalId}/create-case`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+/** Create a case from a correlation, linking risk/activity/signal (M66.8). */
+export async function createCaseFromCorrelation(
+  correlationId: string,
+  token?: string | null,
+): Promise<SecurityCase> {
+  return apiFetch(`/security/correlations/${correlationId}/create-case`, { method: "POST", body: JSON.stringify({}), token });
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

@@ -89,6 +89,16 @@ from app.schemas.security_signal_correlation import (
     SecurityCorrelationGenerateRequest,
     SecurityCorrelationGenerateResponse,
 )
+from app.schemas.security_case import (
+    SecurityCaseCreate,
+    SecurityCaseUpdate,
+    SecurityCaseResponse,
+    SecurityCaseListResponse,
+    SecurityCaseDetailResponse,
+    SecurityCaseLinkCreate,
+    SecurityCaseLinkResponse,
+    SecurityCaseLinkListResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -102,6 +112,7 @@ from app.services import security_activity_event_service
 from app.services import github_activity_ingestion_service
 from app.services import security_incident_signal_service
 from app.services import security_signal_correlation_service
+from app.services import security_case_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1002,3 +1013,212 @@ def get_security_correlation(
     if corr is None:
         raise HTTPException(status_code=404, detail="Correlation not found.")
     return SecuritySignalCorrelationResponse.from_model(corr)
+
+
+# ── Cases / Investigations (M66.8) ────────────────────────────────────────────
+#
+# A case is a HUMAN-MANAGED investigation container grouping incident evidence
+# (signals, correlations, configuration risks, activity events). ConfigTrace does
+# NOT automatically confirm breaches/attackers/compromise — confirmation and
+# dismissal are human actions. ``confirmed_by_user`` requires admin/owner.
+
+
+def _case_or_404(case_id, current_user, db):
+    workspace_id = _current_workspace_id(current_user, db)
+    case = security_case_service.get_case(
+        case_id=case_id, workspace_id=workspace_id, db=db
+    )
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    return workspace_id, case
+
+
+@router.post("/cases", response_model=SecurityCaseResponse, status_code=201)
+def create_security_case(
+    body: SecurityCaseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseResponse:
+    """Create an investigation case (M66.8). Any workspace member may create one."""
+    workspace_id = _current_workspace_id(current_user, db)
+    try:
+        case = security_case_service.create_case(
+            workspace_id=workspace_id, user_id=current_user.id,
+            title=body.title, summary=body.summary, severity=body.severity,
+            provider=body.provider, db=db,
+        )
+    except security_case_service.CaseValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return SecurityCaseResponse.from_model(case, link_count=0)
+
+
+@router.get("/cases", response_model=SecurityCaseListResponse)
+def list_security_cases(
+    status: Optional[str] = Query(None, description="Filter by status."),
+    provider: Optional[str] = Query(None, description="Filter by provider."),
+    severity: Optional[str] = Query(None, description="Filter by severity."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseListResponse:
+    """List investigation cases for the user's workspace (M66.8). Member access."""
+    workspace_id = _current_workspace_id(current_user, db)
+    items, total = security_case_service.list_cases(
+        workspace_id=workspace_id, db=db, status=status, provider=provider,
+        severity=severity, page=page, page_size=page_size,
+    )
+    return SecurityCaseListResponse(
+        items=[
+            SecurityCaseResponse.from_model(
+                c, link_count=security_case_service.count_links(c.id, db)
+            )
+            for c in items
+        ],
+        total=total, page=page, page_size=page_size,
+    )
+
+
+@router.get("/cases/{case_id}", response_model=SecurityCaseDetailResponse)
+def get_security_case(
+    case_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseDetailResponse:
+    """Return a case + its links (M66.8). 404 cross-workspace."""
+    _ws, case = _case_or_404(case_id, current_user, db)
+    links = security_case_service.list_case_links(case_id=case.id, db=db)
+    return SecurityCaseDetailResponse(
+        case=SecurityCaseResponse.from_model(case, link_count=len(links)),
+        links=[SecurityCaseLinkResponse.from_model(ln) for ln in links],
+    )
+
+
+@router.patch("/cases/{case_id}", response_model=SecurityCaseResponse)
+def update_security_case(
+    case_id: UUID4,
+    body: SecurityCaseUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseResponse:
+    """Update case fields / lifecycle (M66.8).
+
+    Members may edit title/summary/severity/confidence and move a case to
+    investigating / dismissed / resolved. Marking a case ``confirmed_by_user``
+    requires admin/owner — confirmation is a higher-trust human action.
+    """
+    workspace_id, case = _case_or_404(case_id, current_user, db)
+    if body.status == "confirmed_by_user":
+        workspace_permission_service.require_workspace_admin(
+            workspace_id, current_user.id, db
+        )
+    try:
+        updated = security_case_service.update_case(
+            case=case, actor_user_id=current_user.id, db=db,
+            title=body.title, summary=body.summary, severity=body.severity,
+            confidence=body.confidence, status=body.status,
+        )
+    except security_case_service.CaseValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return SecurityCaseResponse.from_model(
+        updated, link_count=security_case_service.count_links(updated.id, db)
+    )
+
+
+@router.get("/cases/{case_id}/links", response_model=SecurityCaseLinkListResponse)
+def list_security_case_links(
+    case_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseLinkListResponse:
+    """List the evidence links attached to a case (M66.8)."""
+    _ws, case = _case_or_404(case_id, current_user, db)
+    links = security_case_service.list_case_links(case_id=case.id, db=db)
+    return SecurityCaseLinkListResponse(
+        items=[SecurityCaseLinkResponse.from_model(ln) for ln in links],
+        total=len(links),
+    )
+
+
+@router.post("/cases/{case_id}/links", response_model=SecurityCaseLinkResponse, status_code=201)
+def add_security_case_link(
+    case_id: UUID4,
+    body: SecurityCaseLinkCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseLinkResponse:
+    """Attach an evidence object to a case (M66.8). Cross-workspace objects → 404."""
+    _ws, case = _case_or_404(case_id, current_user, db)
+    try:
+        object_id = uuid.UUID(str(body.linked_object_id))
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=422, detail="Invalid linked_object_id.")
+    try:
+        _outcome, link = security_case_service.link_object_to_case(
+            case=case, object_type=body.linked_object_type, object_id=object_id,
+            actor_user_id=current_user.id, db=db,
+        )
+    except security_case_service.CaseValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except security_case_service.CrossWorkspaceLinkError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return SecurityCaseLinkResponse.from_model(link)
+
+
+@router.delete("/cases/{case_id}/links/{link_id}")
+def delete_security_case_link(
+    case_id: UUID4,
+    link_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Detach an evidence object from a case (M66.8)."""
+    _ws, case = _case_or_404(case_id, current_user, db)
+    removed = security_case_service.unlink_object_from_case(
+        case=case, link_id=link_id, db=db
+    )
+    if not removed:
+        raise HTTPException(status_code=404, detail="Case link not found.")
+    return {"ok": True}
+
+
+@router.post("/signals/{signal_id}/create-case", response_model=SecurityCaseResponse, status_code=201)
+def create_case_from_signal_endpoint(
+    signal_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseResponse:
+    """Create a case from an incident signal, linking its evidence (M66.8)."""
+    workspace_id = _current_workspace_id(current_user, db)
+    signal = security_incident_signal_service.get_incident_signal(
+        signal_id=signal_id, workspace_id=workspace_id, db=db
+    )
+    if signal is None:
+        raise HTTPException(status_code=404, detail="Incident signal not found.")
+    case = security_case_service.create_case_from_signal(
+        workspace_id=workspace_id, user_id=current_user.id, signal=signal, db=db
+    )
+    return SecurityCaseResponse.from_model(
+        case, link_count=security_case_service.count_links(case.id, db)
+    )
+
+
+@router.post("/correlations/{correlation_id}/create-case", response_model=SecurityCaseResponse, status_code=201)
+def create_case_from_correlation_endpoint(
+    correlation_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseResponse:
+    """Create a case from a correlation, linking risk/activity/signal (M66.8)."""
+    workspace_id = _current_workspace_id(current_user, db)
+    corr = security_signal_correlation_service.get_correlation(
+        correlation_id=correlation_id, workspace_id=workspace_id, db=db
+    )
+    if corr is None:
+        raise HTTPException(status_code=404, detail="Correlation not found.")
+    case = security_case_service.create_case_from_correlation(
+        workspace_id=workspace_id, user_id=current_user.id, correlation=corr, db=db
+    )
+    return SecurityCaseResponse.from_model(
+        case, link_count=security_case_service.count_links(case.id, db)
+    )

@@ -31,6 +31,7 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 import RelatedCorrelationsPanel from "@/components/security/RelatedCorrelationsPanel";
+import CreateCaseButton from "@/components/security/CreateCaseButton";
 
 export default function IncidentSignalDetailPage() {
   const params = useParams();
@@ -104,6 +105,11 @@ function SignalBody({ signal }: { signal: SecurityIncidentSignal }) {
         <Chip>evidence: {signal.evidence_level}</Chip>
         <Chip>{signal.provider}</Chip>
         <Chip>{signal.signal_type}</Chip>
+      </div>
+
+      {/* Create case action (M66.8) */}
+      <div style={{ marginBottom: "18px" }}>
+        <CreateCaseButton from="signal" id={signal.id} />
       </div>
 
       {/* Summary */}
