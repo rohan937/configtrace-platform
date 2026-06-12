@@ -27,6 +27,7 @@ import {
   generateAwsSecurityHubSignals,
   generateAwsS3AccessSignals,
   generateAwsVpcFlowSignals,
+  generateCloudflareSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -41,8 +42,10 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
-type Provider = "github" | "aws";
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS" };
+type Provider = "github" | "aws" | "cloudflare";
+
+const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity"];
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
@@ -131,9 +134,11 @@ export default function IncidentSignalsPage() {
     try {
       const token = await getToken();
       const res =
-        provider === "aws"
-          ? await generateAwsIncidentSignals(token)
-          : await generateSecurityIncidentSignals({ provider: "github" }, token);
+        provider === "cloudflare"
+          ? await generateCloudflareSignals(token)
+          : provider === "aws"
+            ? await generateAwsIncidentSignals(token)
+            : await generateSecurityIncidentSignals({ provider: "github" }, token);
       setGenResult(res);
       await load();
     } catch {
@@ -277,14 +282,14 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
         <Select
           label="Signal type"
           value={signalType}
           onChange={setSignalType}
-          options={provider === "aws" ? AWS_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
         />
       </div>
 
@@ -390,10 +395,13 @@ function GenerateBar({
   onGenerateVpcFlow: () => void;
 }) {
   const isAws = provider === "aws";
-  const label = isAws ? "Generate AWS signals" : "Generate signals";
-  const desc = isAws
-    ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM/KMS/S3 management activity, S3 object-level data events, or VPC Flow Log network activity."
-    : "Scans recent GitHub audit activity events and creates review signals.";
+  const isCloudflare = provider === "cloudflare";
+  const label = isCloudflare ? "Generate Cloudflare signals" : isAws ? "Generate AWS signals" : "Generate signals";
+  const desc = isCloudflare
+    ? "Generate review signals from Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity)."
+    : isAws
+      ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM/KMS/S3 management activity, S3 object-level data events, or VPC Flow Log network activity."
+      : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"

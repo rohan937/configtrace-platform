@@ -33,6 +33,14 @@ from app.models.security_activity_event import SecurityActivityEvent
 ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
     {
         "action",            # raw provider action string (e.g. "protected_branch.destroy")
+        # Cloudflare security/audit activity fields (M68.1).
+        "zone_id",           # Cloudflare zone id
+        "zone_name",         # Cloudflare zone name (domain)
+        "actor",             # actor email/id who made the change
+        "rule_id",           # WAF/firewall/page rule id
+        "rule_name",         # WAF/firewall/page rule name
+        "severity",          # provider-reported severity label
+        "outcome",           # action result (success / failure)
         "repository",        # "owner/repo"
         "visibility",        # public/private/internal
         "ref",               # branch/ref name

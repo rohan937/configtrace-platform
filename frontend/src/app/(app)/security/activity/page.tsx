@@ -24,6 +24,7 @@ import {
   syncAwsSecurityAlerts,
   syncAwsCloudTrail,
   syncAwsSecurityHub,
+  syncCloudflareActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -33,7 +34,17 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws";
+type Provider = "github" | "aws" | "cloudflare";
+
+const CLOUDFLARE_EVENT_TYPES = [
+  "cloudflare.dns_record.changed",
+  "cloudflare.waf_rule.changed",
+  "cloudflare.ssl_tls.changed",
+  "cloudflare.access_policy.changed",
+  "cloudflare.api_token.activity",
+  "cloudflare.zone_setting.changed",
+  "cloudflare.audit_event",
+];
 
 const GITHUB_EVENT_TYPES = [
   "github.branch_protection.disabled",
@@ -100,7 +111,7 @@ const AWS_EVENT_TYPES = [
 ];
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -155,7 +166,15 @@ export default function ActivityEventsPage() {
     setSyncNote(null);
     try {
       const token = await getToken();
-      if (provider === "aws") {
+      if (provider === "cloudflare") {
+        const r = await syncCloudflareActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Cloudflare audit-log access is limited for this token. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
+      } else if (provider === "aws") {
         const r = await syncAwsSecurityAlerts(token);
         setSyncWarn(r.permission_limited);
         setSyncNote(
@@ -175,9 +194,11 @@ export default function ActivityEventsPage() {
       await load();
     } catch {
       setSyncError(
-        provider === "aws"
-          ? "Could not sync AWS security alerts. Please try again."
-          : "Could not sync GitHub activity. Please try again.",
+        provider === "cloudflare"
+          ? "Could not sync Cloudflare security activity. Please try again."
+          : provider === "aws"
+            ? "Could not sync AWS security alerts. Please try again."
+            : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -237,7 +258,10 @@ export default function ActivityEventsPage() {
     return { types, latest };
   }, [events]);
 
-  const eventTypeOptions = provider === "aws" ? AWS_EVENT_TYPES : GITHUB_EVENT_TYPES;
+  const eventTypeOptions =
+    provider === "aws" ? AWS_EVENT_TYPES
+    : provider === "cloudflare" ? CLOUDFLARE_EVENT_TYPES
+    : GITHUB_EVENT_TYPES;
 
   return (
     <div>
@@ -275,7 +299,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -374,10 +398,15 @@ function SyncBar({
   onSyncSecurityHub: () => void;
 }) {
   const isAws = provider === "aws";
-  const label = isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
-  const desc = isAws
-    ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, Security Hub findings, S3 data events, and VPC Flow Logs when configured. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
-    : "Ingests recent GitHub audit-log activity into normalized events.";
+  const isCloudflare = provider === "cloudflare";
+  const label = isCloudflare
+    ? "Sync Cloudflare security activity"
+    : isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
+  const desc = isCloudflare
+    ? "Ingests Cloudflare account audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity) into normalized activity events. Requires an account-scoped token with Audit Logs Read."
+    : isAws
+      ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, Security Hub findings, S3 data events, and VPC Flow Logs when configured. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
+      : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"

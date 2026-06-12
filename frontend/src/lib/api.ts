@@ -679,6 +679,18 @@ export async function syncAwsSecurityHub(
   return apiFetch(`/security/aws-security-hub/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function syncCloudflareActivity(
+  token?: string | null,
+): Promise<import("@/types").CloudflareActivitySyncResponse> {
+  return apiFetch(`/security/cloudflare-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+export async function generateCloudflareSignals(
+  token?: string | null,
+): Promise<import("@/types").AwsSignalGenerateResponse> {
+  return apiFetch(`/security/cloudflare-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsIncidentSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

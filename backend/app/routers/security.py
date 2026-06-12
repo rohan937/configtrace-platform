@@ -133,6 +133,11 @@ from app.schemas.security_aws_vpc_flow_logs import (
     AwsVpcFlowSignalGenerateRequest,
     AwsVpcFlowSignalGenerateResponse,
 )
+from app.schemas.security_cloudflare_activity import (
+    CloudflareActivitySyncRequest,
+    CloudflareActivitySyncResponse,
+    CloudflareSignalGenerateResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -157,6 +162,7 @@ from app.services import aws_s3_data_event_ingestion_service
 from app.services import aws_s3_access_signal_service
 from app.services import aws_vpc_flow_log_ingestion_service
 from app.services import aws_vpc_flow_signal_service
+from app.services import cloudflare_security_activity_ingestion_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
 from app.services.security_rule_registry import is_known_rule_key
@@ -1761,6 +1767,78 @@ def generate_aws_vpc_flow_signals(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return AwsVpcFlowSignalGenerateResponse(**summary)
+
+
+@router.post("/cloudflare-activity/sync", response_model=CloudflareActivitySyncResponse)
+def sync_cloudflare_security_activity(
+    body: Optional[CloudflareActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CloudflareActivitySyncResponse:
+    """Ingest Cloudflare account audit activity (M68.1).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised. Members can view the resulting events via
+    ``GET /security/activity/events?provider=cloudflare``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "cloudflare",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="Cloudflare integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return CloudflareActivitySyncResponse(
+                attempted=False, succeeded=False, provider="cloudflare",
+                source="audit_log",
+                error_message="No active Cloudflare integration found.",
+            )
+
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+    summary = cloudflare_security_activity_ingestion_service.ingest_cloudflare_security_activity(
+        integration=integration, workspace_id=workspace_id, db=db, max_events=max_events
+    )
+    return CloudflareActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/cloudflare-activity/generate-signals",
+    response_model=CloudflareSignalGenerateResponse,
+)
+def generate_cloudflare_signals(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> CloudflareSignalGenerateResponse:
+    """Generate Cloudflare Incident Signals from audit activity (M68.1).
+
+    Admin/owner only. Idempotent — re-running creates no duplicates.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    summary = security_incident_signal_service.generate_cloudflare_signals(
+        workspace_id=workspace_id, db=db
+    )
+    return CloudflareSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

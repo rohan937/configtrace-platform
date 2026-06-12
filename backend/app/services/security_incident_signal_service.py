@@ -67,6 +67,13 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "product_name",       # ASFF ProductName
         "workflow_status",    # ASFF Workflow.Status
         "compliance_status",  # ASFF Compliance.Status
+        # Cloudflare audit-activity fields (M68.1).
+        "zone_id",            # Cloudflare zone id
+        "zone_name",          # Cloudflare zone (domain)
+        "rule_id",            # WAF/firewall rule id
+        "rule_name",          # WAF/firewall rule name
+        "outcome",            # audit action result (success / failure)
+        "severity",           # provider-reported severity label
         # AWS S3 object-access-spike fields (M67.9) — safe aggregate counts only.
         "bucket_name",        # S3 bucket name (resource identifier)
         "unique_object_count",  # distinct object_key_hash count
@@ -645,6 +652,138 @@ def generate_aws_security_hub_signals(
 
     return {
         "provider": PROVIDER_AWS,
+        "activity_events_scanned": len(events),
+        "signals_created": created,
+        "signals_skipped": skipped,
+    }
+
+
+# ── Cloudflare audit-activity Incident Signals (M68.1) ─────────────────────────
+
+PROVIDER_CLOUDFLARE = "cloudflare"
+SOURCE_AUDIT_LOG = "audit_log"
+
+_CF_REVIEW_NOTE = (
+    "This is Cloudflare audit activity surfaced as evidence for review. "
+    "ConfigTrace does not confirm a breach, attacker, compromise, or "
+    "unauthorized access."
+)
+
+# Normalized Cloudflare audit ``event_type`` → signal rule. Only these
+# security-relevant control-plane changes produce a signal; the generic
+# ``cloudflare.audit_event`` fallback is intentionally NOT signal-producing.
+CLOUDFLARE_SIGNAL_RULES: dict[str, dict[str, str]] = {
+    "cloudflare.dns_record.changed": _rule(
+        "cloudflare_dns_record_changed", "cloudflare_audit_activity", "medium",
+        "DNS record changed"),
+    "cloudflare.waf_rule.changed": _rule(
+        "cloudflare_waf_rule_changed", "cloudflare_audit_activity", "high",
+        "WAF/firewall rule changed"),
+    "cloudflare.ssl_tls.changed": _rule(
+        "cloudflare_ssl_tls_changed", "cloudflare_audit_activity", "high",
+        "SSL/TLS setting changed"),
+    "cloudflare.access_policy.changed": _rule(
+        "cloudflare_access_policy_changed", "cloudflare_audit_activity", "high",
+        "Access policy changed"),
+    "cloudflare.api_token.activity": _rule(
+        "cloudflare_api_token_activity", "cloudflare_audit_activity", "medium",
+        "API token activity observed"),
+    "cloudflare.zone_setting.changed": _rule(
+        "cloudflare_zone_setting_changed", "cloudflare_audit_activity", "medium",
+        "Zone setting changed"),
+}
+
+
+def build_cloudflare_signal_from_activity_event(
+    ev: SecurityActivityEvent,
+) -> Optional[dict[str, Any]]:
+    """Map a Cloudflare audit activity event -> a signal dict, or None."""
+    if ev.provider != PROVIDER_CLOUDFLARE or ev.source != SOURCE_AUDIT_LOG:
+        return None
+    rule = CLOUDFLARE_SIGNAL_RULES.get(ev.event_type)
+    if rule is None:
+        return None
+
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    zone = md.get("zone_name") or md.get("zone_id") or ev.resource_id
+    actor = md.get("actor") or ev.actor_id
+
+    title = rule["phrase"]
+    if isinstance(zone, str) and zone:
+        title = f"{rule['phrase']} on {zone}"
+
+    who = f" by {actor}" if isinstance(actor, str) and actor else ""
+    where = f" on {zone}" if isinstance(zone, str) and zone else ""
+    summary = (
+        f"Cloudflare audit activity: {rule['phrase'].lower()}{where}{who}. "
+        f"{_CF_REVIEW_NOTE}"
+    )
+
+    when = ev.occurred_at or ev.ingested_at
+    metadata = sanitize_signal_metadata({
+        "event_type": ev.event_type,
+        "action": md.get("action"),
+        "actor": actor if isinstance(actor, str) else None,
+        "zone_id": md.get("zone_id"),
+        "zone_name": md.get("zone_name"),
+        "rule_id": md.get("rule_id"),
+        "rule_name": md.get("rule_name"),
+        "outcome": md.get("outcome"),
+        "severity": md.get("severity"),
+    })
+
+    return {
+        "provider": PROVIDER_CLOUDFLARE,
+        "integration_id": ev.integration_id,
+        "signal_key": rule["signal_key"],
+        "signal_type": rule["signal_type"],
+        "severity": rule["severity"],
+        "status": "open",
+        "title": title[:240],
+        "summary": summary,
+        "evidence_level": "activity",
+        "confidence": "high",
+        "first_seen_at": when,
+        "last_seen_at": when,
+        "linked_activity_event_id": ev.id,
+        "metadata": metadata,
+    }
+
+
+def generate_cloudflare_signals(
+    *, workspace_id: uuid.UUID, db: Session, scan_limit: int = 1000
+) -> dict[str, Any]:
+    """Generate Cloudflare Incident Signals from audit activity. Idempotent."""
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_CLOUDFLARE,
+            SecurityActivityEvent.source == SOURCE_AUDIT_LOG,
+        )
+        .order_by(
+            SecurityActivityEvent.occurred_at.desc().nullslast(),
+            SecurityActivityEvent.created_at.desc(),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    created = 0
+    skipped = 0
+    for ev in events:
+        signal = build_cloudflare_signal_from_activity_event(ev)
+        if signal is None:
+            continue
+        outcome, _row = upsert_incident_signal(
+            workspace_id=workspace_id, signal=signal, db=db
+        )
+        if outcome == "created":
+            created += 1
+        else:
+            skipped += 1
+
+    return {
+        "provider": PROVIDER_CLOUDFLARE,
         "activity_events_scanned": len(events),
         "signals_created": created,
         "signals_skipped": skipped,

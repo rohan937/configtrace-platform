@@ -502,6 +502,80 @@ class CloudflareConnector(BaseConnector):
         # The loop always raises or returns — this line is unreachable.
         raise ConnectorError("Unexpected end of retry loop")  # pragma: no cover
 
+    # ── Security/audit activity (M68.1) ────────────────────────────────────────
+    #
+    # Cloudflare ACCOUNT audit logs are the broadly-available, plan-agnostic
+    # source for security-relevant change activity (DNS records, WAF/firewall
+    # rules, SSL/TLS + zone settings, Access policies, API-token activity). They
+    # require an account-scoped token with audit-log read. WAF/firewall SECURITY
+    # EVENTS (per-request analytics) are intentionally DEFERRED — they require the
+    # GraphQL Analytics API / higher plan tiers and are not safely reachable from
+    # this REST connector. These are control-plane ACTIVITY events for review, not
+    # breach/attack detection. The API token is NEVER logged.
+
+    def list_audit_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        account_id: str | None = None,
+    ) -> list[dict]:
+        """Return recent Cloudflare account audit-log entries (raw dicts).
+
+        Bounded by ``max_events`` and a small page cap — never an unbounded scan.
+        Returns ``[]`` when there is nothing to read.
+
+        Raises (translated by ``_get``): AuthenticationError (401/403),
+        RateLimitError, ConnectorError (incl. 403 when the account context cannot
+        be resolved / audit-log scope is missing), NetworkError.
+        """
+        api_token, zone_id = self._extract_credentials(credentials)
+        headers = self._auth_headers(api_token)
+        cap = max(1, min(int(max_events or 100), 1000))
+        per_page = min(cap, _PER_PAGE)
+
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            acct = (
+                account_id
+                or credentials.get("account_id")
+                or self._resolve_account_id(client, zone_id, headers)
+            )
+            if not acct:
+                raise ConnectorError(
+                    "Cloudflare account context is unavailable for this token "
+                    "(account-scoped audit-log access is required).",
+                    status_code=403,
+                )
+
+            events: list[dict] = []
+            page = 1
+            while len(events) < cap and page <= 10:
+                resp = self._get(
+                    client,
+                    f"{_BASE_URL}/accounts/{acct}/audit_logs",
+                    headers,
+                    params={"page": page, "per_page": per_page, "direction": "desc"},
+                )
+                try:
+                    body = resp.json()
+                except Exception:  # noqa: BLE001 — malformed page is non-fatal
+                    break
+                page_events = body.get("result") if isinstance(body, dict) else None
+                if not isinstance(page_events, list) or not page_events:
+                    break
+                for e in page_events:
+                    if isinstance(e, dict):
+                        e.setdefault("_account_id", str(acct))
+                        events.append(e)
+                        if len(events) >= cap:
+                            break
+                info = (body.get("result_info") or {}) if isinstance(body, dict) else {}
+                total_pages = info.get("total_pages")
+                if isinstance(total_pages, int) and page >= total_pages:
+                    break
+                page += 1
+            return events[:cap]
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # M59.7 — Additional Cloudflare surface fetchers
