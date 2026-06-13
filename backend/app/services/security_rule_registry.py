@@ -30,6 +30,11 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "github_ruleset_status_checks_missing",
         "github_ruleset_bypass_actors_present",
         "github_ruleset_weak_target_coverage",
+        # GitHub automation permissions (M69.5B)
+        "github_automation_admin_permission",
+        "github_automation_write_permission",
+        "github_token_broad_scopes",
+        "github_webhook_secret_missing",
         # AWS
         "aws_public_admin_port",
         "aws_public_database_port",

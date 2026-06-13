@@ -74,6 +74,7 @@ from app.connectors.github_schema import (
     GITHUB_ACTIONS_PERMISSIONS,
     GITHUB_ACTIONS_SECRET,
     GITHUB_ACTIONS_VARIABLE,
+    GITHUB_AUTOMATION_PERMISSIONS,
     GITHUB_BRANCH_PROTECTION,
     GITHUB_DEPLOY_KEY,
     GITHUB_ENVIRONMENT_PROTECTION,
@@ -195,6 +196,17 @@ class GitHubConnector(BaseConnector):
             # break the rest of the GitHub sync.
             records.extend(
                 self._fetch_rulesets(client, headers, owner, repo, slug)
+            )
+
+            # 10. Automation credential / token permission posture (M69.5B).
+            # Fully fail-soft. Stores only the repo permission level and (for
+            # classic PATs) OAuth scope NAMES — never the token, headers, or
+            # secrets.
+            records.extend(
+                self._fetch_automation_permissions(
+                    client, headers, owner, repo, slug,
+                    credential_type=credentials.get("credential_type") or "github_token",
+                )
             )
 
         logger.info(
@@ -735,6 +747,91 @@ class GitHubConnector(BaseConnector):
             "requires_code_scanning":       "code_scanning" in rule_types,
         }
 
+    # ── Automation credential / token permission posture (M69.5B) ────────────
+
+    # Classic-PAT OAuth scopes that grant broad write/admin blast radius.
+    _BROAD_TOKEN_SCOPES: frozenset[str] = frozenset({
+        "repo", "admin:org", "admin:repo_hook", "admin:org_hook",
+        "admin:public_key", "admin:enterprise", "write:org", "delete_repo",
+        "site_admin", "workflow",
+    })
+    # Repository permission levels that broaden blast radius beyond read-only.
+    _BROAD_REPO_PERMS: tuple[str, ...] = ("admin", "maintain", "push")
+
+    def _fetch_automation_permissions(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+        *,
+        credential_type: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch the authenticated credential's repo-permission + token-scope posture.
+
+        Fully fail-soft (returns ``[]`` on any error). Reads ``GET /repos`` which
+        returns a ``permissions`` object describing the AUTHENTICATED credential's
+        access, plus the ``X-OAuth-Scopes`` response header (populated only for
+        classic PATs). Stores ONLY safe aggregate fields — never the token, the
+        Authorization header, raw response headers, or any secret.
+        """
+        url = f"{_BASE_URL}/repos/{owner}/{repo}"
+        try:
+            resp = self._get(client, url, headers, allow_404=True)
+            if resp.status_code == 404:
+                return []
+            raw = resp.json()
+            if not isinstance(raw, dict):
+                return []
+        except (AuthenticationError, ConnectorError, RateLimitError, NetworkError):
+            logger.info(
+                "github_connector: automation permissions unavailable for %s "
+                "(non-fatal)", slug
+            )
+            return []
+        except Exception:  # noqa: BLE001 — never break sync
+            logger.warning(
+                "github_connector: unexpected error reading automation "
+                "permissions for %s (non-fatal)", slug
+            )
+            return []
+
+        perms = raw.get("permissions") if isinstance(raw.get("permissions"), dict) else {}
+        admin = bool(perms.get("admin", False))
+        maintain = bool(perms.get("maintain", False))
+        push = bool(perms.get("push", False))
+        triage = bool(perms.get("triage", False))
+        pull = bool(perms.get("pull", False))
+        # Only meaningful when the API actually returned a permissions object.
+        permissions_present = bool(perms)
+        broad_permission_count = sum(1 for v in (admin, maintain, push) if v)
+
+        # Classic-PAT OAuth scope NAMES from the response header (never the token).
+        scope_header = resp.headers.get("X-OAuth-Scopes", "") if hasattr(resp, "headers") else ""
+        scope_names = sorted(
+            {s.strip() for s in scope_header.split(",") if isinstance(s, str) and s.strip()}
+        )
+        broad_scope_names = sorted(set(scope_names) & self._BROAD_TOKEN_SCOPES)
+
+        return [{
+            "record_id":                 f"{slug}#automation_permissions",
+            "record_type":               GITHUB_AUTOMATION_PERMISSIONS,
+            "name":                       slug,
+            "credential_type":           credential_type,
+            "permissions_present":       permissions_present,
+            "repository_permission_admin":    admin,
+            "repository_permission_maintain": maintain,
+            "repository_permission_push":     push,
+            "repository_permission_triage":   triage,
+            "repository_permission_pull":     pull,
+            "broad_permission_count":    broad_permission_count,
+            "token_scope_names":         scope_names,        # safe scope strings only
+            "token_scope_count":         len(scope_names),
+            "token_broad_scopes":        bool(broad_scope_names),
+            "broad_scope_names":         broad_scope_names,
+        }]
+
     def _fetch_actions_secrets(
         self,
         client: httpx.Client,
@@ -823,6 +920,10 @@ class GitHubConnector(BaseConnector):
                 "active":       bool(item.get("active", True)),
                 "events":       sorted(item.get("events", [])),
                 "content_type": config.get("content_type", "json"),
+                # GitHub masks a configured secret as "********" (and omits the
+                # field entirely when none is set). We store ONLY the boolean
+                # presence — never the masked or real secret value (M69.5B).
+                "webhook_secret_configured": bool(config.get("secret")),
             })
         return records
 

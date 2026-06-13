@@ -54,6 +54,11 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "github_ruleset_status_checks_missing": ("github", "medium", "Rulesets"),
     "github_ruleset_bypass_actors_present": ("github", "medium", "Rulesets"),
     "github_ruleset_weak_target_coverage": ("github", "medium", "Rulesets"),
+    # GitHub automation permissions (M69.5B)
+    "github_automation_admin_permission": ("github", "high", "Automation permissions"),
+    "github_automation_write_permission": ("github", "medium", "Automation permissions"),
+    "github_token_broad_scopes": ("github", "high", "Automation permissions"),
+    "github_webhook_secret_missing": ("github", "medium", "Webhooks"),
     # AWS
     "aws_public_admin_port": ("aws", "high", "Security groups"),
     "aws_public_database_port": ("aws", "critical", "Security groups"),

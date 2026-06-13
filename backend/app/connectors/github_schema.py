@@ -79,6 +79,12 @@ GITHUB_APP_INSTALLATION = "github_app_installation"
 # code scanning, Dependabot, vulnerability alerts.
 GITHUB_SECURITY_FEATURES = "github_security_features"
 
+# Automation credential / token permission posture (M69.5B). One record per
+# repository describing the authenticated credential's repo permission level and
+# (for classic PATs) its OAuth scope NAMES — never the token, headers, or
+# secrets. Used to surface broad automation blast radius.
+GITHUB_AUTOMATION_PERMISSIONS = "github_automation_permissions"
+
 #: Set of all GitHub record type strings — used for fast membership checks.
 GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
     GITHUB_REPO_SETTINGS,
@@ -96,6 +102,7 @@ GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
     GITHUB_COLLABORATOR,
     GITHUB_APP_INSTALLATION,
     GITHUB_SECURITY_FEATURES,
+    GITHUB_AUTOMATION_PERMISSIONS,
 })
 
 

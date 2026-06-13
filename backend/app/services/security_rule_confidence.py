@@ -54,6 +54,11 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "github_ruleset_status_checks_missing": (MEDIUM, "Depends on the protected-branch target heuristic; only active branch rulesets are evaluated."),
     "github_ruleset_bypass_actors_present": (HIGH, "Reads the bypass-actor count directly; counts only, never identities."),
     "github_ruleset_weak_target_coverage": (MEDIUM, "Based on a default-branch coverage heuristic; conservative and may under-report."),
+    # GitHub automation permissions (M69.5B)
+    "github_automation_admin_permission": (HIGH, "Reads the authenticated credential's repository permission object directly."),
+    "github_automation_write_permission": (HIGH, "Reads the authenticated credential's repository permission object directly."),
+    "github_token_broad_scopes": (MEDIUM, "Classic-PAT scopes only (from X-OAuth-Scopes); fine-grained tokens/Apps expose no scopes, so it may under-report."),
+    "github_webhook_secret_missing": (HIGH, "GitHub reliably masks a configured secret and omits the field when none is set."),
     # AWS
     "aws_public_admin_port": (HIGH, "Only 0.0.0.0/0 or ::/0 count as public; reachability is not claimed."),
     "aws_public_database_port": (HIGH, "Only canonical 'any' CIDRs count as public."),

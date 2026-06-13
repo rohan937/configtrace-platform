@@ -42,6 +42,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.connectors.github_schema import (
+    GITHUB_AUTOMATION_PERMISSIONS,
     GITHUB_BRANCH_PROTECTION,
     GITHUB_DEPLOY_KEY,
     GITHUB_ENVIRONMENT_PROTECTION,
@@ -71,6 +72,17 @@ _RULE_RULESET_PR_REVIEW_MISSING = "github_ruleset_pr_review_missing"
 _RULE_RULESET_STATUS_CHECKS_MISSING = "github_ruleset_status_checks_missing"
 _RULE_RULESET_BYPASS_ACTORS = "github_ruleset_bypass_actors_present"
 _RULE_RULESET_WEAK_TARGET = "github_ruleset_weak_target_coverage"
+# GitHub automation credential / token permission posture (M69.5B).
+_RULE_AUTOMATION_ADMIN = "github_automation_admin_permission"
+_RULE_AUTOMATION_WRITE = "github_automation_write_permission"
+_RULE_TOKEN_BROAD_SCOPES = "github_token_broad_scopes"
+_RULE_WEBHOOK_SECRET_MISSING = "github_webhook_secret_missing"
+
+# Calibrated note for automation-permission findings (keeps claims safe).
+_AUTOMATION_REVIEW_NOTE = (
+    "This is evidence for review. ConfigTrace does not confirm unauthorized "
+    "access or compromise."
+)
 
 # Environment names treated as production for the unguarded-environment rule.
 _PRODUCTION_ENV_NAMES = {"production", "prod"}
@@ -96,6 +108,8 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
         return _eval_environment(record)
     if rtype == GITHUB_RULESET:
         return _eval_ruleset(record)
+    if rtype == GITHUB_AUTOMATION_PERMISSIONS:
+        return _eval_automation_permissions(record)
     return []
 
 
@@ -103,37 +117,70 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
 
 
 def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
-    url = get_str(record, "url").strip()
     if not bool(record.get("active", True)):
         return []
-    if not url.lower().startswith("http://"):
-        return []
-
+    url = get_str(record, "url").strip()
     record_id = get_str(record, "record_id") or None
-    return [
-        FindingCandidate(
-            provider="github",
-            rule_key=_RULE_WEBHOOK_HTTP,
-            finding_key=make_finding_key(_RULE_WEBHOOK_HTTP, record_id),
-            severity="critical",
-            title="GitHub webhook uses plain HTTP",
-            description=(
-                "A GitHub webhook delivers events over plain HTTP. Event "
-                "payloads and signature headers may be transmitted in cleartext, "
-                "allowing interception or tampering."
-            ),
-            evidence={"rule": _RULE_WEBHOOK_HTTP, "url": url},
-            remediation={
-                "summary": "Restore HTTPS on the webhook endpoint and verify ownership.",
-                "steps": [
-                    "Change the webhook delivery URL back to https://.",
-                    "Verify the endpoint is owned by your team.",
-                    "Rotate the webhook secret if exposure is suspected.",
-                ],
-            },
-            record_id=record_id,
+    out: list[FindingCandidate] = []
+
+    if url.lower().startswith("http://"):
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_WEBHOOK_HTTP,
+                finding_key=make_finding_key(_RULE_WEBHOOK_HTTP, record_id),
+                severity="critical",
+                title="GitHub webhook uses plain HTTP",
+                description=(
+                    "A GitHub webhook delivers events over plain HTTP. Event "
+                    "payloads and signature headers may be transmitted in cleartext, "
+                    "allowing interception or tampering."
+                ),
+                evidence={"rule": _RULE_WEBHOOK_HTTP, "url": url},
+                remediation={
+                    "summary": "Restore HTTPS on the webhook endpoint and verify ownership.",
+                    "steps": [
+                        "Change the webhook delivery URL back to https://.",
+                        "Verify the endpoint is owned by your team.",
+                        "Rotate the webhook secret if exposure is suspected.",
+                    ],
+                },
+                record_id=record_id,
+            )
         )
-    ]
+
+    # D (M69.5B) — webhook with no signing secret configured. Only fires when the
+    # connector explicitly captured the boolean (partial/old records are ignored).
+    # The secret VALUE is never read or stored — only its presence boolean.
+    if record.get("webhook_secret_configured") is False:
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_WEBHOOK_SECRET_MISSING,
+                finding_key=make_finding_key(_RULE_WEBHOOK_SECRET_MISSING, record_id),
+                severity="medium",
+                title="GitHub webhook has no secret configured",
+                description=(
+                    "A GitHub webhook has no signing secret configured. Without a "
+                    "secret, delivered payloads cannot be verified, so the endpoint "
+                    f"may be easier to spoof. {_AUTOMATION_REVIEW_NOTE}"
+                ),
+                evidence={
+                    "rule": _RULE_WEBHOOK_SECRET_MISSING,
+                    "webhook_secret_configured": False,
+                },
+                remediation={
+                    "summary": "Configure a webhook secret and verify signatures on delivery.",
+                    "steps": [
+                        "Set a secret on the webhook in repository settings.",
+                        "Verify the X-Hub-Signature-256 signature on your receiver.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out
 
 
 # ── Default-branch protection posture (M60.4.1) ──────────────────────────────
@@ -557,3 +604,126 @@ def _ruleset_sub(
         remediation={"summary": title + ".", "steps": steps},
         record_id=record_id,
     )
+
+
+# ── GitHub automation credential / token permission posture (M69.5B) ─────────
+#
+# Surfaces broad automation blast radius from safe metadata only: the
+# authenticated credential's repository permission level and (for classic PATs)
+# its OAuth scope NAMES. The connector stores no token, headers, or secrets;
+# these rules read only the aggregate booleans / counts / scope-name list.
+# Wording stays in "may increase blast radius" / "appears broadly scoped" — never
+# an assertion that a token leaked or that anyone gained access.
+
+
+def _eval_automation_permissions(record: dict[str, Any]) -> list[FindingCandidate]:
+    record_id = get_str(record, "record_id") or None
+    cred_type = get_str(record, "credential_type") or "github_token"
+    out: list[FindingCandidate] = []
+
+    permissions_present = record.get("permissions_present") is True
+    admin = record.get("repository_permission_admin") is True
+    push = record.get("repository_permission_push") is True
+    maintain = record.get("repository_permission_maintain") is True
+    broad_count = record.get("broad_permission_count")
+    broad_count = broad_count if isinstance(broad_count, int) else 0
+
+    # A — admin repository permission (strongest). Only when the API actually
+    # returned a permissions object (partial records are ignored / fail soft).
+    if permissions_present and admin:
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_AUTOMATION_ADMIN,
+                finding_key=make_finding_key(_RULE_AUTOMATION_ADMIN, record_id),
+                severity="high",
+                title="GitHub automation credential has admin repository permission",
+                description=(
+                    "The automation credential has admin permission on this "
+                    "repository. Admin access broadens the blast radius of the "
+                    f"credential beyond what monitoring usually requires. {_AUTOMATION_REVIEW_NOTE}"
+                ),
+                evidence={
+                    "rule": _RULE_AUTOMATION_ADMIN,
+                    "credential_type": cred_type,
+                    "repository_permission_admin": True,
+                    "broad_permission_count": broad_count,
+                },
+                remediation={
+                    "summary": "Reduce the automation credential to the least privilege it needs.",
+                    "steps": [
+                        "Prefer read-only access for monitoring integrations.",
+                        "Use a fine-grained token or GitHub App scoped to required permissions.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+    # B — write/push (or maintain) permission, when not already admin.
+    elif permissions_present and (push or maintain):
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_AUTOMATION_WRITE,
+                finding_key=make_finding_key(_RULE_AUTOMATION_WRITE, record_id),
+                severity="medium",
+                title="GitHub automation credential has write permission",
+                description=(
+                    "The automation credential has write/push permission on this "
+                    "repository where read-only would usually be safer. This may "
+                    f"increase the blast radius of the credential. {_AUTOMATION_REVIEW_NOTE}"
+                ),
+                evidence={
+                    "rule": _RULE_AUTOMATION_WRITE,
+                    "credential_type": cred_type,
+                    "repository_permission_push": push,
+                    "repository_permission_maintain": maintain,
+                    "broad_permission_count": broad_count,
+                },
+                remediation={
+                    "summary": "Reduce the automation credential to read-only where possible.",
+                    "steps": [
+                        "Confirm whether write access is actually required.",
+                        "Re-issue the token/app with the minimum permissions needed.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # C — broad classic-PAT token scopes (independent of repo permission level).
+    if record.get("token_broad_scopes") is True:
+        broad = record.get("broad_scope_names")
+        broad_names = [s for s in broad if isinstance(s, str)] if isinstance(broad, list) else []
+        scope_count = record.get("token_scope_count")
+        scope_count = scope_count if isinstance(scope_count, int) else len(broad_names)
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_TOKEN_BROAD_SCOPES,
+                finding_key=make_finding_key(_RULE_TOKEN_BROAD_SCOPES, record_id),
+                severity="high",
+                title="GitHub token appears broadly scoped",
+                description=(
+                    "The automation token carries broad repository/admin OAuth "
+                    "scopes. A broadly scoped token increases the blast radius of "
+                    f"the credential. {_AUTOMATION_REVIEW_NOTE}"
+                ),
+                evidence={
+                    "rule": _RULE_TOKEN_BROAD_SCOPES,
+                    "credential_type": cred_type,
+                    "broad_scope_names": broad_names,   # safe scope strings only
+                    "token_scope_count": scope_count,
+                },
+                remediation={
+                    "summary": "Replace the broadly scoped token with a least-privilege credential.",
+                    "steps": [
+                        "Prefer a fine-grained personal access token or GitHub App.",
+                        "Grant only the repository permissions ConfigTrace requires (read).",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out
