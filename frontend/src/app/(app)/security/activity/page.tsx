@@ -28,6 +28,7 @@ import {
   syncCloudflareWafEvents,
   syncGitHubSecretScanning,
   syncGitHubCodeScanning,
+  syncGitHubDependabot,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -81,6 +82,12 @@ const GITHUB_EVENT_TYPES = [
   "github.code_scanning.alert.fixed",
   "github.code_scanning.alert.dismissed",
   "github.code_scanning.alert.reopened",
+  // M69.4G — GitHub Dependabot (vulnerable-dependency) alert evidence.
+  "github.dependabot.alert.open",
+  "github.dependabot.alert.fixed",
+  "github.dependabot.alert.dismissed",
+  "github.dependabot.alert.reopened",
+  "github.dependabot.alert.auto_dismissed",
 ];
 const AWS_EVENT_TYPES = [
   "aws.guardduty.unauthorized_access",
@@ -333,6 +340,27 @@ export default function ActivityEventsPage() {
     }
   }, [getToken, load]);
 
+  const onSyncGithubDependabot = useCallback(async () => {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncNote(null);
+    try {
+      const token = await getToken();
+      const r = await syncGitHubDependabot(token);
+      setSyncWarn(r.permission_limited);
+      setSyncNote(
+        `${r.permission_limited ? "GitHub Dependabot alerts are unavailable for this token/repo. " : ""}` +
+          `Dependabot alerts: seen ${r.alerts_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+          `${r.error_message ? ` (${r.error_message})` : ""}`,
+      );
+      await load();
+    } catch {
+      setSyncError("Could not sync GitHub Dependabot alerts. Please try again.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const types = new Set(events.map((e) => e.event_type)).size;
     const latest = events.reduce<string | null>((acc, e) => {
@@ -367,6 +395,7 @@ export default function ActivityEventsPage() {
         onSyncCloudflareWaf={onSyncCloudflareWaf}
         onSyncGithubSecretScanning={onSyncGithubSecretScanning}
         onSyncGithubCodeScanning={onSyncGithubCodeScanning}
+        onSyncGithubDependabot={onSyncGithubDependabot}
       />
 
       <div
@@ -478,6 +507,7 @@ function SyncBar({
   onSyncCloudflareWaf,
   onSyncGithubSecretScanning,
   onSyncGithubCodeScanning,
+  onSyncGithubDependabot,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -492,6 +522,7 @@ function SyncBar({
   onSyncCloudflareWaf: () => void;
   onSyncGithubSecretScanning: () => void;
   onSyncGithubCodeScanning: () => void;
+  onSyncGithubDependabot: () => void;
 }) {
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
@@ -658,6 +689,30 @@ function SyncBar({
             }}
           >
             Sync GitHub code scanning alerts
+          </button>
+        )}
+        {!isAws && !isCloudflare && (
+          <button
+            onClick={onSyncGithubDependabot}
+            disabled={!isAdmin || syncing}
+            title={
+              !isAdmin
+                ? "Only workspace admins can sync."
+                : "Available when the GitHub token and repository support Dependabot alerts."
+            }
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || syncing ? "not-allowed" : "pointer",
+              opacity: syncing ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Sync GitHub Dependabot alerts
           </button>
         )}
       </div>

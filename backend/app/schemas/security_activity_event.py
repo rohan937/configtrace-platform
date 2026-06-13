@@ -152,6 +152,35 @@ class GitHubCodeScanningSyncResponse(BaseModel):
     error_message: Optional[str] = None
 
 
+class GitHubDependabotSyncRequest(BaseModel):
+    """POST /security/github-dependabot/sync request body (M69.4G, optional)."""
+
+    integration_id: Optional[str] = None
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_alerts: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class GitHubDependabotSyncResponse(BaseModel):
+    """POST /security/github-dependabot/sync response — ingestion summary.
+
+    Dependabot ALERT evidence for review. ``permission_limited`` is True when
+    Dependabot alerts are disabled, the repo is unavailable, or the token lacks
+    the security-events scope. ``error_message`` is a short, safe string (never a
+    secret/token/raw advisory body).
+    """
+
+    attempted: bool
+    succeeded: bool
+    provider: str
+    integration_id: Optional[str] = None
+    source: str
+    alerts_seen: int = 0
+    events_inserted: int = 0
+    events_skipped: int = 0
+    permission_limited: bool = False
+    error_message: Optional[str] = None
+
+
 class GitHubCodeScanningSignalGenerateRequest(BaseModel):
     """POST /security/github-code-scanning/generate-signals body (M69.4E)."""
 

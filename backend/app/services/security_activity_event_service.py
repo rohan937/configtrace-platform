@@ -141,6 +141,20 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "fixed_at",                  # ISO timestamp the alert was fixed (or omitted)
         "dismissed_at",              # ISO timestamp the alert was dismissed (or omitted)
         "instances_count",           # safe COUNT of alert instances (never raw locations)
+        # GitHub Dependabot alert fields (M69.4G) — provider-reported vulnerable-
+        # dependency alert evidence ONLY (NEVER raw advisory bodies, raw manifest/
+        # file paths, the raw dependency-graph response, or the raw API response).
+        "dependency_package_name",   # vulnerable package name (e.g. "lodash")
+        "dependency_ecosystem",      # package ecosystem (e.g. "npm", "pip")
+        "vulnerable_version_range",  # affected version range (e.g. "< 4.17.21")
+        "patched_versions",          # first patched version label (safe string)
+        "advisory_ghsa_id",          # GHSA advisory id (public identifier)
+        "advisory_cve_id",           # CVE id (public identifier)
+        "advisory_severity",         # advisory severity (low/medium/high/critical)
+        "advisory_summary",          # short, safe advisory summary (truncated)
+        "cvss_score",                # CVSS base score (float)
+        "epss_percentage",           # EPSS probability (float)
+        "scope",                     # dependency scope (runtime / development)
     }
 )
 

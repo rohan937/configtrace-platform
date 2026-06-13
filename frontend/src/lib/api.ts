@@ -557,6 +557,16 @@ export async function syncGitHubCodeScanning(
   });
 }
 
+export async function syncGitHubDependabot(
+  token?: string | null,
+): Promise<import("@/types").GitHubDependabotSyncResponse> {
+  return apiFetch(`/security/github-dependabot/sync`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    token,
+  });
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    Incident Signals (M66.3 backend / M66.4 UI)
 

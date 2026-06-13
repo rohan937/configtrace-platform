@@ -84,6 +84,8 @@ from app.schemas.security_activity_event import (
     GitHubCodeScanningSyncResponse,
     GitHubCodeScanningSignalGenerateRequest,
     GitHubCodeScanningSignalGenerateResponse,
+    GitHubDependabotSyncRequest,
+    GitHubDependabotSyncResponse,
 )
 from app.schemas.security_incident_signal import (
     SecurityIncidentSignalListResponse,
@@ -167,6 +169,7 @@ from app.services import github_secret_scanning_ingestion_service
 from app.services import github_secret_scanning_signal_service
 from app.services import github_code_scanning_ingestion_service
 from app.services import github_code_scanning_signal_service
+from app.services import github_dependabot_ingestion_service
 from app.services import security_incident_signal_service
 from app.services import security_signal_correlation_service
 from app.services import security_case_service
@@ -931,6 +934,64 @@ def sync_github_code_scanning(
         lookback_hours=lookback_hours, max_alerts=max_alerts,
     )
     return GitHubCodeScanningSyncResponse(**summary)
+
+
+@router.post(
+    "/github-dependabot/sync",
+    response_model=GitHubDependabotSyncResponse,
+)
+def sync_github_dependabot(
+    body: Optional[GitHubDependabotSyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitHubDependabotSyncResponse:
+    """Ingest GitHub Dependabot alerts for a workspace integration (M69.4G).
+
+    Admin/owner only. Repo-scoped Dependabot (vulnerable-dependency) ALERT
+    evidence. Non-fatal: Dependabot disabled, missing scope, or an unavailable
+    repo are reported as ``permission_limited``, never raised. Never stores raw
+    advisory bodies, raw manifest/file paths, or the raw dependency-graph
+    response. Members can view the resulting events via
+    ``GET /security/activity/events?provider=github``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "github",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="GitHub integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return GitHubDependabotSyncResponse(
+                attempted=False, succeeded=False, provider="github",
+                source="dependabot_alert",
+                error_message="No active GitHub integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_alerts = min(body.max_alerts, 1000) if body and body.max_alerts else 1000
+    summary = github_dependabot_ingestion_service.ingest_github_dependabot_alerts(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_alerts=max_alerts,
+    )
+    return GitHubDependabotSyncResponse(**summary)
 
 
 @router.get("/activity/events", response_model=SecurityActivityEventListResponse)
