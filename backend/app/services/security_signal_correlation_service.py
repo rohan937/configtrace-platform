@@ -134,6 +134,20 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "cvss_score",
         "epss_percentage",
         "scope",
+        # GitHub ruleset / automation-permission risk correlation context (M69.5C)
+        # — safe aggregate posture fields only (NEVER tokens, headers, webhook
+        # secrets, private keys, OAuth secrets, raw bypass-actor identities, or
+        # the raw API response).
+        "ruleset_name",
+        "enforcement",
+        "target",
+        "bypass_actor_count",
+        "required_status_checks_count",
+        "targets_protected_branch",
+        "credential_type",
+        "broad_permission_count",
+        "token_scope_count",
+        "webhook_secret_configured",
     }
 )
 
@@ -1308,23 +1322,320 @@ def generate_github_dependabot_correlations(
     }
 
 
+# ---------------------------------------------------------------------------
+# GitHub ruleset / automation-permission risk × evidence correlations (M69.5C)
+# ---------------------------------------------------------------------------
+#
+# Correlate the M69.5A ruleset findings and M69.5B automation-permission findings
+# with existing GitHub evidence on the SAME repository within the review window:
+#   * repository-protection / automation AUDIT activity (source=audit_log), and
+#   * OPEN/REOPENED security-alert evidence (secret / code / Dependabot).
+# These are review correlations; they never assert compromise, a token leak, an
+# attacker, that someone has access, unauthorized access, a breach, or an attack —
+# only "evidence for review". Only safe aggregate posture fields are stored.
+
+# Finding-rule families (base keys; M69.5A / M69.5B).
+_RULESET_FINDING_RULES: frozenset[str] = frozenset({
+    "github_ruleset_not_enforced",
+    "github_ruleset_force_push_allowed",
+    "github_ruleset_pr_review_missing",
+    "github_ruleset_status_checks_missing",
+    "github_ruleset_bypass_actors_present",
+    "github_ruleset_weak_target_coverage",
+})
+_AUTOMATION_FINDING_RULES: frozenset[str] = frozenset({
+    "github_automation_admin_permission",
+    "github_automation_write_permission",
+    "github_token_broad_scopes",
+    "github_webhook_secret_missing",
+})
+
+# Evidence event types (audit activity) for each family.
+_AUDIT_SOURCE = "audit_log"
+_RULESET_PROTECTION_ACTIVITY: frozenset[str] = frozenset({
+    "github.ruleset.changed",
+    "github.branch_protection.disabled",
+    "github.branch_protection.updated",
+})
+_AUTOMATION_ACTIVITY: frozenset[str] = frozenset({
+    "github.deploy_key.added",
+    "github.webhook.created",
+    "github.webhook.updated",
+    "github.webhook.deleted",
+    "github.app.installed",
+    "github.app.permissions_changed",
+})
+
+# OPEN/REOPENED security-alert evidence (excludes fixed / dismissed).
+_SECURITY_ALERT_SOURCES: frozenset[str] = frozenset({
+    "secret_scanning_alert", "code_scanning_alert", "dependabot_alert",
+})
+_OPEN_ALERT_EVENTS: frozenset[str] = frozenset({
+    "github.secret_scanning.alert.open",
+    "github.code_scanning.alert.open",
+    "github.code_scanning.alert.reopened",
+    "github.dependabot.alert.open",
+    "github.dependabot.alert.reopened",
+})
+_HIGH_ALERT_SEVERITIES = {"critical", "high"}
+
+
+def _finding_evidence(finding: SecurityFinding) -> dict[str, Any]:
+    return finding.evidence if isinstance(finding.evidence, dict) else {}
+
+
+def _build_github_finding_evidence_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    repo: str,
+    correlation_type: str,
+    phrase: str,
+    summary_core: str,
+    alert_based: bool,
+) -> dict[str, Any]:
+    """Build a correlation dict (not persisted) for an M69.5C finding × evidence pair."""
+    fev = _finding_evidence(finding)
+    md = _ss_meta(event)
+
+    # Severity: high when the finding is high/critical; for alert-based families,
+    # also high when the alert itself is high/critical / publicly leaked.
+    severity = "high" if finding.severity in _HIGH_SEVERITIES else "medium"
+    if alert_based:
+        alert_sev = md.get("advisory_severity") or md.get("security_severity_level")
+        if isinstance(alert_sev, str) and alert_sev.strip().lower() in _HIGH_ALERT_SEVERITIES:
+            severity = "high"
+        if md.get("publicly_leaked") is True:
+            severity = "high"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{phrase} on {repo}"
+    summary = (
+        f"Configuration risk \"{finding.title}\" and {summary_core} were observed "
+        f"for {repo} within the review window. This may require review. ConfigTrace "
+        f"does not confirm unauthorized access or compromise."
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "repository": repo,
+        "repository_full_name": (
+            md.get("repository_full_name") if isinstance(md.get("repository_full_name"), str)
+            else repo
+        ),
+        "event_type": event.event_type,
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+        # Ruleset finding posture (from the finding's safe evidence).
+        "ruleset_name": fev.get("ruleset_name"),
+        "enforcement": fev.get("enforcement"),
+        "target": fev.get("target"),
+        "bypass_actor_count": fev.get("bypass_actor_count"),
+        "required_status_checks_count": fev.get("required_status_checks_count"),
+        "targets_protected_branch": fev.get("targets_protected_branch"),
+        # Automation finding posture (from the finding's safe evidence).
+        "credential_type": fev.get("credential_type"),
+        "broad_permission_count": fev.get("broad_permission_count"),
+        "token_scope_count": fev.get("token_scope_count"),
+        "webhook_secret_configured": fev.get("webhook_secret_configured"),
+        # Alert evidence posture (from the event's safe metadata).
+        "alert_number": md.get("alert_number"),
+        "state": md.get("state"),
+        "rule_id": md.get("rule_id"),
+        "rule_name": md.get("rule_name"),
+        "tool_name": md.get("tool_name"),
+        "security_severity_level": md.get("security_severity_level"),
+        "advisory_ghsa_id": md.get("advisory_ghsa_id"),
+        "advisory_cve_id": md.get("advisory_cve_id"),
+        "advisory_severity": md.get("advisory_severity"),
+        "dependency_package_name": md.get("dependency_package_name"),
+        "dependency_ecosystem": md.get("dependency_ecosystem"),
+        "secret_type": md.get("secret_type"),
+        "validity": md.get("validity"),
+        "publicly_leaked": md.get("publicly_leaked"),
+    })
+
+    return {
+        "provider": PROVIDER_GITHUB,
+        "correlation_key": correlation_type,
+        "correlation_type": correlation_type,
+        "severity": severity,
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def _generate_github_finding_evidence_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    finding_rules: frozenset[str],
+    activity_sources: frozenset[str],
+    activity_types: frozenset[str],
+    correlation_type: str,
+    phrase: str,
+    summary_core: str,
+    alert_based: bool,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Generic M69.5C pass: correlate findings (in ``finding_rules``) with GitHub
+    activity events (source ∈ ``activity_sources``, type ∈ ``activity_types``) on
+    the SAME repository within the review window. Idempotent."""
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_GITHUB,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [f for f in findings if _base_rule(f.finding_key) in finding_rules]
+
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    repo_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            repo_by_resource[r.id] = r.provider_resource_id
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_GITHUB,
+            SecurityActivityEvent.source.in_(activity_sources),
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    events_by_repo: dict[str, list[SecurityActivityEvent]] = {}
+    for ev in events:
+        if isinstance(ev.resource_id, str) and ev.resource_id:
+            events_by_repo.setdefault(ev.resource_id, []).append(ev)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.resource_id is None:
+            continue
+        repo = repo_by_resource.get(finding.resource_id)
+        if not repo:
+            continue
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        for ev in events_by_repo.get(repo, []):
+            if ev.event_type not in activity_types:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            correlation = _build_github_finding_evidence_correlation(
+                finding=finding, event=ev, repo=repo,
+                correlation_type=correlation_type, phrase=phrase,
+                summary_core=summary_core, alert_based=alert_based,
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_GITHUB,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+def _generate_github_5c_correlations(
+    *, workspace_id: uuid.UUID, db: Session, scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Run all four M69.5C passes (ruleset/automation × audit-activity / alert)."""
+    passes = [
+        # A — ruleset risk × repository-protection audit activity.
+        dict(finding_rules=_RULESET_FINDING_RULES, activity_sources=frozenset({_AUDIT_SOURCE}),
+             activity_types=_RULESET_PROTECTION_ACTIVITY,
+             correlation_type="github_ruleset_risk_activity",
+             phrase="GitHub ruleset risk aligned with repository protection activity",
+             summary_core="GitHub repository protection activity", alert_based=False),
+        # B — ruleset risk × security-alert evidence.
+        dict(finding_rules=_RULESET_FINDING_RULES, activity_sources=_SECURITY_ALERT_SOURCES,
+             activity_types=_OPEN_ALERT_EVENTS,
+             correlation_type="github_ruleset_risk_security_alert",
+             phrase="GitHub ruleset risk aligned with security-alert evidence",
+             summary_core="GitHub security-alert evidence", alert_based=True),
+        # C — automation permission risk × automation audit activity.
+        dict(finding_rules=_AUTOMATION_FINDING_RULES, activity_sources=frozenset({_AUDIT_SOURCE}),
+             activity_types=_AUTOMATION_ACTIVITY,
+             correlation_type="github_automation_permission_activity",
+             phrase="GitHub automation permission risk aligned with automation activity",
+             summary_core="GitHub automation activity", alert_based=False),
+        # D — automation permission risk × security-alert evidence.
+        dict(finding_rules=_AUTOMATION_FINDING_RULES, activity_sources=_SECURITY_ALERT_SOURCES,
+             activity_types=_OPEN_ALERT_EVENTS,
+             correlation_type="github_automation_permission_security_alert",
+             phrase="GitHub automation permission risk aligned with security-alert evidence",
+             summary_core="GitHub security-alert evidence", alert_based=True),
+    ]
+    totals = {"findings_scanned": 0, "events_scanned": 0,
+              "correlations_created": 0, "correlations_skipped": 0}
+    for kw in passes:
+        r = _generate_github_finding_evidence_correlations(
+            workspace_id=workspace_id, db=db, scan_limit=scan_limit, **kw
+        )
+        for k in totals:
+            totals[k] += r[k]
+    return totals
+
+
 def generate_github_correlations(
     *,
     workspace_id: uuid.UUID,
     db: Session,
     scan_limit: int = 1000,
 ) -> dict[str, Any]:
-    """Generate ALL GitHub correlations for a workspace (M66.6 + M69.4C/F/I).
+    """Generate ALL GitHub correlations for a workspace (M66.6 + M69.4C/F/I + M69.5C).
 
     provider=github now generates:
       * Configuration Risk × GitHub audit activity (webhook / branch-protection /
         deploy-key), and
-      * Configuration Risk × GitHub secret-scanning alert evidence (same
-        repository, OPEN alert, within the review window), and
-      * Configuration Risk × GitHub code-scanning alert evidence (same
+      * Configuration Risk × GitHub secret/code/Dependabot alert evidence (same
         repository, OPEN/REOPENED alert, within the review window), and
-      * Configuration Risk × GitHub Dependabot alert evidence (same repository,
-        OPEN/REOPENED alert, within the review window).
+      * GitHub ruleset risk and automation-permission risk × repository-protection /
+        automation audit activity and × OPEN/REOPENED security-alert evidence
+        (M69.5C, same repository, within the review window).
     The returned summary sums all passes. Idempotent.
     """
     audit = _generate_github_audit_correlations(
@@ -1339,24 +1650,16 @@ def generate_github_correlations(
     dependabot = generate_github_dependabot_correlations(
         workspace_id=workspace_id, db=db, scan_limit=scan_limit
     )
+    rulesets_automation = _generate_github_5c_correlations(
+        workspace_id=workspace_id, db=db, scan_limit=scan_limit
+    )
+    passes = (audit, secret, code, dependabot, rulesets_automation)
     return {
         "provider": PROVIDER_GITHUB,
-        "findings_scanned": (
-            audit["findings_scanned"] + secret["findings_scanned"]
-            + code["findings_scanned"] + dependabot["findings_scanned"]
-        ),
-        "events_scanned": (
-            audit["events_scanned"] + secret["events_scanned"]
-            + code["events_scanned"] + dependabot["events_scanned"]
-        ),
-        "correlations_created": (
-            audit["correlations_created"] + secret["correlations_created"]
-            + code["correlations_created"] + dependabot["correlations_created"]
-        ),
-        "correlations_skipped": (
-            audit["correlations_skipped"] + secret["correlations_skipped"]
-            + code["correlations_skipped"] + dependabot["correlations_skipped"]
-        ),
+        "findings_scanned": sum(p["findings_scanned"] for p in passes),
+        "events_scanned": sum(p["events_scanned"] for p in passes),
+        "correlations_created": sum(p["correlations_created"] for p in passes),
+        "correlations_skipped": sum(p["correlations_skipped"] for p in passes),
     }
 
 

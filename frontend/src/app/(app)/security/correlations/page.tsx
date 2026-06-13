@@ -50,6 +50,11 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "github_repo_protection_dependabot_alert",
     "github_automation_dependabot_alert",
     "github_environment_dependabot_alert",
+    // M69.5C — Ruleset / automation-permission risk × evidence.
+    "github_ruleset_risk_activity",
+    "github_ruleset_risk_security_alert",
+    "github_automation_permission_activity",
+    "github_automation_permission_security_alert",
   ],
   aws: [
     "aws_s3_public_access_alert",
@@ -277,7 +282,7 @@ function GenerateBar({
       ? "Correlate Cloudflare configuration risks with Cloudflare audit activity and WAF/security activity for the same zone, host, or risk area (DNS, WAF, TLS, Access, zone settings)."
       : provider === "aws"
         ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
-        : "Matches GitHub configuration risks to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+        : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
