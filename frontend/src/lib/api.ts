@@ -729,6 +729,12 @@ export async function generateGitHubSecretScanningSignals(
   return apiFetch(`/security/github-secret-scanning/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateGitHubCodeScanningSignals(
+  token?: string | null,
+): Promise<import("@/types").GitHubCodeScanningSignalGenerateResponse> {
+  return apiFetch(`/security/github-code-scanning/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsIncidentSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

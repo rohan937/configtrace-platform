@@ -31,6 +31,7 @@ import {
   generateCloudflareSignals,
   generateCloudflareWafSignals,
   generateGitHubSecretScanningSignals,
+  generateGitHubCodeScanningSignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -62,6 +63,7 @@ const GITHUB_SIGNAL_TYPES = [
   "ruleset_change",
   "secret_scanning_alert",
   "github_secret_scanning_alert",
+  "github_code_scanning_alert",
 ];
 const AWS_SIGNAL_TYPES = [
   "aws_guardduty",
@@ -279,6 +281,24 @@ export default function IncidentSignalsPage() {
     }
   }, [getToken, load]);
 
+  const onGenerateCodeScanning = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setBehaviorNote(null);
+    try {
+      const token = await getToken();
+      const res = await generateGitHubCodeScanningSignals(token);
+      setBehaviorNote(
+        `GitHub code scanning: scanned ${res.events_scanned} alert event(s) across ${res.groups_scanned} alert group(s) · ${res.signals_created} signal(s) created · ${res.signals_skipped} skipped.`,
+      );
+      await load();
+    } catch {
+      setGenError("Could not generate GitHub code scanning signals. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const open = signals.filter((s) => s.status === "open").length;
     const high = signals.filter((s) => HIGH_SEVERITIES.has(s.severity)).length;
@@ -313,6 +333,7 @@ export default function IncidentSignalsPage() {
         onGenerateWaf={onGenerateWaf}
         onGenerateIamChain={onGenerateIamChain}
         onGenerateSecretScanning={onGenerateSecretScanning}
+        onGenerateCodeScanning={onGenerateCodeScanning}
       />
 
       {/* Summary cards */}
@@ -446,6 +467,7 @@ function GenerateBar({
   onGenerateWaf,
   onGenerateIamChain,
   onGenerateSecretScanning,
+  onGenerateCodeScanning,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -462,6 +484,7 @@ function GenerateBar({
   onGenerateWaf: () => void;
   onGenerateIamChain: () => void;
   onGenerateSecretScanning: () => void;
+  onGenerateCodeScanning: () => void;
 }) {
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
@@ -667,6 +690,30 @@ function GenerateBar({
             }}
           >
             Generate GitHub secret scanning signals
+          </button>
+        )}
+        {isGithub && (
+          <button
+            onClick={onGenerateCodeScanning}
+            disabled={!isAdmin || generating}
+            title={
+              !isAdmin
+                ? "Only workspace admins can generate signals."
+                : "Generate review signals from GitHub code-scanning alert evidence."
+            }
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+              opacity: generating ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate GitHub code scanning signals
           </button>
         )}
       </div>

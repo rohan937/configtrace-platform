@@ -102,6 +102,11 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "validity",              # GitHub-reported validity: active / inactive / unknown
         "publicly_leaked",       # bool — GitHub flagged the secret as publicly leaked
         "location_count",        # safe COUNT of alert locations (never the raw paths)
+        # GitHub code-scanning alert signal fields (M69.4E) — safe summary only.
+        "tool_name",                 # analysis tool (e.g. "CodeQL")
+        "security_severity_level",   # GitHub security severity (critical/high/medium/low)
+        "dismissed_reason",          # why an alert was dismissed (false positive / won't fix / used in tests)
+        "instances_count",           # safe COUNT of alert instances (never raw locations)
         # AWS IAM privilege-chain signal fields (M69.3A) — safe summary only.
         "chain_steps",        # number of distinct chain-step events detected (int)
         "target_user",        # target IAM user name (resource identifier, not raw ARN)

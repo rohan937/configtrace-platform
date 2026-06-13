@@ -152,6 +152,28 @@ class GitHubCodeScanningSyncResponse(BaseModel):
     error_message: Optional[str] = None
 
 
+class GitHubCodeScanningSignalGenerateRequest(BaseModel):
+    """POST /security/github-code-scanning/generate-signals body (M69.4E)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class GitHubCodeScanningSignalGenerateResponse(BaseModel):
+    """GitHub code-scanning signal generation summary (M69.4E).
+
+    Review signals from code-scanning ALERT evidence. These do not confirm
+    exploitation, compromise, or unauthorized access.
+    """
+
+    provider: str
+    source: str
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0
+
+
 class GitHubSecretScanningSignalGenerateRequest(BaseModel):
     """POST /security/github-secret-scanning/generate-signals body (M69.4B)."""
 
