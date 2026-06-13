@@ -277,9 +277,9 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/activity",
     cta: "Open Activity Events",
     talkTrack:
-      "This is normalized GitHub audit activity — control-plane events like a webhook or branch protection changing. It's evidence for review, not detection. Source IPs are stored only as hashes.",
+      "This is normalized GitHub evidence — control-plane audit activity (a webhook, branch protection, or ruleset changing) alongside provider security-alert evidence: secret-scanning, code-scanning, and Dependabot alerts on the same repository. It's evidence for review, not detection. Source IPs are stored only as hashes; secrets, code, and advisory bodies are never stored.",
     whatToClick: "Open Activity Events and one event to show the metadata-only evidence.",
-    emphasize: "Control-plane audit activity, metadata-only.",
+    emphasize: "Audit activity + secret/code/Dependabot alert evidence, metadata-only.",
     avoid: "Don't say this proves anyone did anything malicious.",
   },
   {
@@ -299,9 +299,9 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/correlations",
     cta: "Open Correlations",
     talkTrack:
-      "Here's the differentiator: ConfigTrace connects the configuration risk to GitHub audit activity on the same repository within a review window. A risky setting plus activity that followed it is stronger evidence for review.",
-    whatToClick: "Open a correlation to show the linked risk + activity and the timeline.",
-    emphasize: "Configuration risk aligned with audit activity — potential security impact.",
+      "Here's the differentiator: ConfigTrace connects configuration risk — repository posture, ruleset, and automation-permission risks — to evidence on the same repository within a review window: audit activity AND open secret-scanning, code-scanning, and Dependabot alerts. A risky setting plus aligned evidence is stronger evidence for review.",
+    whatToClick: "Open a correlation to show the linked risk + evidence and the timeline.",
+    emphasize: "Repository posture / ruleset / automation risk aligned with audit + security-alert evidence.",
     avoid: "Don't call a correlation a confirmed compromise.",
   },
   {
@@ -321,10 +321,21 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Export from a case",
     talkTrack:
-      "Finally, export the case as a metadata-only evidence packet — Markdown or JSON — for review or a customer conversation. No raw payloads, IPs, secrets, or tokens.",
+      "Finally, export the case as a metadata-only evidence packet — Markdown or JSON — for review or a customer conversation. No raw payloads, IPs, secrets, tokens, code, or advisory bodies.",
     whatToClick: "On a case, use Export Markdown / Export JSON.",
     emphasize: "Defensible, metadata-only evidence for review.",
     avoid: "Don't promise it certifies compliance or proves a breach.",
+  },
+  {
+    id: "incident-what-this-proves",
+    title: "What this proves",
+    href: "/security/cases",
+    cta: "Recap",
+    talkTrack:
+      "ConfigTrace links repository posture, security-alert evidence, and audit activity into a reviewable investigation timeline without claiming compromise. The flow is: seed the GitHub demo data, review configuration risks, review activity and alert evidence, generate signals and correlations, open or create a case, generate and read the report, then clear the demo data.",
+    whatToClick: "Recap the seed → review → signals → correlations → case → report → clear flow.",
+    emphasize: "Posture + evidence + activity → a reviewable timeline; never a compromise claim.",
+    avoid: "Don't claim ConfigTrace confirms compromise, unauthorized access, or a breach.",
   },
 ];
 

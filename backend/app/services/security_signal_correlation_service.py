@@ -1620,6 +1620,33 @@ def _generate_github_5c_correlations(
     return totals
 
 
+# Public builders for direct (non-scanning) use by the incident demo seeder
+# (M69.6) — keep the M69.5C phrasing authoritative in one place.
+def build_ruleset_activity_correlation(
+    *, finding: SecurityFinding, event: SecurityActivityEvent, repo: str,
+) -> dict[str, Any]:
+    """Ruleset risk × repository-protection activity (github_ruleset_risk_activity)."""
+    return _build_github_finding_evidence_correlation(
+        finding=finding, event=event, repo=repo,
+        correlation_type="github_ruleset_risk_activity",
+        phrase="GitHub ruleset risk aligned with repository protection activity",
+        summary_core="GitHub repository protection activity", alert_based=False,
+    )
+
+
+def build_automation_security_alert_correlation(
+    *, finding: SecurityFinding, event: SecurityActivityEvent, repo: str,
+) -> dict[str, Any]:
+    """Automation permission risk × security-alert evidence
+    (github_automation_permission_security_alert)."""
+    return _build_github_finding_evidence_correlation(
+        finding=finding, event=event, repo=repo,
+        correlation_type="github_automation_permission_security_alert",
+        phrase="GitHub automation permission risk aligned with security-alert evidence",
+        summary_core="GitHub security-alert evidence", alert_based=True,
+    )
+
+
 def generate_github_correlations(
     *,
     workspace_id: uuid.UUID,

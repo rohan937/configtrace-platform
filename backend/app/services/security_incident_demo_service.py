@@ -55,6 +55,10 @@ DEMO_PROVIDER_TAG = "demo"
 DEMO_INTEGRATION_NAME = "ConfigTrace incident demo (sample data)"
 DEMO_REPO = "configtrace-demo/incident-repo"
 DEMO_CASE_SOURCE = "demo_incident"
+# Synthetic, clearly demo-only advisory / rule identifiers for the expanded
+# GitHub story (M69.6). None reference a real secret, token, or advisory.
+DEMO_GHSA_ID = "GHSA-demo-0000-0000"
+DEMO_CVE_ID = "CVE-0000-00000"
 
 # ── AWS incident demo (M67.4) — a SEPARATE hidden demo integration + case source
 # so "Clear AWS demo" removes only AWS demo objects and never touches the GitHub
@@ -165,51 +169,119 @@ def seed(*, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session) -> d
     db.add(resource)
     db.flush()
 
-    # 3. Configuration Risk finding (demo-tagged in evidence).
-    finding = finding_svc.upsert_active_finding(
-        db=db,
-        workspace_id=workspace_id,
-        integration_id=integ.id,
-        provider="github",
-        finding_key=f"github_webhook_http:{DEMO_REPO}#demo",
-        severity="high",
-        title="Demo: GitHub webhook delivered over plain HTTP",
-        resource_id=resource.id,
-        description="Sample configuration risk for the incident-workflow demo.",
+    # ── Helper: build + upsert a demo activity/alert event on the demo repo. ──
+    def _mk_event(source: str, event_type: str, *, actor=None, metadata):
+        meta = {"repository": DEMO_REPO, "repository_full_name": DEMO_REPO}
+        meta.update(metadata)
+        norm = activity_svc.normalize_activity_event(
+            provider="github", source=source, event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-{uuid.uuid4().hex[:10]}",
+            actor_id=actor, actor_type="user" if actor else None,
+            resource_type="repository", resource_id=DEMO_REPO, metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    # ── Helper: upsert a correlation dict + link it (and its signal) to a case. ─
+    correlations: list = []
+
+    def _add_correlation(corr_dict: dict):
+        _o, c = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=corr_dict, db=db
+        )
+        correlations.append(c)
+        return c
+
+    # 3. Configuration-risk findings (demo-tagged) — repo / ruleset / automation.
+    webhook_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="github",
+        finding_key=f"github_webhook_http:{DEMO_REPO}#demo", severity="high",
+        title="Demo: GitHub webhook delivered over plain HTTP", resource_id=resource.id,
+        description="Sample repository configuration risk for the incident-workflow demo.",
         evidence={"rule": "github_webhook_http", "demo": True, "repository": DEMO_REPO},
         remediation={"summary": "Switch the webhook to HTTPS."},
     )
+    ruleset_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="github",
+        finding_key=f"github_ruleset_not_enforced:{DEMO_REPO}#demo", severity="high",
+        title="Demo: GitHub ruleset is not actively enforced", resource_id=resource.id,
+        description="Sample ruleset posture risk for the incident-workflow demo.",
+        evidence={"rule": "github_ruleset_not_enforced", "demo": True,
+                  "ruleset_name": "Protect main (demo)", "enforcement": "disabled",
+                  "target": "branch", "targets_protected_branch": True},
+        remediation={"summary": "Set the ruleset enforcement status to 'Active'."},
+    )
+    automation_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="github",
+        finding_key=f"github_automation_admin_permission:{DEMO_REPO}#demo", severity="high",
+        title="Demo: GitHub automation credential has admin repository permission",
+        resource_id=resource.id,
+        description="Sample automation permission risk for the incident-workflow demo.",
+        evidence={"rule": "github_automation_admin_permission", "demo": True,
+                  "credential_type": "github_token", "broad_permission_count": 2},
+        remediation={"summary": "Reduce the automation credential to least privilege."},
+    )
 
-    # 4. Activity Event (control-plane: webhook changed) on the same repo.
-    normalized = activity_svc.normalize_activity_event(
-        provider="github",
-        source="audit_log",
-        event_type="github.webhook.updated",
-        occurred_at=_utcnow(),
-        provider_event_id=f"demo-doc-{uuid.uuid4().hex[:8]}",
-        actor_id="demo-admin",
-        actor_type="user",
-        resource_type="repository",
-        resource_id=DEMO_REPO,
-        metadata={"action": "hook.config_changed", "repository": DEMO_REPO},
-    )
-    _outcome, activity = activity_svc.upsert_activity_event(
-        workspace_id=workspace_id, integration_id=integ.id, normalized=normalized, db=db
-    )
+    # 4. Evidence events on the same repo: audit activity + security alerts.
+    webhook_activity = _mk_event(
+        "audit_log", "github.webhook.updated", actor="demo-admin",
+        metadata={"action": "hook.config_changed"})
+    ruleset_activity = _mk_event(
+        "audit_log", "github.ruleset.changed", actor="demo-admin",
+        metadata={"action": "ruleset.updated"})
+    deploy_key_activity = _mk_event(
+        "audit_log", "github.deploy_key.added", actor="demo-admin",
+        metadata={"action": "deploy_key.create"})
+    secret_alert = _mk_event(
+        "secret_scanning_alert", "github.secret_scanning.alert.open",
+        metadata={"alert_number": 1, "state": "open",
+                  "secret_type": "github_personal_access_token",
+                  "secret_type_display_name": "GitHub Personal Access Token (demo)",
+                  "validity": "unknown", "publicly_leaked": False})
+    code_alert = _mk_event(
+        "code_scanning_alert", "github.code_scanning.alert.open",
+        metadata={"alert_number": 2, "state": "open", "rule_id": "demo/sql-injection",
+                  "rule_name": "Database query from user input (demo)",
+                  "tool_name": "CodeQL", "security_severity_level": "high"})
+    dependabot_alert = _mk_event(
+        "dependabot_alert", "github.dependabot.alert.open",
+        metadata={"alert_number": 3, "state": "open",
+                  "dependency_package_name": "demo-lib", "dependency_ecosystem": "npm",
+                  "advisory_ghsa_id": DEMO_GHSA_ID, "advisory_cve_id": DEMO_CVE_ID,
+                  "advisory_severity": "high"})
 
-    # 5. Incident Signal from the activity event.
-    sig = signal_svc.build_signal_from_activity_event(activity)
-    if sig is not None:
-        signal_svc.upsert_incident_signal(workspace_id=workspace_id, signal=sig, db=db)
+    # 5. Incident signals from the audit activity events.
+    audit_signals = []
+    for ev in (webhook_activity, ruleset_activity, deploy_key_activity):
+        s = signal_svc.build_signal_from_activity_event(ev)
+        if s is not None:
+            _o, srow = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=s, db=db)
+            audit_signals.append(srow)
 
-    # 6. Correlation (built directly for the demo objects — never scans real data).
-    rule = corr_svc.CORRELATION_RULES["github_webhook_http"]
-    corr_dict = corr_svc.build_correlation(
-        finding=finding, event=activity, repo=DEMO_REPO, rule=rule
-    )
-    _o, correlation = corr_svc.upsert_correlation(
-        workspace_id=workspace_id, correlation=corr_dict, db=db
-    )
+    # 6. Correlations (built directly for the demo objects — never scans real data).
+    #    Each upsert_correlation also creates a correlation-evidence signal.
+    _add_correlation(corr_svc.build_correlation(
+        finding=webhook_finding, event=webhook_activity, repo=DEMO_REPO,
+        rule=corr_svc.CORRELATION_RULES["github_webhook_http"]))
+    _add_correlation(corr_svc.build_secret_scanning_correlation(
+        finding=webhook_finding, event=secret_alert, repo=DEMO_REPO,
+        rule=corr_svc.SECRET_SCANNING_CORRELATION_RULES["github_webhook_http"]))
+    _add_correlation(corr_svc.build_code_scanning_correlation(
+        finding=webhook_finding, event=code_alert, repo=DEMO_REPO,
+        rule=corr_svc.CODE_SCANNING_CORRELATION_RULES["github_webhook_http"]))
+    _add_correlation(corr_svc.build_dependabot_correlation(
+        finding=webhook_finding, event=dependabot_alert, repo=DEMO_REPO,
+        rule=corr_svc.DEPENDABOT_CORRELATION_RULES["github_webhook_http"]))
+    _add_correlation(corr_svc.build_ruleset_activity_correlation(
+        finding=ruleset_finding, event=ruleset_activity, repo=DEMO_REPO))
+    _add_correlation(corr_svc.build_automation_security_alert_correlation(
+        finding=automation_finding, event=code_alert, repo=DEMO_REPO))
+
+    top_severity = "high"
 
     # 7. Case linking all the evidence (marked demo via metadata.source).
     case = case_svc.create_case(
@@ -217,22 +289,36 @@ def seed(*, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session) -> d
         user_id=actor_user_id,
         title="[Demo] GitHub incident investigation",
         summary=(
-            "Demo investigation case. A configuration risk on a GitHub repository "
-            "was accompanied by control-plane audit activity on the same repo. "
-            "This is a human-reviewed case presenting evidence for review — "
-            "ConfigTrace does not automatically confirm compromise or unauthorized "
-            "access."
+            "Demo investigation case. Repository protection and automation posture "
+            "risks on a GitHub repository align with security-alert evidence "
+            "(secret-scanning, code-scanning, Dependabot) and control-plane audit "
+            "activity on the same repo. This is a human-reviewed case presenting "
+            "evidence for review — ConfigTrace does not automatically confirm "
+            "compromise or unauthorized access."
         ),
-        severity=correlation.severity,
+        severity=top_severity,
         provider="github",
         metadata={"source": DEMO_CASE_SOURCE, "repository": DEMO_REPO},
         db=db,
     )
-    case_svc.link_object_to_case(case=case, object_type="correlation", object_id=correlation.id, actor_user_id=actor_user_id, db=db)
-    case_svc.link_object_to_case(case=case, object_type="finding", object_id=finding.id, actor_user_id=actor_user_id, db=db)
-    case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=activity.id, actor_user_id=actor_user_id, db=db)
-    if correlation.linked_signal_id is not None:
-        case_svc.link_object_to_case(case=case, object_type="signal", object_id=correlation.linked_signal_id, actor_user_id=actor_user_id, db=db)
+    for f in (webhook_finding, ruleset_finding, automation_finding):
+        case_svc.link_object_to_case(case=case, object_type="finding", object_id=f.id,
+                                     actor_user_id=actor_user_id, db=db)
+    for ev in (webhook_activity, ruleset_activity, deploy_key_activity,
+               secret_alert, code_alert, dependabot_alert):
+        case_svc.link_object_to_case(case=case, object_type="activity_event",
+                                     object_id=ev.id, actor_user_id=actor_user_id, db=db)
+    linked_signal_ids: set = set()
+    for s in audit_signals:
+        linked_signal_ids.add(s.id)
+    for c in correlations:
+        case_svc.link_object_to_case(case=case, object_type="correlation",
+                                     object_id=c.id, actor_user_id=actor_user_id, db=db)
+        if c.linked_signal_id is not None:
+            linked_signal_ids.add(c.linked_signal_id)
+    for sid in linked_signal_ids:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=sid,
+                                     actor_user_id=actor_user_id, db=db)
 
     logger.info("incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
     return {
