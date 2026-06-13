@@ -112,6 +112,7 @@ from app.schemas.security_case import (
     SecurityCaseLinkListResponse,
 )
 from app.schemas.security_case_report import (
+    SecurityCaseGraphResponse,
     SecurityCaseReportResponse,
     SecurityCaseTimelineResponse,
 )
@@ -1527,6 +1528,27 @@ def get_security_case_timeline(
         case_id=case.id, workspace_id=case.workspace_id, db=db
     )
     return SecurityCaseTimelineResponse(**timeline)
+
+
+@router.get("/cases/{case_id}/graph", response_model=SecurityCaseGraphResponse)
+def get_security_case_graph(
+    case_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseGraphResponse:
+    """Return a metadata-only evidence relationship graph for a case (M69.7B).
+
+    Member-readable; 404 cross-workspace. Connects the case's linked findings,
+    activity events, incident signals, and correlations using their explicit
+    foreign keys only — no inferred attack paths. Node previews are
+    scalar-allowlisted. This correlates evidence for review and does NOT confirm
+    compromise or unauthorized access.
+    """
+    _ws, case = _case_or_404(case_id, current_user, db)
+    graph = security_case_report_service.build_case_evidence_graph(
+        case_id=case.id, workspace_id=case.workspace_id, db=db
+    )
+    return SecurityCaseGraphResponse(**graph)
 
 
 # ── GitHub Incident Workflow demo (M66.10) ────────────────────────────────────

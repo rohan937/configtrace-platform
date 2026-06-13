@@ -116,6 +116,55 @@ class SecurityCaseTimelineResponse(BaseModel):
     claim_note: str
 
 
+class CaseGraphNode(BaseModel):
+    """One node on the case evidence relationship graph (M69.7B).
+
+    Metadata-only: ``metadata_preview`` is the same scalar-allowlisted preview used
+    by the M69.7A timeline — never raw secrets/tokens/headers/payloads/code/paths.
+    """
+
+    id: str
+    node_type: str  # case | finding | activity_event | incident_signal | correlation
+    provider: Optional[str] = None
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    severity: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    source: Optional[str] = None
+    discriminator: Optional[str] = None
+    linked_object_id: str
+    metadata_preview: Dict[str, Any] = {}
+
+
+class CaseGraphEdge(BaseModel):
+    """One explicit-foreign-key relationship between two graph nodes (M69.7B)."""
+
+    id: str
+    source_node_id: str
+    target_node_id: str
+    edge_type: str
+    label: str
+    reason: str
+    confidence: Optional[str] = None
+
+
+class SecurityCaseGraphResponse(BaseModel):
+    """GET /security/cases/{id}/graph — explicit evidence relationships for review.
+
+    Shows how linked findings, events, signals, and correlations relate via their
+    existing foreign keys. It does NOT infer attack paths and does NOT confirm
+    compromise or unauthorized access.
+    """
+
+    case_id: str
+    nodes: List[CaseGraphNode] = []
+    edges: List[CaseGraphEdge] = []
+    counts_by_node_type: Dict[str, int] = {}
+    counts_by_edge_type: Dict[str, int] = {}
+    counts_by_provider: Dict[str, int] = {}
+    claim_note: str
+
+
 class CaseReportCase(BaseModel):
     id: str
     title: str
@@ -148,5 +197,6 @@ class SecurityCaseReportResponse(BaseModel):
     correlations: List[CaseReportCorrelation] = []
     timeline: List[CaseReportTimelineItem] = []
     evidence_timeline: Optional[SecurityCaseTimelineResponse] = None
+    evidence_graph: Optional[SecurityCaseGraphResponse] = None
     review_checklist: List[str] = []
     limitations: str

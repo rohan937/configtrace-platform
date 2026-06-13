@@ -21,10 +21,14 @@ import type {
   SecurityCaseLink,
   SecurityCaseTimeline,
   CaseEvidenceTimelineItem,
+  SecurityCaseGraph,
+  CaseGraphNode,
+  CaseGraphEdge,
 } from "@/types";
 import {
   getSecurityCase,
   getSecurityCaseTimeline,
+  getSecurityCaseGraph,
   updateSecurityCase,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
@@ -226,6 +230,9 @@ function Body({
       {/* Chronological evidence timeline (M69.7A) */}
       <EvidenceTimelineSection caseId={c.id} />
 
+      {/* Evidence relationship map (M69.7B) */}
+      <EvidenceGraphSection caseId={c.id} />
+
       {/* Case lifecycle timeline */}
       <div style={{ marginBottom: "22px" }}>
         <SectionLabel>Case lifecycle timeline</SectionLabel>
@@ -369,6 +376,139 @@ function EvidenceTimelineRow({ item }: { item: CaseEvidenceTimelineItem }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const NODE_TYPE_LABEL: Record<string, string> = {
+  case: "Case",
+  finding: "Configuration risk",
+  activity_event: "Activity event",
+  incident_signal: "Incident signal",
+  correlation: "Correlation",
+};
+const EDGE_TYPE_LABEL: Record<string, string> = {
+  case_contains: "Case contains evidence",
+  correlation_links_finding: "Correlation → configuration risk",
+  correlation_links_activity: "Correlation → activity event",
+  correlation_created_signal: "Correlation → incident signal",
+  signal_links_finding: "Incident signal → configuration risk",
+  signal_links_activity: "Incident signal → activity event",
+};
+
+function EvidenceGraphSection({ caseId }: { caseId: string }) {
+  const { getToken } = useAuth();
+  const [graph, setGraph] = useState<SecurityCaseGraph | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const token = await getToken();
+        const res = await getSecurityCaseGraph(caseId, token);
+        if (active) setGraph(res);
+      } catch {
+        if (active) setFailed(true);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [getToken, caseId]);
+
+  const nodeById = new Map<string, CaseGraphNode>(
+    (graph?.nodes ?? []).map((n) => [n.id, n]),
+  );
+
+  // Group edges by type, preserving the backend's deterministic order.
+  const groups: { type: string; edges: CaseGraphEdge[] }[] = [];
+  for (const e of graph?.edges ?? []) {
+    let g = groups.find((x) => x.type === e.edge_type);
+    if (!g) {
+      g = { type: e.edge_type, edges: [] };
+      groups.push(g);
+    }
+    g.edges.push(e);
+  }
+
+  return (
+    <div style={{ marginBottom: "22px" }}>
+      <SectionLabel>Evidence relationship map</SectionLabel>
+      <div style={{ fontSize: "12px", color: "#8b90a0", margin: "4px 0 8px" }}>
+        Shows explicit relationships between linked findings, events, signals, and
+        correlations. This does not confirm compromise or unauthorized access.
+      </div>
+      {loading ? (
+        <div style={{ fontSize: "12.5px", color: "#565b6e" }}>Loading relationships…</div>
+      ) : failed ? (
+        <div style={{ fontSize: "12.5px", color: "#565b6e" }}>
+          The evidence relationship map is unavailable right now.
+        </div>
+      ) : !graph || graph.edges.length === 0 ? (
+        <div style={{ fontSize: "12.5px", color: "#565b6e" }}>
+          No explicit relationships between the linked evidence yet.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
+            {Object.entries(graph.counts_by_node_type)
+              .filter(([, n]) => n > 0)
+              .map(([t, n]) => (
+                <Chip key={t}>{`${NODE_TYPE_LABEL[t] ?? t}: ${n}`}</Chip>
+              ))}
+            <Chip>{`${graph.edges.length} relationships`}</Chip>
+          </div>
+          {groups.map((g) => (
+            <div key={g.type} style={{ marginBottom: "12px" }}>
+              <div style={{ fontSize: "12px", fontWeight: 600, color: "#c4c8d4", marginBottom: "6px" }}>
+                {EDGE_TYPE_LABEL[g.type] ?? g.type}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                {g.edges.map((e) => (
+                  <GraphEdgeRow
+                    key={e.id}
+                    edge={e}
+                    source={nodeById.get(e.source_node_id)}
+                    target={nodeById.get(e.target_node_id)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function nodeLabel(n: CaseGraphNode | undefined): string {
+  if (!n) return "—";
+  const kind = NODE_TYPE_LABEL[n.node_type] ?? n.node_type;
+  return n.title ? `${kind}: ${n.title}` : kind;
+}
+
+function GraphEdgeRow({
+  edge,
+  source,
+  target,
+}: {
+  edge: CaseGraphEdge;
+  source?: CaseGraphNode;
+  target?: CaseGraphNode;
+}) {
+  return (
+    <div className="bg-surface1 border border-border" style={{ borderRadius: "10px", padding: "10px 12px" }}>
+      <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", fontSize: "13px", color: "#c4c8d4" }}>
+        <span style={{ wordBreak: "break-word" }}>{nodeLabel(source)}</span>
+        <span style={{ color: "#6b9cf8" }}>→</span>
+        <span style={{ wordBreak: "break-word" }}>{nodeLabel(target)}</span>
+        {edge.confidence && <Chip>{`confidence: ${edge.confidence}`}</Chip>}
+      </div>
+      <div style={{ fontSize: "11.5px", color: "#8b90a0", marginTop: "4px" }}>{edge.reason}</div>
     </div>
   );
 }

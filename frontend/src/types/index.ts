@@ -2009,6 +2009,7 @@ export interface SecurityCaseReport {
   correlations: CaseReportCorrelation[];
   timeline: CaseReportTimelineItem[];
   evidence_timeline?: SecurityCaseTimeline | null;
+  evidence_graph?: SecurityCaseGraph | null;
   review_checklist: string[];
   limitations: string;
 }
@@ -2044,6 +2045,48 @@ export interface SecurityCaseTimeline {
   counts_by_type: Record<string, number>;
   counts_by_provider: Record<string, number>;
   total: number;
+  claim_note: string;
+}
+
+// ── M69.7B — cross-provider evidence relationship graph ──────────────────────
+export type CaseGraphNodeType =
+  | "case"
+  | "finding"
+  | "activity_event"
+  | "incident_signal"
+  | "correlation";
+
+export interface CaseGraphNode {
+  id: string;
+  node_type: CaseGraphNodeType;
+  provider: string | null;
+  title: string | null;
+  summary: string | null;
+  severity: string | null;
+  timestamp: string | null;
+  source: string | null;
+  discriminator: string | null;
+  linked_object_id: string;
+  metadata_preview: Record<string, string | number | boolean>;
+}
+
+export interface CaseGraphEdge {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+  edge_type: string;
+  label: string;
+  reason: string;
+  confidence: string | null;
+}
+
+export interface SecurityCaseGraph {
+  case_id: string;
+  nodes: CaseGraphNode[];
+  edges: CaseGraphEdge[];
+  counts_by_node_type: Record<string, number>;
+  counts_by_edge_type: Record<string, number>;
+  counts_by_provider: Record<string, number>;
   claim_note: string;
 }
 

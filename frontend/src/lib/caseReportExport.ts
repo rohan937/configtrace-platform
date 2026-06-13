@@ -149,14 +149,46 @@ export function caseReportToMarkdown(r: SecurityCaseReport): string {
   }
   L.push("");
 
-  L.push("## 10. Review checklist");
+  // M69.7B — explicit-FK evidence relationship map.
+  const eg = r.evidence_graph;
+  const EDGE_LABELS: Record<string, string> = {
+    case_contains: "Case contains evidence",
+    correlation_links_finding: "Correlation → configuration risk",
+    correlation_links_activity: "Correlation → activity event",
+    correlation_created_signal: "Correlation → incident signal",
+    signal_links_finding: "Incident signal → configuration risk",
+    signal_links_activity: "Incident signal → activity event",
+  };
+  L.push("## 10. Evidence relationship map");
+  L.push("");
+  if (!eg || eg.edges.length === 0) {
+    L.push("_No explicit relationships between the linked evidence._");
+  } else {
+    L.push(
+      "Explicit relationships between linked findings, events, signals, and " +
+        "correlations. This does not confirm compromise or unauthorized access.",
+    );
+    L.push("");
+    const nodeTotal = Object.values(eg.counts_by_node_type).reduce((a, b) => a + b, 0);
+    L.push(`- **Nodes:** ${nodeTotal}`);
+    L.push(`- **Relationships:** ${eg.edges.length}`);
+    L.push("");
+    L.push("| Relationship | Count |");
+    L.push("|---|---|");
+    for (const [t, n] of Object.entries(eg.counts_by_edge_type)) {
+      L.push(`| ${mdCell(EDGE_LABELS[t] ?? t)} | ${n} |`);
+    }
+  }
+  L.push("");
+
+  L.push("## 11. Review checklist");
   L.push("");
   for (const item of r.review_checklist) {
     L.push(`- [ ] ${item}`);
   }
   L.push("");
 
-  L.push("## 11. Metadata-only limitations");
+  L.push("## 12. Metadata-only limitations");
   L.push("");
   L.push(r.limitations);
   L.push("");

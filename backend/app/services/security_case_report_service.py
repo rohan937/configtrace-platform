@@ -282,6 +282,216 @@ def build_case_evidence_timeline(
     }
 
 
+# ── M69.7B — Cross-provider evidence relationship graph ──────────────────────
+#
+# A computed, metadata-only presentation layer that shows how a case's linked
+# evidence objects relate to each other via EXPLICIT foreign keys only (the
+# linked_*_id columns that already exist on correlations and signals). It is NOT
+# a graph database and NOT an inferred attack path: no edge is invented, no
+# causation is asserted. Nodes reuse the M69.7A scalar-allowlisted previews.
+# This correlates evidence for review — it does NOT confirm compromise, attacker
+# presence, unauthorized access, or breach.
+
+# Node ordering: the case anchors the map, then evidence by kind.
+_NODE_RANK = {
+    "case": 0, "finding": 1, "activity_event": 2, "incident_signal": 3,
+    "correlation": 4,
+}
+
+# item_type (from the timeline) → graph node_type (identical names here).
+_ITEM_TO_NODE = {
+    "finding": "finding", "activity_event": "activity_event",
+    "incident_signal": "incident_signal", "correlation": "correlation",
+}
+
+
+def build_case_evidence_graph(
+    *, case_id: uuid.UUID, workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Build a metadata-only evidence relationship graph for a case.
+
+    Reuses the M69.7A timeline (same linked-evidence loading + sanitized previews)
+    for the evidence nodes, then connects them with explicit-foreign-key edges only.
+    Returns ``case_id``, ``nodes``, ``edges``, ``counts_by_node_type``,
+    ``counts_by_edge_type``, ``counts_by_provider``, and ``claim_note``.
+    """
+    case = (
+        db.query(SecurityCase)
+        .filter(SecurityCase.id == case_id, SecurityCase.workspace_id == workspace_id)
+        .first()
+    )
+
+    timeline = build_case_evidence_timeline(
+        case_id=case_id, workspace_id=workspace_id, db=db)
+    items = timeline["timeline_items"]
+
+    # ── Nodes ───────────────────────────────────────────────────────────────
+    nodes: list[dict[str, Any]] = []
+
+    case_node_id = f"case:{case_id}"
+    nodes.append({
+        "id": case_node_id,
+        "node_type": "case",
+        "provider": (case.provider if case else None),
+        "title": (case.title if case else "Case"),
+        "summary": (case.summary if case else None),
+        "severity": (case.severity if case else None),
+        "timestamp": (case.created_at if case else None),
+        "source": "case",
+        "discriminator": None,
+        "linked_object_id": str(case_id),
+        "metadata_preview": {},
+    })
+
+    # One node per linked evidence object, keyed for edge lookups.
+    # node_index maps ("finding"|"activity_event"|"incident_signal"|"correlation",
+    # <object-uuid-str>) → graph node id, so an edge is only created when BOTH ends
+    # exist in this case (missing/deleted evidence is skipped safely).
+    node_index: dict[tuple[str, str], str] = {}
+    for it in items:
+        node_type = _ITEM_TO_NODE.get(it["item_type"])
+        if node_type is None:
+            continue
+        node_id = f"{node_type}:{it['id']}"
+        node_index[(node_type, it["id"])] = node_id
+        discriminator = (
+            it.get("rule_key") or it.get("event_type")
+            or it.get("signal_type") or it.get("correlation_type")
+        )
+        nodes.append({
+            "id": node_id,
+            "node_type": node_type,
+            "provider": it.get("provider"),
+            "title": it.get("title"),
+            "summary": it.get("summary"),
+            "severity": it.get("severity"),
+            "timestamp": it.get("timestamp"),
+            "source": it.get("source"),
+            "discriminator": discriminator,
+            "linked_object_id": it.get("linked_object_id"),
+            "metadata_preview": it.get("metadata_preview", {}),
+        })
+
+    # ── Edges ─────────────────────────────────────────────────────────────────
+    edges: list[dict[str, Any]] = []
+
+    def _add_edge(edge_type, source_id, target_id, label, reason, confidence=None):
+        edges.append({
+            "id": f"{edge_type}:{source_id}->{target_id}",
+            "source_node_id": source_id,
+            "target_node_id": target_id,
+            "edge_type": edge_type,
+            "label": label,
+            "reason": reason,
+            "confidence": confidence,
+        })
+
+    # case_contains: the case anchors every linked evidence node.
+    for it in items:
+        node_type = _ITEM_TO_NODE.get(it["item_type"])
+        if node_type is None:
+            continue
+        target = node_index[(node_type, it["id"])]
+        _add_edge(
+            "case_contains", case_node_id, target,
+            "contains evidence",
+            "This evidence object is linked to the case.",
+        )
+
+    # Explicit FK edges from correlations (linked_finding_id / linked_activity_event_id
+    # / linked_signal_id). Only build an edge when the target node exists in the case.
+    by_type = _ids_by_type(
+        db.query(SecurityCaseLink).filter(SecurityCaseLink.case_id == case_id).all()
+    )
+
+    if by_type.get("correlation"):
+        corrs = (
+            db.query(SecuritySignalCorrelation)
+            .filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                SecuritySignalCorrelation.id.in_(by_type["correlation"]),
+            )
+            .all()
+        )
+        for c in corrs:
+            src = node_index.get(("correlation", str(c.id)))
+            if src is None:
+                continue
+            fid = node_index.get(("finding", str(c.linked_finding_id))) if c.linked_finding_id else None
+            if fid:
+                _add_edge("correlation_links_finding", src, fid,
+                          "links configuration risk",
+                          "Correlation references this configuration risk via its linked finding id.",
+                          c.confidence)
+            aid = node_index.get(("activity_event", str(c.linked_activity_event_id))) if c.linked_activity_event_id else None
+            if aid:
+                _add_edge("correlation_links_activity", src, aid,
+                          "links activity event",
+                          "Correlation references this activity event via its linked activity event id.",
+                          c.confidence)
+            sid = node_index.get(("incident_signal", str(c.linked_signal_id))) if c.linked_signal_id else None
+            if sid:
+                _add_edge("correlation_created_signal", src, sid,
+                          "linked incident signal",
+                          "Correlation references this incident signal via its linked signal id.",
+                          c.confidence)
+
+    # Explicit FK edges from signals (linked_finding_id / linked_activity_event_id).
+    # Note: the signal model has no linked_correlation_id column, so the
+    # signal_links_correlation relationship is represented from the correlation side
+    # above (correlation_created_signal) and is not duplicated here.
+    if by_type.get("signal"):
+        sigs = (
+            db.query(SecurityIncidentSignal)
+            .filter(
+                SecurityIncidentSignal.workspace_id == workspace_id,
+                SecurityIncidentSignal.id.in_(by_type["signal"]),
+            )
+            .all()
+        )
+        for s in sigs:
+            src = node_index.get(("incident_signal", str(s.id)))
+            if src is None:
+                continue
+            fid = node_index.get(("finding", str(s.linked_finding_id))) if s.linked_finding_id else None
+            if fid:
+                _add_edge("signal_links_finding", src, fid,
+                          "links configuration risk",
+                          "Incident signal references this configuration risk via its linked finding id.",
+                          s.confidence)
+            aid = node_index.get(("activity_event", str(s.linked_activity_event_id))) if s.linked_activity_event_id else None
+            if aid:
+                _add_edge("signal_links_activity", src, aid,
+                          "links activity event",
+                          "Incident signal references this activity event via its linked activity event id.",
+                          s.confidence)
+
+    # Deterministic ordering.
+    nodes.sort(key=lambda n: (_NODE_RANK.get(n["node_type"], 9), n["id"]))
+    edges.sort(key=lambda e: (e["edge_type"], e["source_node_id"], e["target_node_id"]))
+
+    counts_by_node_type: dict[str, int] = {}
+    counts_by_provider: dict[str, int] = {}
+    for n in nodes:
+        counts_by_node_type[n["node_type"]] = counts_by_node_type.get(n["node_type"], 0) + 1
+        p = (n["provider"] or "").lower()
+        if p:
+            counts_by_provider[p] = counts_by_provider.get(p, 0) + 1
+    counts_by_edge_type: dict[str, int] = {}
+    for e in edges:
+        counts_by_edge_type[e["edge_type"]] = counts_by_edge_type.get(e["edge_type"], 0) + 1
+
+    return {
+        "case_id": str(case_id),
+        "nodes": nodes,
+        "edges": edges,
+        "counts_by_node_type": counts_by_node_type,
+        "counts_by_edge_type": counts_by_edge_type,
+        "counts_by_provider": counts_by_provider,
+        "claim_note": CLAIM_NOTE,
+    }
+
+
 def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
     """Build a metadata-only Case Evidence Report dict for ``case``."""
     links = (
@@ -449,6 +659,10 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
         "timeline": timeline,
         # M69.7A — normalized cross-provider chronological evidence timeline.
         "evidence_timeline": build_case_evidence_timeline(
+            case_id=case.id, workspace_id=case.workspace_id, db=db
+        ),
+        # M69.7B — explicit-FK evidence relationship graph.
+        "evidence_graph": build_case_evidence_graph(
             case_id=case.id, workspace_id=case.workspace_id, db=db
         ),
         "review_checklist": review_checklist,
