@@ -93,6 +93,14 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "port_category",
         "interface_id",
         "flow_action",
+        # AWS IAM risk × privilege-chain correlation context (M69.3B) — safe
+        # IAM entity labels and chain summary only (NEVER access keys, secrets,
+        # session tokens, credentials, raw CloudTrail JSON, requestParameters,
+        # responseElements, raw IPs, user agents, or request bodies).
+        "source_signal_type",
+        "chain_pattern",
+        "target_user",
+        "target_role",
     }
 )
 
@@ -1357,21 +1365,277 @@ def generate_aws_sg_vpc_flow_correlations(
     }
 
 
+# ---------------------------------------------------------------------------
+# AWS IAM risk × privilege-chain correlations (M69.3B)
+# ---------------------------------------------------------------------------
+#
+# AWS IAM Configuration Risk findings (``aws_iam_admin_policy_attached`` /
+# ``aws_access_key_unused`` from ``security_rules/aws.py``) are correlated with
+# M69.3A IAM privilege-chain Incident Signals (``signal_type=
+# "aws_iam_privilege_chain"``) when BOTH reference the SAME IAM target entity
+# (user/role name) within the finding's review window AND share the same
+# integration (same AWS account/region).
+#
+# JOIN KEY:
+#   * same ``integration_id`` (same AWS account/region scope), AND
+#   * finding's ``evidence["principal_name"]`` (rule A) or ``evidence["username"]``
+#     (rule B), normalized via ``_norm_resource``, matches the chain signal's
+#     ``signal_metadata["target_user"]`` / ``signal_metadata["target_role"]`` /
+#     ``signal_metadata["resource_name"]`` (already normalized in M69.3A), AND
+#   * review window overlap.
+#
+# ANCHOR: the chain signal's ``linked_activity_event_id`` is used as the
+# correlation's activity anchor (the deterministic CloudTrail event from the
+# chain). This reuses the existing ``upsert_correlation`` infrastructure and
+# gives the correlation a traceable, concrete activity-event link.
+#
+# CLAIM DISCIPLINE: these are EVIDENCE FOR REVIEW. They NEVER assert compromise,
+# unauthorized access, a successful privilege escalation, or an attacker.
+#
+# PRIVACY: only safe aggregate identifiers are stored (IAM entity names,
+# chain_pattern, source_signal_type, event_count, window). NEVER access key
+# values, secret keys, session tokens, requestParameters, responseElements,
+# raw IPs, user agents, raw CloudTrail JSON, or credentials.
+
+_AWS_IAM_CHAIN_SIGNAL_TYPE = "aws_iam_privilege_chain"
+
+# Map finding base rule → (evidence entity key, chain_pattern filter, rule descriptor).
+_AWS_IAM_ADMIN_CHAIN_RULE = {
+    "correlation_key": "aws_iam_admin_risk_privilege_chain",
+    "correlation_type": "aws_iam_admin_risk_privilege_chain",
+    "phrase": "IAM admin-risk aligned with privilege-chain activity",
+    "subject": "An AWS IAM admin-policy configuration risk",
+    "chain_patterns": None,  # any chain pattern
+}
+_AWS_IAM_KEY_CHAIN_RULE = {
+    "correlation_key": "aws_iam_access_key_risk_privilege_chain",
+    "correlation_type": "aws_iam_access_key_risk_privilege_chain",
+    "phrase": "IAM access-key risk aligned with access-key creation chain",
+    "subject": "An AWS IAM access-key configuration risk",
+    "chain_patterns": frozenset({"privilege_grant_access_key"}),
+}
+
+_AWS_IAM_CHAIN_FINDING_RULES: dict[str, tuple[str, dict[str, Any]]] = {
+    "aws_iam_admin_policy_attached": ("principal_name", _AWS_IAM_ADMIN_CHAIN_RULE),
+    "aws_access_key_unused": ("username", _AWS_IAM_KEY_CHAIN_RULE),
+}
+
+_AWS_IAM_CHAIN_REVIEW_NOTE = (
+    "This may require review. ConfigTrace does not confirm compromise or "
+    "unauthorized access."
+)
+
+
+def _iam_signal_targets(sig_md: dict[str, Any]) -> set[str]:
+    """Return the set of normalized entity names a chain signal targets."""
+    out: set[str] = set()
+    for k in ("target_user", "target_role", "resource_name"):
+        v = sig_md.get(k)
+        n = _norm_resource(v)
+        if n:
+            out.add(n)
+    return out
+
+
+def build_aws_iam_chain_correlation(
+    *,
+    finding: SecurityFinding,
+    signal: SecurityIncidentSignal,
+    rule: dict[str, Any],
+) -> Optional[dict[str, Any]]:
+    """Build an IAM risk × chain correlation dict (not persisted)."""
+    anchor_ev_id = signal.linked_activity_event_id
+    if anchor_ev_id is None:
+        return None  # no anchor → cannot build a valid correlation
+
+    _valid_sev = {"critical", "high", "medium", "low", "info"}
+    severity = finding.severity if finding.severity in _valid_sev else "high"
+
+    sig_md = signal.signal_metadata if isinstance(signal.signal_metadata, dict) else {}
+    chain_pattern = sig_md.get("chain_pattern")
+    target_user = sig_md.get("target_user")
+    target_role = sig_md.get("target_role")
+    resource_name = sig_md.get("resource_name")
+    entity_label = target_user or target_role or resource_name or "an IAM entity"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    sig_time = _aware(signal.last_seen_at) or _aware(signal.first_seen_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+
+    seens = [d for d in (f_start, sig_time) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, sig_time) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['phrase']} ({entity_label})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and IAM privilege-chain activity "
+        f"(\"{signal.title}\") were observed for the same IAM target entity "
+        f"\"{entity_label}\" within the review window. {_AWS_IAM_CHAIN_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": "cloudtrail",
+        "source_signal_type": _AWS_IAM_CHAIN_SIGNAL_TYPE,
+        "chain_pattern": chain_pattern,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": "aws_iam_privilege_chain",
+        "target_user": target_user,
+        "target_role": target_role,
+        "resource_id": resource_name,
+        "event_count": sig_md.get("chain_steps"),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_AWS,
+        "correlation_key": rule["correlation_key"],
+        "correlation_type": rule["correlation_type"],
+        "severity": severity,
+        # Same IAM account + matching entity name + chain signal is strong
+        # circumstantial evidence — calibrated to "high" (same entity match,
+        # not just account-level).
+        "confidence": "high",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": anchor_ev_id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_aws_iam_chain_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 2000,
+) -> dict[str, Any]:
+    """Correlate active AWS IAM risk findings with IAM privilege-chain signals.
+
+    Conservative + entity-matched: a finding only matches a chain signal whose
+    target IAM entity (target_user / target_role / resource_name, normalized)
+    matches the finding's evidence entity (principal_name / username, normalized)
+    AND shares the same integration (same AWS account/region), within the
+    finding's review window. Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_AWS,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings
+        if _base_rule(f.finding_key) in _AWS_IAM_CHAIN_FINDING_RULES
+    ]
+
+    chain_signals = (
+        db.query(SecurityIncidentSignal)
+        .filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            SecurityIncidentSignal.provider == PROVIDER_AWS,
+            SecurityIncidentSignal.signal_type == _AWS_IAM_CHAIN_SIGNAL_TYPE,
+            SecurityIncidentSignal.linked_activity_event_id.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    # Index chain signals by (integration_id, normalized_target_entity) for
+    # cheap exact lookup. A signal may appear under multiple keys if it has
+    # both target_user and resource_name set.
+    signals_by_integ_entity: dict[tuple, list[SecurityIncidentSignal]] = {}
+    for sig in chain_signals:
+        sig_md = sig.signal_metadata if isinstance(sig.signal_metadata, dict) else {}
+        targets = _iam_signal_targets(sig_md)
+        for entity in targets:
+            key = (sig.integration_id, entity)
+            signals_by_integ_entity.setdefault(key, []).append(sig)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.integration_id is None:
+            continue
+        base = _base_rule(finding.finding_key)
+        evidence_key, rule = _AWS_IAM_CHAIN_FINDING_RULES[base]
+        ev = finding.evidence if isinstance(finding.evidence, dict) else {}
+        raw_entity = ev.get(evidence_key)
+        entity = _norm_resource(raw_entity)
+        if not entity:
+            continue  # no safe entity to match on
+
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+        chain_patterns = rule.get("chain_patterns")
+
+        for sig in signals_by_integ_entity.get((finding.integration_id, entity), []):
+            # Chain pattern filter (None = all patterns accepted).
+            if chain_patterns is not None:
+                sig_md = sig.signal_metadata if isinstance(sig.signal_metadata, dict) else {}
+                if sig_md.get("chain_pattern") not in chain_patterns:
+                    continue
+            # Window gate: signal must have been active within the review window.
+            sig_time = _aware(sig.last_seen_at) or _aware(sig.first_seen_at)
+            if sig_time is None or not (window_start <= sig_time <= window_end):
+                continue
+            correlation = build_aws_iam_chain_correlation(
+                finding=finding, signal=sig, rule=rule,
+            )
+            if correlation is None:
+                continue
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_AWS,
+        "findings_scanned": len(findings),
+        "events_scanned": len(chain_signals),  # signals scanned (schema compat)
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
 def generate_aws_correlations(
     *,
     workspace_id: uuid.UUID,
     db: Session,
     scan_limit: int = 1000,
 ) -> dict[str, Any]:
-    """Generate ALL AWS correlations for a workspace (M67.3 + M69.2A + M69.2B).
+    """Generate ALL AWS correlations for a workspace (M67.3 + M69.2A + M69.2B + M69.3B).
 
     provider=aws now generates:
       * Configuration Risk × provider alerts (GuardDuty / Access Analyzer), and
       * S3 public-exposure risk × S3 object-level activity (GetObject / ListBucket
         / object-access spike), and
       * SG public-exposure risk × VPC Flow Log network activity (accepted and
-        rejected flows to admin/datastore ports).
-    The returned summary sums all three passes. Idempotent.
+        rejected flows to admin/datastore ports), and
+      * IAM configuration risk × IAM privilege-chain signals (entity-matched,
+        same AWS account, within review window).
+    The returned summary sums all four passes. Idempotent.
     """
     alerts = _generate_aws_alert_correlations(
         workspace_id=workspace_id, db=db, scan_limit=scan_limit
@@ -1382,21 +1646,26 @@ def generate_aws_correlations(
     sg_vpc = generate_aws_sg_vpc_flow_correlations(
         workspace_id=workspace_id, db=db
     )
+    iam_chain = generate_aws_iam_chain_correlations(
+        workspace_id=workspace_id, db=db
+    )
     return {
         "provider": PROVIDER_AWS,
         "findings_scanned": (
-            alerts["findings_scanned"] + s3["findings_scanned"] + sg_vpc["findings_scanned"]
+            alerts["findings_scanned"] + s3["findings_scanned"]
+            + sg_vpc["findings_scanned"] + iam_chain["findings_scanned"]
         ),
         "events_scanned": (
-            alerts["events_scanned"] + s3["events_scanned"] + sg_vpc["events_scanned"]
+            alerts["events_scanned"] + s3["events_scanned"]
+            + sg_vpc["events_scanned"] + iam_chain["events_scanned"]
         ),
         "correlations_created": (
             alerts["correlations_created"] + s3["correlations_created"]
-            + sg_vpc["correlations_created"]
+            + sg_vpc["correlations_created"] + iam_chain["correlations_created"]
         ),
         "correlations_skipped": (
             alerts["correlations_skipped"] + s3["correlations_skipped"]
-            + sg_vpc["correlations_skipped"]
+            + sg_vpc["correlations_skipped"] + iam_chain["correlations_skipped"]
         ),
     }
 

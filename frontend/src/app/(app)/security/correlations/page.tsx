@@ -46,6 +46,9 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "aws_sg_public_admin_port_flow",
     "aws_sg_public_database_port_flow",
     "aws_sg_public_rejected_flow_activity",
+    // M69.3B — IAM configuration risk × IAM privilege-chain activity.
+    "aws_iam_admin_risk_privilege_chain",
+    "aws_iam_access_key_risk_privilege_chain",
   ],
   cloudflare: [
     "cloudflare_dns_change",
