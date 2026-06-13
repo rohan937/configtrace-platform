@@ -64,6 +64,12 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "stripe_webhook_http",
         # Vercel
         "vercel_preview_unprotected",
+        "vercel_production_branch_missing",
+        "vercel_production_branch_unusual",
+        "vercel_domain_unverified",
+        "vercel_env_var_broad_target",
+        "vercel_sensitive_env_var_broad_scope",
+        "vercel_deploy_hook_production_branch",
         # Shopify
         "shopify_webhook_http",
     }

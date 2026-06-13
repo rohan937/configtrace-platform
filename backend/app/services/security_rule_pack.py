@@ -88,6 +88,12 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "stripe_webhook_http": ("stripe", "critical", "Webhooks"),
     # Vercel
     "vercel_preview_unprotected": ("vercel", "medium", "Deployment protection"),
+    "vercel_production_branch_missing": ("vercel", "medium", "Deployment configuration"),
+    "vercel_production_branch_unusual": ("vercel", "medium", "Deployment configuration"),
+    "vercel_domain_unverified": ("vercel", "medium", "Domains"),
+    "vercel_env_var_broad_target": ("vercel", "medium", "Environment variables"),
+    "vercel_sensitive_env_var_broad_scope": ("vercel", "high", "Environment variables"),
+    "vercel_deploy_hook_production_branch": ("vercel", "medium", "Deploy hooks"),
     # Shopify
     "shopify_webhook_http": ("shopify", "critical", "Webhooks"),
 }

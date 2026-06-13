@@ -88,6 +88,12 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "stripe_webhook_http": (HIGH, "Only an explicit http scheme fires; disabled endpoints are not flagged."),
     # Vercel
     "vercel_preview_unprotected": (MEDIUM, "Only fires when every protection mechanism is off; previews are not production data."),
+    "vercel_production_branch_missing": (MEDIUM, "Only fires when a git repository is connected but no production branch is configured."),
+    "vercel_production_branch_unusual": (MEDIUM, "Only fires when the production branch matches a known non-production name; main/master/prod are treated as normal."),
+    "vercel_domain_unverified": (MEDIUM, "Only an explicit verified=false fires; verified or unknown domains are skipped."),
+    "vercel_env_var_broad_target": (MEDIUM, "Only fires when one variable spans production and a non-production environment."),
+    "vercel_sensitive_env_var_broad_scope": (HIGH, "Only fires when a secret-suggestive key name is also scoped to a non-production environment; the value is never read."),
+    "vercel_deploy_hook_production_branch": (MEDIUM, "Only fires when a deploy hook's target ref is the production branch; the hook URL is never stored."),
     # Shopify
     "shopify_webhook_http": (HIGH, "Only an explicit http scheme fires; non-HTTP transports are ignored."),
 }

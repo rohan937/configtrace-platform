@@ -95,6 +95,12 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "stripe_webhook_http": ("stripe_webhook_endpoint",),
     # Vercel
     "vercel_preview_unprotected": ("vercel_deployment_protection",),
+    "vercel_production_branch_missing": ("vercel_project",),
+    "vercel_production_branch_unusual": ("vercel_project",),
+    "vercel_domain_unverified": ("vercel_domain",),
+    "vercel_env_var_broad_target": ("vercel_env_var",),
+    "vercel_sensitive_env_var_broad_scope": ("vercel_env_var",),
+    "vercel_deploy_hook_production_branch": ("vercel_deploy_hook_metadata",),
     # Shopify
     "shopify_webhook_http": ("shopify_webhook_subscription",),
 }
@@ -107,7 +113,7 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
     "supabase": ["Row-level security", "Auth configuration"],
     "firebase": ["Firestore rules", "Storage rules", "Auth configuration"],
     "stripe": ["Webhook endpoints"],
-    "vercel": ["Deployment protection"],
+    "vercel": ["Deployment protection", "Production branch", "Domains", "Environment variables", "Deploy hooks"],
     "shopify": ["Webhook subscriptions"],
 }
 
