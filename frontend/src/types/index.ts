@@ -2008,8 +2008,43 @@ export interface SecurityCaseReport {
   activity_events: CaseReportActivity[];
   correlations: CaseReportCorrelation[];
   timeline: CaseReportTimelineItem[];
+  evidence_timeline?: SecurityCaseTimeline | null;
   review_checklist: string[];
   limitations: string;
+}
+
+// ── M69.7A — cross-provider case evidence timeline ───────────────────────────
+export type CaseTimelineItemType =
+  | "finding"
+  | "activity_event"
+  | "incident_signal"
+  | "correlation";
+
+export interface CaseEvidenceTimelineItem {
+  id: string;
+  item_type: CaseTimelineItemType;
+  provider: string | null;
+  timestamp: string | null;
+  title: string;
+  summary: string;
+  severity: string | null;
+  source: string | null;
+  rule_key: string | null;
+  event_type: string | null;
+  signal_type: string | null;
+  correlation_type: string | null;
+  linked_object_id: string;
+  metadata_preview: Record<string, string | number | boolean>;
+}
+
+export interface SecurityCaseTimeline {
+  case_id: string;
+  provider: string | null;
+  timeline_items: CaseEvidenceTimelineItem[];
+  counts_by_type: Record<string, number>;
+  counts_by_provider: Record<string, number>;
+  total: number;
+  claim_note: string;
 }
 
 export interface SecurityRulePack {

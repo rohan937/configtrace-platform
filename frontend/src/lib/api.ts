@@ -47,6 +47,7 @@ import type {
   SecurityCaseLink,
   SecurityCaseLinkCreateRequest,
   SecurityCaseReport,
+  SecurityCaseTimeline,
   SecurityCaseUpdateRequest,
   SecurityCorrelationGenerateRequest,
   SecurityCorrelationGenerateResponse,
@@ -793,6 +794,13 @@ export async function getSecurityCaseReport(
   token?: string | null,
 ): Promise<SecurityCaseReport> {
   return apiFetch(`/security/cases/${caseId}/report`, { token });
+}
+
+export async function getSecurityCaseTimeline(
+  caseId: string,
+  token?: string | null,
+): Promise<SecurityCaseTimeline> {
+  return apiFetch(`/security/cases/${caseId}/timeline`, { token });
 }
 
 /* ── Incident Workflow demo (M66.10 github / M67.4 aws) — admin-only seed/clear ─ */

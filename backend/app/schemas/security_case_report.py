@@ -75,6 +75,47 @@ class CaseReportTimelineItem(BaseModel):
     label: str
 
 
+class CaseEvidenceTimelineItem(BaseModel):
+    """One normalized item on the cross-provider case evidence timeline (M69.7A).
+
+    Metadata-only: ``metadata_preview`` carries ONLY allowlisted scalar fields —
+    never raw secrets, tokens, headers, webhook secrets, private keys, bypass-actor
+    identities, raw API responses, code, file/manifest paths, advisory bodies,
+    patches, or request/response bodies.
+    """
+
+    id: str
+    item_type: str  # finding | activity_event | incident_signal | correlation
+    provider: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    title: str
+    summary: str
+    severity: Optional[str] = None
+    source: Optional[str] = None
+    rule_key: Optional[str] = None
+    event_type: Optional[str] = None
+    signal_type: Optional[str] = None
+    correlation_type: Optional[str] = None
+    linked_object_id: str
+    metadata_preview: Dict[str, Any] = {}
+
+
+class SecurityCaseTimelineResponse(BaseModel):
+    """GET /security/cases/{id}/timeline — chronological evidence for review.
+
+    This correlates linked findings, activity, signals, and correlations for human
+    review. It does NOT confirm compromise or unauthorized access.
+    """
+
+    case_id: str
+    provider: Optional[str] = None
+    timeline_items: List[CaseEvidenceTimelineItem] = []
+    counts_by_type: Dict[str, int] = {}
+    counts_by_provider: Dict[str, int] = {}
+    total: int = 0
+    claim_note: str
+
+
 class CaseReportCase(BaseModel):
     id: str
     title: str
@@ -106,5 +147,6 @@ class SecurityCaseReportResponse(BaseModel):
     activity_events: List[CaseReportActivity] = []
     correlations: List[CaseReportCorrelation] = []
     timeline: List[CaseReportTimelineItem] = []
+    evidence_timeline: Optional[SecurityCaseTimelineResponse] = None
     review_checklist: List[str] = []
     limitations: str

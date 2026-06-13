@@ -16,8 +16,17 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 
-import type { SecurityCaseDetail, SecurityCaseLink } from "@/types";
-import { getSecurityCase, updateSecurityCase } from "@/lib/api";
+import type {
+  SecurityCaseDetail,
+  SecurityCaseLink,
+  SecurityCaseTimeline,
+  CaseEvidenceTimelineItem,
+} from "@/types";
+import {
+  getSecurityCase,
+  getSecurityCaseTimeline,
+  updateSecurityCase,
+} from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -214,9 +223,12 @@ function Body({
         ))
       )}
 
-      {/* Evidence timeline */}
+      {/* Chronological evidence timeline (M69.7A) */}
+      <EvidenceTimelineSection caseId={c.id} />
+
+      {/* Case lifecycle timeline */}
       <div style={{ marginBottom: "22px" }}>
-        <SectionLabel>Evidence timeline</SectionLabel>
+        <SectionLabel>Case lifecycle timeline</SectionLabel>
         <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px" }}>
           <TimelineRow when={c.created_at} label="Case created" />
           {[...links]
@@ -242,6 +254,121 @@ function Body({
           user” reflects a human decision, not an automated breach determination.
         </p>
       </div>
+    </div>
+  );
+}
+
+const ITEM_TYPE_LABEL: Record<string, string> = {
+  finding: "Configuration risk",
+  activity_event: "Activity event",
+  incident_signal: "Incident signal",
+  correlation: "Correlation",
+};
+const ITEM_TYPE_ROUTE: Record<string, string> = {
+  finding: "/security/risks",
+  activity_event: "/security/activity",
+  incident_signal: "/security/signals",
+  correlation: "/security/correlations",
+};
+
+function EvidenceTimelineSection({ caseId }: { caseId: string }) {
+  const { getToken } = useAuth();
+  const [timeline, setTimeline] = useState<SecurityCaseTimeline | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const token = await getToken();
+        const res = await getSecurityCaseTimeline(caseId, token);
+        if (active) setTimeline(res);
+      } catch {
+        if (active) setFailed(true);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [getToken, caseId]);
+
+  return (
+    <div style={{ marginBottom: "22px" }}>
+      <SectionLabel>Chronological evidence timeline</SectionLabel>
+      <div style={{ fontSize: "12px", color: "#8b90a0", margin: "4px 0 8px" }}>
+        Shows linked findings, activity, signals, and correlations for review.
+        This does not confirm compromise or unauthorized access.
+      </div>
+      {loading ? (
+        <div style={{ fontSize: "12.5px", color: "#565b6e" }}>Loading timeline…</div>
+      ) : failed ? (
+        <div style={{ fontSize: "12.5px", color: "#565b6e" }}>
+          The evidence timeline is unavailable right now.
+        </div>
+      ) : !timeline || timeline.total === 0 ? (
+        <div style={{ fontSize: "12.5px", color: "#565b6e" }}>
+          No linked evidence to place on a timeline yet.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "8px" }}>
+            {timeline.provider && <Chip>{timeline.provider}</Chip>}
+            <Chip>{timeline.total} items</Chip>
+            {Object.entries(timeline.counts_by_type)
+              .filter(([, n]) => n > 0)
+              .map(([t, n]) => (
+                <Chip key={t}>{`${ITEM_TYPE_LABEL[t] ?? t}: ${n}`}</Chip>
+              ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {timeline.timeline_items.map((it) => (
+              <EvidenceTimelineRow key={`${it.item_type}:${it.id}`} item={it} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function EvidenceTimelineRow({ item }: { item: CaseEvidenceTimelineItem }) {
+  const base = ITEM_TYPE_ROUTE[item.item_type];
+  const href = base ? `${base}/${item.linked_object_id}` : null;
+  const kind =
+    item.rule_key ?? item.event_type ?? item.signal_type ?? item.correlation_type ?? null;
+  const previewKeys = Object.keys(item.metadata_preview ?? {});
+  return (
+    <div className="bg-surface1 border border-border" style={{ borderRadius: "10px", padding: "10px 12px" }}>
+      <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ color: "#565b6e", fontSize: "12px", minWidth: "150px" }}>
+          {item.timestamp ? formatRelativeTime(item.timestamp) : "—"}
+        </span>
+        <Chip>{ITEM_TYPE_LABEL[item.item_type] ?? item.item_type}</Chip>
+        {item.severity && <SeverityBadge severity={item.severity} />}
+        <span style={{ flex: 1, minWidth: 0, fontSize: "13px", color: "#c4c8d4", wordBreak: "break-word" }}>
+          {item.summary}
+        </span>
+        {href && (
+          <Link href={href} style={{ fontSize: "12px", color: "#6b9cf8", textDecoration: "none" }}>
+            Open →
+          </Link>
+        )}
+      </div>
+      {(kind || previewKeys.length > 0) && (
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "6px", paddingLeft: "160px" }}>
+          {kind && (
+            <span style={{ fontSize: "11px", color: "#8b90a0", fontFamily: "monospace" }}>{kind}</span>
+          )}
+          {previewKeys.map((k) => (
+            <span key={k} style={{ fontSize: "11px", color: "#8b90a0" }}>
+              {k}: {String(item.metadata_preview[k])}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

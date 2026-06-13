@@ -127,14 +127,36 @@ export function caseReportToMarkdown(r: SecurityCaseReport): string {
   }
   L.push("");
 
-  L.push("## 9. Review checklist");
+  // M69.7A — normalized cross-provider chronological evidence timeline.
+  const et = r.evidence_timeline;
+  L.push("## 9. Chronological evidence timeline");
+  L.push("");
+  if (!et || et.timeline_items.length === 0) {
+    L.push("_No linked evidence to place on a timeline._");
+  } else {
+    L.push(
+      "Shows linked findings, activity, signals, and correlations for review. " +
+        "This does not confirm compromise or unauthorized access.",
+    );
+    L.push("");
+    L.push("| When | Type | Provider | Severity | Summary |");
+    L.push("|---|---|---|---|---|");
+    for (const it of et.timeline_items) {
+      L.push(
+        `| ${fmtUtc(it.timestamp)} | ${mdCell(it.item_type)} | ${mdCell(it.provider)} | ${mdCell(it.severity)} | ${mdCell(it.summary)} |`,
+      );
+    }
+  }
+  L.push("");
+
+  L.push("## 10. Review checklist");
   L.push("");
   for (const item of r.review_checklist) {
     L.push(`- [ ] ${item}`);
   }
   L.push("");
 
-  L.push("## 10. Metadata-only limitations");
+  L.push("## 11. Metadata-only limitations");
   L.push("");
   L.push(r.limitations);
   L.push("");

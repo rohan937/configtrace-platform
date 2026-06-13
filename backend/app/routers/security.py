@@ -111,7 +111,10 @@ from app.schemas.security_case import (
     SecurityCaseLinkResponse,
     SecurityCaseLinkListResponse,
 )
-from app.schemas.security_case_report import SecurityCaseReportResponse
+from app.schemas.security_case_report import (
+    SecurityCaseReportResponse,
+    SecurityCaseTimelineResponse,
+)
 from app.schemas.security_incident_demo import (
     IncidentDemoStatusResponse,
     IncidentDemoSeedResponse,
@@ -1503,6 +1506,27 @@ def get_security_case_report(
     _ws, case = _case_or_404(case_id, current_user, db)
     report = security_case_report_service.build_case_report(case=case, db=db)
     return SecurityCaseReportResponse(**report)
+
+
+@router.get("/cases/{case_id}/timeline", response_model=SecurityCaseTimelineResponse)
+def get_security_case_timeline(
+    case_id: UUID4,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SecurityCaseTimelineResponse:
+    """Return a normalized chronological evidence timeline for a case (M69.7A).
+
+    Member-readable; 404 cross-workspace. Joins the case's linked findings,
+    activity events, incident signals, and correlations into a single ascending
+    timeline for review. Metadata previews are scalar-allowlisted — no raw
+    secrets/tokens/headers/payloads. This correlates evidence for review and does
+    NOT confirm compromise or unauthorized access.
+    """
+    _ws, case = _case_or_404(case_id, current_user, db)
+    timeline = security_case_report_service.build_case_evidence_timeline(
+        case_id=case.id, workspace_id=case.workspace_id, db=db
+    )
+    return SecurityCaseTimelineResponse(**timeline)
 
 
 # ── GitHub Incident Workflow demo (M66.10) ────────────────────────────────────
