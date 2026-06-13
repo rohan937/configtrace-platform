@@ -78,6 +78,7 @@ from app.connectors.github_schema import (
     GITHUB_DEPLOY_KEY,
     GITHUB_ENVIRONMENT_PROTECTION,
     GITHUB_REPO_SETTINGS,
+    GITHUB_RULESET,
     GITHUB_WEBHOOK,
 )
 
@@ -186,6 +187,14 @@ class GitHubConnector(BaseConnector):
             # 8. Deployment environment protection rules — optional, M57.9
             records.extend(
                 self._fetch_environments(client, headers, owner, repo, slug)
+            )
+
+            # 9. Repository rulesets — modern branch protection (M69.5A).
+            # Fully fail-soft: rulesets are unavailable on some plans / tokens,
+            # so this helper swallows its own errors and returns [] rather than
+            # break the rest of the GitHub sync.
+            records.extend(
+                self._fetch_rulesets(client, headers, owner, repo, slug)
             )
 
         logger.info(
@@ -588,6 +597,142 @@ class GitHubConnector(BaseConnector):
             "allow_deletions": bool(
                 (raw.get("allow_deletions") or {}).get("enabled", False)
             ),
+        }
+
+    # ── Repository rulesets (M69.5A) ─────────────────────────────────────────
+
+    def _fetch_rulesets(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+        *,
+        max_rulesets: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Fetch repository rulesets (modern branch protection), fully fail-soft.
+
+        Rulesets require ``GET /repos/{owner}/{repo}/rulesets`` and a per-ruleset
+        detail call for the rules / bypass-actor / condition summary. The feature
+        is unavailable on some plans and for some tokens (403/404), so this helper
+        SWALLOWS its own errors and returns ``[]`` rather than break the rest of
+        the GitHub sync. Only safe AGGREGATE fields (counts, booleans, enforcement
+        / target strings, the ruleset name) are stored — never raw bypass-actor
+        identities, branch glob strings, or the raw API response.
+        """
+        list_url = f"{_BASE_URL}/repos/{owner}/{repo}/rulesets"
+        try:
+            resp = self._get(
+                client, list_url, headers,
+                params={"per_page": _PER_PAGE}, allow_404=True,
+            )
+            if resp.status_code == 404:
+                return []  # feature unavailable / repo without rulesets
+            body = resp.json()
+            items = body if isinstance(body, list) else []
+        except (AuthenticationError, ConnectorError, RateLimitError, NetworkError):
+            logger.info(
+                "github_connector: rulesets unavailable for %s (non-fatal)", slug
+            )
+            return []
+        except Exception:  # noqa: BLE001 — never break sync on a ruleset hiccup
+            logger.warning(
+                "github_connector: unexpected error listing rulesets for %s "
+                "(non-fatal)", slug
+            )
+            return []
+
+        records: list[dict[str, Any]] = []
+        for item in items[:max_rulesets]:
+            if not isinstance(item, dict):
+                continue
+            rid = item.get("id")
+            if rid is None:
+                continue
+            # Per-ruleset detail carries rules / bypass_actors / conditions; the
+            # list response does not. Fall back to the summary if detail fails.
+            detail = item
+            try:
+                durl = f"{_BASE_URL}/repos/{owner}/{repo}/rulesets/{rid}"
+                dresp = self._get(client, durl, headers, allow_404=True)
+                if dresp.status_code != 404:
+                    parsed = dresp.json()
+                    if isinstance(parsed, dict):
+                        detail = parsed
+            except (AuthenticationError, ConnectorError, RateLimitError, NetworkError):
+                detail = item
+            except Exception:  # noqa: BLE001
+                detail = item
+            records.append(self._normalize_ruleset(slug, item, detail))
+        return records
+
+    @staticmethod
+    def _ruleset_targets_protected(include_refs: list[Any]) -> bool:
+        """Heuristic: does the ruleset target a default/main/release branch ref?
+
+        Uses only the safe ref tokens; never persists the raw glob strings.
+        """
+        hints = ("main", "master", "release", "~default_branch", "~all")
+        for ref in include_refs:
+            if not isinstance(ref, str):
+                continue
+            low = ref.lower()
+            if any(h in low for h in hints):
+                return True
+        return False
+
+    def _normalize_ruleset(
+        self, slug: str, summary: dict[str, Any], detail: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Normalize one ruleset → a safe aggregate record (counts only)."""
+        rid = summary.get("id")
+        name = summary.get("name") if isinstance(summary.get("name"), str) else ""
+        target = summary.get("target") if isinstance(summary.get("target"), str) else ""
+        enforcement = detail.get("enforcement") or summary.get("enforcement") or ""
+        enforcement = enforcement.lower() if isinstance(enforcement, str) else ""
+
+        # Conditions → branch-pattern COUNT + protected-branch heuristic (no globs).
+        conditions = detail.get("conditions") if isinstance(detail.get("conditions"), dict) else {}
+        ref_name = conditions.get("ref_name") if isinstance(conditions.get("ref_name"), dict) else {}
+        include = ref_name.get("include") if isinstance(ref_name.get("include"), list) else []
+        exclude = ref_name.get("exclude") if isinstance(ref_name.get("exclude"), list) else []
+
+        # Rules → which rule types are present + required-status-check COUNT.
+        rules = detail.get("rules") if isinstance(detail.get("rules"), list) else []
+        rule_types = {
+            r.get("type") for r in rules
+            if isinstance(r, dict) and isinstance(r.get("type"), str)
+        }
+        rsc_count = 0
+        for r in rules:
+            if isinstance(r, dict) and r.get("type") == "required_status_checks":
+                params = r.get("parameters") if isinstance(r.get("parameters"), dict) else {}
+                checks = params.get("required_status_checks")
+                if isinstance(checks, list):
+                    rsc_count = len(checks)
+
+        # Bypass actors → COUNT only (never identities).
+        bypass = detail.get("bypass_actors") if isinstance(detail.get("bypass_actors"), list) else []
+
+        return {
+            "record_id":                    f"{slug}#ruleset#{rid}",
+            "record_type":                  GITHUB_RULESET,
+            "name":                         name or f"ruleset #{rid}",
+            "ruleset_id":                   str(rid),
+            "target":                       target.lower() if isinstance(target, str) else "",
+            "enforcement":                  enforcement,
+            "branch_patterns_count":        len(include) + len(exclude),
+            "targets_protected_branch":     self._ruleset_targets_protected(include),
+            "bypass_actor_count":           len(bypass),
+            "required_status_checks_count": rsc_count,
+            # "non_fast_forward" present ⇒ force-push blocked. Absent ⇒ ALLOWED.
+            "restrict_force_pushes":        "non_fast_forward" in rule_types,
+            "restrict_deletions":           "deletion" in rule_types,
+            "required_pr_reviews_required": "pull_request" in rule_types,
+            "require_signed_commits":       "required_signatures" in rule_types,
+            "requires_linear_history":      "required_linear_history" in rule_types,
+            "requires_code_scanning":       "code_scanning" in rule_types,
         }
 
     def _fetch_actions_secrets(

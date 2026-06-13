@@ -47,6 +47,13 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "github_status_checks_not_required": ("github", "medium", "Branch protection"),
     "github_deploy_key_write_access": ("github", "high", "Deploy keys"),
     "github_env_protection_missing": ("github", "medium", "Environment protection"),
+    # GitHub rulesets (M69.5A)
+    "github_ruleset_not_enforced": ("github", "high", "Rulesets"),
+    "github_ruleset_force_push_allowed": ("github", "high", "Rulesets"),
+    "github_ruleset_pr_review_missing": ("github", "high", "Rulesets"),
+    "github_ruleset_status_checks_missing": ("github", "medium", "Rulesets"),
+    "github_ruleset_bypass_actors_present": ("github", "medium", "Rulesets"),
+    "github_ruleset_weak_target_coverage": ("github", "medium", "Rulesets"),
     # AWS
     "aws_public_admin_port": ("aws", "high", "Security groups"),
     "aws_public_database_port": ("aws", "critical", "Security groups"),

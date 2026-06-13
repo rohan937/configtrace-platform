@@ -47,6 +47,13 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "github_status_checks_not_required": (HIGH, "Only evaluated when branch protection is enabled."),
     "github_deploy_key_write_access": (HIGH, "A missing read_only flag defaults to read-only (safe); partial records are ignored."),
     "github_env_protection_missing": (HIGH, "Narrowly scoped to environments explicitly named production/prod."),
+    # GitHub rulesets (M69.5A)
+    "github_ruleset_not_enforced": (HIGH, "Reads the ruleset's enforcement field directly; only fires when it is not 'active'."),
+    "github_ruleset_force_push_allowed": (HIGH, "Only fires for active branch rulesets that lack a non-fast-forward (block force push) rule."),
+    "github_ruleset_pr_review_missing": (MEDIUM, "Depends on the protected-branch target heuristic; only active branch rulesets are evaluated."),
+    "github_ruleset_status_checks_missing": (MEDIUM, "Depends on the protected-branch target heuristic; only active branch rulesets are evaluated."),
+    "github_ruleset_bypass_actors_present": (HIGH, "Reads the bypass-actor count directly; counts only, never identities."),
+    "github_ruleset_weak_target_coverage": (MEDIUM, "Based on a default-branch coverage heuristic; conservative and may under-report."),
     # AWS
     "aws_public_admin_port": (HIGH, "Only 0.0.0.0/0 or ::/0 count as public; reachability is not claimed."),
     "aws_public_database_port": (HIGH, "Only canonical 'any' CIDRs count as public."),
