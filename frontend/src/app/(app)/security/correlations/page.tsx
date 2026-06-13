@@ -34,7 +34,15 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
 const PROVIDER_OPTIONS = ["github", "aws", "cloudflare"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
-  github: ["webhook_change", "branch_protection_change", "deploy_key_added"],
+  github: [
+    "webhook_change",
+    "branch_protection_change",
+    "deploy_key_added",
+    // M69.4C — Configuration Risk × secret-scanning alert evidence.
+    "github_repo_protection_secret_alert",
+    "github_automation_secret_alert",
+    "github_repo_risk_secret_alert",
+  ],
   aws: [
     "aws_s3_public_access_alert",
     "aws_iam_credential_alert",
@@ -261,7 +269,7 @@ function GenerateBar({
       ? "Correlate Cloudflare configuration risks with Cloudflare audit activity and WAF/security activity for the same zone, host, or risk area (DNS, WAF, TLS, Access, zone settings)."
       : provider === "aws"
         ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
-        : "Matches configuration risks to GitHub audit activity on the same repository.";
+        : "Matches GitHub configuration risks to audit activity and secret-scanning alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"

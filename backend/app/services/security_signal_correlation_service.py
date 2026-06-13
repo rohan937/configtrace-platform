@@ -101,6 +101,18 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "chain_pattern",
         "target_user",
         "target_role",
+        # GitHub config-risk × secret-scanning alert correlation context (M69.4C)
+        # — safe alert summary fields only (NEVER the raw secret, token, raw alert
+        # URL, raw API response, raw locations, file contents, patch, headers, or
+        # request body).
+        "repository_full_name",
+        "alert_number",
+        "state",
+        "resolution",
+        "secret_type",
+        "secret_type_display_name",
+        "validity",
+        "publicly_leaked",
     }
 )
 
@@ -384,13 +396,13 @@ def _upsert_correlation_signal(
     return sig.id
 
 
-def generate_github_correlations(
+def _generate_github_audit_correlations(
     *,
     workspace_id: uuid.UUID,
     db: Session,
     scan_limit: int = 1000,
 ) -> dict[str, Any]:
-    """Correlate active GitHub findings with GitHub activity for a workspace.
+    """Correlate active GitHub findings with GitHub audit activity for a workspace.
 
     Idempotent. Returns a generation summary.
     """
@@ -471,6 +483,298 @@ def generate_github_correlations(
         "events_scanned": len(events),
         "correlations_created": created,
         "correlations_skipped": skipped,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GitHub config-risk × secret-scanning alert correlations (M69.4C)
+# ---------------------------------------------------------------------------
+#
+# Correlate active GitHub repository configuration-risk findings with GitHub
+# secret-scanning ALERT evidence (security_activity_events, provider=github,
+# source=secret_scanning_alert — ingested in M69.4A) observed on the SAME
+# repository within the review window. These are review correlations; they never
+# assert secret leakage confirmed, compromise, an attacker, that someone has
+# access, unauthorized access, a breach, or an attack — only "evidence for
+# review" and, where GitHub itself set the flag, "marked publicly leaked" /
+# "marked active".
+#
+# We anchor to the secret-scanning ACTIVITY EVENT directly (the preferred
+# strategy) and only correlate OPEN alerts — resolved / revoked / false-positive
+# / used-in-tests alerts never produce a (high-risk) correlation.
+
+SS_SOURCE = "secret_scanning_alert"
+# Only OPEN alerts are correlated (excludes resolved/revoked/false_positive/
+# used_in_tests so non-actionable alerts never become correlations).
+_SS_OPEN_EVENT = "github.secret_scanning.alert.open"
+
+
+def _ss_rule(
+    correlation_key: str,
+    severity: str,
+    phrase: str,
+) -> dict[str, Any]:
+    return {
+        "correlation_key": correlation_key,
+        "correlation_type": correlation_key,  # type == key for these families
+        "activity_types": {_SS_OPEN_EVENT},
+        "severity": severity,
+        "phrase": phrase,
+    }
+
+
+# Map a finding's BASE rule key → secret-scanning correlation rule. Only GitHub
+# repository-scoped config-risk rules that actually exist today are included.
+# Three families: repository-protection risk, automation risk, and a safe
+# repository-scoped generic fallback. (No public-repo visibility rule exists in
+# the codebase today, so Pattern C is deferred — see the milestone report.)
+_SS_PROTECTION_TYPE = "github_repo_protection_secret_alert"
+_SS_AUTOMATION_TYPE = "github_automation_secret_alert"
+_SS_GENERIC_TYPE = "github_repo_risk_secret_alert"
+
+SECRET_SCANNING_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    # A — repository protection risk × open secret-scanning alert.
+    "github_branch_protection_missing": _ss_rule(
+        _SS_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with secret-scanning alert evidence",
+    ),
+    "github_force_pushes_allowed": _ss_rule(
+        _SS_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with secret-scanning alert evidence",
+    ),
+    "github_branch_deletion_allowed": _ss_rule(
+        _SS_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with secret-scanning alert evidence",
+    ),
+    "github_pr_review_not_required": _ss_rule(
+        _SS_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with secret-scanning alert evidence",
+    ),
+    "github_status_checks_not_required": _ss_rule(
+        _SS_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with secret-scanning alert evidence",
+    ),
+    # B — automation / deploy-key / webhook risk × open secret-scanning alert.
+    "github_webhook_http": _ss_rule(
+        _SS_AUTOMATION_TYPE, "high",
+        "GitHub automation risk aligned with secret-scanning alert evidence",
+    ),
+    "github_deploy_key_write_access": _ss_rule(
+        _SS_AUTOMATION_TYPE, "high",
+        "GitHub automation risk aligned with secret-scanning alert evidence",
+    ),
+    # D — safe repository-scoped generic fallback (any remaining repo-scoped
+    # GitHub config risk). Severity is medium, raised to high only when GitHub
+    # marked the alert publicly leaked or active.
+    "github_env_protection_missing": _ss_rule(
+        _SS_GENERIC_TYPE, "medium",
+        "GitHub repository configuration risk aligned with secret-scanning alert evidence",
+    ),
+}
+
+
+def _ss_meta(event: SecurityActivityEvent) -> dict[str, Any]:
+    return event.event_metadata if isinstance(event.event_metadata, dict) else {}
+
+
+def build_secret_scanning_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    repo: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a correlation dict (not persisted) from a finding + open alert event."""
+    md = _ss_meta(event)
+    publicly_leaked = md.get("publicly_leaked") is True
+    active = isinstance(md.get("validity"), str) and md["validity"].strip().lower() == "active"
+
+    # Raise to high when GitHub marked the alert publicly leaked or active.
+    severity = rule["severity"]
+    if publicly_leaked or active:
+        severity = "high"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['phrase']} on {repo}"
+    summary = (
+        f"Configuration risk \"{finding.title}\" and GitHub secret-scanning alert "
+        f"evidence were observed for {repo} within the review window. This may "
+        f"require review. ConfigTrace does not confirm secret misuse, compromise, "
+        f"or unauthorized access."
+    )
+
+    metadata = sanitize_correlation_metadata(
+        {
+            "source": SS_SOURCE,
+            "finding_rule": _base_rule(finding.finding_key),
+            "finding_severity": finding.severity,
+            "repository": repo,
+            "repository_full_name": (
+                md.get("repository_full_name") if isinstance(md.get("repository_full_name"), str)
+                else repo
+            ),
+            "alert_number": md.get("alert_number"),
+            "state": md.get("state"),
+            "resolution": md.get("resolution"),
+            "secret_type": md.get("secret_type"),
+            "secret_type_display_name": md.get("secret_type_display_name"),
+            "validity": md.get("validity"),
+            "publicly_leaked": publicly_leaked,
+            "window_hours": int(WINDOW.total_seconds() // 3600),
+        }
+    )
+
+    return {
+        "provider": PROVIDER_GITHUB,
+        "correlation_key": rule["correlation_key"],
+        "correlation_type": rule["correlation_type"],
+        "severity": severity,
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        # carried for signal creation (not a column):
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_github_secret_scanning_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active GitHub config-risk findings with OPEN secret-scanning alert
+    evidence on the SAME repository within the review window (M69.4C).
+
+    Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_GITHUB,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in SECRET_SCANNING_CORRELATION_RULES
+    ]
+
+    # Resolve each finding's repository slug via its Resource.
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    repo_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            repo_by_resource[r.id] = r.provider_resource_id
+
+    # Only secret-scanning ALERT events (source-scoped); indexed by repo slug.
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_GITHUB,
+            SecurityActivityEvent.source == SS_SOURCE,
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    events_by_repo: dict[str, list[SecurityActivityEvent]] = {}
+    for ev in events:
+        if isinstance(ev.resource_id, str) and ev.resource_id:
+            events_by_repo.setdefault(ev.resource_id, []).append(ev)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.resource_id is None:
+            continue  # integration-level finding — no repo to match
+        repo = repo_by_resource.get(finding.resource_id)
+        if not repo:
+            continue
+        rule = SECRET_SCANNING_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        for ev in events_by_repo.get(repo, []):
+            if ev.event_type not in rule["activity_types"]:
+                continue  # only OPEN alerts correlate
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            correlation = build_secret_scanning_correlation(
+                finding=finding, event=ev, repo=repo, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_GITHUB,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+def generate_github_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Generate ALL GitHub correlations for a workspace (M66.6 + M69.4C).
+
+    provider=github now generates BOTH:
+      * Configuration Risk × GitHub audit activity (webhook / branch-protection /
+        deploy-key), and
+      * Configuration Risk × GitHub secret-scanning alert evidence (same
+        repository, OPEN alert, within the review window).
+    The returned summary sums both passes. Idempotent.
+    """
+    audit = _generate_github_audit_correlations(
+        workspace_id=workspace_id, db=db, scan_limit=scan_limit
+    )
+    secret = generate_github_secret_scanning_correlations(
+        workspace_id=workspace_id, db=db, scan_limit=scan_limit
+    )
+    return {
+        "provider": PROVIDER_GITHUB,
+        "findings_scanned": audit["findings_scanned"] + secret["findings_scanned"],
+        "events_scanned": audit["events_scanned"] + secret["events_scanned"],
+        "correlations_created": audit["correlations_created"] + secret["correlations_created"],
+        "correlations_skipped": audit["correlations_skipped"] + secret["correlations_skipped"],
     }
 
 
