@@ -123,6 +123,35 @@ class GitHubSecretScanningSyncResponse(BaseModel):
     error_message: Optional[str] = None
 
 
+class GitHubCodeScanningSyncRequest(BaseModel):
+    """POST /security/github-code-scanning/sync request body (M69.4D, optional)."""
+
+    integration_id: Optional[str] = None
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_alerts: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class GitHubCodeScanningSyncResponse(BaseModel):
+    """POST /security/github-code-scanning/sync response — ingestion summary.
+
+    Code-scanning ALERT evidence for review. ``permission_limited`` is True when
+    GitHub Advanced Security / code scanning is disabled, the repo is unavailable,
+    or the token lacks the security-events scope. ``error_message`` is a short,
+    safe string (never a secret/token/raw code).
+    """
+
+    attempted: bool
+    succeeded: bool
+    provider: str
+    integration_id: Optional[str] = None
+    source: str
+    alerts_seen: int = 0
+    events_inserted: int = 0
+    events_skipped: int = 0
+    permission_limited: bool = False
+    error_message: Optional[str] = None
+
+
 class GitHubSecretScanningSignalGenerateRequest(BaseModel):
     """POST /security/github-secret-scanning/generate-signals body (M69.4B)."""
 

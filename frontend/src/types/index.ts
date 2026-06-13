@@ -1658,6 +1658,18 @@ export interface GitHubSecretScanningSyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+export interface GitHubCodeScanningSyncResponse {
+  attempted: boolean;
+  succeeded: boolean;
+  provider: string;
+  integration_id: string | null;
+  source: string;
+  alerts_seen: number;
+  events_inserted: number;
+  events_skipped: number;
+  permission_limited: boolean;
+  error_message: string | null;
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
    Correlations (M66.6)

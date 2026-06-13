@@ -131,6 +131,16 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "resolved_at",           # ISO timestamp the alert was resolved (or omitted)
         "location_count",        # safe COUNT of alert locations (never raw paths/code)
         "alert_url_hash",        # salted hash of the alert HTML URL (never the raw URL)
+        # GitHub code-scanning alert fields (M69.4D) — provider-reported SAST
+        # alert evidence ONLY (NEVER raw SARIF, code snippets, file contents,
+        # raw locations/paths, raw alert URL, or the raw API response).
+        "tool_name",                 # analysis tool (e.g. "CodeQL")
+        "security_severity_level",   # GitHub security severity (critical/high/medium/low)
+        "dismissed_reason",          # why an alert was dismissed (false positive / won't fix / used in tests)
+        "rule_description",          # short, safe rule description (truncated by sanitizer)
+        "fixed_at",                  # ISO timestamp the alert was fixed (or omitted)
+        "dismissed_at",              # ISO timestamp the alert was dismissed (or omitted)
+        "instances_count",           # safe COUNT of alert instances (never raw locations)
     }
 )
 

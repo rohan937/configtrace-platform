@@ -547,6 +547,16 @@ export async function syncGitHubSecretScanning(
   });
 }
 
+export async function syncGitHubCodeScanning(
+  token?: string | null,
+): Promise<import("@/types").GitHubCodeScanningSyncResponse> {
+  return apiFetch(`/security/github-code-scanning/sync`, {
+    method: "POST",
+    body: JSON.stringify({}),
+    token,
+  });
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
    Incident Signals (M66.3 backend / M66.4 UI)
 

@@ -361,6 +361,82 @@ class GitHubConnector(BaseConnector):
                 page += 1
         return alerts[:cap]
 
+    def list_code_scanning_alerts(
+        self,
+        credentials: dict,
+        *,
+        per_page: int = 100,
+        max_alerts: int = 1000,
+        max_pages: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Fetch repository code-scanning alerts (M69.4D).
+
+        Uses ``GET /repos/{owner}/{repo}/code-scanning/alerts`` (repo-scoped,
+        matching the existing credential model). This is a SECURITY-ALERT
+        evidence source — it surfaces provider-reported code-scanning (SAST)
+        alerts for review. It never reads or returns raw SARIF, raw code
+        snippets, raw file contents, or raw alert locations.
+
+        Code scanning requires GitHub Advanced Security (or a public repo with
+        code scanning enabled) and a token with ``security_events:read`` (or repo
+        admin). When the feature is disabled, the token lacks scope, or the repo
+        is unavailable, GitHub returns 401/403/404 — the ingestion service treats
+        those as *permission-limited*, never fatal.
+
+        Bounded: ``per_page`` ≤ 100, capped to ``max_alerts`` total across at most
+        ``max_pages`` pages (no unbounded pagination).
+
+        Returns a list of raw alert dicts (newest first, per GitHub).
+
+        Raises:
+            AuthenticationError: HTTP 401/403 — token lacks code-scanning access.
+            ConnectorError:      HTTP 404 (feature disabled / repo unavailable) or
+                                 other non-2xx.
+            RateLimitError / NetworkError: as per ``_get``.
+        """
+        token = credentials.get("github_token", "")
+        owner = credentials.get("repo_owner", "")
+        repo = credentials.get("repo_name", "")
+        if not token or not owner or not repo:
+            raise ConnectorError(
+                "GitHub code-scanning ingestion needs 'github_token', "
+                "'repo_owner', and 'repo_name'."
+            )
+        headers = _auth_headers(token)
+        url = f"{_BASE_URL}/repos/{owner}/{repo}/code-scanning/alerts"
+
+        page_size = max(1, min(int(per_page or 100), 100))
+        cap = max(1, min(int(max_alerts or 1000), 1000))
+        page_cap = max(1, min(int(max_pages or 10), 50))
+
+        alerts: list[dict[str, Any]] = []
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            page = 1
+            while page <= page_cap and len(alerts) < cap:
+                resp = self._get(
+                    client,
+                    url,
+                    headers,
+                    params={"per_page": page_size, "page": page, "sort": "created",
+                            "direction": "desc"},
+                    allow_404=True,
+                )
+                if resp.status_code == 404:
+                    raise ConnectorError(
+                        f"GitHub code scanning is not available for "
+                        f"'{owner}/{repo}' (HTTP 404). Requires GitHub Advanced "
+                        f"Security (or a public repo with code scanning) and a "
+                        f"token with security-events read permission.",
+                        status_code=404,
+                    )
+                body = resp.json()
+                page_items = body if isinstance(body, list) else []
+                alerts.extend(page_items)
+                if len(page_items) < page_size:
+                    break
+                page += 1
+        return alerts[:cap]
+
     # ── Per-category fetch helpers ───────────────────────────────────────────
 
     def _fetch_repo_settings(

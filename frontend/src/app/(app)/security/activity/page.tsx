@@ -27,6 +27,7 @@ import {
   syncCloudflareActivity,
   syncCloudflareWafEvents,
   syncGitHubSecretScanning,
+  syncGitHubCodeScanning,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -75,6 +76,11 @@ const GITHUB_EVENT_TYPES = [
   "github.secret_scanning.alert.revoked",
   "github.secret_scanning.alert.false_positive",
   "github.secret_scanning.alert.used_in_tests",
+  // M69.4D — GitHub code-scanning (SAST) alert evidence (provider-reported alerts).
+  "github.code_scanning.alert.open",
+  "github.code_scanning.alert.fixed",
+  "github.code_scanning.alert.dismissed",
+  "github.code_scanning.alert.reopened",
 ];
 const AWS_EVENT_TYPES = [
   "aws.guardduty.unauthorized_access",
@@ -306,6 +312,27 @@ export default function ActivityEventsPage() {
     }
   }, [getToken, load]);
 
+  const onSyncGithubCodeScanning = useCallback(async () => {
+    setSyncing(true);
+    setSyncError(null);
+    setSyncNote(null);
+    try {
+      const token = await getToken();
+      const r = await syncGitHubCodeScanning(token);
+      setSyncWarn(r.permission_limited);
+      setSyncNote(
+        `${r.permission_limited ? "GitHub code scanning is unavailable for this token/repo. " : ""}` +
+          `Code-scanning alerts: seen ${r.alerts_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+          `${r.error_message ? ` (${r.error_message})` : ""}`,
+      );
+      await load();
+    } catch {
+      setSyncError("Could not sync GitHub code scanning alerts. Please try again.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [getToken, load]);
+
   const metrics = useMemo(() => {
     const types = new Set(events.map((e) => e.event_type)).size;
     const latest = events.reduce<string | null>((acc, e) => {
@@ -339,6 +366,7 @@ export default function ActivityEventsPage() {
         onSyncSecurityHub={onSyncSecurityHub}
         onSyncCloudflareWaf={onSyncCloudflareWaf}
         onSyncGithubSecretScanning={onSyncGithubSecretScanning}
+        onSyncGithubCodeScanning={onSyncGithubCodeScanning}
       />
 
       <div
@@ -449,6 +477,7 @@ function SyncBar({
   onSyncSecurityHub,
   onSyncCloudflareWaf,
   onSyncGithubSecretScanning,
+  onSyncGithubCodeScanning,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -462,6 +491,7 @@ function SyncBar({
   onSyncSecurityHub: () => void;
   onSyncCloudflareWaf: () => void;
   onSyncGithubSecretScanning: () => void;
+  onSyncGithubCodeScanning: () => void;
 }) {
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
@@ -604,6 +634,30 @@ function SyncBar({
             }}
           >
             Sync GitHub secret scanning alerts
+          </button>
+        )}
+        {!isAws && !isCloudflare && (
+          <button
+            onClick={onSyncGithubCodeScanning}
+            disabled={!isAdmin || syncing}
+            title={
+              !isAdmin
+                ? "Only workspace admins can sync."
+                : "Available when the GitHub token and repository support code scanning alerts."
+            }
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || syncing ? "not-allowed" : "pointer",
+              opacity: syncing ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Sync GitHub code scanning alerts
           </button>
         )}
       </div>
