@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session
 from app.models.resource import Resource
 from app.models.security_activity_event import SecurityActivityEvent
 from app.models.security_finding import SecurityFinding
+from app.models.security_incident_signal import SecurityIncidentSignal
 from app.models.security_signal_correlation import SecuritySignalCorrelation
 from app.services import security_incident_signal_service as signal_svc
 
@@ -80,6 +81,10 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "rule_name",
         "path_prefix",
         "event_count",
+        # AWS S3 exposure × object-activity correlation context (M69.2A) — safe
+        # bucket name + sanitized object prefix only (NEVER a raw object key).
+        "bucket_name",
+        "object_key_prefix",
     }
 )
 
@@ -609,7 +614,7 @@ def build_aws_correlation(
     }
 
 
-def generate_aws_correlations(
+def _generate_aws_alert_correlations(
     *,
     workspace_id: uuid.UUID,
     db: Session,
@@ -688,6 +693,328 @@ def generate_aws_correlations(
         "events_scanned": len(events),
         "correlations_created": created,
         "correlations_skipped": skipped,
+    }
+
+
+# ---------------------------------------------------------------------------
+# AWS S3 exposure × S3 object-activity correlations (M69.2A)
+# ---------------------------------------------------------------------------
+#
+# AWS S3 public-EXPOSURE Configuration Risk findings (``aws_s3_public_policy`` /
+# ``aws_s3_public_acl`` from ``security_rules/aws.py``) are correlated with S3
+# OBJECT-LEVEL activity (``security_activity_events`` provider=aws, source=
+# "s3_data_event" — ingested in M67.8) ONLY when both reference the SAME bucket
+# within the finding's review window.
+#
+# JOIN KEY: the finding's ``evidence["bucket"]`` (normalized) must equal the S3
+# data event's bucket (``resource_id`` / ``metadata["bucket_name"]``, normalized).
+# Same account / same provider is NEVER enough — only same bucket.
+#
+# OUTPUT SHAPE: one correlation per (finding, rule-category), anchored to a
+# deterministic representative event, with ``event_count`` as a safe aggregate —
+# so the correlation count is bounded by the number of exposure findings, never
+# the (large) S3 data-event volume.
+#
+# CLAIM DISCIPLINE: a correlation is EVIDENCE FOR REVIEW. It NEVER asserts data
+# exfiltration, a breach, an attacker, a compromise, or unauthorized access — only
+# that a public-exposure risk and S3 object activity co-occurred for the same
+# bucket and may require review.
+#
+# PRIVACY: only safe aggregate fields are stored (bucket name, sanitized object
+# prefix, event type, counts, window). NEVER a raw object key, raw IP, raw
+# CloudTrail JSON, requestParameters/responseElements, tokens, secrets, or keys.
+
+_AWS_S3_EXPOSURE_RULES = frozenset({"aws_s3_public_policy", "aws_s3_public_acl"})
+_AWS_S3_DATA_SOURCE = "s3_data_event"
+_AWS_S3_SPIKE_SIGNAL_TYPE = "s3_object_access_spike"
+_AWS_S3_GET = "aws.s3.data.get_object"
+_AWS_S3_LIST = "aws.s3.data.list_bucket"
+
+_AWS_S3_REVIEW_NOTE = (
+    "This may require review. ConfigTrace does not confirm data exfiltration or "
+    "unauthorized access."
+)
+
+# (correlation_key, correlation_type, event_type, activity phrase) per category.
+_AWS_S3_GETOBJECT_RULE = {
+    "correlation_key": "aws_s3_public_getobject_activity",
+    "correlation_type": "aws_s3_public_getobject_activity",
+    "event_type": _AWS_S3_GET,
+    "phrase": "S3 exposure risk aligned with object-read activity",
+    "activity": "S3 object-read activity",
+}
+_AWS_S3_LISTBUCKET_RULE = {
+    "correlation_key": "aws_s3_public_listbucket_activity",
+    "correlation_type": "aws_s3_public_listbucket_activity",
+    "event_type": _AWS_S3_LIST,
+    "phrase": "S3 exposure risk aligned with bucket-list activity",
+    "activity": "S3 bucket-list activity",
+}
+_AWS_S3_SPIKE_RULE = {
+    "correlation_key": "aws_s3_public_access_spike_activity",
+    "correlation_type": "aws_s3_public_access_spike_activity",
+    "phrase": "S3 exposure risk aligned with an S3 object-access spike",
+    "activity": "an S3 object-access spike",
+}
+
+# Event-type → category rule for the per-event passes (GetObject / ListBucket).
+_AWS_S3_EVENT_RULES = {
+    _AWS_S3_GET: _AWS_S3_GETOBJECT_RULE,
+    _AWS_S3_LIST: _AWS_S3_LISTBUCKET_RULE,
+}
+
+
+def _aws_event_bucket(ev: SecurityActivityEvent) -> Optional[str]:
+    """Normalized bucket name for an S3 data event (metadata or resource_id)."""
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    return _norm_resource(md.get("bucket_name")) or _norm_resource(ev.resource_id)
+
+
+def _aws_s3_anchor(events: list[SecurityActivityEvent]) -> SecurityActivityEvent:
+    """Deterministically pick a representative event (latest time, then id)."""
+    return max(
+        events,
+        key=lambda e: (
+            _aware(e.occurred_at) or _aware(e.ingested_at)
+            or datetime.min.replace(tzinfo=timezone.utc),
+            str(e.provider_event_id or ""),
+        ),
+    )
+
+
+def build_aws_s3_activity_correlation(
+    *,
+    finding: SecurityFinding,
+    anchor: SecurityActivityEvent,
+    matched: list[SecurityActivityEvent],
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build an S3 exposure × object-activity correlation dict (not persisted)."""
+    _valid_sev = {"critical", "high", "medium", "low", "info"}
+    severity = finding.severity if finding.severity in _valid_sev else "high"
+
+    md = anchor.event_metadata if isinstance(anchor.event_metadata, dict) else {}
+    bucket = (
+        md.get("bucket_name") if isinstance(md.get("bucket_name"), str) else None
+    ) or (anchor.resource_id if isinstance(anchor.resource_id, str) else None)
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(anchor.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    label = bucket or "an S3 bucket"
+    title = f"{rule['phrase']} ({label})"
+    summary = (
+        f"An S3 exposure risk (\"{finding.title}\") and {rule['activity']} were "
+        f"observed for the same bucket \"{label}\" within the review window. "
+        f"{_AWS_S3_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": _AWS_S3_DATA_SOURCE,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": anchor.event_type,
+        "bucket_name": bucket,
+        "object_key_prefix": md.get("object_key_prefix")
+        if isinstance(md.get("object_key_prefix"), str) else None,
+        "event_count": len(matched),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_AWS,
+        "correlation_key": rule["correlation_key"],
+        "correlation_type": rule["correlation_type"],
+        "severity": severity,
+        # Same-bucket exposure + object activity is circumstantial co-occurrence
+        # (object activity is not provider-adjudicated) — calibrated to "medium".
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": anchor.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        # carried for signal creation (not a column):
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_aws_s3_exposure_activity_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 2000,
+) -> dict[str, Any]:
+    """Correlate active AWS S3 public-exposure findings with S3 object activity.
+
+    Conservative + bucket-driven: an exposure finding only matches S3 data events
+    (GetObject / ListBucket) and S3 object-access-spike signals for the SAME bucket
+    within the finding's review window. One correlation per (finding, category),
+    anchored to a deterministic representative event. Idempotent.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_AWS,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in _AWS_S3_EXPOSURE_RULES
+    ]
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_AWS,
+            SecurityActivityEvent.source == _AWS_S3_DATA_SOURCE,
+            SecurityActivityEvent.event_type.in_(tuple(_AWS_S3_EVENT_RULES.keys())),
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    # Index S3 data events by (bucket, event_type) for cheap, exact lookup.
+    events_by_bucket_type: dict[tuple[str, str], list[SecurityActivityEvent]] = {}
+    for ev in events:
+        bucket = _aws_event_bucket(ev)
+        if not bucket:
+            continue  # never correlate an event without a bucket
+        events_by_bucket_type.setdefault((bucket, ev.event_type), []).append(ev)
+
+    # Index S3 object-access-spike signals by bucket for the spike pass.
+    spike_signals = (
+        db.query(SecurityIncidentSignal)
+        .filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            SecurityIncidentSignal.provider == PROVIDER_AWS,
+            SecurityIncidentSignal.signal_type == _AWS_S3_SPIKE_SIGNAL_TYPE,
+            SecurityIncidentSignal.linked_activity_event_id.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    spikes_by_bucket: dict[str, list[SecurityIncidentSignal]] = {}
+    for sig in spike_signals:
+        smd = sig.signal_metadata if isinstance(sig.signal_metadata, dict) else {}
+        bucket = _norm_resource(smd.get("bucket_name"))
+        if bucket:
+            spikes_by_bucket.setdefault(bucket, []).append(sig)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.integration_id is None:
+            continue
+        bucket_key = _aws_finding_resource_key(finding)
+        if not bucket_key:
+            continue  # no safe bucket name on the finding
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        # Per-event-type passes (GetObject, ListBucket).
+        for event_type, rule in _AWS_S3_EVENT_RULES.items():
+            matched = [
+                ev for ev in events_by_bucket_type.get((bucket_key, event_type), [])
+                if (occ := _aware(ev.occurred_at)) is not None
+                and window_start <= occ <= window_end
+            ]
+            if not matched:
+                continue
+            anchor = _aws_s3_anchor(matched)
+            correlation = build_aws_s3_activity_correlation(
+                finding=finding, anchor=anchor, matched=matched, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+        # Spike pass — exposure + a detected S3 object-access spike (M67.9) for the
+        # same bucket. Links the spike's anchor activity event.
+        for sig in spikes_by_bucket.get(bucket_key, []):
+            anchor_id = sig.linked_activity_event_id
+            anchor = db.get(SecurityActivityEvent, anchor_id) if anchor_id else None
+            if anchor is None:
+                continue
+            occ = _aware(sig.last_seen_at) or _aware(anchor.occurred_at)
+            if occ is None or not (window_start <= occ <= window_end):
+                continue
+            smd = sig.signal_metadata if isinstance(sig.signal_metadata, dict) else {}
+            count = smd.get("event_count")
+            matched = [anchor] * (count if isinstance(count, int) and count > 0 else 1)
+            correlation = build_aws_s3_activity_correlation(
+                finding=finding, anchor=anchor, matched=matched, rule=_AWS_S3_SPIKE_RULE
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_AWS,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+def generate_aws_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Generate ALL AWS correlations for a workspace (M67.3 + M69.2A).
+
+    provider=aws now generates BOTH:
+      * Configuration Risk × provider alerts (GuardDuty / Access Analyzer), and
+      * S3 public-exposure risk × S3 object-level activity (GetObject / ListBucket
+        / object-access spike).
+    The returned summary sums both passes. Idempotent.
+    """
+    alerts = _generate_aws_alert_correlations(
+        workspace_id=workspace_id, db=db, scan_limit=scan_limit
+    )
+    s3 = generate_aws_s3_exposure_activity_correlations(
+        workspace_id=workspace_id, db=db
+    )
+    return {
+        "provider": PROVIDER_AWS,
+        "findings_scanned": alerts["findings_scanned"] + s3["findings_scanned"],
+        "events_scanned": alerts["events_scanned"] + s3["events_scanned"],
+        "correlations_created": alerts["correlations_created"] + s3["correlations_created"],
+        "correlations_skipped": alerts["correlations_skipped"] + s3["correlations_skipped"],
     }
 
 

@@ -35,7 +35,14 @@ const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
 const PROVIDER_OPTIONS = ["github", "aws", "cloudflare"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: ["webhook_change", "branch_protection_change", "deploy_key_added"],
-  aws: ["aws_s3_public_access_alert", "aws_iam_credential_alert"],
+  aws: [
+    "aws_s3_public_access_alert",
+    "aws_iam_credential_alert",
+    // M69.2A — S3 exposure × S3 object-level activity.
+    "aws_s3_public_getobject_activity",
+    "aws_s3_public_listbucket_activity",
+    "aws_s3_public_access_spike_activity",
+  ],
   cloudflare: [
     "cloudflare_dns_change",
     "cloudflare_waf_change",
