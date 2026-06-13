@@ -155,6 +155,23 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "cvss_score",                # CVSS base score (float)
         "epss_percentage",           # EPSS probability (float)
         "scope",                     # dependency scope (runtime / development)
+        # Vercel audit/activity fields (M70B) — control-plane change activity ONLY.
+        # NEVER env var values, deploy hook URLs, tokens, headers, raw payloads,
+        # actor emails, or the raw API response.
+        "project_id",                # Vercel project id (prj_xxx)
+        "project_name",              # Vercel project slug/name
+        "team_id",                   # Vercel team id (when present)
+        "event_action",              # raw Vercel audit action string (e.g. "env.create")
+        "target_type",               # affected object type (project/domain/env/deploy_hook/deployment)
+        "target_id",                 # affected object id (never a secret)
+        "target_name",               # affected object name (never a secret value)
+        "domain",                    # custom domain name involved in the event
+        "env_var_key",               # env var KEY name only (NEVER the value)
+        "deploy_hook_name",          # deploy hook user-visible name (NEVER the URL)
+        "branch",                    # git branch / ref involved in the event
+        "deployment_id",             # Vercel deployment id (dpl_xxx)
+        "deployment_target",         # "production" / "preview" / "staging"
+        "event_time",                # ISO event timestamp (string)
     }
 )
 

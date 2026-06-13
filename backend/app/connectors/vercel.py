@@ -62,6 +62,9 @@ _RETRY_BASE_SECONDS = 1.5
 # Per-request HTTP timeout in seconds
 _TIMEOUT = 30.0
 
+# Bounded pagination for the audit-log surface (M70B).
+_MAX_AUDIT_PAGES = 10
+
 
 # ── Connector class ──────────────────────────────────────────────────────────
 
@@ -155,6 +158,71 @@ class VercelConnector(BaseConnector):
         # A successful GET is enough to confirm read access.
         self._get(f"/v9/projects/{project_id}", headers)
         return True
+
+    def list_audit_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch Vercel team audit-log events (M70B) — metadata only.
+
+        Vercel audit logs are a TEAM-scoped surface that requires a team id and a
+        token with audit-log read access (typically Enterprise). When no team id
+        is configured or access is not granted, this raises a typed connector
+        error so the ingestion layer can report ``permission_limited`` and fail
+        soft — it never breaks the existing project/env/domain config sync.
+
+        SECURITY: this returns raw audit entries for the ingestion layer to
+        normalize through the metadata allowlist. The connector itself stores
+        nothing; the ingestion layer drops env var values, deploy hook URLs,
+        actor emails, tokens, and any non-allowlisted field.
+
+        Raises:
+            AuthenticationError / ConnectorError / RateLimitError / NetworkError.
+        """
+        token = credentials["vercel_token"]
+        team_id = (
+            credentials.get("vercel_team_id")
+            or credentials.get("team_id")
+            or ""
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        if not team_id:
+            # No team → no audit-log surface. Treated as permission_limited.
+            raise ConnectorError(
+                "Vercel audit log requires a team id with audit-log read access.",
+                status_code=404,
+            )
+
+        cap = max(1, min(int(max_events), 1000))
+        page_limit = min(cap, 100)
+        events: list[dict] = []
+        params: dict[str, Any] = {"limit": page_limit}
+
+        for _page in range(_MAX_AUDIT_PAGES):
+            data = self._get(f"/v1/teams/{team_id}/audit-logs", headers, params=params)
+            batch = (
+                data.get("auditLogs")
+                or data.get("events")
+                or data.get("logs")
+                or []
+            )
+            if not isinstance(batch, list):
+                break
+            for ev in batch:
+                events.append(ev)
+                if len(events) >= cap:
+                    return events[:cap]
+            pagination = data.get("pagination") or {}
+            next_cursor = pagination.get("next")
+            if not next_cursor:
+                break
+            params = {"limit": page_limit, "until": next_cursor}
+
+        return events[:cap]
 
     # ── Private helpers ───────────────────────────────────────────────────────
 

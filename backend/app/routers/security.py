@@ -160,6 +160,10 @@ from app.schemas.security_cloudflare_activity import (
     CloudflareWafSignalGenerateRequest,
     CloudflareWafSignalGenerateResponse,
 )
+from app.schemas.security_vercel_activity import (
+    VercelActivitySyncRequest,
+    VercelActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -193,6 +197,7 @@ from app.services import aws_vpc_flow_log_ingestion_service
 from app.services import aws_vpc_flow_signal_service
 from app.services import cloudflare_security_activity_ingestion_service
 from app.services import cloudflare_waf_event_ingestion_service
+from app.services import vercel_activity_ingestion_service
 from app.services import cloudflare_waf_signal_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
@@ -2120,6 +2125,59 @@ def sync_cloudflare_security_activity(
         integration=integration, workspace_id=workspace_id, db=db, max_events=max_events
     )
     return CloudflareActivitySyncResponse(**summary)
+
+
+@router.post("/vercel-activity/sync", response_model=VercelActivitySyncResponse)
+def sync_vercel_activity(
+    body: Optional[VercelActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> VercelActivitySyncResponse:
+    """Ingest Vercel team audit activity (M70B).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised — Vercel audit logs need a team id and audit-log
+    read access (typically Enterprise). Members can view the resulting events via
+    ``GET /security/activity/events?provider=vercel``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "vercel",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="Vercel integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return VercelActivitySyncResponse(
+                attempted=False, succeeded=False, provider="vercel",
+                source="audit_log",
+                error_message="No active Vercel integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+    summary = vercel_activity_ingestion_service.ingest_vercel_activity(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_events=max_events,
+    )
+    return VercelActivitySyncResponse(**summary)
 
 
 @router.post(

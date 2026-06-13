@@ -29,6 +29,7 @@ import {
   syncGitHubSecretScanning,
   syncGitHubCodeScanning,
   syncGitHubDependabot,
+  syncVercelActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -38,7 +39,22 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare";
+type Provider = "github" | "aws" | "cloudflare" | "vercel";
+
+// M70B — Vercel team audit-log activity (control-plane change events).
+const VERCEL_EVENT_TYPES = [
+  "vercel.project.updated",
+  "vercel.project.event",
+  "vercel.domain.added",
+  "vercel.domain.removed",
+  "vercel.env_var.created",
+  "vercel.env_var.updated",
+  "vercel.env_var.deleted",
+  "vercel.deploy_hook.created",
+  "vercel.deploy_hook.deleted",
+  "vercel.deployment.created",
+  "vercel.deployment.promoted",
+];
 
 const CLOUDFLARE_EVENT_TYPES = [
   "cloudflare.dns_record.changed",
@@ -141,7 +157,7 @@ const AWS_EVENT_TYPES = [
 ];
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -212,6 +228,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.findings_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "vercel") {
+        const r = await syncVercelActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Vercel audit-log access is limited for this token/team. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -228,7 +252,9 @@ export default function ActivityEventsPage() {
           ? "Could not sync Cloudflare security activity. Please try again."
           : provider === "aws"
             ? "Could not sync AWS security alerts. Please try again."
-            : "Could not sync GitHub activity. Please try again.",
+            : provider === "vercel"
+              ? "Could not sync Vercel activity. Please try again."
+              : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -374,6 +400,7 @@ export default function ActivityEventsPage() {
 
   const eventTypeOptions =
     provider === "aws" ? AWS_EVENT_TYPES
+    : provider === "vercel" ? VERCEL_EVENT_TYPES
     : provider === "cloudflare" ? CLOUDFLARE_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
@@ -417,7 +444,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -526,14 +553,18 @@ function SyncBar({
 }) {
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
+  const isVercel = provider === "vercel";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
-    : isAws ? "Sync AWS security alerts" : "Sync GitHub activity";
+    : isAws ? "Sync AWS security alerts"
+    : isVercel ? "Sync Vercel activity" : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
     : isAws
       ? "AWS events may include GuardDuty, Access Analyzer, CloudTrail management events, Security Hub findings, S3 data events, and VPC Flow Logs when configured. Sync provider-reported security findings, CloudTrail control-plane activity, or Security Hub findings as normalized activity events."
-      : "Ingests recent GitHub audit-log activity into normalized events.";
+      : isVercel
+        ? "Sync Vercel team audit activity (project, domain, environment-variable, deploy-hook, and deployment events) into normalized events. Available when the Vercel token/team supports activity or audit-log access."
+        : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -869,9 +900,13 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
         ? isAdmin
           ? "Run “Sync Cloudflare activity” above to ingest audit activity and WAF/security events."
           : "An admin can sync Cloudflare activity to ingest audit activity and WAF/security events."
-        : isAdmin
-          ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
-          : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";
+        : provider === "vercel"
+          ? isAdmin
+            ? "Run “Sync Vercel activity” above. Available when the Vercel token/team supports activity or audit-log access."
+            : "An admin can sync Vercel activity. Available when the Vercel token/team supports activity or audit-log access."
+          : isAdmin
+            ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
+            : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No activity events yet.</div>

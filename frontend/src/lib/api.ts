@@ -723,6 +723,16 @@ export async function syncCloudflareWafEvents(
   return apiFetch(`/security/cloudflare-waf-events/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Trigger Vercel team audit-log activity ingestion (M70B). Admin/owner only.
+ * Non-fatal: permission/availability limits are reported in the summary.
+ */
+export async function syncVercelActivity(
+  token?: string | null,
+): Promise<import("@/types").VercelActivitySyncResponse> {
+  return apiFetch(`/security/vercel-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {
