@@ -272,6 +272,28 @@ export const DEMO_SCRIPT_5MIN: DemoStep[] = [
  */
 export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
   {
+    id: "incident-seed",
+    title: "Seed the demo",
+    href: "/security/cases",
+    cta: "Load a provider demo",
+    talkTrack:
+      "Start by loading a sample incident from the Cases page — GitHub, AWS, or Cloudflare. Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
+    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, or Cloudflare incident demo.",
+    emphasize: "One click seeds a full, clearly-marked evidence chain — no real provider sync.",
+    avoid: "Don't present demo data as a live finding from the customer's environment.",
+  },
+  {
+    id: "incident-risks",
+    title: "Configuration Risks",
+    href: "/security/risks",
+    cta: "Open Configuration Risks",
+    talkTrack:
+      "Begin the review at the configuration risk — a risky current state on the provider, such as a webhook over HTTP, a public bucket policy, or a disabled WAF rule. This is posture we observe, with calibrated severity and confidence; it is not an alert and not a claim that anything was exploited.",
+    whatToClick: "Open Configuration Risks and one risk to show the evidence, severity, and confidence.",
+    emphasize: "A risky current state to review — posture, not a confirmed incident.",
+    avoid: "Don't call a configuration risk a breach or an active attack.",
+  },
+  {
     id: "incident-activity",
     title: "Activity Events",
     href: "/security/activity",
@@ -354,9 +376,9 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Recap",
     talkTrack:
-      "ConfigTrace links repository posture, security-alert evidence, and audit activity into a reviewable investigation timeline without claiming compromise. The flow is: seed the GitHub demo data, review configuration risks, review activity and alert evidence, generate signals and correlations, open or create a case, generate and read the report, then clear the demo data.",
-    whatToClick: "Recap the seed → review → signals → correlations → case → report → clear flow.",
-    emphasize: "Posture + evidence + activity → a reviewable timeline; never a compromise claim.",
+      "ConfigTrace links configuration posture, activity evidence, security-alert evidence, and correlations into a reviewable investigation workflow without claiming compromise. The flow is: seed the demo, review configuration risks, review activity and alert evidence, generate and review signals and correlations, open a case, inspect its timeline and relationship map, export and read the report, then clear the demo data.",
+    whatToClick: "Recap the seed → risks → activity → signals → correlations → case → timeline → map → report → clear flow.",
+    emphasize: "Posture + activity + alerts + correlations → a reviewable workflow; never a compromise claim.",
     avoid: "Don't claim ConfigTrace confirms compromise, unauthorized access, or a breach.",
   },
 ];
