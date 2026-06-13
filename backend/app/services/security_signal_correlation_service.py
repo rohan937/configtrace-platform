@@ -85,6 +85,14 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         # bucket name + sanitized object prefix only (NEVER a raw object key).
         "bucket_name",
         "object_key_prefix",
+        # AWS SG exposure × VPC Flow Log correlation context (M69.2B) — safe
+        # aggregate identifiers only (NEVER raw source/destination IPs, flow lines,
+        # payloads, headers, tokens, or secrets).
+        "security_group_id",
+        "dst_port",
+        "port_category",
+        "interface_id",
+        "flow_action",
     }
 )
 
@@ -989,19 +997,381 @@ def generate_aws_s3_exposure_activity_correlations(
     }
 
 
+# ---------------------------------------------------------------------------
+# AWS Security Group exposure × VPC Flow Log correlations (M69.2B)
+# ---------------------------------------------------------------------------
+#
+# AWS Security Group public-EXPOSURE Configuration Risk findings
+# (``aws_public_admin_port`` / ``aws_public_database_port`` /
+# ``aws_public_all_ports`` from ``security_rules/aws.py``) are correlated with
+# VPC Flow Log activity (``security_activity_events`` provider=aws, source=
+# "vpc_flow_log" — ingested in M67.10) when BOTH share the SAME integration
+# (same AWS account/region) AND the VPC flow's destination port falls within
+# the SG rule's exposed port range (from_port..to_port), within the finding's
+# review window.
+#
+# JOIN KEY: same ``integration_id`` (same AWS account/region scope) +
+# destination port overlap (flow's ``dst_port`` within finding's exposed
+# ``from_port``..``to_port``) + risk-area match (admin vs datastore ports).
+# This is NOT "same port only" — the integration + port range + risk area +
+# window combination provides non-vague, account-scoped evidence. Raw IPs and
+# raw flow lines are NEVER used; no SG→ENI mapping is attempted.
+#
+# OUTPUT SHAPE: one correlation per (finding, port category, action category),
+# anchored to a deterministic representative event, with ``event_count`` as a
+# safe aggregate. Bounded by the number of exposure findings.
+#
+# CLAIM DISCIPLINE: a correlation is EVIDENCE FOR REVIEW. It NEVER asserts a
+# network intrusion, breach, attacker, compromise, or unauthorized access.
+#
+# PRIVACY: only safe aggregate identifiers are stored (security_group_id,
+# dst_port, port_category, interface_id, protocol, flow_action, event_count,
+# window). NEVER raw source/destination IPs, raw flow lines, payloads,
+# headers, tokens, secrets, or access keys.
+#
+# DEFERRED:
+#   * SG→ENI exact mapping: no join key exists today (SG records carry no ENI
+#     attachment; VPC flow records carry no SG context). Flagged in M69.1 and
+#     intentionally omitted — correlating an SG finding to a *specific* ENI
+#     would require a SG→attachment side-table that does not exist yet.
+
+_AWS_SG_EXPOSURE_RULES = frozenset({
+    "aws_public_admin_port",
+    "aws_public_database_port",
+    "aws_public_all_ports",
+})
+_AWS_VPC_FLOW_SOURCE = "vpc_flow_log"
+_AWS_FLOW_ACCEPT = "aws.vpc.flow.accept"
+_AWS_FLOW_REJECT = "aws.vpc.flow.reject"
+
+# Sensitive destination ports — must match aws_vpc_flow_signal_service.
+_SG_ADMIN_PORTS: frozenset[int] = frozenset({22, 3389, 5985, 5986})
+_SG_DB_PORTS: frozenset[int] = frozenset({3306, 5432, 6379, 27017, 9200, 1433})
+
+# Minimum reject events required to create a reject correlation (conservative).
+_SG_REJECT_THRESHOLD = 2
+
+# Mapping: finding base rule → list of sensitive port sets to match against.
+# All three rules get matched against admin and/or DB ports only — "all ports"
+# findings match both, but never arbitrary other ports (too vague).
+_SG_RULE_PORT_SETS: dict[str, list[frozenset[int]]] = {
+    "aws_public_admin_port": [_SG_ADMIN_PORTS],
+    "aws_public_database_port": [_SG_DB_PORTS],
+    "aws_public_all_ports": [_SG_ADMIN_PORTS, _SG_DB_PORTS],
+}
+
+_AWS_VPC_REVIEW_NOTE = (
+    "This may require review. ConfigTrace does not confirm network intrusion or "
+    "unauthorized access."
+)
+
+_SG_ADMIN_ACCEPT_RULE = {
+    "correlation_key": "aws_sg_public_admin_port_flow",
+    "correlation_type": "aws_sg_public_admin_port_flow",
+    "action_type": _AWS_FLOW_ACCEPT,
+    "phrase": "Security group admin-port exposure aligned with accepted network flow",
+    "activity": "accepted VPC network flow to an admin destination port",
+}
+_SG_DB_ACCEPT_RULE = {
+    "correlation_key": "aws_sg_public_database_port_flow",
+    "correlation_type": "aws_sg_public_database_port_flow",
+    "action_type": _AWS_FLOW_ACCEPT,
+    "phrase": "Security group datastore-port exposure aligned with accepted network flow",
+    "activity": "accepted VPC network flow to a datastore destination port",
+}
+_SG_REJECT_RULE = {
+    "correlation_key": "aws_sg_public_rejected_flow_activity",
+    "correlation_type": "aws_sg_public_rejected_flow_activity",
+    "action_type": _AWS_FLOW_REJECT,
+    "phrase": "Security group exposure aligned with repeated rejected network flow",
+    "activity": "repeated rejected VPC network flow activity to an exposed destination port",
+}
+
+# Port set → correlation rule descriptor (accept path).
+_SG_PORT_SET_TO_RULE: dict[int, dict[str, Any]] = {}  # keyed by id() for O(1) lookup
+_SG_PORT_SET_TO_RULE[id(_SG_ADMIN_PORTS)] = _SG_ADMIN_ACCEPT_RULE
+_SG_PORT_SET_TO_RULE[id(_SG_DB_PORTS)] = _SG_DB_ACCEPT_RULE
+
+
+def _sg_finding_evidence(finding: SecurityFinding) -> dict[str, Any]:
+    return finding.evidence if isinstance(finding.evidence, dict) else {}
+
+
+def _flow_dst_port(ev: SecurityActivityEvent) -> Optional[int]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get("dst_port")
+    return v if isinstance(v, int) else None
+
+
+def _flow_interface(ev: SecurityActivityEvent) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    iface = md.get("interface_id")
+    if isinstance(iface, str) and iface:
+        return iface
+    return ev.resource_id if isinstance(ev.resource_id, str) and ev.resource_id else None
+
+
+def _port_in_sg_range(dst_port: int, evidence: dict[str, Any]) -> bool:
+    """Return True if dst_port falls in the SG rule's exposed port range.
+
+    If from_port/to_port are absent (all-ports rule), every port matches.
+    """
+    fp = evidence.get("from_port")
+    tp = evidence.get("to_port")
+    if not isinstance(fp, int) or not isinstance(tp, int):
+        return True  # all-ports finding or range info absent → accept any port
+    return fp <= dst_port <= tp
+
+
+def _aws_vpc_flow_anchor(events: list[SecurityActivityEvent]) -> SecurityActivityEvent:
+    """Deterministically select the most representative VPC flow event.
+
+    Prefer ACCEPT over REJECT; then latest occurrence time; then id.
+    """
+    return max(
+        events,
+        key=lambda e: (
+            1 if e.event_type == _AWS_FLOW_ACCEPT else 0,
+            _aware(e.occurred_at) or _aware(e.ingested_at)
+            or datetime.min.replace(tzinfo=timezone.utc),
+            str(e.provider_event_id or ""),
+        ),
+    )
+
+
+def build_aws_sg_vpc_flow_correlation(
+    *,
+    finding: SecurityFinding,
+    anchor: SecurityActivityEvent,
+    matched: list[SecurityActivityEvent],
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build an AWS SG exposure × VPC flow correlation dict (not persisted)."""
+    _valid_sev = {"critical", "high", "medium", "low", "info"}
+    severity = finding.severity if finding.severity in _valid_sev else "high"
+    # Rejected flow is weaker evidence → cap severity at medium.
+    if rule.get("action_type") == _AWS_FLOW_REJECT:
+        if severity in {"critical", "high"}:
+            severity = "medium"
+        confidence = "low"
+    else:
+        confidence = "medium"
+
+    md = anchor.event_metadata if isinstance(anchor.event_metadata, dict) else {}
+    dst_port = _flow_dst_port(anchor)
+    interface = _flow_interface(anchor)
+    ev_evidence = _sg_finding_evidence(finding)
+    sg_id = ev_evidence.get("group_id")
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(anchor.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    port_label = f"port {dst_port}" if dst_port is not None else "an exposed port"
+    title = f"{rule['phrase']} ({port_label})"
+    summary = (
+        f"An AWS security group exposure risk (\"{finding.title}\") and {rule['activity']} "
+        f"were observed within the same AWS account in the review window. "
+        f"{_AWS_VPC_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": _AWS_VPC_FLOW_SOURCE,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": anchor.event_type,
+        "security_group_id": sg_id if isinstance(sg_id, str) else None,
+        "dst_port": dst_port,
+        "port_category": ev_evidence.get("port_category")
+        if isinstance(ev_evidence.get("port_category"), str) else None,
+        "interface_id": interface,
+        "protocol": md.get("protocol") if isinstance(md.get("protocol"), int) else None,
+        "flow_action": md.get("action") if isinstance(md.get("action"), str) else None,
+        "event_count": len(matched),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_AWS,
+        "correlation_key": rule["correlation_key"],
+        "correlation_type": rule["correlation_type"],
+        "severity": severity,
+        "confidence": confidence,
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": anchor.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        # carried for signal creation (not a column):
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_aws_sg_vpc_flow_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 5000,
+) -> dict[str, Any]:
+    """Correlate active AWS SG exposure findings with VPC Flow Log activity.
+
+    Conservative + account-scoped: a finding only matches VPC flow events from
+    the SAME integration (same AWS account/region) whose destination port falls
+    within the SG rule's exposed port range AND within the review window. One
+    correlation per (finding, port_category, action_category), anchored to a
+    deterministic representative event. Idempotent.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_AWS,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings
+        if _base_rule(f.finding_key) in _AWS_SG_EXPOSURE_RULES
+    ]
+
+    flow_events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_AWS,
+            SecurityActivityEvent.source == _AWS_VPC_FLOW_SOURCE,
+            SecurityActivityEvent.event_type.in_((_AWS_FLOW_ACCEPT, _AWS_FLOW_REJECT)),
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    # Only index events that carry a valid dst_port (never correlate portless flows).
+    flows_by_integ_type: dict[Any, list[SecurityActivityEvent]] = {}
+    for ev in flow_events:
+        if ev.integration_id is not None and _flow_dst_port(ev) is not None:
+            key = (ev.integration_id, ev.event_type)
+            flows_by_integ_type.setdefault(key, []).append(ev)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.integration_id is None:
+            continue  # no account scope to match on
+        base = _base_rule(finding.finding_key)
+        ev_evidence = _sg_finding_evidence(finding)
+        target_port_sets = _SG_RULE_PORT_SETS.get(base, [])
+        if not target_port_sets:
+            continue
+
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        # ACCEPT correlations (one per sensitive port set).
+        for port_set in target_port_sets:
+            rule = _SG_PORT_SET_TO_RULE[id(port_set)]
+            candidates = flows_by_integ_type.get(
+                (finding.integration_id, _AWS_FLOW_ACCEPT), []
+            )
+            matched: list[SecurityActivityEvent] = []
+            for ev in candidates:
+                dst = _flow_dst_port(ev)
+                if dst is None or dst not in port_set:
+                    continue
+                if not _port_in_sg_range(dst, ev_evidence):
+                    continue
+                occ = _aware(ev.occurred_at)
+                if occ is None or not (window_start <= occ <= window_end):
+                    continue
+                matched.append(ev)
+            if not matched:
+                continue
+            anchor = _aws_vpc_flow_anchor(matched)
+            correlation = build_aws_sg_vpc_flow_correlation(
+                finding=finding, anchor=anchor, matched=matched, rule=rule,
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+        # REJECT correlation — all exposed sensitive ports, threshold-gated.
+        all_exposed_ports: frozenset[int] = frozenset().union(*target_port_sets)
+        reject_candidates = flows_by_integ_type.get(
+            (finding.integration_id, _AWS_FLOW_REJECT), []
+        )
+        reject_matched: list[SecurityActivityEvent] = []
+        for ev in reject_candidates:
+            dst = _flow_dst_port(ev)
+            if dst is None or dst not in all_exposed_ports:
+                continue
+            if not _port_in_sg_range(dst, ev_evidence):
+                continue
+            occ = _aware(ev.occurred_at)
+            if occ is None or not (window_start <= occ <= window_end):
+                continue
+            reject_matched.append(ev)
+        if len(reject_matched) >= _SG_REJECT_THRESHOLD:
+            anchor = _aws_vpc_flow_anchor(reject_matched)
+            correlation = build_aws_sg_vpc_flow_correlation(
+                finding=finding, anchor=anchor, matched=reject_matched,
+                rule=_SG_REJECT_RULE,
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_AWS,
+        "findings_scanned": len(findings),
+        "events_scanned": len(flow_events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
 def generate_aws_correlations(
     *,
     workspace_id: uuid.UUID,
     db: Session,
     scan_limit: int = 1000,
 ) -> dict[str, Any]:
-    """Generate ALL AWS correlations for a workspace (M67.3 + M69.2A).
+    """Generate ALL AWS correlations for a workspace (M67.3 + M69.2A + M69.2B).
 
-    provider=aws now generates BOTH:
+    provider=aws now generates:
       * Configuration Risk × provider alerts (GuardDuty / Access Analyzer), and
       * S3 public-exposure risk × S3 object-level activity (GetObject / ListBucket
-        / object-access spike).
-    The returned summary sums both passes. Idempotent.
+        / object-access spike), and
+      * SG public-exposure risk × VPC Flow Log network activity (accepted and
+        rejected flows to admin/datastore ports).
+    The returned summary sums all three passes. Idempotent.
     """
     alerts = _generate_aws_alert_correlations(
         workspace_id=workspace_id, db=db, scan_limit=scan_limit
@@ -1009,12 +1379,25 @@ def generate_aws_correlations(
     s3 = generate_aws_s3_exposure_activity_correlations(
         workspace_id=workspace_id, db=db
     )
+    sg_vpc = generate_aws_sg_vpc_flow_correlations(
+        workspace_id=workspace_id, db=db
+    )
     return {
         "provider": PROVIDER_AWS,
-        "findings_scanned": alerts["findings_scanned"] + s3["findings_scanned"],
-        "events_scanned": alerts["events_scanned"] + s3["events_scanned"],
-        "correlations_created": alerts["correlations_created"] + s3["correlations_created"],
-        "correlations_skipped": alerts["correlations_skipped"] + s3["correlations_skipped"],
+        "findings_scanned": (
+            alerts["findings_scanned"] + s3["findings_scanned"] + sg_vpc["findings_scanned"]
+        ),
+        "events_scanned": (
+            alerts["events_scanned"] + s3["events_scanned"] + sg_vpc["events_scanned"]
+        ),
+        "correlations_created": (
+            alerts["correlations_created"] + s3["correlations_created"]
+            + sg_vpc["correlations_created"]
+        ),
+        "correlations_skipped": (
+            alerts["correlations_skipped"] + s3["correlations_skipped"]
+            + sg_vpc["correlations_skipped"]
+        ),
     }
 
 

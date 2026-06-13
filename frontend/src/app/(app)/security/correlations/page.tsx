@@ -42,6 +42,10 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "aws_s3_public_getobject_activity",
     "aws_s3_public_listbucket_activity",
     "aws_s3_public_access_spike_activity",
+    // M69.2B — SG exposure × VPC Flow Log network activity.
+    "aws_sg_public_admin_port_flow",
+    "aws_sg_public_database_port_flow",
+    "aws_sg_public_rejected_flow_activity",
   ],
   cloudflare: [
     "cloudflare_dns_change",

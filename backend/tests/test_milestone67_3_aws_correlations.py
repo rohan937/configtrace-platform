@@ -259,21 +259,28 @@ def test_different_resource_no_correlation(test_user, db_session):
     _cleanup(db_session, ws.id)
 
 
-# ── 6. security-group risk is DEFERRED (never correlated to an instance) ───────
+# ── 6. security-group risk does NOT correlate with GuardDuty instance alerts ────
+# (M67.3: SG→EC2 instance join is intentionally deferred — no safe join key)
+# (M69.2B extended SG findings to correlate with VPC flow events instead, but
+#  that pass looks for vpc_flow_log activity — not security_alert GuardDuty events.
+#  Without a matching VPC flow event, no SG correlation fires.)
 
 def test_security_group_risk_is_deferred(test_user, db_session):
     ws = _ws(test_user, db_session)
     integ = _integ(db_session, test_user, ws.id)
     res = _resource(db_session, integ, test_user, rtype="aws_security_group_rule", rid="sg-123")
-    # An SG finding has no safe join key to an instance — must be ignored.
+    # An SG finding has no safe join to a GuardDuty EC2 instance alert.
+    # (M69.2B's VPC flow pass would see the finding but finds no vpc_flow_log event.)
     _finding(db_session, ws, integ, res, "aws_public_admin_port",
              {"rule": "aws_public_admin_port", "group_id": "sg-123", "port": 22})
     _alert(db_session, ws.id, integ.id, "aws.guardduty.unauthorized_access", "i-0abc123")
     summary = _gen(db_session, ws.id)
-    assert summary["findings_scanned"] == 0  # SG finding filtered out as non-correlatable
+    # SG finding is excluded from the ALERT correlation rules (no SG→instance join).
+    # It may appear in findings_scanned via the VPC flow pass (M69.2B), but no
+    # correlation is created because there are no matching vpc_flow_log events here.
     assert summary["correlations_created"] == 0
     assert _corrs(db_session, ws.id) == []
-    # Defensive: the SG base rule is intentionally absent from the ruleset.
+    # Defensive: the SG base rule must remain absent from the old alert ruleset.
     assert "aws_public_admin_port" not in corr_svc.AWS_CORRELATION_RULES
     _cleanup(db_session, ws.id)
 
