@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SecurityActivityEventResponse(BaseModel):
@@ -90,5 +90,34 @@ class SecurityActivitySyncResponse(BaseModel):
     events_seen: int = 0
     events_inserted: int = 0
     events_updated_or_skipped: int = 0
+    permission_limited: bool = False
+    error_message: Optional[str] = None
+
+
+class GitHubSecretScanningSyncRequest(BaseModel):
+    """POST /security/github-secret-scanning/sync request body (M69.4A, optional)."""
+
+    integration_id: Optional[str] = None
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_alerts: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class GitHubSecretScanningSyncResponse(BaseModel):
+    """POST /security/github-secret-scanning/sync response — ingestion summary.
+
+    Secret-scanning ALERT evidence for review. ``permission_limited`` is True when
+    GitHub Advanced Security is disabled, the repo is unavailable, or the token
+    lacks secret-scanning scope. ``error_message`` is a short, safe string (never
+    a secret/token).
+    """
+
+    attempted: bool
+    succeeded: bool
+    provider: str
+    integration_id: Optional[str] = None
+    source: str
+    alerts_seen: int = 0
+    events_inserted: int = 0
+    events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None

@@ -119,6 +119,18 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "start_time",        # flow start (ISO string)
         "end_time",          # flow end (ISO string)
         "destination_ip_hash",  # salted hash of the destination IP (NEVER raw)
+        # GitHub secret-scanning alert fields (M69.4A) — provider-reported alert
+        # evidence ONLY (NEVER the raw secret, token, credential value, or code).
+        "repository_full_name",  # "owner/repo" (alert's repository)
+        "state",                 # alert state: open / resolved
+        "resolution",            # resolution reason (resolved/revoked/false_positive/…)
+        "secret_type",           # secret_type machine key (e.g. "github_personal_access_token")
+        "secret_type_display_name",  # human label (e.g. "GitHub Personal Access Token")
+        "validity",              # active / inactive / unknown (GitHub validity check)
+        "publicly_leaked",       # whether GitHub observed the secret publicly leaked (bool)
+        "resolved_at",           # ISO timestamp the alert was resolved (or omitted)
+        "location_count",        # safe COUNT of alert locations (never raw paths/code)
+        "alert_url_hash",        # salted hash of the alert HTML URL (never the raw URL)
     }
 )
 

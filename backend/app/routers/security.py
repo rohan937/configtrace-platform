@@ -76,6 +76,8 @@ from app.schemas.security_activity_event import (
     SecurityActivityEventResponse,
     SecurityActivitySyncRequest,
     SecurityActivitySyncResponse,
+    GitHubSecretScanningSyncRequest,
+    GitHubSecretScanningSyncResponse,
 )
 from app.schemas.security_incident_signal import (
     SecurityIncidentSignalListResponse,
@@ -155,6 +157,7 @@ from app.services import security_beta_feedback_service
 from app.services import security_rule_pack
 from app.services import security_activity_event_service
 from app.services import github_activity_ingestion_service
+from app.services import github_secret_scanning_ingestion_service
 from app.services import security_incident_signal_service
 from app.services import security_signal_correlation_service
 from app.services import security_case_service
@@ -805,6 +808,63 @@ def sync_security_activity(
         db=db,
     )
     return SecurityActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/github-secret-scanning/sync",
+    response_model=GitHubSecretScanningSyncResponse,
+)
+def sync_github_secret_scanning(
+    body: Optional[GitHubSecretScanningSyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitHubSecretScanningSyncResponse:
+    """Ingest GitHub secret-scanning alerts for a workspace integration (M69.4A).
+
+    Admin/owner only. Repo-scoped secret-scanning ALERT evidence. Non-fatal:
+    GitHub Advanced Security disabled / missing scope / unavailable repo are
+    reported as ``permission_limited``, never raised. Never stores raw secrets.
+    Members can view the resulting events via
+    ``GET /security/activity/events?provider=github``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "github",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="GitHub integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return GitHubSecretScanningSyncResponse(
+                attempted=False, succeeded=False, provider="github",
+                source="secret_scanning_alert",
+                error_message="No active GitHub integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_alerts = min(body.max_alerts, 1000) if body and body.max_alerts else 1000
+    summary = github_secret_scanning_ingestion_service.ingest_github_secret_scanning_alerts(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_alerts=max_alerts,
+    )
+    return GitHubSecretScanningSyncResponse(**summary)
 
 
 @router.get("/activity/events", response_model=SecurityActivityEventListResponse)
