@@ -121,3 +121,25 @@ class GitHubSecretScanningSyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class GitHubSecretScanningSignalGenerateRequest(BaseModel):
+    """POST /security/github-secret-scanning/generate-signals body (M69.4B)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class GitHubSecretScanningSignalGenerateResponse(BaseModel):
+    """GitHub secret-scanning signal generation summary (M69.4B).
+
+    Review signals from secret-scanning ALERT evidence. These do not confirm
+    secret misuse, compromise, or unauthorized access.
+    """
+
+    provider: str
+    source: str
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

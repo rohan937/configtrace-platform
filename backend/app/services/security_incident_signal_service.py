@@ -93,6 +93,15 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "flow_action",        # ACCEPT / REJECT / mixed
         "bytes_total",        # summed byte count across the flows (int)
         "packets_total",      # summed packet count across the flows (int)
+        # GitHub secret-scanning alert signal fields (M69.4B) — safe summary only.
+        "repository_full_name",  # owner/repo (safe identifier)
+        "state",                 # alert state: open / resolved
+        "resolution",            # resolution reason for resolved alerts
+        "secret_type",           # detector slug (e.g. "github_personal_access_token")
+        "secret_type_display_name",  # human-readable detector name
+        "validity",              # GitHub-reported validity: active / inactive / unknown
+        "publicly_leaked",       # bool — GitHub flagged the secret as publicly leaked
+        "location_count",        # safe COUNT of alert locations (never the raw paths)
         # AWS IAM privilege-chain signal fields (M69.3A) — safe summary only.
         "chain_steps",        # number of distinct chain-step events detected (int)
         "target_user",        # target IAM user name (resource identifier, not raw ARN)

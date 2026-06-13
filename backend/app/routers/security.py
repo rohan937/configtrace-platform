@@ -78,6 +78,8 @@ from app.schemas.security_activity_event import (
     SecurityActivitySyncResponse,
     GitHubSecretScanningSyncRequest,
     GitHubSecretScanningSyncResponse,
+    GitHubSecretScanningSignalGenerateRequest,
+    GitHubSecretScanningSignalGenerateResponse,
 )
 from app.schemas.security_incident_signal import (
     SecurityIncidentSignalListResponse,
@@ -158,6 +160,7 @@ from app.services import security_rule_pack
 from app.services import security_activity_event_service
 from app.services import github_activity_ingestion_service
 from app.services import github_secret_scanning_ingestion_service
+from app.services import github_secret_scanning_signal_service
 from app.services import security_incident_signal_service
 from app.services import security_signal_correlation_service
 from app.services import security_case_service
@@ -2062,6 +2065,39 @@ def generate_cloudflare_waf_signals(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return CloudflareWafSignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/github-secret-scanning/generate-signals",
+    response_model=GitHubSecretScanningSignalGenerateResponse,
+)
+def generate_github_secret_scanning_signals(
+    body: Optional[GitHubSecretScanningSignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitHubSecretScanningSignalGenerateResponse:
+    """Generate GitHub secret-scanning alert Incident Signals (M69.4B).
+
+    Admin/owner only. Surfaces review-worthy secret-scanning alert evidence
+    (open / publicly-leaked / active-validity / resolved-or-revoked /
+    non-actionable) as activity-level signals. Idempotent — re-running creates no
+    duplicates. These are review signals; they do not confirm secret misuse,
+    compromise, or unauthorized access.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = github_secret_scanning_signal_service.generate_github_secret_scanning_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return GitHubSecretScanningSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

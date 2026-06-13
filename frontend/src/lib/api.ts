@@ -713,6 +713,12 @@ export async function generateCloudflareWafSignals(
   return apiFetch(`/security/cloudflare-waf-events/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateGitHubSecretScanningSignals(
+  token?: string | null,
+): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {
+  return apiFetch(`/security/github-secret-scanning/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsIncidentSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {
