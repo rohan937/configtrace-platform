@@ -24,6 +24,7 @@ import {
   generateSecurityIncidentSignals,
   generateAwsIncidentSignals,
   generateAwsIamBehaviorSignals,
+  generateAwsIamChainSignals,
   generateAwsSecurityHubSignals,
   generateAwsS3AccessSignals,
   generateAwsVpcFlowSignals,
@@ -65,6 +66,7 @@ const AWS_SIGNAL_TYPES = [
   "aws_access_analyzer",
   "aws_security_hub_finding",
   "iam_behavior_timeline",
+  "aws_iam_privilege_chain",
   "s3_object_access_spike",
   "vpc_flow_activity_signal",
 ];
@@ -162,6 +164,24 @@ export default function IncidentSignalsPage() {
       await load();
     } catch {
       setGenError("Could not generate IAM behavior signals. Please try again.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [getToken, load]);
+
+  const onGenerateIamChain = useCallback(async () => {
+    setGenerating(true);
+    setGenError(null);
+    setBehaviorNote(null);
+    try {
+      const token = await getToken();
+      const res = await generateAwsIamChainSignals(token);
+      setBehaviorNote(
+        `IAM chain: scanned ${res.events_scanned} CloudTrail events across ${res.chains_scanned} target entity chain(s) · ${res.signals_created} signal(s) created · ${res.signals_skipped} skipped.`,
+      );
+      await load();
+    } catch {
+      setGenError("Could not generate AWS IAM chain signals. Please try again.");
     } finally {
       setGenerating(false);
     }
@@ -271,6 +291,7 @@ export default function IncidentSignalsPage() {
         onGenerateS3Access={onGenerateS3Access}
         onGenerateVpcFlow={onGenerateVpcFlow}
         onGenerateWaf={onGenerateWaf}
+        onGenerateIamChain={onGenerateIamChain}
       />
 
       {/* Summary cards */}
@@ -402,6 +423,7 @@ function GenerateBar({
   onGenerateS3Access,
   onGenerateVpcFlow,
   onGenerateWaf,
+  onGenerateIamChain,
 }: {
   provider: Provider;
   isAdmin: boolean;
@@ -416,6 +438,7 @@ function GenerateBar({
   onGenerateS3Access: () => void;
   onGenerateVpcFlow: () => void;
   onGenerateWaf: () => void;
+  onGenerateIamChain: () => void;
 }) {
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
@@ -496,6 +519,26 @@ function GenerateBar({
             }}
           >
             Generate IAM behavior signals
+          </button>
+        )}
+        {isAws && (
+          <button
+            onClick={onGenerateIamChain}
+            disabled={!isAdmin || generating}
+            title={!isAdmin ? "Only workspace admins can generate signals." : undefined}
+            className="bg-surface1 border border-border"
+            style={{
+              fontSize: "13px",
+              fontWeight: 500,
+              color: isAdmin ? "#c4c8d4" : "#565b6e",
+              borderRadius: "8px",
+              padding: "8px 16px",
+              cursor: !isAdmin || generating ? "not-allowed" : "pointer",
+              opacity: generating ? 0.7 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate IAM chain signals
           </button>
         )}
         {isAws && (

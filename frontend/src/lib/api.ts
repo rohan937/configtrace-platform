@@ -715,6 +715,12 @@ export async function generateAwsIamBehaviorSignals(
   return apiFetch(`/security/aws-cloudtrail/generate-behavior-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateAwsIamChainSignals(
+  token?: string | null,
+): Promise<import("@/types").AwsIamChainSignalGenerateResponse> {
+  return apiFetch(`/security/aws-iam-chains/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsSecurityHubSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

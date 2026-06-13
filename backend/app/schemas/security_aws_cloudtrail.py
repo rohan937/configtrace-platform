@@ -45,3 +45,22 @@ class AwsBehaviorSignalGenerateResponse(BaseModel):
     principals_scanned: int = 0
     signals_created: int = 0
     signals_skipped: int = 0
+
+
+class AwsIamChainSignalGenerateRequest(BaseModel):
+    """POST /security/aws-iam-chains/generate-signals request body (M69.3A)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+    chain_window_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
+
+
+class AwsIamChainSignalGenerateResponse(BaseModel):
+    """IAM privilege-chain signal generation summary (M69.3A)."""
+
+    provider: str
+    source: str
+    events_scanned: int = 0
+    chains_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

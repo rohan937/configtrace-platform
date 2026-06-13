@@ -93,6 +93,13 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "flow_action",        # ACCEPT / REJECT / mixed
         "bytes_total",        # summed byte count across the flows (int)
         "packets_total",      # summed packet count across the flows (int)
+        # AWS IAM privilege-chain signal fields (M69.3A) — safe summary only.
+        "chain_steps",        # number of distinct chain-step events detected (int)
+        "target_user",        # target IAM user name (resource identifier, not raw ARN)
+        "target_role",        # target IAM role name (resource identifier, not raw ARN)
+        "policy_arn",         # attached policy ARN (safe label, already stored)
+        "chain_pattern",      # which chain pattern fired (e.g. user_create_privilege_grant)
+        "chain_window_minutes",  # configured sequence window (int)
     }
 )
 

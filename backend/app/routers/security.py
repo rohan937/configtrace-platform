@@ -115,6 +115,8 @@ from app.schemas.security_aws_cloudtrail import (
     AwsCloudTrailSyncResponse,
     AwsBehaviorSignalGenerateRequest,
     AwsBehaviorSignalGenerateResponse,
+    AwsIamChainSignalGenerateRequest,
+    AwsIamChainSignalGenerateResponse,
 )
 from app.schemas.security_aws_security_hub import (
     AwsSecurityHubSyncRequest,
@@ -161,6 +163,7 @@ from app.services import security_incident_demo_service
 from app.services import aws_security_alert_ingestion_service
 from app.services import aws_cloudtrail_ingestion_service
 from app.services import aws_iam_behavior_service
+from app.services import aws_iam_chain_signal_service
 from app.services import aws_security_hub_ingestion_service
 from app.services import aws_s3_data_event_ingestion_service
 from app.services import aws_s3_access_signal_service
@@ -1540,6 +1543,41 @@ def generate_aws_iam_behavior_signals(
         lookback_hours=lookback_hours, max_signals=max_signals,
     )
     return AwsBehaviorSignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/aws-iam-chains/generate-signals",
+    response_model=AwsIamChainSignalGenerateResponse,
+)
+def generate_aws_iam_chain_signals(
+    body: Optional[AwsIamChainSignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AwsIamChainSignalGenerateResponse:
+    """Generate AWS IAM privilege-chain signals from CloudTrail activity (M69.3A).
+
+    Admin/owner only. Detects ordered IAM privilege-escalation sequences (user/role
+    creation followed by policy grants, policy grants followed by access-key
+    creation) targeting the SAME IAM entity within a configurable chain window.
+    Idempotent — re-running creates no duplicates. These are review signals; they
+    do not confirm compromise or unauthorized access.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+        if body.chain_window_minutes is not None:
+            kwargs["chain_window_minutes"] = body.chain_window_minutes
+    summary = aws_iam_chain_signal_service.generate_aws_iam_chain_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return AwsIamChainSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-security-hub/sync", response_model=AwsSecurityHubSyncResponse)
