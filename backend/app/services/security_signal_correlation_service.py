@@ -120,6 +120,20 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "tool_name",
         "security_severity_level",
         "severity",
+        # GitHub config-risk × Dependabot alert correlation context (M69.4I)
+        # — safe advisory/dependency summary fields only (NEVER raw manifest/file
+        # paths, advisory bodies/details, the raw dependency-graph or API
+        # response, patch, headers, request body, tokens, or secrets).
+        "dependency_package_name",
+        "dependency_ecosystem",
+        "vulnerable_version_range",
+        "patched_versions",
+        "advisory_ghsa_id",
+        "advisory_cve_id",
+        "advisory_severity",
+        "cvss_score",
+        "epss_percentage",
+        "scope",
     }
 )
 
@@ -1019,13 +1033,288 @@ def generate_github_code_scanning_correlations(
     }
 
 
+# ---------------------------------------------------------------------------
+# GitHub config-risk × Dependabot alert correlations (M69.4I)
+# ---------------------------------------------------------------------------
+#
+# Correlate active GitHub repository configuration-risk findings with GitHub
+# Dependabot (vulnerable-dependency) ALERT evidence (security_activity_events,
+# provider=github, source=dependabot_alert — ingested in M69.4G) observed on the
+# SAME repository within the review window. These are review correlations; they
+# never assert exploitation confirmed, that the vulnerable dependency was
+# exploited, a compromise, an attacker, that someone has access, unauthorized
+# access, a breach, or an attack — only "evidence for review".
+#
+# We anchor to the Dependabot ACTIVITY EVENT directly (the preferred strategy)
+# and only correlate OPEN or REOPENED alerts — fixed / dismissed / auto-dismissed
+# alerts never produce a (high-risk) correlation. Raw manifest/file paths,
+# advisory bodies, and the raw dependency-graph response are never read (the
+# source events were already sanitized in M69.4G).
+
+DEP_SOURCE = "dependabot_alert"
+# Only open / reopened alerts are correlated (excludes fixed/dismissed/auto).
+_DEP_OPEN_EVENT = "github.dependabot.alert.open"
+_DEP_REOPENED_EVENT = "github.dependabot.alert.reopened"
+_DEP_ACTIVITY_TYPES = {_DEP_OPEN_EVENT, _DEP_REOPENED_EVENT}
+
+# Advisory severities that raise the correlation severity to high.
+_DEP_HIGH_SEVERITIES = {"critical", "high"}
+_DEP_HIGH_CVSS = 7.0
+
+
+def _dep_rule(
+    correlation_key: str,
+    severity: str,
+    phrase: str,
+) -> dict[str, Any]:
+    return {
+        "correlation_key": correlation_key,
+        "correlation_type": correlation_key,  # type == key for these families
+        "activity_types": set(_DEP_ACTIVITY_TYPES),
+        "severity": severity,
+        "phrase": phrase,
+    }
+
+
+# Map a finding's BASE rule key → Dependabot correlation rule. Only GitHub
+# repository-scoped config-risk rules that exist today are included. Three
+# families fire: repository-protection risk, automation risk, environment
+# protection risk. A generic repo-scoped fallback type
+# (``github_repo_risk_dependabot_alert``) is DEFERRED — every existing
+# repo-scoped GitHub finding rule already maps to a specific family, so the
+# generic rule would never match. See the milestone report.
+_DEP_PROTECTION_TYPE = "github_repo_protection_dependabot_alert"
+_DEP_AUTOMATION_TYPE = "github_automation_dependabot_alert"
+_DEP_ENVIRONMENT_TYPE = "github_environment_dependabot_alert"
+_DEP_GENERIC_TYPE = "github_repo_risk_dependabot_alert"  # deferred (no rule maps to it)
+
+DEPENDABOT_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    # A — repository protection risk × open/reopened Dependabot alert.
+    "github_branch_protection_missing": _dep_rule(
+        _DEP_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with Dependabot alert evidence",
+    ),
+    "github_force_pushes_allowed": _dep_rule(
+        _DEP_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with Dependabot alert evidence",
+    ),
+    "github_branch_deletion_allowed": _dep_rule(
+        _DEP_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with Dependabot alert evidence",
+    ),
+    "github_pr_review_not_required": _dep_rule(
+        _DEP_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with Dependabot alert evidence",
+    ),
+    "github_status_checks_not_required": _dep_rule(
+        _DEP_PROTECTION_TYPE, "high",
+        "GitHub repository protection risk aligned with Dependabot alert evidence",
+    ),
+    # B — automation / deploy-key / webhook risk × open/reopened Dependabot alert.
+    "github_webhook_http": _dep_rule(
+        _DEP_AUTOMATION_TYPE, "high",
+        "GitHub automation risk aligned with Dependabot alert evidence",
+    ),
+    "github_deploy_key_write_access": _dep_rule(
+        _DEP_AUTOMATION_TYPE, "high",
+        "GitHub automation risk aligned with Dependabot alert evidence",
+    ),
+    # C — environment protection risk × open/reopened Dependabot alert.
+    # Base medium; raised to high when the advisory is high/critical or CVSS>=7.
+    "github_env_protection_missing": _dep_rule(
+        _DEP_ENVIRONMENT_TYPE, "medium",
+        "GitHub environment protection risk aligned with Dependabot alert evidence",
+    ),
+}
+
+
+def build_dependabot_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    repo: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a correlation dict (not persisted) from a finding + open/reopened alert."""
+    md = _ss_meta(event)
+    sev = md.get("advisory_severity")
+    score = md.get("cvss_score")
+    high = (
+        (isinstance(sev, str) and sev.strip().lower() in _DEP_HIGH_SEVERITIES)
+        or (isinstance(score, (int, float)) and not isinstance(score, bool) and score >= _DEP_HIGH_CVSS)
+    )
+
+    # Raise to high when the advisory is high/critical or CVSS >= 7.0.
+    severity = rule["severity"]
+    if high:
+        severity = "high"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['phrase']} on {repo}"
+    summary = (
+        f"Configuration risk \"{finding.title}\" and GitHub Dependabot alert "
+        f"evidence were observed for {repo} within the review window. This may "
+        f"require review. ConfigTrace does not confirm exploitation, compromise, "
+        f"or unauthorized access."
+    )
+
+    metadata = sanitize_correlation_metadata(
+        {
+            "source": DEP_SOURCE,
+            "finding_rule": _base_rule(finding.finding_key),
+            "finding_severity": finding.severity,
+            "repository": repo,
+            "repository_full_name": (
+                md.get("repository_full_name") if isinstance(md.get("repository_full_name"), str)
+                else repo
+            ),
+            "alert_number": md.get("alert_number"),
+            "state": md.get("state"),
+            "dependency_package_name": md.get("dependency_package_name"),
+            "dependency_ecosystem": md.get("dependency_ecosystem"),
+            "vulnerable_version_range": md.get("vulnerable_version_range"),
+            "patched_versions": md.get("patched_versions"),
+            "advisory_ghsa_id": md.get("advisory_ghsa_id"),
+            "advisory_cve_id": md.get("advisory_cve_id"),
+            "advisory_severity": md.get("advisory_severity"),
+            "cvss_score": md.get("cvss_score"),
+            "epss_percentage": md.get("epss_percentage"),
+            "scope": md.get("scope"),
+            "window_hours": int(WINDOW.total_seconds() // 3600),
+        }
+    )
+
+    return {
+        "provider": PROVIDER_GITHUB,
+        "correlation_key": rule["correlation_key"],
+        "correlation_type": rule["correlation_type"],
+        "severity": severity,
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        # carried for signal creation (not a column):
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_github_dependabot_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active GitHub config-risk findings with OPEN/REOPENED Dependabot
+    alert evidence on the SAME repository within the review window (M69.4I).
+
+    Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_GITHUB,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in DEPENDABOT_CORRELATION_RULES
+    ]
+
+    # Resolve each finding's repository slug via its Resource.
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    repo_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            repo_by_resource[r.id] = r.provider_resource_id
+
+    # Only Dependabot ALERT events (source-scoped); indexed by repo slug.
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_GITHUB,
+            SecurityActivityEvent.source == DEP_SOURCE,
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    events_by_repo: dict[str, list[SecurityActivityEvent]] = {}
+    for ev in events:
+        if isinstance(ev.resource_id, str) and ev.resource_id:
+            events_by_repo.setdefault(ev.resource_id, []).append(ev)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.resource_id is None:
+            continue  # integration-level finding — no repo to match
+        repo = repo_by_resource.get(finding.resource_id)
+        if not repo:
+            continue
+        rule = DEPENDABOT_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        for ev in events_by_repo.get(repo, []):
+            if ev.event_type not in rule["activity_types"]:
+                continue  # only open / reopened alerts correlate
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            correlation = build_dependabot_correlation(
+                finding=finding, event=ev, repo=repo, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_GITHUB,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
 def generate_github_correlations(
     *,
     workspace_id: uuid.UUID,
     db: Session,
     scan_limit: int = 1000,
 ) -> dict[str, Any]:
-    """Generate ALL GitHub correlations for a workspace (M66.6 + M69.4C + M69.4F).
+    """Generate ALL GitHub correlations for a workspace (M66.6 + M69.4C/F/I).
 
     provider=github now generates:
       * Configuration Risk × GitHub audit activity (webhook / branch-protection /
@@ -1033,7 +1322,9 @@ def generate_github_correlations(
       * Configuration Risk × GitHub secret-scanning alert evidence (same
         repository, OPEN alert, within the review window), and
       * Configuration Risk × GitHub code-scanning alert evidence (same
-        repository, OPEN/REOPENED alert, within the review window).
+        repository, OPEN/REOPENED alert, within the review window), and
+      * Configuration Risk × GitHub Dependabot alert evidence (same repository,
+        OPEN/REOPENED alert, within the review window).
     The returned summary sums all passes. Idempotent.
     """
     audit = _generate_github_audit_correlations(
@@ -1045,21 +1336,26 @@ def generate_github_correlations(
     code = generate_github_code_scanning_correlations(
         workspace_id=workspace_id, db=db, scan_limit=scan_limit
     )
+    dependabot = generate_github_dependabot_correlations(
+        workspace_id=workspace_id, db=db, scan_limit=scan_limit
+    )
     return {
         "provider": PROVIDER_GITHUB,
         "findings_scanned": (
-            audit["findings_scanned"] + secret["findings_scanned"] + code["findings_scanned"]
+            audit["findings_scanned"] + secret["findings_scanned"]
+            + code["findings_scanned"] + dependabot["findings_scanned"]
         ),
         "events_scanned": (
-            audit["events_scanned"] + secret["events_scanned"] + code["events_scanned"]
+            audit["events_scanned"] + secret["events_scanned"]
+            + code["events_scanned"] + dependabot["events_scanned"]
         ),
         "correlations_created": (
             audit["correlations_created"] + secret["correlations_created"]
-            + code["correlations_created"]
+            + code["correlations_created"] + dependabot["correlations_created"]
         ),
         "correlations_skipped": (
             audit["correlations_skipped"] + secret["correlations_skipped"]
-            + code["correlations_skipped"]
+            + code["correlations_skipped"] + dependabot["correlations_skipped"]
         ),
     }
 

@@ -46,6 +46,10 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "github_repo_protection_code_alert",
     "github_automation_code_alert",
     "github_environment_code_alert",
+    // M69.4I — Configuration Risk × Dependabot alert evidence.
+    "github_repo_protection_dependabot_alert",
+    "github_automation_dependabot_alert",
+    "github_environment_dependabot_alert",
   ],
   aws: [
     "aws_s3_public_access_alert",
@@ -273,7 +277,7 @@ function GenerateBar({
       ? "Correlate Cloudflare configuration risks with Cloudflare audit activity and WAF/security activity for the same zone, host, or risk area (DNS, WAF, TLS, Access, zone settings)."
       : provider === "aws"
         ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
-        : "Matches GitHub configuration risks to audit activity, secret-scanning alert evidence, and code-scanning alert evidence on the same repository within the review window.";
+        : "Matches GitHub configuration risks to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
