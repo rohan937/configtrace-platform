@@ -745,6 +745,12 @@ export async function generateGitHubCodeScanningSignals(
   return apiFetch(`/security/github-code-scanning/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+export async function generateGitHubDependabotSignals(
+  token?: string | null,
+): Promise<import("@/types").GitHubDependabotSignalGenerateResponse> {
+  return apiFetch(`/security/github-dependabot/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateAwsIncidentSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

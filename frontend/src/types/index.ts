@@ -1963,6 +1963,14 @@ export interface GitHubCodeScanningSignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface GitHubDependabotSignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface AwsSecurityHubSyncResponse {
   attempted: boolean;
   succeeded: boolean;

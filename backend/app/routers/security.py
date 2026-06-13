@@ -86,6 +86,8 @@ from app.schemas.security_activity_event import (
     GitHubCodeScanningSignalGenerateResponse,
     GitHubDependabotSyncRequest,
     GitHubDependabotSyncResponse,
+    GitHubDependabotSignalGenerateRequest,
+    GitHubDependabotSignalGenerateResponse,
 )
 from app.schemas.security_incident_signal import (
     SecurityIncidentSignalListResponse,
@@ -170,6 +172,7 @@ from app.services import github_secret_scanning_signal_service
 from app.services import github_code_scanning_ingestion_service
 from app.services import github_code_scanning_signal_service
 from app.services import github_dependabot_ingestion_service
+from app.services import github_dependabot_signal_service
 from app.services import security_incident_signal_service
 from app.services import security_signal_correlation_service
 from app.services import security_case_service
@@ -2254,6 +2257,39 @@ def generate_github_code_scanning_signals(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return GitHubCodeScanningSignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/github-dependabot/generate-signals",
+    response_model=GitHubDependabotSignalGenerateResponse,
+)
+def generate_github_dependabot_signals(
+    body: Optional[GitHubDependabotSignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitHubDependabotSignalGenerateResponse:
+    """Generate GitHub Dependabot alert Incident Signals (M69.4H).
+
+    Admin/owner only. Surfaces review-worthy Dependabot (vulnerable-dependency)
+    alert evidence (open / high-severity / reopened / fixed / dismissed) as
+    activity-level signals. Idempotent — re-running creates no duplicates. These
+    are review signals; they do not confirm exploitation, compromise, or
+    unauthorized access.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = github_dependabot_signal_service.generate_github_dependabot_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return GitHubDependabotSignalGenerateResponse(**summary)
 
 
 @router.post("/aws-alerts/generate-signals", response_model=AwsSignalGenerateResponse)

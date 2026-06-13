@@ -107,6 +107,17 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "security_severity_level",   # GitHub security severity (critical/high/medium/low)
         "dismissed_reason",          # why an alert was dismissed (false positive / won't fix / used in tests)
         "instances_count",           # safe COUNT of alert instances (never raw locations)
+        # GitHub Dependabot alert signal fields (M69.4H) — safe summary only.
+        "dependency_package_name",   # vulnerable package name (e.g. "lodash")
+        "dependency_ecosystem",      # package ecosystem (e.g. "npm", "pip")
+        "vulnerable_version_range",  # affected version range (e.g. "< 4.17.21")
+        "patched_versions",          # first patched version label
+        "advisory_ghsa_id",          # GHSA advisory id (public identifier)
+        "advisory_cve_id",           # CVE id (public identifier)
+        "advisory_severity",         # advisory severity (low/medium/high/critical)
+        "cvss_score",                # CVSS base score (float)
+        "epss_percentage",           # EPSS probability (float)
+        "scope",                     # dependency scope (runtime / development)
         # AWS IAM privilege-chain signal fields (M69.3A) — safe summary only.
         "chain_steps",        # number of distinct chain-step events detected (int)
         "target_user",        # target IAM user name (resource identifier, not raw ARN)
