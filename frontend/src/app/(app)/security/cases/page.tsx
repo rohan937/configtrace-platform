@@ -302,12 +302,13 @@ function Hero() {
       />
       <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "16px 18px", marginBottom: "20px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub beta</span>
+          <span style={{ fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>GitHub · AWS · Cloudflare beta</span>
           <Badge>Beta</Badge>
         </div>
         <p style={{ margin: 0, fontSize: "13px", color: "#8b90a0", lineHeight: 1.6 }}>
-          Cases are investigation workspaces. ConfigTrace does not automatically
-          confirm breaches or unauthorized access.
+          Cases are investigation workspaces for GitHub, AWS, and Cloudflare
+          evidence. ConfigTrace does not automatically confirm breaches or
+          unauthorized access.
         </p>
       </div>
     </>

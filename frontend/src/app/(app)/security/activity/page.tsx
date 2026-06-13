@@ -865,9 +865,13 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
       ? isAdmin
         ? "Run “Sync AWS security alerts” above to ingest GuardDuty and Access Analyzer findings."
         : "An admin can sync AWS security alerts to ingest GuardDuty and Access Analyzer findings."
-      : isAdmin
-        ? "Run GitHub activity sync above to ingest recent audit activity."
-        : "An admin can run GitHub activity sync to ingest recent audit activity.";
+      : provider === "cloudflare"
+        ? isAdmin
+          ? "Run “Sync Cloudflare activity” above to ingest audit activity and WAF/security events."
+          : "An admin can sync Cloudflare activity to ingest audit activity and WAF/security events."
+        : isAdmin
+          ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
+          : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No activity events yet.</div>

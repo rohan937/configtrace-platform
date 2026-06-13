@@ -316,15 +316,37 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     avoid: "Don't say ConfigTrace auto-confirms anything.",
   },
   {
+    id: "incident-timeline-graph",
+    title: "Timeline & Relationship Map",
+    href: "/security/cases",
+    cta: "Open a case",
+    talkTrack:
+      "Inside any case — GitHub, AWS, or Cloudflare — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
+    whatToClick: "Open a case and scroll to the chronological timeline and the evidence relationship map.",
+    emphasize: "Timeline + relationship map turn linked evidence into a reviewable investigation, across providers.",
+    avoid: "Don't describe the map as an attack path or call any relationship a confirmed compromise.",
+  },
+  {
     id: "incident-report",
     title: "Case Evidence Report",
     href: "/security/cases",
     cta: "Export from a case",
     talkTrack:
-      "Finally, export the case as a metadata-only evidence packet — Markdown or JSON — for review or a customer conversation. No raw payloads, IPs, secrets, tokens, code, or advisory bodies.",
+      "Finally, export the case as a metadata-only evidence packet — Markdown or JSON — for review or a customer conversation. The packet carries the executive summary, linked evidence, the chronological timeline, and the evidence relationship map, with provider labels and a claim note. No raw payloads, IPs, secrets, tokens, code, or advisory bodies.",
     whatToClick: "On a case, use Export Markdown / Export JSON.",
-    emphasize: "Defensible, metadata-only evidence for review.",
+    emphasize: "Defensible, metadata-only evidence for review — timeline + relationship map included.",
     avoid: "Don't promise it certifies compliance or proves a breach.",
+  },
+  {
+    id: "incident-clear-demo",
+    title: "Clear demo data",
+    href: "/security/cases",
+    cta: "Clear the demo",
+    talkTrack:
+      "When you're done, clear the demo from the same banner that seeded it — for GitHub, AWS, or Cloudflare. Clearing removes only the clearly-marked demo case and its seeded evidence; any real connected-provider evidence is untouched.",
+    whatToClick: "Use the demo banner's Clear action for the provider you seeded.",
+    emphasize: "Demo data is isolated and reversible; clearing preserves real evidence.",
+    avoid: "Don't imply clearing affects real provider data — it only removes the seeded demo.",
   },
   {
     id: "incident-what-this-proves",
