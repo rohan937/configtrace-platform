@@ -80,6 +80,10 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "supabase_rls_disabled": (HIGH, "Only an explicit rls_enabled=false fires; missing/unknown is skipped."),
     "supabase_anonymous_access_enabled": (MEDIUM, "Anonymous auth is a feature; risky mainly with weak RLS, so wording stays careful."),
     "supabase_jwt_expiry_long": (HIGH, "Only a concrete value over the threshold fires; unknown values are skipped."),
+    "supabase_public_select_sensitive_table": (HIGH, "Only fires when a public/anon SELECT policy is active on an RLS-enabled, sensitively-named table."),
+    "supabase_public_write_policy": (HIGH, "Only fires when a public/anon insert/update/delete policy is active on an RLS-enabled table."),
+    "supabase_edge_function_jwt_disabled": (HIGH, "Only an explicit verify_jwt=false fires; missing/unknown is skipped."),
+    "supabase_auth_protection_missing": (MEDIUM, "Only an explicit leaked-password-protection=false fires; missing/unknown is skipped."),
     # Firebase
     "firebase_rules_public": (MEDIUM, "Low-confidence ruleset parses are skipped to avoid false positives."),
     "firebase_storage_rules_public": (MEDIUM, "Low-confidence ruleset parses are skipped to avoid false positives."),

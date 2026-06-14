@@ -84,6 +84,74 @@ def _sha256_prefix(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
+# Postgres roles that mean "everyone / unauthenticated" → a public exposure.
+_PUBLIC_POLICY_ROLES = frozenset({"public", "anon"})
+
+# pg_policies metadata query — METADATA ONLY (policy role targets + commands).
+# It NEVER selects the USING / WITH CHECK expressions, column names, or any row
+# data; only the per-table command + role targets needed to derive public-policy
+# booleans. Read-only.
+_POLICIES_QUERY = (
+    "select schemaname, tablename, cmd, roles "
+    "from pg_policies where schemaname = 'public'"
+)
+
+
+def _normalize_policy_rows(rows: Any) -> dict[str, dict[str, Any]]:
+    """Aggregate pg_policies metadata rows → per-table public-policy flags.
+
+    Returns ``{"<schema>.<table>": {policy flags}}``. Only safe, derived booleans
+    and a policy count are produced — never the raw policy expressions, column
+    names, or any row data. A policy is "public" when it targets the Postgres
+    ``public`` role (everyone) or the Supabase ``anon`` role.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        schema = str(row.get("schemaname") or "public")
+        table = str(row.get("tablename") or "")
+        if not table:
+            continue
+        key = f"{schema}.{table}"
+        flags = out.setdefault(key, {
+            "policy_count": 0,
+            "has_public_select_policy": False,
+            "has_public_insert_policy": False,
+            "has_public_update_policy": False,
+            "has_public_delete_policy": False,
+            "exposed_to_anon": False,
+        })
+        flags["policy_count"] += 1
+
+        # roles may arrive as a list (["anon"]) or a Postgres array string ("{anon}").
+        raw_roles = row.get("roles")
+        if isinstance(raw_roles, str):
+            role_set = {r.strip().strip('"') for r in raw_roles.strip("{}").split(",") if r.strip()}
+        elif isinstance(raw_roles, (list, tuple)):
+            role_set = {str(r).strip() for r in raw_roles}
+        else:
+            role_set = set()
+
+        if not (role_set & _PUBLIC_POLICY_ROLES):
+            continue  # policy scoped to a non-public role → not a public exposure
+        flags["exposed_to_anon"] = True
+
+        cmd = str(row.get("cmd") or "").upper()
+        is_all = cmd in ("ALL", "*")
+        if is_all or cmd == "SELECT":
+            flags["has_public_select_policy"] = True
+        if is_all or cmd == "INSERT":
+            flags["has_public_insert_policy"] = True
+        if is_all or cmd == "UPDATE":
+            flags["has_public_update_policy"] = True
+        if is_all or cmd == "DELETE":
+            flags["has_public_delete_policy"] = True
+    return out
+
+
 # ── Connector ─────────────────────────────────────────────────────────────────
 
 class SupabaseConnector(BaseConnector):
@@ -571,6 +639,93 @@ class SupabaseConnector(BaseConnector):
             })
         return records
 
+    def _run_query(
+        self,
+        access_token: str,
+        project_ref: str,
+        query: str,
+        *,
+        timeout: float = _TIMEOUT,
+    ) -> Any:
+        """Run a read-only SQL query via the Management API and return its rows.
+
+        Used ONLY for safe catalog-metadata queries (e.g. pg_policies). The
+        connector never runs queries that select row data. Raises the same typed
+        errors as ``_get``.
+        """
+        url = f"{_BASE_URL}/v1/projects/{project_ref}/database/query"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                response = httpx.post(
+                    url, headers=headers, json={"query": query},
+                    timeout=timeout, follow_redirects=True,
+                )
+            except httpx.TimeoutException as exc:
+                if attempt < _MAX_RETRIES:
+                    continue
+                raise NetworkError(f"Query timed out: {url}") from exc
+            except httpx.RequestError as exc:
+                if attempt < _MAX_RETRIES:
+                    continue
+                raise NetworkError(f"Network error running Supabase query: {exc}") from exc
+
+            if response.status_code == 401:
+                raise AuthenticationError("Supabase access token rejected (HTTP 401).", status_code=401)
+            if response.status_code in (403, 404):
+                raise ConnectorError(
+                    f"Supabase query endpoint returned HTTP {response.status_code}.",
+                    status_code=response.status_code,
+                )
+            if response.status_code == 429:
+                if attempt < _MAX_RETRIES:
+                    continue
+                raise RateLimitError("Supabase rate limit hit running query.")
+            if response.status_code >= 500:
+                if attempt < _MAX_RETRIES:
+                    continue
+                raise ConnectorError(
+                    f"Supabase query returned HTTP {response.status_code}.",
+                    status_code=response.status_code,
+                )
+            if not response.is_success:
+                raise ConnectorError(
+                    f"Supabase query returned HTTP {response.status_code}.",
+                    status_code=response.status_code,
+                )
+            try:
+                return response.json()
+            except Exception as exc:
+                raise ConnectorError("Supabase query returned non-JSON response.") from exc
+        raise ConnectorError("Supabase query failed (unknown reason).")
+
+    def _fetch_database_policies(
+        self,
+        access_token: str,
+        project_ref: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch per-table public-policy posture from pg_policies METADATA.
+
+        Fail-soft: any permission/availability/network error yields an empty map
+        so the RLS records simply carry no policy flags (the policy rules then do
+        not fire — never invented). SECURITY: only policy role targets + commands
+        are read; never the USING/WITH CHECK expressions, column names, or rows.
+        """
+        try:
+            rows = self._run_query(access_token, project_ref, _POLICIES_QUERY)
+        except Exception:  # noqa: BLE001 — policy posture is optional; never fatal
+            logger.warning(
+                "supabase: could not fetch pg_policies metadata for %s — skipping "
+                "policy posture (RLS status still collected).",
+                project_ref,
+            )
+            return {}
+        return _normalize_policy_rows(rows)
+
     def _fetch_api_config(
         self,
         access_token: str,
@@ -810,6 +965,15 @@ class SupabaseConnector(BaseConnector):
 
         # ── 6. RLS status (fail-soft on 403) ─────────────────────────────────
         rls_records = self._fetch_rls_status(access_token, project_ref)
+        # Merge safe per-table public-policy posture (pg_policies metadata only).
+        policies_by_table = self._fetch_database_policies(access_token, project_ref)
+        if policies_by_table:
+            for rec in rls_records:
+                schema = str(rec.get("schema_name") or "public")
+                table = str(rec.get("table_name") or "")
+                flags = policies_by_table.get(f"{schema}.{table}")
+                if flags:
+                    rec.update(flags)
         records.extend(rls_records)
 
         # ── 7. PostgREST / API config (fail-soft on 403) ──────────────────────

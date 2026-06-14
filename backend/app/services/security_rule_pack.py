@@ -80,6 +80,10 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "supabase_rls_disabled": ("supabase", "high", "RLS"),
     "supabase_anonymous_access_enabled": ("supabase", "medium", "Auth"),
     "supabase_jwt_expiry_long": ("supabase", "medium", "Auth"),
+    "supabase_public_select_sensitive_table": ("supabase", "high", "RLS"),
+    "supabase_public_write_policy": ("supabase", "high", "RLS"),
+    "supabase_edge_function_jwt_disabled": ("supabase", "medium", "Edge Functions"),
+    "supabase_auth_protection_missing": ("supabase", "medium", "Auth"),
     # Firebase
     "firebase_rules_public": ("firebase", "critical", "Security rules"),
     "firebase_storage_rules_public": ("firebase", "critical", "Security rules"),

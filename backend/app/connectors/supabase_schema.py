@@ -153,6 +153,16 @@ try:
         schema_name: str
         rls_enabled: bool
         rls_forced: bool
+        # M71A — per-table policy posture derived from pg_policies METADATA ONLY
+        # (policy role targets + commands). NEVER the policy USING/WITH CHECK
+        # expressions, column names, or any row data. A "public" policy targets
+        # the Postgres ``public`` role (everyone) or Supabase ``anon`` role.
+        policy_count: int
+        has_public_select_policy: bool
+        has_public_insert_policy: bool
+        has_public_update_policy: bool
+        has_public_delete_policy: bool
+        exposed_to_anon: bool
         config_fetch_warnings: list[str]
 
     class SupabaseApiConfigRecord(TypedDict, total=False):
