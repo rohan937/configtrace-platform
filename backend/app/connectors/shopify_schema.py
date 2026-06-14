@@ -38,6 +38,19 @@ SHOPIFY_SHOP_METADATA = "shopify_shop_metadata"
 SHOPIFY_WEBHOOK_SUBSCRIPTION = "shopify_webhook_subscription"
 SHOPIFY_STORE_POLICY = "shopify_store_policy"
 SHOPIFY_APP_SCOPE_SUMMARY = "shopify_app_scope_summary"  # M57.9
+# M74A — shop domain metadata (host + ssl/verified/primary flags only).
+SHOPIFY_DOMAIN = "shopify_domain"
+
+# Canonical Shopify store policy types we expect to find a "present" record
+# for. The connector emits a baseline ``present=False`` record for any of
+# these that the policies API does not return, so the M74A policy-missing
+# rule can fire deterministically. Handles are kept underscore-canonical.
+SHOPIFY_STANDARD_POLICY_TYPES: tuple[str, ...] = (
+    "refund_policy",
+    "privacy_policy",
+    "terms_of_service",
+    "shipping_policy",
+)
 
 SHOPIFY_RECORD_TYPES: frozenset[str] = frozenset(
     {
@@ -45,6 +58,7 @@ SHOPIFY_RECORD_TYPES: frozenset[str] = frozenset(
         SHOPIFY_WEBHOOK_SUBSCRIPTION,
         SHOPIFY_STORE_POLICY,
         SHOPIFY_APP_SCOPE_SUMMARY,
+        SHOPIFY_DOMAIN,
     }
 )
 
@@ -198,3 +212,26 @@ class ShopifyAppScopeSummaryRecord(TypedDict, total=False):
 
     # Full sorted scope list (permission labels — not secrets)
     scope_names: list[str]
+
+
+class ShopifyDomainRecord(TypedDict, total=False):
+    """Normalised shopify_domain record — M74A.
+
+    Captures shop-level domain posture: hostname, ssl_enabled, primary,
+    and verified flags. No customer data, billing data, or DNS record
+    contents are stored.
+    """
+
+    record_type: str            # "shopify_domain"
+    record_id: str              # stable: "{shop_domain}:{host}"
+    name: str                   # display identifier — host
+
+    # Identity (host is infrastructure metadata, not customer data)
+    domain_id_hash: str         # SHA-256[:16] of the domain id
+    host: str                   # e.g. "store.example.com"
+
+    # Posture flags (booleans only)
+    ssl_enabled: bool | None    # True when ssl is enabled
+    primary: bool | None        # True when this is the shop's primary domain
+    verified: bool | None       # True when verified (custom domains)
+    managed_by_shopify: bool | None  # True when shopify manages the cert/DNS

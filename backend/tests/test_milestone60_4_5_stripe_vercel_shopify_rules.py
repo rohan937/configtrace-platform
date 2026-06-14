@@ -145,13 +145,20 @@ def test_shopify_http_fires_critical():
 
 
 def test_shopify_https_safe():
-    assert sh.evaluate(_shopify_wh(endpoint_scheme="https", is_https=True)) == []
+    # HTTPS with a non-high-risk topic does not fire any Shopify rule.
+    # M74A: the default fixture uses topic="orders/create" which now also
+    # fires the high-risk-topic rule, so we override to a benign topic here.
+    assert sh.evaluate(
+        _shopify_wh(endpoint_scheme="https", is_https=True, topic="products/update")
+    ) == []
 
 
 def test_shopify_non_http_transport_ignored():
-    # EventBridge / Pub-Sub style delivery (scheme not "http") is not flagged.
-    assert sh.evaluate(_shopify_wh(endpoint_scheme="", is_https=False)) == []
-    assert sh.evaluate(_shopify_wh(endpoint_scheme="pubsub", is_https=False)) == []
+    # EventBridge / Pub-Sub style delivery (scheme not "http") is not flagged
+    # by the HTTP rule. Override the default topic to a benign one so the
+    # M74A high-risk-topic rule (orders/customers/etc.) does not fire either.
+    assert sh.evaluate(_shopify_wh(endpoint_scheme="", is_https=False, topic="products/update")) == []
+    assert sh.evaluate(_shopify_wh(endpoint_scheme="pubsub", is_https=False, topic="products/update")) == []
 
 
 def test_shopify_unknown_record_ignored():
@@ -251,7 +258,9 @@ def test_shopify_multi_webhook_and_lifecycle(test_user, db_session):
         db=db_session, workspace_id=ws.id, integration=integ, resource=res, snapshot=snap
     )
     findings = _active(db_session, ws.id, res.id)
-    assert len(findings) == 2  # two HTTP webhooks, safe one excluded
+    # Two HTTP + high-risk-topic webhooks fire BOTH rules each (M74A added the
+    # high-risk-topic rule); the products/update HTTPS one is excluded.
+    assert len(findings) == 4
     first_seen = {f.finding_key: f.last_seen_at for f in findings}
 
     # Re-evaluate → dedupe + refresh.
@@ -260,11 +269,12 @@ def test_shopify_multi_webhook_and_lifecycle(test_user, db_session):
         db=db_session, workspace_id=ws.id, integration=integ, resource=res, snapshot=snap2
     )
     again = _active(db_session, ws.id, res.id)
-    assert len(again) == 2
+    assert len(again) == 4
     for f in again:
         assert f.last_seen_at >= first_seen[f.finding_key]
 
-    # One webhook fixed to HTTPS → that finding resolves.
+    # One webhook fixed to HTTPS → its http finding resolves (the high-risk-
+    # topic finding remains because the topic is still orders/create).
     fixed = [
         _shopify_wh(record_id="wh_a", topic="orders/create", endpoint_scheme="https", is_https=True),
         _shopify_wh(record_id="wh_b", topic="app/uninstalled", endpoint_scheme="http", is_https=False),
@@ -273,8 +283,10 @@ def test_shopify_multi_webhook_and_lifecycle(test_user, db_session):
     summary = evaluator.evaluate_security_findings_for_resource(
         db=db_session, workspace_id=ws.id, integration=integ, resource=res, snapshot=snap3
     )
+    # wh_a's HTTP finding resolves (it is now https); its high-risk-topic
+    # finding remains, and wh_b's two findings remain.
     assert summary["resolved"] == 1
-    assert len(_active(db_session, ws.id, res.id)) == 1
+    assert len(_active(db_session, ws.id, res.id)) == 3
 
     _cleanup(db_session, ws.id)
 

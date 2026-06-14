@@ -60,7 +60,9 @@ from app.connectors.exceptions import (
 from app.connectors.shopify_schema import (
     SENSITIVE_SHOPIFY_SCOPES,
     SHOPIFY_APP_SCOPE_SUMMARY,
+    SHOPIFY_DOMAIN,
     SHOPIFY_SHOP_METADATA,
+    SHOPIFY_STANDARD_POLICY_TYPES,
     SHOPIFY_STORE_POLICY,
     SHOPIFY_WEBHOOK_SUBSCRIPTION,
 )
@@ -609,8 +611,12 @@ class ShopifyConnector(BaseConnector):
         policies = data.get("policies") or []
         shop_domain = credentials.get("shop_domain", "")
         records = []
+        seen_types: set[str] = set()
         for policy in policies:
-            policy_type = policy.get("handle") or policy.get("title", "").lower().replace(" ", "_")
+            raw_type = policy.get("handle") or policy.get("title", "").lower().replace(" ", "_")
+            # Normalize handle so "refund-policy" and "refund_policy" match.
+            policy_type = raw_type.replace("-", "_") if raw_type else raw_type
+            seen_types.add(policy_type)
             body = policy.get("body") or ""
             body_bytes = body.encode("utf-8")
             body_hash = hashlib.sha256(body_bytes).hexdigest() if body else None
@@ -626,6 +632,78 @@ class ShopifyConnector(BaseConnector):
                     "body_length":  len(body_bytes),
                     "updated_at":   policy.get("updated_at"),
                     # SECURITY: raw body text is intentionally NOT stored
+                }
+            )
+        # M74A — emit baseline ``present=False`` records for the canonical
+        # policy types that the API did not return. This lets the policy-
+        # missing rule fire deterministically without scanning the absence
+        # of records (rules see one record at a time).
+        for standard_type in SHOPIFY_STANDARD_POLICY_TYPES:
+            if standard_type in seen_types:
+                continue
+            record_id = self._hash(f"{shop_domain}:{standard_type}")
+            records.append(
+                {
+                    "record_type":  SHOPIFY_STORE_POLICY,
+                    "record_id":    record_id,
+                    "name":         f"{standard_type} policy",
+                    "policy_type":  standard_type,
+                    "present":      False,
+                    "body_hash":    None,
+                    "body_length":  0,
+                    "updated_at":   None,
+                }
+            )
+        return records
+
+    def _fetch_domains(self, credentials: dict) -> list[dict]:
+        """Fetch GET /admin/api/{version}/shop/domains.json — M74A.
+
+        Returns one ``shopify_domain`` record per shop domain, with safe
+        identity (host) and posture flags (ssl_enabled, primary, verified,
+        managed_by_shopify). Returns an empty list when the endpoint is
+        inaccessible (token lacks the required scope). Customer data,
+        billing data, and DNS record contents are NEVER stored.
+        """
+        try:
+            data = self._get(credentials, "/shop/domains.json")
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                logger.info(
+                    "shopify: /shop/domains.json not accessible (status=%d) — "
+                    "shopify_domain records omitted",
+                    exc.status_code,
+                )
+                return []
+            raise
+
+        domains = data.get("domains") if isinstance(data, dict) else None
+        if not isinstance(domains, list):
+            return []
+
+        shop_domain = credentials.get("shop_domain", "")
+        records: list[dict] = []
+        for entry in domains:
+            if not isinstance(entry, dict):
+                continue
+            host = str(entry.get("host") or entry.get("domain") or "").strip()
+            if not host:
+                continue
+            domain_id = entry.get("id")
+            domain_id_hash = self._hash(str(domain_id)) if domain_id else self._hash(host)
+            records.append(
+                {
+                    "record_type":        SHOPIFY_DOMAIN,
+                    "record_id":          self._hash(f"{shop_domain}:{host}"),
+                    "name":               host,
+                    "domain_id_hash":     domain_id_hash,
+                    "host":               host,
+                    "ssl_enabled":        entry.get("ssl_enabled"),
+                    "primary":            entry.get("primary"),
+                    "verified":           entry.get("verified"),
+                    "managed_by_shopify": entry.get("managed_by_shopify"),
+                    # SECURITY: DNS records, certificate chain, and contact
+                    # info are intentionally NOT fetched or stored.
                 }
             )
         return records
@@ -687,6 +765,14 @@ class ShopifyConnector(BaseConnector):
             logger.info("ShopifyConnector.fetch: app_scope_summary fetched")
         else:
             logger.info("ShopifyConnector.fetch: app_scope_summary skipped")
+
+        # 5. Shop domains — M74A (optional: skipped on 403/404).
+        domain_records = self._fetch_domains(credentials)
+        records.extend(domain_records)
+        logger.info(
+            "ShopifyConnector.fetch: shopify_domain records=%d",
+            len(domain_records),
+        )
 
         logger.info(
             "ShopifyConnector.fetch: complete total_records=%d",

@@ -119,6 +119,13 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "vercel_deploy_hook_production_branch": ("vercel_deploy_hook_metadata",),
     # Shopify
     "shopify_webhook_http": ("shopify_webhook_subscription",),
+    # Shopify — M74A
+    "shopify_webhook_high_risk_topic": ("shopify_webhook_subscription",),
+    "shopify_app_broad_write_scopes": ("shopify_app_scope_summary",),
+    "shopify_app_customer_data_scope": ("shopify_app_scope_summary",),
+    "shopify_domain_ssl_missing": ("shopify_domain",),
+    "shopify_domain_unverified": ("shopify_domain",),
+    "shopify_policy_missing": ("shopify_store_policy",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -130,7 +137,7 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
     "firebase": ["Firestore rules", "Realtime Database rules", "Storage rules", "Auth configuration"],
     "stripe": ["Webhook endpoints", "Payment links", "Customer portal", "Account configuration"],
     "vercel": ["Deployment protection", "Production branch", "Domains", "Environment variables", "Deploy hooks"],
-    "shopify": ["Webhook subscriptions"],
+    "shopify": ["Webhook subscriptions", "App scopes", "Domains", "Store policies"],
 }
 
 
@@ -236,6 +243,18 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
         "hints": ["Verify project/team API access."],
     },
     # Shopify
+    "shopify_app_scope_summary": {
+        "message": "App scope summary metadata was not observed.",
+        "hints": ["Verify the access token can read /admin/oauth/access_scopes.json."],
+    },
+    "shopify_domain": {
+        "message": "Shop domain metadata was not observed.",
+        "hints": ["Verify the access token can read /admin/api/{ver}/shop/domains.json."],
+    },
+    "shopify_store_policy": {
+        "message": "Store policy metadata was not observed.",
+        "hints": ["Verify the access token can read /admin/api/{ver}/policies.json."],
+    },
     "shopify_webhook_subscription": {
         "message": "Webhook subscription metadata was not observed.",
         "hints": ["Verify the app/admin API can read webhook subscriptions."],

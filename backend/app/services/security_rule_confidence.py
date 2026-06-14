@@ -112,6 +112,13 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "vercel_deploy_hook_production_branch": (MEDIUM, "Only fires when a deploy hook's target ref is the production branch; the hook URL is never stored."),
     # Shopify
     "shopify_webhook_http": (HIGH, "Only an explicit http scheme fires; non-HTTP transports are ignored."),
+    # Shopify — M74A
+    "shopify_webhook_high_risk_topic": (MEDIUM, "Only a curated set of high-risk topic prefixes / handles fires; generic topics are not flagged."),
+    "shopify_app_broad_write_scopes": (HIGH, "Only the curated high-risk write scopes are counted (not generic write_* scopes); fires at >= 3."),
+    "shopify_app_customer_data_scope": (HIGH, "Only an exact read_customers / write_customers grant fires; broader 'customer'-substring scopes are not used."),
+    "shopify_domain_ssl_missing": (HIGH, "Only an explicit ssl_enabled=false on the primary domain fires."),
+    "shopify_domain_unverified": (HIGH, "Only an explicit verified=false on the primary domain fires."),
+    "shopify_policy_missing": (HIGH, "Only an explicit present=false on a canonical-policy baseline record fires."),
 }
 
 

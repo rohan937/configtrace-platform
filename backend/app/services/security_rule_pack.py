@@ -112,6 +112,13 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "vercel_deploy_hook_production_branch": ("vercel", "medium", "Deploy hooks"),
     # Shopify
     "shopify_webhook_http": ("shopify", "critical", "Webhooks"),
+    # Shopify — M74A
+    "shopify_webhook_high_risk_topic": ("shopify", "medium", "Webhooks"),
+    "shopify_app_broad_write_scopes": ("shopify", "high", "App scopes"),
+    "shopify_app_customer_data_scope": ("shopify", "high", "App scopes"),
+    "shopify_domain_ssl_missing": ("shopify", "high", "Domains"),
+    "shopify_domain_unverified": ("shopify", "medium", "Domains"),
+    "shopify_policy_missing": ("shopify", "low", "Store policies"),
 }
 
 

@@ -88,6 +88,13 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "vercel_deploy_hook_production_branch",
         # Shopify
         "shopify_webhook_http",
+        # Shopify — M74A
+        "shopify_webhook_high_risk_topic",
+        "shopify_app_broad_write_scopes",
+        "shopify_app_customer_data_scope",
+        "shopify_domain_ssl_missing",
+        "shopify_domain_unverified",
+        "shopify_policy_missing",
     }
 )
 
