@@ -35,3 +35,21 @@ class StripeActivitySyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class StripeActivitySignalGenerateRequest(BaseModel):
+    """POST /security/stripe-activity/generate-signals body (M73C, all optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class StripeActivitySignalGenerateResponse(BaseModel):
+    """Stripe activity Incident Signal generation summary (M73C)."""
+
+    provider: str
+    source: str
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

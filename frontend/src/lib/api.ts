@@ -811,6 +811,16 @@ export async function generateFirebaseActivitySignals(
   return apiFetch(`/security/firebase-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Stripe activity Incident Signals (M73C). Admin/owner only.
+ * Idempotent — re-running creates no duplicates.
+ */
+export async function generateStripeActivitySignals(
+  token?: string | null,
+): Promise<import("@/types").StripeActivitySignalGenerateResponse> {
+  return apiFetch(`/security/stripe-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

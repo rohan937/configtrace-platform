@@ -36,6 +36,7 @@ import {
   generateVercelActivitySignals,
   generateSupabaseActivitySignals,
   generateFirebaseActivitySignals,
+  generateStripeActivitySignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -50,13 +51,14 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe";
 
 const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity", "cloudflare_waf_activity_signal"];
 const VERCEL_SIGNAL_TYPES = ["vercel_activity_signal"];
 const SUPABASE_SIGNAL_TYPES = ["supabase_activity_signal"];
 const FIREBASE_SIGNAL_TYPES = ["firebase_activity_signal"];
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase" };
+const STRIPE_SIGNAL_TYPES = ["stripe_activity_signal"];
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
@@ -167,6 +169,14 @@ export default function IncidentSignalsPage() {
         };
       } else if (provider === "firebase") {
         const v = await generateFirebaseActivitySignals(token);
+        res = {
+          provider: v.provider,
+          activity_events_scanned: v.events_scanned,
+          signals_created: v.signals_created,
+          signals_skipped: v.signals_skipped,
+        };
+      } else if (provider === "stripe") {
+        const v = await generateStripeActivitySignals(token);
         res = {
           provider: v.provider,
           activity_events_scanned: v.events_scanned,
@@ -419,14 +429,14 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
         <Select
           label="Signal type"
           value={signalType}
           onChange={setSignalType}
-          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
         />
       </div>
 
@@ -548,11 +558,13 @@ function GenerateBar({
   const isVercel = provider === "vercel";
   const isSupabase = provider === "supabase";
   const isFirebase = provider === "firebase";
+  const isStripe = provider === "stripe";
   const label = isCloudflare ? "Generate Cloudflare signals"
     : isAws ? "Generate AWS signals"
     : isVercel ? "Generate Vercel activity signals"
     : isSupabase ? "Generate Supabase activity signals"
-    : isFirebase ? "Generate Firebase activity signals" : "Generate signals";
+    : isFirebase ? "Generate Firebase activity signals"
+    : isStripe ? "Generate Stripe activity signals" : "Generate signals";
   const desc = isCloudflare
     ? "Generate review signals from Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity)."
     : isAws
@@ -563,7 +575,9 @@ function GenerateBar({
           ? "Generate review signals from Supabase activity evidence (table/RLS, access policy, storage bucket, Edge Function, auth configuration, and project changes)."
           : isFirebase
             ? "Generate review signals from Firebase activity evidence (Firestore/Realtime Database/Storage rules, auth configuration, Cloud Function, Hosting, and project/app changes)."
-            : "Scans recent GitHub audit activity events and creates review signals.";
+            : isStripe
+              ? "Generate review signals from Stripe configuration activity evidence (webhook endpoint, payment link, customer portal, account, and capability changes)."
+              : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -967,6 +981,11 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               (isAdmin
                 ? " Use “Generate Firebase activity signals” above once activity has been ingested."
                 : " A workspace admin can sync Firebase activity and generate signals.")
+          : provider === "stripe"
+            ? "Sync Stripe activity first, then generate Stripe activity signals." +
+              (isAdmin
+                ? " Use “Generate Stripe activity signals” above once activity has been ingested."
+                : " A workspace admin can sync Stripe activity and generate signals.")
           : "Run GitHub activity sync first, then generate signals." +
             (isAdmin
               ? " Use “Generate signals” above once activity has been ingested."
