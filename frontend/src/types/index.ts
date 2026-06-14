@@ -2065,6 +2065,15 @@ export interface ShopifyActivitySignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+// M77E — Azure Activity Log Incident Signal generation summary.
+export interface AzureActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface GitHubSecretScanningSignalGenerateResponse {
   provider: string;
   source: string;

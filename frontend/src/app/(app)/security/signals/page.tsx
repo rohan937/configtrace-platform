@@ -38,6 +38,7 @@ import {
   generateFirebaseActivitySignals,
   generateStripeActivitySignals,
   generateShopifyActivitySignals,
+  generateAzureActivitySignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -52,7 +53,7 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure";
 
 const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity", "cloudflare_waf_activity_signal"];
 const VERCEL_SIGNAL_TYPES = ["vercel_activity_signal"];
@@ -60,7 +61,23 @@ const SUPABASE_SIGNAL_TYPES = ["supabase_activity_signal"];
 const FIREBASE_SIGNAL_TYPES = ["firebase_activity_signal"];
 const STRIPE_SIGNAL_TYPES = ["stripe_activity_signal"];
 const SHOPIFY_SIGNAL_TYPES = ["shopify_activity_signal"];
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify" };
+const AZURE_SIGNAL_TYPES = [
+  "azure_network_exposure_changed",
+  "azure_nsg_deleted",
+  "azure_storage_config_changed",
+  "azure_storage_account_deleted",
+  "azure_key_vault_config_changed",
+  "azure_key_vault_deleted",
+  "azure_role_assignment_changed",
+  "azure_app_service_config_changed",
+  "azure_app_service_deleted",
+  "azure_sql_network_config_changed",
+  "azure_sql_server_deleted",
+  "azure_aks_cluster_config_changed",
+  "azure_aks_cluster_deleted",
+  "azure_config_activity",
+];
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
@@ -187,6 +204,14 @@ export default function IncidentSignalsPage() {
         };
       } else if (provider === "shopify") {
         const v = await generateShopifyActivitySignals(token);
+        res = {
+          provider: v.provider,
+          activity_events_scanned: v.events_scanned,
+          signals_created: v.signals_created,
+          signals_skipped: v.signals_skipped,
+        };
+      } else if (provider === "azure") {
+        const v = await generateAzureActivitySignals(token);
         res = {
           provider: v.provider,
           activity_events_scanned: v.events_scanned,
@@ -439,14 +464,14 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
         <Select
           label="Signal type"
           value={signalType}
           onChange={setSignalType}
-          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : provider === "azure" ? AZURE_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
         />
       </div>
 
@@ -570,13 +595,15 @@ function GenerateBar({
   const isFirebase = provider === "firebase";
   const isStripe = provider === "stripe";
   const isShopify = provider === "shopify";
+  const isAzure = provider === "azure";
   const label = isCloudflare ? "Generate Cloudflare signals"
     : isAws ? "Generate AWS signals"
     : isVercel ? "Generate Vercel activity signals"
     : isSupabase ? "Generate Supabase activity signals"
     : isFirebase ? "Generate Firebase activity signals"
     : isStripe ? "Generate Stripe activity signals"
-    : isShopify ? "Generate Shopify activity signals" : "Generate signals";
+    : isShopify ? "Generate Shopify activity signals"
+    : isAzure ? "Generate Azure signals" : "Generate signals";
   const desc = isCloudflare
     ? "Generate review signals from Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity)."
     : isAws
@@ -591,7 +618,9 @@ function GenerateBar({
               ? "Generate review signals from Stripe configuration activity evidence (webhook endpoint, payment link, customer portal, account, and capability changes)."
               : isShopify
                 ? "Generate review signals from Shopify configuration activity evidence."
-                : "Scans recent GitHub audit activity events and creates review signals.";
+                : isAzure
+                  ? "Generate review-safe signals from Azure Activity Log evidence for NSG, Storage, Key Vault, role assignment, App Service, SQL, and AKS configuration changes. Sync Azure activity first, then generate signals."
+                  : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1003,8 +1032,13 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
           : provider === "shopify"
             ? "Sync Shopify activity first, then generate Shopify activity signals." +
               (isAdmin
-                ? " Use “Generate Shopify activity signals” above once activity has been ingested."
+                ? " Use \”Generate Shopify activity signals\” above once activity has been ingested."
                 : " A workspace admin can sync Shopify activity and generate signals.")
+          : provider === "azure"
+            ? "Sync Azure activity first, then generate Azure signals." +
+              (isAdmin
+                ? " Use \”Generate Azure signals\” above once Azure Activity Log events have been ingested via the Activity page."
+                : " A workspace admin can sync Azure Activity Log events and generate signals.")
           : "Run GitHub activity sync first, then generate signals." +
             (isAdmin
               ? " Use “Generate signals” above once activity has been ingested."

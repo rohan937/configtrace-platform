@@ -208,6 +208,36 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "domain_host",               # shop-domain host (a NAME, never DNS records)
         "policy_type",               # store policy type (e.g. "refund_policy") — NAME
         "setting_name",              # shop setting NAME (never a secret value)
+        # Azure Activity Log signal fields (M77E) — safe control-plane change
+        # summary ONLY. NEVER caller email/UPN/name, principal IDs, object IDs,
+        # raw correlationId, claims, authorization objects, properties payload,
+        # httpRequest body, raw event payload, storage keys, SAS tokens,
+        # connection strings, Key Vault secret names/values, certificate material,
+        # key material, database contents, VM user data, app setting names/values,
+        # env var values, customer/workload data, or PII.
+        "subscription_id",           # Azure subscription GUID (opaque identifier, not a secret)
+        "resource_group",            # resource group name (infra identifier)
+        "resource_type",             # ARM resource type (e.g. Microsoft.Network/networkSecurityGroups)
+        "operation_name",            # ARM operationName (e.g. "Microsoft.Network/networkSecurityGroups/write")
+        "operation_family",          # operation namespace+resource type prefix
+        "operation_action",          # operation verb (write / delete)
+        "azure_event_id",            # eventDataId UUID (opaque stable event identifier)
+        "azure_correlation_id_hash", # salted hash of correlationId (NEVER raw)
+        "scope_type",                # role assignment scope category (subscription/resource_group)
+        "role_definition_name",      # resolved built-in role name (Owner/Contributor/…; not PII)
+        "principal_type",            # principalType string (User/Group/ServicePrincipal; not PII)
+        "nsg_name",                  # NSG resource name (infra identifier)
+        "nsg_rule_name",             # NSG security rule name (infra identifier)
+        "storage_account_name",      # Storage Account resource name (infra identifier)
+        "key_vault_name",            # Key Vault resource name (infra identifier)
+        "app_service_name",          # App Service resource name (infra identifier)
+        "sql_server_name",           # SQL Server resource name (infra identifier)
+        "sql_firewall_rule_name",    # SQL firewall rule resource name (infra identifier)
+        "aks_cluster_name",          # AKS managed cluster resource name (infra identifier)
+        "status",                    # operation status (e.g. "Succeeded") — not PII
+        "sub_status",                # operation sub-status (e.g. "Created") — not PII
+        "category",                  # Activity Log event category (e.g. "Administrative")
+        "provider_event_id",         # stable provider event ID (Azure eventDataId or fingerprint)
     }
 )
 

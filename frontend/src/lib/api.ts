@@ -891,6 +891,21 @@ export async function generateShopifyActivitySignals(
   return apiFetch(`/security/shopify-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Azure Activity Log Incident Signals (M77E).
+ *
+ * Admin-gated. Promotes Azure Activity Log management events (NSG, Storage,
+ * Key Vault, role assignment, App Service, SQL, AKS configuration changes)
+ * into review-worthy signals. Idempotent — re-running creates no duplicates.
+ * These are review signals; they do not confirm compromise, unauthorized
+ * access, leaked secrets, or data exposure.
+ */
+export async function generateAzureActivitySignals(
+  token?: string | null,
+): Promise<import("@/types").AzureActivitySignalGenerateResponse> {
+  return apiFetch(`/security/azure-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

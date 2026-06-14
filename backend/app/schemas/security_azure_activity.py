@@ -1,9 +1,8 @@
-"""Schemas for Azure Activity Log ingestion (M77D).
+"""Schemas for Azure Activity Log ingestion (M77D) and signals (M77E).
 
-Activity ingestion only — no signals, correlations, or demo for Azure in this
-milestone. Honest about partial/limited results: ``permission_limited`` is True
-when the service principal lacks the Reader role on the subscription, or when
-the Activity Log endpoint returns 401/403/404/422. ``error_message`` is a short,
+Honest about partial/limited results: ``permission_limited`` is True when the
+service principal lacks the Reader role on the subscription, or when the
+Activity Log endpoint returns 401/403/404/422. ``error_message`` is a short,
 safe string — never credentials, bearer tokens, raw event payloads, Azure
 resource secrets, or PII.
 """
@@ -36,3 +35,21 @@ class AzureActivitySyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class AzureActivitySignalGenerateRequest(BaseModel):
+    """POST /security/azure-activity/generate-signals request body (all optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class AzureActivitySignalGenerateResponse(BaseModel):
+    """Azure Activity Log Incident Signal generation summary."""
+
+    provider: str
+    source: str
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

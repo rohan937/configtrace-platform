@@ -1117,13 +1117,13 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
-    """Flipped in M77D: planned_next_stage now points to M77E."""
+    """Flipped in M77E: planned_next_stage now points to M77F."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M77E" in planned, (
-        f"planned_next_stage should reference M77E after M77D, got: {planned!r}"
+    assert "M77F" in planned, (
+        f"planned_next_stage should reference M77F after M77E, got: {planned!r}"
     )
 
 

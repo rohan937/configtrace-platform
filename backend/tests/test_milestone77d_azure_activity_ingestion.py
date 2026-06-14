@@ -763,9 +763,10 @@ class TestCapabilityMatrix:
         assert cap.security.activity_ingestion is True
 
     def test_azure_signals_still_false(self):
+        """Flipped in M77E: activity_signals is now True."""
         cap = get_provider_capability("azure")
         assert cap is not None
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True   # flipped in M77E
 
     def test_azure_correlations_still_false(self):
         cap = get_provider_capability("azure")
@@ -790,9 +791,10 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_next_stage_is_m77e(self):
+        """Flipped in M77E: planned_next_stage now points to M77F."""
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M77E" in stage
+        assert "M77F" in stage
 
 
 # ──────────────────────────────────────────────────────────────────────────────

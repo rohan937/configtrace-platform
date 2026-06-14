@@ -405,7 +405,7 @@ _AZURE = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -414,16 +414,19 @@ _AZURE = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Azure drift + expanded security + Activity Log ingestion (M77A–M77D). "
-        "Drift snapshots cover subscription / resource group / NSG / storage account / "
-        "Key Vault / role assignments / App Service / SQL Server / AKS. Security rules "
-        "cover NSG public ingress, storage public access / weak TLS / shared-key, Key "
-        "Vault network / recovery / RBAC posture, broad role assignment privilege, App "
-        "Service HTTPS / FTP / TLS / public access, SQL Server public access / weak TLS, "
-        "and AKS local accounts / public API exposure / network policy. Activity Log "
-        "ingestion covers WRITE/DELETE management events on NSGs, Storage, Key Vaults, "
-        "role assignments, App Services, SQL Servers, and AKS clusters. Activity signals "
-        "and correlations follow in M77E–M77F; demo in M77G."
+        "Azure drift + expanded security + Activity Log ingestion + signals (M77A–M77E). "
+        "Drift snapshots: subscription / RG / NSG / Storage / KV / role assignments / "
+        "App Service / SQL Server / AKS. Security rules: 20 rules covering NSG / storage / "
+        "KV / role assignment / App Service / SQL / AKS posture. Activity Log ingestion: "
+        "WRITE/DELETE management events across all monitored surfaces. Activity signals: "
+        "14 signal types (azure_network_exposure_changed, azure_nsg_deleted, "
+        "azure_storage_config_changed, azure_storage_account_deleted, "
+        "azure_key_vault_config_changed, azure_key_vault_deleted, "
+        "azure_role_assignment_changed, azure_app_service_config_changed, "
+        "azure_app_service_deleted, azure_sql_network_config_changed, "
+        "azure_sql_server_deleted, azure_aks_cluster_config_changed, "
+        "azure_aks_cluster_deleted, azure_config_activity). "
+        "Correlations and demo follow in M77F–M77G."
     ),
 )
 
