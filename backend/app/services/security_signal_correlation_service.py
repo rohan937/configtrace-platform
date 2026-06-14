@@ -47,6 +47,7 @@ from app.services import security_incident_signal_service as signal_svc
 PROVIDER_GITHUB = "github"
 PROVIDER_AWS = "aws"
 PROVIDER_CLOUDFLARE = "cloudflare"
+PROVIDER_VERCEL = "vercel"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -148,6 +149,22 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "broad_permission_count",
         "token_scope_count",
         "webhook_secret_configured",
+        # Vercel config-risk × activity correlation context (M70D) — safe
+        # project/target identifiers + change classification only. NEVER env var
+        # values, deploy hook URLs, tokens, headers, raw API responses, actor
+        # emails, request/response bodies, or secrets.
+        "project_id",
+        "project_name",
+        "event_action",
+        "target_type",
+        "target_id",
+        "target_name",
+        "domain",
+        "env_var_key",
+        "deploy_hook_name",
+        "branch",
+        "deployment_id",
+        "deployment_target",
     }
 )
 
@@ -3576,6 +3593,275 @@ def generate_cloudflare_correlations(
         "events_scanned": audit["events_scanned"] + waf["events_scanned"],
         "correlations_created": audit["correlations_created"] + waf["correlations_created"],
         "correlations_skipped": audit["correlations_skipped"] + waf["correlations_skipped"],
+    }
+
+
+# ── M70D — Vercel configuration-risk × activity correlations ─────────────────
+#
+# Correlates an ACTIVE Vercel configuration-risk finding with Vercel audit
+# activity (source="audit_log") for the SAME project, when an aligned activity
+# event falls inside the finding's review window
+# (first_detected_at - 24h .. last_seen_at + 24h). Project identity is the
+# finding's Resource.provider_resource_id (the Vercel project id/slug — all
+# Vercel records for one project share that resource), matched against the
+# event's metadata project_id / project_name. This is evidence for review; it
+# never asserts a secret was exposed, that anyone gained access, that access was
+# unauthorized, or that a breach/attack occurred.
+
+# finding base rule → correlation rule definition.
+#   activity_types: the Vercel event_type strings that count as aligned evidence.
+VERCEL_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    "vercel_production_branch_missing": {
+        "correlation_type": "vercel_project_branch_activity",
+        "activity_types": {"vercel.project.updated"},
+        "severity": "medium",
+        "title": "Vercel production branch risk aligned with project activity",
+        "subject": "Vercel production branch risk",
+        "evidence_phrase": "project activity",
+    },
+    "vercel_production_branch_unusual": {
+        "correlation_type": "vercel_project_branch_activity",
+        "activity_types": {"vercel.project.updated"},
+        "severity": "medium",
+        "title": "Vercel production branch risk aligned with project activity",
+        "subject": "Vercel production branch risk",
+        "evidence_phrase": "project activity",
+    },
+    "vercel_domain_unverified": {
+        "correlation_type": "vercel_domain_risk_activity",
+        "activity_types": {"vercel.domain.added", "vercel.domain.removed"},
+        "severity": "medium",
+        "title": "Vercel domain risk aligned with domain activity",
+        "subject": "Vercel domain risk",
+        "evidence_phrase": "domain activity",
+    },
+    "vercel_env_var_broad_target": {
+        "correlation_type": "vercel_env_var_risk_activity",
+        "activity_types": {
+            "vercel.env_var.created", "vercel.env_var.updated", "vercel.env_var.deleted",
+        },
+        "severity": "medium",
+        "title": "Vercel environment variable risk aligned with environment activity",
+        "subject": "Vercel environment variable risk",
+        "evidence_phrase": "environment variable activity",
+    },
+    "vercel_sensitive_env_var_broad_scope": {
+        "correlation_type": "vercel_env_var_risk_activity",
+        "activity_types": {
+            "vercel.env_var.created", "vercel.env_var.updated", "vercel.env_var.deleted",
+        },
+        # A secret-suggestive env var risk aligned with env activity is higher
+        # review priority (the value itself is never read or stored).
+        "severity": "high",
+        "title": "Vercel environment variable risk aligned with environment activity",
+        "subject": "Vercel sensitive environment variable risk",
+        "evidence_phrase": "environment variable activity",
+    },
+    "vercel_deploy_hook_production_branch": {
+        "correlation_type": "vercel_deploy_hook_risk_activity",
+        "activity_types": {"vercel.deploy_hook.created", "vercel.deploy_hook.deleted"},
+        "severity": "medium",
+        "title": "Vercel deploy hook risk aligned with deploy-hook activity",
+        "subject": "Vercel deploy hook risk",
+        "evidence_phrase": "deploy-hook activity",
+    },
+    "vercel_preview_unprotected": {
+        "correlation_type": "vercel_deployment_protection_activity",
+        "activity_types": {
+            "vercel.deployment.created", "vercel.deployment.promoted",
+            "vercel.project.updated",
+        },
+        "severity": "medium",
+        "title": "Vercel deployment protection risk aligned with deployment activity",
+        "subject": "Vercel deployment protection risk",
+        "evidence_phrase": "deployment activity",
+    },
+}
+
+
+def _vercel_event_project_keys(ev: SecurityActivityEvent) -> set[str]:
+    """The safe project identities an activity event carries (id + name)."""
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    out: set[str] = set()
+    for k in ("project_id", "project_name"):
+        v = md.get(k)
+        if isinstance(v, str) and v.strip():
+            out.add(v.strip())
+    return out
+
+
+def _vercel_event_md(ev: SecurityActivityEvent, key: str) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v if isinstance(v, str) and v.strip() else None
+
+
+def build_vercel_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    project_key: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a Vercel correlation dict (not persisted) from a finding + event."""
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    md = event.event_metadata if isinstance(event.event_metadata, dict) else {}
+    project_name = _vercel_event_md(event, "project_name") or project_key
+    title = f"{rule['title']} ({project_name})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and {rule['evidence_phrase']} "
+        f"(\"{event.event_type}\") were observed for the same Vercel project "
+        f"\"{project_name}\" within the review window. {_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": event.event_type,
+        "event_action": _vercel_event_md(event, "event_action"),
+        "project_id": _vercel_event_md(event, "project_id") or project_key,
+        "project_name": _vercel_event_md(event, "project_name"),
+        "target_type": _vercel_event_md(event, "target_type"),
+        "target_id": _vercel_event_md(event, "target_id"),
+        "target_name": _vercel_event_md(event, "target_name"),
+        "domain": _vercel_event_md(event, "domain"),
+        "env_var_key": _vercel_event_md(event, "env_var_key"),
+        "deploy_hook_name": _vercel_event_md(event, "deploy_hook_name"),
+        "branch": _vercel_event_md(event, "branch"),
+        "deployment_id": _vercel_event_md(event, "deployment_id"),
+        "deployment_target": _vercel_event_md(event, "deployment_target"),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_VERCEL,
+        "correlation_key": rule["correlation_type"],
+        "correlation_type": rule["correlation_type"],
+        "severity": rule["severity"],
+        # Same-project config risk + aligned audit activity within the review
+        # window is supporting (still circumstantial) evidence.
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_vercel_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active Vercel findings with Vercel audit activity for a workspace.
+
+    Conservative + project-scoped: a finding only matches an event for the SAME
+    project (the finding's Resource.provider_resource_id ∈ the event's
+    project_id/project_name), with an aligned event_type, inside the finding's
+    review window. Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_VERCEL,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in VERCEL_CORRELATION_RULES
+    ]
+
+    # Resolve each finding's Vercel project identity via its Resource.
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    project_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            if isinstance(r.provider_resource_id, str) and r.provider_resource_id:
+                project_by_resource[r.id] = r.provider_resource_id
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_VERCEL,
+            SecurityActivityEvent.source == "audit_log",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    # Index events by each safe project key they carry (id + name).
+    events_by_project: dict[str, list[SecurityActivityEvent]] = {}
+    for ev in events:
+        for key in _vercel_event_project_keys(ev):
+            events_by_project.setdefault(key, []).append(ev)
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        if finding.resource_id is None:
+            continue  # no project-scoped resource to match on
+        project_key = project_by_resource.get(finding.resource_id)
+        if not project_key:
+            continue  # no safe project identity → never provider-only match
+        rule = VERCEL_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        seen_event_ids: set[uuid.UUID] = set()
+        for ev in events_by_project.get(project_key, []):
+            if ev.id in seen_event_ids:
+                continue  # an event may index under both id + name
+            if ev.event_type not in rule["activity_types"]:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            seen_event_ids.add(ev.id)
+            correlation = build_vercel_correlation(
+                finding=finding, event=ev, project_key=project_key, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_VERCEL,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
     }
 
 

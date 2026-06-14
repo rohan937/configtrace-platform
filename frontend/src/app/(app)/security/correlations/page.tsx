@@ -32,7 +32,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -83,6 +83,14 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "cloudflare_dns_origin_activity",
     "cloudflare_access_policy_activity",
     "cloudflare_tls_activity",
+  ],
+  vercel: [
+    // M70D — Vercel Configuration Risk × Vercel audit activity.
+    "vercel_project_branch_activity",
+    "vercel_domain_risk_activity",
+    "vercel_env_var_risk_activity",
+    "vercel_deploy_hook_risk_activity",
+    "vercel_deployment_protection_activity",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
@@ -282,7 +290,9 @@ function GenerateBar({
       ? "Correlate Cloudflare configuration risks with Cloudflare audit activity and WAF/security activity for the same zone, host, or risk area (DNS, WAF, TLS, Access, zone settings)."
       : provider === "aws"
         ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
-        : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+        : provider === "vercel"
+          ? "Correlate Vercel configuration risks with Vercel activity evidence (project, domain, environment-variable, deploy-hook, and deployment activity) for the same project within the review window."
+          : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -449,7 +459,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
       ? "the same AWS resource (bucket / IAM principal)"
       : provider === "cloudflare"
         ? "the same Cloudflare zone, host, or risk area"
-        : "the same GitHub repository";
+        : provider === "vercel"
+          ? "the same Vercel project"
+          : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>
