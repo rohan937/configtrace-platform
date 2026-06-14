@@ -49,6 +49,7 @@ PROVIDER_AWS = "aws"
 PROVIDER_CLOUDFLARE = "cloudflare"
 PROVIDER_VERCEL = "vercel"
 PROVIDER_SUPABASE = "supabase"
+PROVIDER_FIREBASE = "firebase"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -182,6 +183,23 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "edge_function_id",
         "edge_function_name",
         "auth_setting_name",
+        # Firebase config-risk × activity correlation context (M72D) — safe
+        # project/service/method/resource NAMES and identifiers only. NEVER
+        # Firestore documents, Realtime Database data, storage object contents,
+        # auth users, emails, private keys, service-account JSON secrets, tokens,
+        # headers, raw API responses, raw rule source, request/response bodies, or
+        # Cloud Function env var values.
+        "project_number",
+        "event_source",
+        "service_name",
+        "method_name",
+        "ruleset_name",
+        "database_instance",
+        "function_name",
+        "function_region",
+        "app_id",
+        "app_platform",
+        "hosting_site_id",
     }
 )
 
@@ -4181,6 +4199,262 @@ def generate_supabase_correlations(
 
     return {
         "provider": PROVIDER_SUPABASE,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+# ── Firebase config-risk × activity correlations (M72D) ──────────────────────
+
+_FIREBASE_REVIEW_NOTE = (
+    "This may require review. ConfigTrace does not confirm data exposure, "
+    "unauthorized access, or compromise."
+)
+
+# Map a Firebase finding's BASE rule key → correlation rule. ``narrow_key`` (when
+# set) is an OPTIONAL resource identity: a join is project-scoped, but if the
+# finding's evidence carries that key it must match the event's metadata value.
+# Only rules whose finding side actually exists today are included. The public
+# HTTPS-function correlation is intentionally absent: the
+# ``firebase_public_https_function`` rule is deferred (no ingress metadata to
+# infer public reachability), so there is nothing to match against — see report.
+FIREBASE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    "firebase_rules_public": {
+        "correlation_type": "firebase_firestore_rules_risk_activity",
+        "activity_types": {"firebase.firestore_rules.updated"},
+        "narrow_key": "ruleset_name",
+        "title": "Firebase Firestore rules risk aligned with rules activity",
+        "subject": "Firebase Firestore rules risk",
+        "evidence_phrase": "rules activity",
+    },
+    "firebase_database_public_read": {
+        "correlation_type": "firebase_database_rules_risk_activity",
+        "activity_types": {"firebase.database_rules.updated"},
+        "narrow_key": "database_instance",
+        "title": "Firebase Realtime Database rules risk aligned with rules activity",
+        "subject": "Firebase Realtime Database rules risk",
+        "evidence_phrase": "rules activity",
+    },
+    "firebase_database_public_write": {
+        "correlation_type": "firebase_database_rules_risk_activity",
+        "activity_types": {"firebase.database_rules.updated"},
+        "narrow_key": "database_instance",
+        "title": "Firebase Realtime Database rules risk aligned with rules activity",
+        "subject": "Firebase Realtime Database rules risk",
+        "evidence_phrase": "rules activity",
+    },
+    "firebase_storage_rules_public": {
+        "correlation_type": "firebase_storage_rules_risk_activity",
+        "activity_types": {"firebase.storage_rules.updated"},
+        "narrow_key": "storage_bucket_name",
+        "title": "Firebase Storage rules risk aligned with rules activity",
+        "subject": "Firebase Storage rules risk",
+        "evidence_phrase": "rules activity",
+    },
+    "firebase_anonymous_auth_enabled": {
+        "correlation_type": "firebase_anonymous_auth_risk_activity",
+        "activity_types": {"firebase.auth_config.updated"},
+        "narrow_key": None,
+        "title": "Firebase anonymous auth risk aligned with auth configuration activity",
+        "subject": "Firebase anonymous auth risk",
+        "evidence_phrase": "auth configuration activity",
+    },
+    "firebase_auth_protection_missing": {
+        "correlation_type": "firebase_auth_protection_risk_activity",
+        "activity_types": {"firebase.auth_config.updated"},
+        "narrow_key": None,
+        "title": "Firebase auth protection risk aligned with auth configuration activity",
+        "subject": "Firebase auth protection risk",
+        "evidence_phrase": "auth configuration activity",
+    },
+}
+
+
+def _fb_event_md(ev: SecurityActivityEvent, key: str) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _fb_evidence_str(finding: SecurityFinding, key: str) -> Optional[str]:
+    ev = finding.evidence if isinstance(finding.evidence, dict) else {}
+    v = ev.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def build_firebase_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    project_label: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a Firebase correlation dict (not persisted) from a finding + event."""
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['title']} ({project_label})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and {rule['evidence_phrase']} "
+        f"(\"{event.event_type}\") were observed for the same Firebase "
+        f"{project_label} within the review window. {_FIREBASE_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": event.event_type,
+        "event_action": _fb_event_md(event, "event_action"),
+        "event_source": _fb_event_md(event, "event_source"),
+        "project_id": _fb_event_md(event, "project_id"),
+        "project_number": _fb_event_md(event, "project_number"),
+        "service_name": _fb_event_md(event, "service_name"),
+        "method_name": _fb_event_md(event, "method_name"),
+        "target_type": _fb_event_md(event, "target_type"),
+        "target_id": _fb_event_md(event, "target_id"),
+        "target_name": _fb_event_md(event, "target_name"),
+        "ruleset_name": _fb_event_md(event, "ruleset_name"),
+        "database_instance": _fb_event_md(event, "database_instance"),
+        "storage_bucket_name": _fb_event_md(event, "storage_bucket_name"),
+        "function_name": _fb_event_md(event, "function_name"),
+        "function_region": _fb_event_md(event, "function_region"),
+        "app_id": _fb_event_md(event, "app_id"),
+        "app_platform": _fb_event_md(event, "app_platform"),
+        "hosting_site_id": _fb_event_md(event, "hosting_site_id"),
+        "auth_setting_name": _fb_event_md(event, "auth_setting_name"),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_FIREBASE,
+        "correlation_key": rule["correlation_type"],
+        "correlation_type": rule["correlation_type"],
+        "severity": finding.severity or "medium",
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_firebase_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active Firebase findings with Firebase audit activity (M72D).
+
+    Conservative + project-scoped: a finding only matches an event for the SAME
+    Firebase project (the finding's Resource.provider_resource_id or evidence
+    project_id == the event's metadata project_id), with an aligned event_type,
+    inside the finding's review window. When the finding's evidence carries a
+    narrower resource identity (ruleset/database/bucket name), the event must
+    match it too. Never provider-only. Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_FIREBASE,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in FIREBASE_CORRELATION_RULES
+    ]
+
+    # Resolve each finding's Firebase project id via its Resource (project id).
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    project_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            if isinstance(r.provider_resource_id, str) and r.provider_resource_id:
+                project_by_resource[r.id] = r.provider_resource_id
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_FIREBASE,
+            SecurityActivityEvent.source == "audit_log",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        rule = FIREBASE_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        # Project identity from the Resource, falling back to evidence.project_id.
+        finding_project = (
+            project_by_resource.get(finding.resource_id)
+            if finding.resource_id is not None else None
+        ) or _fb_evidence_str(finding, "project_id")
+        if not finding_project:
+            continue  # no project identity → never a provider-only match
+
+        narrow_key = rule.get("narrow_key")
+        narrow_value = _fb_evidence_str(finding, narrow_key) if narrow_key else None
+
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        for ev in events:
+            if ev.event_type not in rule["activity_types"]:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            # Project guard: require a matching project (never provider-only).
+            if _fb_event_md(ev, "project_id") != finding_project:
+                continue
+            # Optional narrow identity: require it when the finding carries it.
+            if narrow_value is not None and _fb_event_md(ev, narrow_key) != narrow_value:
+                continue
+
+            project_label = f'project "{finding_project}"'
+            correlation = build_firebase_correlation(
+                finding=finding, event=ev, project_label=project_label, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_FIREBASE,
         "findings_scanned": len(findings),
         "events_scanned": len(events),
         "correlations_created": created,

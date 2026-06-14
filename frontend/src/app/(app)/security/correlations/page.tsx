@@ -32,7 +32,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -99,6 +99,14 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "supabase_public_write_risk_activity",
     "supabase_edge_function_risk_activity",
     "supabase_auth_protection_risk_activity",
+  ],
+  firebase: [
+    // M72D — Firebase Configuration Risk × Firebase audit activity.
+    "firebase_firestore_rules_risk_activity",
+    "firebase_database_rules_risk_activity",
+    "firebase_storage_rules_risk_activity",
+    "firebase_anonymous_auth_risk_activity",
+    "firebase_auth_protection_risk_activity",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
@@ -302,7 +310,9 @@ function GenerateBar({
           ? "Correlate Vercel configuration risks with Vercel activity evidence (project, domain, environment-variable, deploy-hook, and deployment activity) for the same project within the review window."
           : provider === "supabase"
             ? "Correlate Supabase configuration risks with Supabase activity evidence (table/RLS, access policy, Edge Function, and auth-configuration activity) for the same table/function/project within the review window."
-            : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+            : provider === "firebase"
+              ? "Correlate Firebase configuration risks with Firebase activity evidence (Firestore/Realtime Database/Storage rules and auth-configuration activity) for the same project within the review window."
+              : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -473,7 +483,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
           ? "the same Vercel project"
           : provider === "supabase"
             ? "the same Supabase table, function, or project"
-            : "the same GitHub repository";
+            : provider === "firebase"
+              ? "the same Firebase project"
+              : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>
