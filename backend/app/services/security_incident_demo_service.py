@@ -49,6 +49,7 @@ from app.services import aws_s3_access_signal_service as s3_spike_svc
 from app.services import aws_vpc_flow_signal_service as vpc_flow_svc
 from app.services import cloudflare_waf_signal_service as cf_waf_signal_svc
 from app.services import vercel_activity_signal_service as ve_sig
+from app.services import supabase_activity_signal_service as sb_sig
 
 logger = logging.getLogger(__name__)
 
@@ -1400,6 +1401,366 @@ def clear_vercel(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
 
     # 2. Vercel demo evidence anchored on the hidden Vercel demo integration.
     integ = get_vercel_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_finding_id.in_(finding_ids))
+        if activity_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids))
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids))
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── Supabase incident demo (M71E) ─────────────────────────────────────────────
+
+SUPABASE_DEMO_INTEGRATION_NAME = "ConfigTrace Supabase incident demo (sample data)"
+SUPABASE_DEMO_CASE_SOURCE = "demo_supabase_incident"
+SUPABASE_DEMO_PROJECT_REF = "demoref_configtrace00"   # sample project ref (not real)
+SUPABASE_DEMO_PROJECT_NAME = "configtrace-demo-db"    # sample project name
+SUPABASE_DEMO_SCHEMA = "public"
+SUPABASE_DEMO_TABLE_CUSTOMERS = "customers"           # sensitive-looking table NAME only
+SUPABASE_DEMO_TABLE_ORDERS = "orders"                 # table NAME only (never row data)
+SUPABASE_DEMO_FUNCTION = "admin-webhook"              # Edge Function NAME only (never source/env)
+
+
+def get_supabase_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == SUPABASE_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_supabase_demo_case(workspace_id: uuid.UUID, db: Session) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == SUPABASE_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_supabase_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_supabase_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_supabase(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Supabase demo incident chain (idempotent). No real sync.
+
+    One coherent Supabase story anchored on the same demo project:
+      Configuration Risks (RLS disabled on a sensitive table + a public/anon
+      SELECT policy on it + a public write policy on another table + an Edge
+      Function with JWT verification disabled + leaked-password protection off)
+      -> Supabase audit activity (rls / policy / edge-function / auth-config
+      changes) for the same table/function/project -> Supabase activity Incident
+      Signals -> Supabase risk x activity correlations -> Case.
+
+    All objects are anchored on a hidden demo integration so ``clear_supabase``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace). Metadata is NAMES only —
+    NEVER database row data, SQL result rows, auth users, emails, JWT secrets,
+    service-role/anon keys, db passwords, tokens, headers, raw API responses,
+    policy expressions, or Edge Function env var values.
+    """
+    existing = _existing_supabase_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -> never shown / never synced).
+    integ = get_supabase_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({"demo": True, "dataset": "supabase_incident_demo_v1"})
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=SUPABASE_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    # 2. Demo Supabase project resource (provider_resource_id == project ref).
+    resource = Resource(
+        integration_id=integ.id,
+        user_id=actor_user_id,
+        provider_resource_type="supabase_project",
+        provider_resource_id=SUPABASE_DEMO_PROJECT_REF,
+        display_name=SUPABASE_DEMO_PROJECT_NAME,
+        is_active=True,
+    )
+    db.add(resource)
+    db.flush()
+
+    # 3. Configuration Risk findings on the same project (names/booleans only).
+    rls_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="supabase",
+        finding_key=f"supabase_rls_disabled:{SUPABASE_DEMO_PROJECT_REF}#{SUPABASE_DEMO_TABLE_CUSTOMERS}#demo",
+        severity="high", title="Demo: Supabase table has Row Level Security disabled",
+        resource_id=resource.id,
+        description="Sample Supabase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "supabase_rls_disabled", "demo": True,
+            "schema": SUPABASE_DEMO_SCHEMA, "table": SUPABASE_DEMO_TABLE_CUSTOMERS,
+        },
+        remediation={"summary": "Enable Row Level Security and add explicit policies."},
+    )
+    select_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="supabase",
+        finding_key=f"supabase_public_select_sensitive_table:{SUPABASE_DEMO_PROJECT_REF}#{SUPABASE_DEMO_TABLE_CUSTOMERS}#demo",
+        severity="high", title="Demo: Supabase public read policy on a sensitive-looking table",
+        resource_id=resource.id,
+        description="Sample Supabase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "supabase_public_select_sensitive_table", "demo": True,
+            "schema": SUPABASE_DEMO_SCHEMA, "table": SUPABASE_DEMO_TABLE_CUSTOMERS,
+            "policy_count": 2,
+        },
+        remediation={"summary": "Scope read access away from the public/anon role."},
+    )
+    write_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="supabase",
+        finding_key=f"supabase_public_write_policy:{SUPABASE_DEMO_PROJECT_REF}#{SUPABASE_DEMO_TABLE_ORDERS}#demo",
+        severity="high", title="Demo: Supabase public write policy on a table",
+        resource_id=resource.id,
+        description="Sample Supabase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "supabase_public_write_policy", "demo": True,
+            "schema": SUPABASE_DEMO_SCHEMA, "table": SUPABASE_DEMO_TABLE_ORDERS,
+            "policy_count": 1,
+        },
+        remediation={"summary": "Restrict write access away from the public/anon role."},
+    )
+    fn_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="supabase",
+        finding_key=f"supabase_edge_function_jwt_disabled:{SUPABASE_DEMO_PROJECT_REF}#{SUPABASE_DEMO_FUNCTION}#demo",
+        severity="high", title="Demo: Supabase Edge Function has JWT verification disabled",
+        resource_id=resource.id,
+        description="Sample Supabase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "supabase_edge_function_jwt_disabled", "demo": True,
+            "function_name": SUPABASE_DEMO_FUNCTION, "verify_jwt": False,
+        },
+        remediation={"summary": "Enable JWT verification unless the function is intentionally public."},
+    )
+    auth_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="supabase",
+        finding_key=f"supabase_auth_protection_missing:{SUPABASE_DEMO_PROJECT_REF}#auth#demo",
+        severity="medium", title="Demo: Supabase leaked-password protection is disabled",
+        resource_id=resource.id,
+        description="Sample Supabase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "supabase_auth_protection_missing", "demo": True,
+            "leaked_password_protection_enabled": False, "mfa_totp_enabled": False,
+        },
+        remediation={"summary": "Enable leaked-password protection (and consider MFA)."},
+    )
+
+    # 4. Supabase audit activity (control-plane changes) for the same project.
+    def _mk_event(event_type, action, **md):
+        meta = {
+            "project_ref": SUPABASE_DEMO_PROJECT_REF,
+            "project_name": SUPABASE_DEMO_PROJECT_NAME,
+            "organization_id": "org_configtrace_demo",
+            "event_action": action,
+            "event_source": "supabase_audit_log",
+        }
+        meta.update(md)
+        norm = activity_svc.normalize_activity_event(
+            provider="supabase", source="audit_log", event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-supabase-{uuid.uuid4().hex[:10]}",
+            actor_id=None, actor_type="user",
+            resource_type=md.get("target_type") or "project",
+            resource_id=md.get("table_name") or md.get("edge_function_name") or SUPABASE_DEMO_PROJECT_REF,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    rls_event = _mk_event(
+        "supabase.rls.updated", "rls.update",
+        target_type="table", schema_name=SUPABASE_DEMO_SCHEMA, table_name=SUPABASE_DEMO_TABLE_CUSTOMERS,
+    )
+    policy_select_event = _mk_event(
+        "supabase.policy.updated", "policy.update",
+        target_type="policy", schema_name=SUPABASE_DEMO_SCHEMA, table_name=SUPABASE_DEMO_TABLE_CUSTOMERS,
+        policy_name="public_read", policy_command="SELECT",
+    )
+    policy_write_event = _mk_event(
+        "supabase.policy.created", "policy.create",
+        target_type="policy", schema_name=SUPABASE_DEMO_SCHEMA, table_name=SUPABASE_DEMO_TABLE_ORDERS,
+        policy_name="public_write", policy_command="INSERT",
+    )
+    fn_event = _mk_event(
+        "supabase.edge_function.updated", "function.update",
+        target_type="edge_function", edge_function_name=SUPABASE_DEMO_FUNCTION,
+    )
+    auth_event = _mk_event(
+        "supabase.auth_config.updated", "auth.config.update",
+        target_type="auth_config", auth_setting_name="leaked_password_protection",
+    )
+
+    # 5. Supabase activity Incident Signals (built directly from each event).
+    signals = []
+    for ev in (rls_event, policy_select_event, policy_write_event, fn_event, auth_event):
+        sig_dict = sb_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db
+            )
+            signals.append(sig)
+
+    # 6. Supabase risk x activity correlations (M71D), built directly.
+    def _add_correlation(finding, event):
+        rule = corr_svc.SUPABASE_CORRELATION_RULES[corr_svc._base_rule(finding.finding_key)]
+        cdict = corr_svc.build_supabase_correlation(
+            finding=finding, event=event,
+            project_label=f'project "{SUPABASE_DEMO_PROJECT_NAME}"', rule=rule,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db
+        )
+        return corr
+
+    rls_corr = _add_correlation(rls_finding, rls_event)
+    select_corr = _add_correlation(select_finding, policy_select_event)
+    write_corr = _add_correlation(write_finding, policy_write_event)
+    fn_corr = _add_correlation(fn_finding, fn_event)
+    auth_corr = _add_correlation(auth_finding, auth_event)
+
+    correlations = [rls_corr, select_corr, write_corr, fn_corr, auth_corr]
+    findings = [rls_finding, select_finding, write_finding, fn_finding, auth_finding]
+    events = [rls_event, policy_select_event, policy_write_event, fn_event, auth_event]
+
+    # 7. Case linking all the evidence (marked demo via metadata.source).
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Supabase incident investigation",
+        summary=(
+            "Demo investigation case. It groups Supabase security evidence: "
+            "configuration risks (Row Level Security disabled on a sensitive "
+            "table, a public read policy on it, a public write policy on another "
+            "table, an Edge Function with JWT verification disabled, and "
+            "leaked-password protection disabled), and Supabase audit activity "
+            "(table/RLS, access-policy, Edge Function, and auth-configuration "
+            "changes) for the same project - turned into review signals and "
+            "correlations. This is a human-reviewed case presenting evidence for "
+            "review and may require review. ConfigTrace does not confirm data "
+            "exposure, unauthorized access, or compromise."
+        ),
+        severity=rls_corr.severity,
+        provider="supabase",
+        metadata={"source": SUPABASE_DEMO_CASE_SOURCE, "repository": SUPABASE_DEMO_PROJECT_NAME},
+        db=db,
+    )
+    for corr in correlations:
+        case_svc.link_object_to_case(case=case, object_type="correlation", object_id=corr.id, actor_user_id=actor_user_id, db=db)
+    for finding in findings:
+        case_svc.link_object_to_case(case=case, object_type="finding", object_id=finding.id, actor_user_id=actor_user_id, db=db)
+    for ev in events:
+        case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=ev.id, actor_user_id=actor_user_id, db=db)
+    for sig in signals:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=sig.id, actor_user_id=actor_user_id, db=db)
+    # Correlation-evidence signals (auto-created by upsert_correlation).
+    for corr in correlations:
+        if corr.linked_signal_id is not None:
+            case_svc.link_object_to_case(case=case, object_type="signal", object_id=corr.linked_signal_id, actor_user_id=actor_user_id, db=db)
+
+    logger.info("supabase_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_supabase(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Supabase demo incident objects (and nothing else)."""
+    # 1. Supabase demo cases (+ their links).
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == SUPABASE_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    # 2. Supabase demo evidence anchored on the hidden Supabase demo integration.
+    integ = get_supabase_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(
