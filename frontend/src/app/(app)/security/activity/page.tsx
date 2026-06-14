@@ -31,6 +31,7 @@ import {
   syncGitHubDependabot,
   syncVercelActivity,
   syncSupabaseActivity,
+  syncFirebaseActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -40,7 +41,22 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase";
+
+// M72B — Firebase / Google Cloud Audit Log control-plane change events.
+const FIREBASE_EVENT_TYPES = [
+  "firebase.project.updated",
+  "firebase.project.event",
+  "firebase.firestore_rules.updated",
+  "firebase.database_rules.updated",
+  "firebase.storage_rules.updated",
+  "firebase.auth_config.updated",
+  "firebase.hosting.updated",
+  "firebase.function.created",
+  "firebase.function.updated",
+  "firebase.function.deleted",
+  "firebase.app.updated",
+];
 
 // M71B — Supabase organization audit-log activity (control-plane config change events).
 const SUPABASE_EVENT_TYPES = [
@@ -176,7 +192,7 @@ const AWS_EVENT_TYPES = [
 ];
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -263,6 +279,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "firebase") {
+        const r = await syncFirebaseActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Firebase audit-log access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -283,7 +307,9 @@ export default function ActivityEventsPage() {
               ? "Could not sync Vercel activity. Please try again."
               : provider === "supabase"
                 ? "Could not sync Supabase activity. Please try again."
-                : "Could not sync GitHub activity. Please try again.",
+                : provider === "firebase"
+                  ? "Could not sync Firebase activity. Please try again."
+                  : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -431,6 +457,7 @@ export default function ActivityEventsPage() {
     provider === "aws" ? AWS_EVENT_TYPES
     : provider === "vercel" ? VERCEL_EVENT_TYPES
     : provider === "supabase" ? SUPABASE_EVENT_TYPES
+    : provider === "firebase" ? FIREBASE_EVENT_TYPES
     : provider === "cloudflare" ? CLOUDFLARE_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
@@ -474,7 +501,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -585,11 +612,13 @@ function SyncBar({
   const isCloudflare = provider === "cloudflare";
   const isVercel = provider === "vercel";
   const isSupabase = provider === "supabase";
+  const isFirebase = provider === "firebase";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
     : isVercel ? "Sync Vercel activity"
-    : isSupabase ? "Sync Supabase activity" : "Sync GitHub activity";
+    : isSupabase ? "Sync Supabase activity"
+    : isFirebase ? "Sync Firebase activity" : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
     : isAws
@@ -598,7 +627,9 @@ function SyncBar({
         ? "Sync Vercel team audit activity (project, domain, environment-variable, deploy-hook, and deployment events) into normalized events. Available when the Vercel token/team supports activity or audit-log access."
         : isSupabase
           ? "Sync Supabase organization audit activity (project, table, RLS, policy, storage-bucket, Edge Function, and auth-config change events) into normalized events. Available when the Supabase token/project supports activity or audit-log access."
-          : "Ingests recent GitHub audit-log activity into normalized events.";
+          : isFirebase
+            ? "Sync Firebase control-plane change activity (Firestore/Realtime Database/Storage rules, auth-config, Cloud Function, Hosting, and project/app changes) into normalized events. Available when the Firebase credentials/project supports audit-log access."
+            : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -708,7 +739,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -732,7 +763,7 @@ function SyncBar({
             Sync GitHub secret scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && (
           <button
             onClick={onSyncGithubCodeScanning}
             disabled={!isAdmin || syncing}
@@ -756,7 +787,7 @@ function SyncBar({
             Sync GitHub code scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && (
           <button
             onClick={onSyncGithubDependabot}
             disabled={!isAdmin || syncing}
@@ -942,6 +973,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
             ? isAdmin
               ? "Run “Sync Supabase activity” above. Available when the Supabase token/project supports activity or audit-log access."
               : "An admin can sync Supabase activity. Available when the Supabase token/project supports activity or audit-log access."
+            : provider === "firebase"
+              ? isAdmin
+                ? "Run “Sync Firebase activity” above. Available when the Firebase credentials/project supports audit-log access."
+                : "An admin can sync Firebase activity. Available when the Firebase credentials/project supports audit-log access."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

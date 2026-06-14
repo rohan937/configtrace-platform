@@ -166,6 +166,10 @@ from app.schemas.security_vercel_activity import (
     VercelActivitySignalGenerateRequest,
     VercelActivitySignalGenerateResponse,
 )
+from app.schemas.security_firebase_activity import (
+    FirebaseActivitySyncRequest,
+    FirebaseActivitySyncResponse,
+)
 from app.schemas.security_supabase_activity import (
     SupabaseActivitySyncRequest,
     SupabaseActivitySyncResponse,
@@ -208,6 +212,7 @@ from app.services import cloudflare_waf_event_ingestion_service
 from app.services import vercel_activity_ingestion_service
 from app.services import vercel_activity_signal_service
 from app.services import supabase_activity_ingestion_service
+from app.services import firebase_activity_ingestion_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
 from app.services import workspace_service
@@ -2267,6 +2272,60 @@ def sync_supabase_activity(
         lookback_hours=lookback_hours, max_events=max_events,
     )
     return SupabaseActivitySyncResponse(**summary)
+
+
+@router.post("/firebase-activity/sync", response_model=FirebaseActivitySyncResponse)
+def sync_firebase_activity(
+    body: Optional[FirebaseActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FirebaseActivitySyncResponse:
+    """Ingest Firebase / Google Cloud Audit Log activity (M72B).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised — Firebase audit logs are read from Cloud Logging
+    and need an IAM role with audit-log read access (the read-only config-sync
+    service account commonly lacks it). Members can view the resulting events via
+    ``GET /security/activity/events?provider=firebase``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "firebase",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="Firebase integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return FirebaseActivitySyncResponse(
+                attempted=False, succeeded=False, provider="firebase",
+                source="audit_log",
+                error_message="No active Firebase integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+    summary = firebase_activity_ingestion_service.ingest_firebase_activity(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_events=max_events,
+    )
+    return FirebaseActivitySyncResponse(**summary)
 
 
 @router.post(

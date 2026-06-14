@@ -744,6 +744,17 @@ export async function syncSupabaseActivity(
   return apiFetch(`/security/supabase-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Trigger Firebase / Google Cloud Audit Log activity ingestion (M72B). Admin/owner
+ * only. Non-fatal: permission/availability limits are reported in the summary
+ * (audit logs are read from Cloud Logging and need audit-log read access).
+ */
+export async function syncFirebaseActivity(
+  token?: string | null,
+): Promise<import("@/types").FirebaseActivitySyncResponse> {
+  return apiFetch(`/security/firebase-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

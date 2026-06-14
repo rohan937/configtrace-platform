@@ -107,6 +107,9 @@ _TIMEOUT = 20.0           # seconds
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = (1.0, 2.0, 4.0)
 
+# Bounded pagination guard for the Cloud Logging audit-entries surface (M72B).
+_MAX_ACTIVITY_PAGES = 10
+
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # OAuth scopes requested.  cloud-platform.read-only covers GCS, Functions,
@@ -1361,6 +1364,139 @@ class FirebaseConnector(BaseConnector):
         return [record]
 
     # ── Public interface ───────────────────────────────────────────────────────
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        project_id: str | None = None,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch Firebase/Google Cloud Audit Log entries — METADATA only (M72B).
+
+        Firebase control-plane change activity surfaces through Google Cloud Audit
+        Logs (Cloud Logging). Reading them needs an IAM role with
+        ``logging.privateLogEntries.list`` (e.g. roles/logging.viewer / Private
+        Logs Viewer) on the project — a permission the read-only config-sync
+        service account commonly lacks. When that access is not granted this
+        raises a typed connector error and the ingestion layer reports
+        ``permission_limited`` and fails soft — it NEVER breaks the existing
+        Firebase configuration sync, and it never scrapes or infers events.
+
+        SECURITY: returns raw audit entries for the ingestion layer to normalize
+        through the metadata allowlist. The connector stores nothing; the
+        ingestion layer keeps only allowlisted, flat fields (service/method/
+        resource NAMES, ids) and NEVER request/response bodies, principal emails,
+        tokens, headers, raw rule source, documents, DB data, or the raw API
+        response.
+
+        Raises:
+            AuthenticationError / ConnectorError / RateLimitError / NetworkError.
+        """
+        creds = self._parse_credentials(credentials)
+        self._validate_sa_fields(creds)
+        pid = project_id or creds.get("project_id") or ""
+        access_token = self._get_access_token(creds)
+
+        cap = max(1, min(int(max_events), 1000))
+        hours = max(1, min(int(lookback_hours or 24), 168))
+        # Filter to Firebase control-plane services' ACTIVITY audit logs only.
+        # ``timestamp`` bounds the window; ``logName`` restricts to audit logs.
+        _SERVICES = (
+            "firebaserules.googleapis.com OR firebasedatabase.googleapis.com OR "
+            "firebasestorage.googleapis.com OR identitytoolkit.googleapis.com OR "
+            "cloudfunctions.googleapis.com OR firebasehosting.googleapis.com OR "
+            "firebase.googleapis.com"
+        )
+        log_filter = (
+            'logName="projects/%s/logs/cloudaudit.googleapis.com%%2Factivity" '
+            'AND protoPayload.serviceName=(%s)' % (pid, _SERVICES)
+        )
+        body: dict[str, Any] = {
+            "resourceNames": [f"projects/{pid}"],
+            "filter": log_filter,
+            "orderBy": "timestamp desc",
+            "pageSize": min(cap, 100),
+        }
+
+        events: list[dict] = []
+        url = "https://logging.googleapis.com/v2/entries:list"
+        for _page in range(_MAX_ACTIVITY_PAGES):
+            data = self._post(access_token, url, body)
+            batch = data.get("entries") if isinstance(data, dict) else None
+            if not isinstance(batch, list):
+                break
+            for ev in batch:
+                events.append(ev)
+                if len(events) >= cap:
+                    return events[:cap]
+            next_token = data.get("nextPageToken") if isinstance(data, dict) else None
+            if not next_token:
+                break
+            body = {**body, "pageToken": next_token}
+
+        return events[:cap]
+
+    def _post(self, access_token: str, url: str, json_body: dict) -> Any:
+        """Authenticated POST with retry/back-off (Cloud Logging entries:list).
+
+        SECURITY: access_token is NEVER logged. Raises the same typed errors as
+        ``_get`` so the ingestion layer can fail soft uniformly.
+        """
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = httpx.post(
+                    url,
+                    json=json_body,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=_TIMEOUT,
+                )
+            except httpx.TimeoutException as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_RETRY_BACKOFF[attempt])
+                    continue
+                raise NetworkError(f"Firebase logging API timed out: {url}") from exc
+            except httpx.RequestError as exc:
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_RETRY_BACKOFF[attempt])
+                    continue
+                raise NetworkError(f"Network error reaching Firebase logging API: {exc}") from exc
+
+            if resp.status_code == 401:
+                raise AuthenticationError(
+                    "Firebase logging API rejected the token (HTTP 401).",
+                    status_code=401,
+                )
+            if resp.status_code in (403, 404):
+                raise ConnectorError(
+                    f"Firebase logging API returned HTTP {resp.status_code} "
+                    "(audit-log read access is required).",
+                    status_code=resp.status_code,
+                )
+            if resp.status_code == 429:
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(float(resp.headers.get("Retry-After", _RETRY_BACKOFF[attempt])))
+                    continue
+                raise RateLimitError("Firebase logging API rate limit hit.")
+            if resp.status_code >= 500:
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(_RETRY_BACKOFF[attempt])
+                    continue
+                raise ConnectorError(
+                    f"Firebase logging API returned HTTP {resp.status_code}.",
+                    status_code=resp.status_code,
+                )
+            if not resp.is_success:
+                raise ConnectorError(
+                    f"Firebase logging API returned HTTP {resp.status_code}.",
+                    status_code=resp.status_code,
+                )
+            try:
+                return resp.json()
+            except Exception as exc:
+                raise ConnectorError("Firebase logging API returned non-JSON.") from exc
+        raise ConnectorError("Firebase logging API request failed (unknown).")
 
     def validate_credentials(self, credentials: dict) -> bool:
         """Validate service account credentials with a minimal API probe.
