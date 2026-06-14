@@ -37,6 +37,114 @@ import { CaseStatusBadge } from "@/components/security/signalDisplay";
 const STATUS_OPTIONS = ["open", "investigating", "confirmed_by_user", "dismissed", "resolved"];
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 
+// M75B — single source of truth for the per-provider demo cards. Each entry
+// renders one admin-only "Try the <Label> demo" banner on this page. Keep
+// description copy short, in the shape:
+//   "Seed a <Label> demo to review <provider-specific risk surface>,
+//    activity evidence, generated signals, correlations, and a case report."
+// The seed/clear button labels are pinned by tests (see M75A): GitHub uses
+// "Load GitHub incident demo" / "Clear demo"; others use
+// "Load <Label> security demo" / "Clear <Label> demo".
+type DemoProvider =
+  | "github" | "aws" | "cloudflare" | "vercel"
+  | "supabase" | "firebase" | "stripe" | "shopify";
+
+interface ProviderDemoCard {
+  provider: DemoProvider;
+  label: string;
+  /** Strong intro sentence (rendered inside <strong>). */
+  intro: string;
+  /** Body copy following the intro — kept short and consistent. */
+  description: string;
+  seedButton: string;
+  clearButton: string;
+  /** Accent color for the seed button. */
+  seedColor: string;
+}
+
+const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
+  {
+    provider: "github",
+    label: "GitHub",
+    intro: "Try the GitHub incident demo:",
+    description:
+      "seed a sample GitHub evidence chain across configuration risk, audit activity, Incident Signals, correlations, and a case report (clearly marked demo, no real GitHub sync).",
+    seedButton: "Load GitHub incident demo",
+    clearButton: "Clear demo",
+    seedColor: "#6b9cf8",
+  },
+  {
+    provider: "aws",
+    label: "AWS",
+    intro: "Try the AWS security demo:",
+    description:
+      "seed a sample AWS evidence chain across configuration risk, provider findings, CloudTrail / S3 / VPC Flow activity, signals, correlations, and a case report (clearly marked demo, no real AWS sync).",
+    seedButton: "Load AWS security demo",
+    clearButton: "Clear AWS demo",
+    seedColor: "#f5a623",
+  },
+  {
+    provider: "cloudflare",
+    label: "Cloudflare",
+    intro: "Try the Cloudflare security demo:",
+    description:
+      "seed a sample Cloudflare evidence chain across configuration risk, audit + WAF/security activity, signals, correlations, and a case report (clearly marked demo, no real Cloudflare sync).",
+    seedButton: "Load Cloudflare security demo",
+    clearButton: "Clear Cloudflare demo",
+    seedColor: "#f6821f",
+  },
+  {
+    provider: "vercel",
+    label: "Vercel",
+    intro: "Try the Vercel security demo:",
+    description:
+      "seed a Vercel demo to review project posture, activity evidence, generated signals, correlations, and a case report (clearly marked demo, no real Vercel sync).",
+    seedButton: "Load Vercel security demo",
+    clearButton: "Clear Vercel demo",
+    seedColor: "#cbd5e1",
+  },
+  {
+    provider: "supabase",
+    label: "Supabase",
+    intro: "Try the Supabase security demo:",
+    description:
+      "seed a Supabase demo to review database access posture, activity evidence, generated signals, correlations, and a case report (clearly marked demo, no real Supabase sync).",
+    seedButton: "Load Supabase security demo",
+    clearButton: "Clear Supabase demo",
+    seedColor: "#3ecf8e",
+  },
+  {
+    provider: "firebase",
+    label: "Firebase",
+    intro: "Try the Firebase security demo:",
+    description:
+      "seed a Firebase demo to review security rules posture, activity evidence, generated signals, correlations, and a case report (clearly marked demo, no real Firebase sync).",
+    seedButton: "Load Firebase security demo",
+    clearButton: "Clear Firebase demo",
+    seedColor: "#ffca28",
+  },
+  {
+    provider: "stripe",
+    label: "Stripe",
+    intro: "Try the Stripe security demo:",
+    description:
+      "seed a Stripe demo to review webhook, payment link, portal, and account configuration evidence, generated signals, correlations, and a case report (clearly marked demo, no real Stripe sync).",
+    seedButton: "Load Stripe security demo",
+    clearButton: "Clear Stripe demo",
+    seedColor: "#cbd5e1",
+  },
+  {
+    provider: "shopify",
+    label: "Shopify",
+    intro: "Try the Shopify security demo:",
+    description:
+      "seed a Shopify demo to review webhook, domain, app-permission, and policy configuration evidence, generated signals, correlations, and a case report (clearly marked demo, no real Shopify sync).",
+    seedButton: "Load Shopify security demo",
+    clearButton: "Clear Shopify demo",
+    seedColor: "#a3e635",
+  },
+];
+
 export default function CasesPage() {
   const { getToken } = useAuth();
   const { isAdmin } = useWorkspace();
@@ -147,240 +255,41 @@ export default function CasesPage() {
     <div>
       <Hero />
 
-      {/* Admin-only: load/clear the GitHub incident-workflow demo (M66.10) */}
-      {isAdmin && (
+      {/* M75B — provider demo cards rendered from PROVIDER_DEMO_CARDS.
+          Each card seeds/clears one provider's incident demo on a hidden
+          demo integration. Copy is review-safe ("evidence for review", no
+          fraud/breach/compromise claims). The shared status note attaches
+          to the first (GitHub) card so it doesn't double-render. */}
+      {isAdmin && PROVIDER_DEMO_CARDS.map((card, idx) => (
         <div
+          key={card.provider}
           className="bg-surface1 border border-border"
           style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
         >
           <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the GitHub incident demo:</strong>{" "}
-            seeds a sample risk → activity → signal → correlation → case (clearly
-            marked demo, no real provider sync).
+            <strong style={{ color: "#e8eaf0" }}>{card.intro}</strong>{" "}
+            {card.description}
           </span>
           <button
-            onClick={() => onSeedDemo("github")}
+            onClick={() => onSeedDemo(card.provider)}
             disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#6b9cf8", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
+            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: card.seedColor, border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
           >
-            {demoBusy ? "Working…" : "Load GitHub incident demo"}
+            {demoBusy ? "Working…" : card.seedButton}
           </button>
           <button
-            onClick={() => onClearDemo("github")}
+            onClick={() => onClearDemo(card.provider)}
             disabled={demoBusy}
             className="bg-surface1 border border-border"
             style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
           >
-            Clear demo
+            {card.clearButton}
           </button>
-          {demoNote && <span style={{ fontSize: "12px", color: "#3ccf7e", width: "100%" }}>{demoNote}</span>}
+          {idx === 0 && demoNote && (
+            <span style={{ fontSize: "12px", color: "#3ccf7e", width: "100%" }}>{demoNote}</span>
+          )}
         </div>
-      )}
-
-      {/* Admin-only: load/clear the AWS incident-workflow demo (M67.4) */}
-      {isAdmin && (
-        <div
-          className="bg-surface1 border border-border"
-          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the AWS security demo:</strong>{" "}
-            seed a sample AWS evidence chain across configuration risk, provider
-            findings, CloudTrail activity, S3 data events, and VPC Flow Logs
-            (clearly marked demo, no real AWS sync).
-          </span>
-          <button
-            onClick={() => onSeedDemo("aws")}
-            disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#f5a623", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            {demoBusy ? "Working…" : "Load AWS security demo"}
-          </button>
-          <button
-            onClick={() => onClearDemo("aws")}
-            disabled={demoBusy}
-            className="bg-surface1 border border-border"
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            Clear AWS demo
-          </button>
-        </div>
-      )}
-
-      {/* Admin-only: load/clear the Cloudflare security demo (M68.7) */}
-      {isAdmin && (
-        <div
-          className="bg-surface1 border border-border"
-          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the Cloudflare security demo:</strong>{" "}
-            seed a sample Cloudflare evidence chain across configuration risk, audit
-            activity, WAF/security activity, Incident Signals, and correlations
-            (clearly marked demo, no real Cloudflare sync).
-          </span>
-          <button
-            onClick={() => onSeedDemo("cloudflare")}
-            disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#f6821f", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            {demoBusy ? "Working…" : "Load Cloudflare security demo"}
-          </button>
-          <button
-            onClick={() => onClearDemo("cloudflare")}
-            disabled={demoBusy}
-            className="bg-surface1 border border-border"
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            Clear Cloudflare demo
-          </button>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div
-          className="bg-surface1 border border-border"
-          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the Vercel security demo:</strong>{" "}
-            seed a Vercel demo to review project posture, activity evidence,
-            generated signals, correlations, and a case report (clearly marked
-            demo, no real Vercel sync).
-          </span>
-          <button
-            onClick={() => onSeedDemo("vercel")}
-            disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#cbd5e1", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            {demoBusy ? "Working…" : "Load Vercel security demo"}
-          </button>
-          <button
-            onClick={() => onClearDemo("vercel")}
-            disabled={demoBusy}
-            className="bg-surface1 border border-border"
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            Clear Vercel demo
-          </button>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div
-          className="bg-surface1 border border-border"
-          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the Supabase security demo:</strong>{" "}
-            seed a Supabase demo to review database access posture, activity
-            evidence, generated signals, correlations, and a case report (clearly
-            marked demo, no real Supabase sync).
-          </span>
-          <button
-            onClick={() => onSeedDemo("supabase")}
-            disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#cbd5e1", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            {demoBusy ? "Working…" : "Load Supabase security demo"}
-          </button>
-          <button
-            onClick={() => onClearDemo("supabase")}
-            disabled={demoBusy}
-            className="bg-surface1 border border-border"
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            Clear Supabase demo
-          </button>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div
-          className="bg-surface1 border border-border"
-          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the Firebase security demo:</strong>{" "}
-            seed a Firebase demo to review security rules posture, activity
-            evidence, generated signals, correlations, and a case report (clearly
-            marked demo, no real Firebase sync).
-          </span>
-          <button
-            onClick={() => onSeedDemo("firebase")}
-            disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#cbd5e1", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            {demoBusy ? "Working…" : "Load Firebase security demo"}
-          </button>
-          <button
-            onClick={() => onClearDemo("firebase")}
-            disabled={demoBusy}
-            className="bg-surface1 border border-border"
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            Clear Firebase demo
-          </button>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div
-          className="bg-surface1 border border-border"
-          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the Stripe security demo:</strong>{" "}
-            seed a Stripe demo to review webhook, payment link, portal, and
-            account activity evidence, generated signals, correlations, and a
-            case report (clearly marked demo, no real Stripe sync).
-          </span>
-          <button
-            onClick={() => onSeedDemo("stripe")}
-            disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#cbd5e1", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            {demoBusy ? "Working…" : "Load Stripe security demo"}
-          </button>
-          <button
-            onClick={() => onClearDemo("stripe")}
-            disabled={demoBusy}
-            className="bg-surface1 border border-border"
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            Clear Stripe demo
-          </button>
-        </div>
-      )}
-
-      {isAdmin && (
-        <div
-          className="bg-surface1 border border-border"
-          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
-        >
-          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
-            <strong style={{ color: "#e8eaf0" }}>Try the Shopify security demo:</strong>{" "}
-            seed a Shopify demo to review webhook, domain, app-permission,
-            policy, activity evidence, generated signals, correlations, and a
-            case report (clearly marked demo, no real Shopify sync).
-          </span>
-          <button
-            onClick={() => onSeedDemo("shopify")}
-            disabled={demoBusy}
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#a3e635", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            {demoBusy ? "Working…" : "Load Shopify security demo"}
-          </button>
-          <button
-            onClick={() => onClearDemo("shopify")}
-            disabled={demoBusy}
-            className="bg-surface1 border border-border"
-            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
-          >
-            Clear Shopify demo
-          </button>
-        </div>
-      )}
+      ))}
 
       {/* Create case */}
       <div
