@@ -48,6 +48,7 @@ PROVIDER_GITHUB = "github"
 PROVIDER_AWS = "aws"
 PROVIDER_CLOUDFLARE = "cloudflare"
 PROVIDER_VERCEL = "vercel"
+PROVIDER_SUPABASE = "supabase"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -165,6 +166,22 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "branch",
         "deployment_id",
         "deployment_target",
+        # Supabase config-risk × activity correlation context (M71D) — safe
+        # project/table/policy/bucket/function/auth NAMES and identifiers only.
+        # NEVER database row data, SQL result rows, auth users, emails, JWT
+        # secrets, service-role/anon keys, db passwords, tokens, headers, raw API
+        # responses, request/response bodies, policy expressions/SQL conditions,
+        # or Edge Function env var values.
+        "project_ref",
+        "organization_id",
+        "schema_name",
+        "table_name",
+        "policy_command",
+        "storage_bucket_id",
+        "storage_bucket_name",
+        "edge_function_id",
+        "edge_function_name",
+        "auth_setting_name",
     }
 )
 
@@ -3858,6 +3875,312 @@ def generate_vercel_correlations(
 
     return {
         "provider": PROVIDER_VERCEL,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+# ── Supabase config-risk × activity correlations (M71D) ──────────────────────
+
+_SUPABASE_REVIEW_NOTE = (
+    "This may require review. ConfigTrace does not confirm data exposure, "
+    "unauthorized access, or compromise."
+)
+
+# Map a Supabase finding's BASE rule key → correlation rule. ``match`` selects the
+# narrowest identity used to join finding ↔ activity event:
+#   "table"    — same schema_name + table_name
+#   "function" — same edge function name (or id)
+#   "auth"     — same project (auth config is project-scoped)
+# Only rules whose finding side actually exists today are included. The public
+# storage-bucket correlation is intentionally absent: the
+# ``supabase_public_storage_bucket`` rule is deferred (no safe Management-API
+# bucket listing), so there is nothing to match against — see report.
+SUPABASE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    "supabase_rls_disabled": {
+        "correlation_type": "supabase_rls_risk_activity",
+        "match": "table",
+        "activity_types": {"supabase.rls.updated", "supabase.table.updated"},
+        "title": "Supabase RLS risk aligned with table activity",
+        "subject": "Supabase RLS risk",
+        "evidence_phrase": "table activity",
+    },
+    "supabase_public_select_sensitive_table": {
+        "correlation_type": "supabase_public_select_risk_activity",
+        "match": "table",
+        "activity_types": {
+            "supabase.policy.created", "supabase.policy.updated",
+            "supabase.policy.deleted", "supabase.table.updated",
+            "supabase.rls.updated",
+        },
+        "title": "Supabase public SELECT risk aligned with policy activity",
+        "subject": "Supabase public SELECT risk",
+        "evidence_phrase": "policy activity",
+    },
+    "supabase_public_write_policy": {
+        "correlation_type": "supabase_public_write_risk_activity",
+        "match": "table",
+        "activity_types": {
+            "supabase.policy.created", "supabase.policy.updated",
+            "supabase.policy.deleted",
+        },
+        "title": "Supabase public write risk aligned with policy activity",
+        "subject": "Supabase public write risk",
+        "evidence_phrase": "policy activity",
+    },
+    "supabase_edge_function_jwt_disabled": {
+        "correlation_type": "supabase_edge_function_risk_activity",
+        "match": "function",
+        "activity_types": {
+            "supabase.edge_function.created", "supabase.edge_function.updated",
+            "supabase.edge_function.deleted",
+        },
+        "title": "Supabase Edge Function risk aligned with function activity",
+        "subject": "Supabase Edge Function risk",
+        "evidence_phrase": "Edge Function activity",
+    },
+    "supabase_auth_protection_missing": {
+        "correlation_type": "supabase_auth_protection_risk_activity",
+        "match": "auth",
+        "activity_types": {"supabase.auth_config.updated"},
+        "title": "Supabase auth protection risk aligned with auth configuration activity",
+        "subject": "Supabase auth protection risk",
+        "evidence_phrase": "auth configuration activity",
+    },
+}
+
+
+def _sb_event_md(ev: SecurityActivityEvent, key: str) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _sb_finding_identity(finding: SecurityFinding, match: str) -> Optional[dict[str, str]]:
+    """Resolve a finding's narrow join identity from its (safe) evidence.
+
+    Returns ``None`` when the finding lacks enough identity to match — never a
+    provider-only fallback.
+    """
+    ev = finding.evidence if isinstance(finding.evidence, dict) else {}
+    if match == "table":
+        table = ev.get("table")
+        if not isinstance(table, str) or not table.strip():
+            return None
+        schema = ev.get("schema")
+        schema = schema.strip() if isinstance(schema, str) and schema.strip() else "public"
+        return {"schema": schema, "table": table.strip()}
+    if match == "function":
+        fn = ev.get("function_name")
+        if not isinstance(fn, str) or not fn.strip():
+            return None
+        return {"function": fn.strip()}
+    if match == "auth":
+        return {}  # project-scoped; the project guard supplies the identity
+    return None
+
+
+def _sb_event_matches(ev: SecurityActivityEvent, match: str, identity: dict[str, str]) -> bool:
+    """Conservative narrow-identity match between an event and a finding identity."""
+    if match == "table":
+        ev_table = _sb_event_md(ev, "table_name")
+        if not ev_table or ev_table != identity["table"]:
+            return False
+        ev_schema = _sb_event_md(ev, "schema_name") or "public"
+        return ev_schema == identity["schema"]
+    if match == "function":
+        target = identity["function"]
+        return (
+            _sb_event_md(ev, "edge_function_name") == target
+            or _sb_event_md(ev, "edge_function_id") == target
+        )
+    if match == "auth":
+        # Auth config is project-scoped — the project guard already enforced a
+        # matching project_ref, so an auth_config.updated event is sufficient.
+        return True
+    return False
+
+
+def build_supabase_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    project_label: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a Supabase correlation dict (not persisted) from a finding + event."""
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['title']} ({project_label})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and {rule['evidence_phrase']} "
+        f"(\"{event.event_type}\") were observed for the same Supabase "
+        f"{project_label} within the review window. {_SUPABASE_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": event.event_type,
+        "event_action": _sb_event_md(event, "event_action"),
+        "project_ref": _sb_event_md(event, "project_ref"),
+        "project_name": _sb_event_md(event, "project_name"),
+        "organization_id": _sb_event_md(event, "organization_id"),
+        "target_type": _sb_event_md(event, "target_type"),
+        "target_id": _sb_event_md(event, "target_id"),
+        "target_name": _sb_event_md(event, "target_name"),
+        "schema_name": _sb_event_md(event, "schema_name"),
+        "table_name": _sb_event_md(event, "table_name"),
+        "policy_name": _sb_event_md(event, "policy_name"),
+        "policy_command": _sb_event_md(event, "policy_command"),
+        "storage_bucket_id": _sb_event_md(event, "storage_bucket_id"),
+        "storage_bucket_name": _sb_event_md(event, "storage_bucket_name"),
+        "edge_function_id": _sb_event_md(event, "edge_function_id"),
+        "edge_function_name": _sb_event_md(event, "edge_function_name"),
+        "auth_setting_name": _sb_event_md(event, "auth_setting_name"),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_SUPABASE,
+        "correlation_key": rule["correlation_type"],
+        "correlation_type": rule["correlation_type"],
+        # Severity tracks the finding (the rules already calibrate it).
+        "severity": finding.severity or "medium",
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_supabase_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active Supabase findings with Supabase audit activity (M71D).
+
+    Conservative + identity-scoped: a finding only matches an event that shares
+    the narrowest available identity (same schema+table / same Edge Function /
+    same project for auth config), with an aligned event_type, inside the
+    finding's review window, AND — when both sides carry a project_ref — the SAME
+    project. Never provider-only. Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_SUPABASE,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in SUPABASE_CORRELATION_RULES
+    ]
+
+    # Resolve each finding's Supabase project ref via its Resource (project ref).
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    project_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            if isinstance(r.provider_resource_id, str) and r.provider_resource_id:
+                project_by_resource[r.id] = r.provider_resource_id
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_SUPABASE,
+            SecurityActivityEvent.source == "audit_log",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        rule = SUPABASE_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        match = rule["match"]
+        identity = _sb_finding_identity(finding, match)
+        if identity is None:
+            continue  # not enough identity → never a provider-only match
+        finding_project = (
+            project_by_resource.get(finding.resource_id)
+            if finding.resource_id is not None else None
+        )
+        # The auth-config join is project-scoped: require a known project ref.
+        if match == "auth" and not finding_project:
+            continue
+
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        for ev in events:
+            if ev.event_type not in rule["activity_types"]:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            # Project guard: never correlate across different projects.
+            ev_project = _sb_event_md(ev, "project_ref")
+            if finding_project and ev_project and ev_project != finding_project:
+                continue
+            if match == "auth" and ev_project != finding_project:
+                continue  # auth identity IS the project — require an exact match
+            if not _sb_event_matches(ev, match, identity):
+                continue
+
+            project_label = (
+                _sb_event_md(ev, "project_name")
+                or _sb_event_md(ev, "project_ref")
+                or finding_project
+                or "project"
+            )
+            project_label = f"project \"{project_label}\""
+            correlation = build_supabase_correlation(
+                finding=finding, event=ev, project_label=project_label, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_SUPABASE,
         "findings_scanned": len(findings),
         "events_scanned": len(events),
         "correlations_created": created,

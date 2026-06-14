@@ -32,7 +32,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -91,6 +91,14 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "vercel_env_var_risk_activity",
     "vercel_deploy_hook_risk_activity",
     "vercel_deployment_protection_activity",
+  ],
+  supabase: [
+    // M71D — Supabase Configuration Risk × Supabase audit activity.
+    "supabase_rls_risk_activity",
+    "supabase_public_select_risk_activity",
+    "supabase_public_write_risk_activity",
+    "supabase_edge_function_risk_activity",
+    "supabase_auth_protection_risk_activity",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
@@ -292,7 +300,9 @@ function GenerateBar({
         ? "Correlate AWS configuration risks with GuardDuty and Access Analyzer findings for the same bucket or IAM principal."
         : provider === "vercel"
           ? "Correlate Vercel configuration risks with Vercel activity evidence (project, domain, environment-variable, deploy-hook, and deployment activity) for the same project within the review window."
-          : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+          : provider === "supabase"
+            ? "Correlate Supabase configuration risks with Supabase activity evidence (table/RLS, access policy, Edge Function, and auth-configuration activity) for the same table/function/project within the review window."
+            : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -461,7 +471,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
         ? "the same Cloudflare zone, host, or risk area"
         : provider === "vercel"
           ? "the same Vercel project"
-          : "the same GitHub repository";
+          : provider === "supabase"
+            ? "the same Supabase table, function, or project"
+            : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>
