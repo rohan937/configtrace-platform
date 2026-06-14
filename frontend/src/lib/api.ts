@@ -769,6 +769,23 @@ export async function syncStripeActivity(
   return apiFetch(`/security/stripe-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Sync Shopify configuration-change activity into the activity timeline (M74B).
+ *
+ * Admin-gated. Members can view the resulting events via the activity list.
+ * Non-fatal: permission/availability limits are reported in the summary
+ * (Shopify Events API access requires the Admin API token to grant the right
+ * read scopes). Strict subject-type allowlist applied at the API level —
+ * Webhook, Shop, and Domain subject types only; customer / order / checkout /
+ * cart / payment / fulfillment / refund / inventory / staff subject types are
+ * never requested.
+ */
+export async function syncShopifyActivity(
+  token?: string | null,
+): Promise<import("@/types").ShopifyActivitySyncResponse> {
+  return apiFetch(`/security/shopify-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

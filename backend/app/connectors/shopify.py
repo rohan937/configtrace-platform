@@ -780,6 +780,106 @@ class ShopifyConnector(BaseConnector):
         )
         return records
 
+    # ── Activity / Events API surface (M74B) ──────────────────────────────────
+    #
+    # Shopify surfaces admin-side configuration-change activity through the
+    # public ``/admin/api/{ver}/events.json`` REST API. ConfigTrace ingests
+    # ONLY a strict subject_type allowlist (Webhook, Shop, Domain) — Order /
+    # Customer / Checkout / DraftOrder / Cart / Transaction / Refund /
+    # Fulfillment / Product / ProductVariant / InventoryLevel events are
+    # NEVER requested. When the access token lacks the required scope this
+    # fails soft (the ingestion layer reports ``permission_limited`` and the
+    # existing Shopify configuration sync is NEVER broken). The connector
+    # itself stores nothing; the ingestion layer keeps only allowlisted, flat
+    # fields and NEVER raw event payloads, raw API responses, customer PII /
+    # emails, orders, carts, payment method data, card data, tokens, signing
+    # secrets, authorization headers, request/response bodies, bank-account
+    # details, tax IDs, or staff names/emails.
+
+    # Strict subject_type allowlist (configuration changes only). Customer /
+    # order / payment / fulfillment / inventory subject types are deliberately
+    # EXCLUDED — they are never requested at the API level, and the ingestion
+    # layer drops them defense-in-depth if they ever slipped through.
+    _ALLOWED_EVENT_SUBJECT_TYPES: tuple[str, ...] = (
+        "Webhook",
+        "Shop",
+        "Domain",
+    )
+
+    # Bounded pagination guard for the Shopify Events API.
+    _MAX_ACTIVITY_PAGES = 10
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch Shopify configuration-change events — metadata only (M74B).
+
+        Strict subject_type allowlist applied at the API level. Customer /
+        order / payment / checkout / fulfillment events are deliberately
+        EXCLUDED — they are never requested, scraped, or inferred from any
+        other surface.
+
+        SECURITY: returns raw event dicts for the ingestion layer to normalize
+        through the metadata allowlist. The connector stores nothing; the
+        ingestion layer keeps only allowlisted, flat fields and NEVER raw
+        event payloads, raw API responses, customer PII / emails, orders,
+        carts, payment method data, card data, OAuth tokens, signing secrets,
+        authorization headers, request/response bodies, bank-account details,
+        tax IDs, or staff names/emails.
+
+        Raises ``AuthenticationError`` for an invalid token; ``ConnectorError``
+        for permission or API errors so the ingestion layer can fail soft.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cap = max(1, min(int(max_events), 1000))
+        hours = max(1, min(int(lookback_hours or 24), 168))
+        try:
+            created_floor = datetime.now(timezone.utc) - timedelta(hours=hours)
+            created_at_min = created_floor.isoformat()
+        except Exception:
+            created_at_min = None
+
+        per_page = min(cap, 250)  # Shopify hard cap per page.
+        params: dict[str, Any] = {
+            "limit": per_page,
+            # The ``filter`` param on /events.json is a comma-joined list of
+            # CapitalCase subject types to retain. This is our API-level
+            # allowlist (defense-in-depth re-check happens in the ingestion
+            # layer's normalizer).
+            "filter": ",".join(self._ALLOWED_EVENT_SUBJECT_TYPES),
+        }
+        if created_at_min:
+            params["created_at_min"] = created_at_min
+
+        events: list[dict] = []
+        since_id: int = 0
+        for _page in range(self._MAX_ACTIVITY_PAGES):
+            page_params = dict(params)
+            if since_id:
+                page_params["since_id"] = since_id
+            data = self._get(credentials, "/events.json", params=page_params)
+            batch = data.get("events") if isinstance(data, dict) else None
+            if not isinstance(batch, list) or not batch:
+                break
+            for ev in batch:
+                events.append(ev)
+                if len(events) >= cap:
+                    return events[:cap]
+            # since_id pagination: advance past the largest id in the batch.
+            try:
+                last_id = max(int(e.get("id") or 0) for e in batch if isinstance(e, dict))
+            except (ValueError, TypeError):
+                last_id = 0
+            if not last_id or last_id <= since_id:
+                break
+            since_id = last_id
+        return events[:cap]
+
     def validate_credentials(self, credentials: dict) -> bool:
         """Validate Shopify credentials via GET /admin/api/{version}/shop.json.
 

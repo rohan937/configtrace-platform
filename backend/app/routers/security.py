@@ -184,6 +184,10 @@ from app.schemas.security_stripe_activity import (
     StripeActivitySignalGenerateRequest,
     StripeActivitySignalGenerateResponse,
 )
+from app.schemas.security_shopify_activity import (
+    ShopifyActivitySyncRequest,
+    ShopifyActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -223,6 +227,7 @@ from app.services import supabase_activity_ingestion_service
 from app.services import firebase_activity_ingestion_service
 from app.services import stripe_activity_ingestion_service
 from app.services import stripe_activity_signal_service
+from app.services import shopify_activity_ingestion_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -2420,6 +2425,65 @@ def sync_stripe_activity(
         lookback_hours=lookback_hours, max_events=max_events,
     )
     return StripeActivitySyncResponse(**summary)
+
+
+@router.post("/shopify-activity/sync", response_model=ShopifyActivitySyncResponse)
+def sync_shopify_activity(
+    body: Optional[ShopifyActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ShopifyActivitySyncResponse:
+    """Ingest Shopify configuration-change activity from the Events API (M74B).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised — Shopify Events API access requires the Admin API
+    token to grant the appropriate read scopes (a restricted token without them
+    cannot read these events). Members can view the resulting events via
+    ``GET /security/activity/events?provider=shopify``.
+
+    Strict configuration-event allowlist applied at the API level via the
+    Shopify ``filter`` parameter: ``Webhook``, ``Shop``, and ``Domain`` subject
+    types only. Customer / order / checkout / cart / payment / fulfillment /
+    refund / inventory / staff subject types are NEVER requested.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "shopify",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="Shopify integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return ShopifyActivitySyncResponse(
+                attempted=False, succeeded=False, provider="shopify",
+                source="shopify_events",
+                error_message="No active Shopify integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+    summary = shopify_activity_ingestion_service.ingest_shopify_activity(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_events=max_events,
+    )
+    return ShopifyActivitySyncResponse(**summary)
 
 
 @router.post(
