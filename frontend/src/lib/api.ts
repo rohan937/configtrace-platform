@@ -745,6 +745,16 @@ export async function generateCloudflareWafSignals(
   return apiFetch(`/security/cloudflare-waf-events/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Vercel activity Incident Signals (M70C). Admin/owner only.
+ * Idempotent — re-running creates no duplicates.
+ */
+export async function generateVercelActivitySignals(
+  token?: string | null,
+): Promise<import("@/types").VercelActivitySignalGenerateResponse> {
+  return apiFetch(`/security/vercel-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

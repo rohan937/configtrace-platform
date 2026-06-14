@@ -125,6 +125,22 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "policy_arn",         # attached policy ARN (safe label, already stored)
         "chain_pattern",      # which chain pattern fired (e.g. user_create_privilege_grant)
         "chain_window_minutes",  # configured sequence window (int)
+        # Vercel activity signal fields (M70C) — safe control-plane change summary.
+        # NEVER env var values, deploy hook URLs, tokens, headers, or actor emails.
+        "project_id",         # Vercel project id (prj_xxx)
+        "project_name",       # Vercel project slug/name
+        "team_id",            # Vercel team id (when present)
+        "event_action",       # raw Vercel audit action string (e.g. "env.create")
+        "event_source",       # originating activity source ("vercel_audit_log")
+        "target_type",        # affected object type (project/domain/env/deploy_hook/deployment)
+        "target_id",          # affected object id (never a secret)
+        "target_name",        # affected object name (never a secret value)
+        "domain",             # custom domain name involved in the event
+        "env_var_key",        # env var KEY name only (NEVER the value)
+        "deploy_hook_name",   # deploy hook user-visible name (NEVER the URL)
+        "branch",             # git branch / ref involved in the event
+        "deployment_id",      # Vercel deployment id (dpl_xxx)
+        "deployment_target",  # "production" / "preview" / "staging"
     }
 )
 

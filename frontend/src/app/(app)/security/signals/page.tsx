@@ -33,6 +33,7 @@ import {
   generateGitHubSecretScanningSignals,
   generateGitHubCodeScanningSignals,
   generateGitHubDependabotSignals,
+  generateVercelActivitySignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -47,10 +48,11 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
-type Provider = "github" | "aws" | "cloudflare";
+type Provider = "github" | "aws" | "cloudflare" | "vercel";
 
 const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity", "cloudflare_waf_activity_signal"];
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare" };
+const VERCEL_SIGNAL_TYPES = ["vercel_activity_signal"];
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
@@ -142,12 +144,23 @@ export default function IncidentSignalsPage() {
     setGenResult(null);
     try {
       const token = await getToken();
-      const res =
-        provider === "cloudflare"
-          ? await generateCloudflareSignals(token)
-          : provider === "aws"
-            ? await generateAwsIncidentSignals(token)
-            : await generateSecurityIncidentSignals({ provider: "github" }, token);
+      let res;
+      if (provider === "vercel") {
+        const v = await generateVercelActivitySignals(token);
+        res = {
+          provider: v.provider,
+          activity_events_scanned: v.events_scanned,
+          signals_created: v.signals_created,
+          signals_skipped: v.signals_skipped,
+        };
+      } else {
+        res =
+          provider === "cloudflare"
+            ? await generateCloudflareSignals(token)
+            : provider === "aws"
+              ? await generateAwsIncidentSignals(token)
+              : await generateSecurityIncidentSignals({ provider: "github" }, token);
+      }
       setGenResult(res);
       await load();
     } catch {
@@ -386,14 +399,14 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
         <Select
           label="Signal type"
           value={signalType}
           onChange={setSignalType}
-          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
         />
       </div>
 
@@ -512,12 +525,17 @@ function GenerateBar({
   const isAws = provider === "aws";
   const isCloudflare = provider === "cloudflare";
   const isGithub = provider === "github";
-  const label = isCloudflare ? "Generate Cloudflare signals" : isAws ? "Generate AWS signals" : "Generate signals";
+  const isVercel = provider === "vercel";
+  const label = isCloudflare ? "Generate Cloudflare signals"
+    : isAws ? "Generate AWS signals"
+    : isVercel ? "Generate Vercel activity signals" : "Generate signals";
   const desc = isCloudflare
     ? "Generate review signals from Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity)."
     : isAws
       ? "Generate Incident Signals from provider-reported AWS security findings (GuardDuty / Access Analyzer / Security Hub), or review signals from CloudTrail IAM/KMS/S3 management activity, S3 object-level data events, or VPC Flow Log network activity."
-      : "Scans recent GitHub audit activity events and creates review signals.";
+      : isVercel
+        ? "Generate review signals from Vercel activity evidence (project, domain, environment-variable, deploy-hook, and deployment changes)."
+        : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -906,10 +924,15 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
           (isAdmin
             ? " Use “Generate Cloudflare signals” / “Generate Cloudflare WAF signals” above once events have been ingested."
             : " A workspace admin can sync Cloudflare events and generate Cloudflare signals.")
-        : "Run GitHub activity sync first, then generate signals." +
-          (isAdmin
-            ? " Use “Generate signals” above once activity has been ingested."
-            : " A workspace admin can ingest activity and generate signals.");
+        : provider === "vercel"
+          ? "Sync Vercel activity first, then generate Vercel activity signals." +
+            (isAdmin
+              ? " Use “Generate Vercel activity signals” above once activity has been ingested."
+              : " A workspace admin can sync Vercel activity and generate signals.")
+          : "Run GitHub activity sync first, then generate signals." +
+            (isAdmin
+              ? " Use “Generate signals” above once activity has been ingested."
+              : " A workspace admin can ingest activity and generate signals.");
   return (
     <div
       className="bg-surface1 border border-border"
