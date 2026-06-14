@@ -391,7 +391,39 @@ _SHOPIFY = ProviderCapability(
 )
 
 
-# Public ordered list — canonical provider order (M75A).
+_AZURE = ProviderCapability(
+    provider="azure",
+    label="Azure",
+    category="cloud",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=True,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Azure drift foundation (M77A). Covers subscription metadata, resource groups, "
+        "network security groups, storage accounts, and Key Vaults. Security rules, "
+        "activity ingestion, signals, correlations, and demo will follow in M77B–M77G."
+    ),
+)
+
+
+# Public ordered list — canonical 8-provider dual-stack matrix (M75A/M75C).
+# Azure is tracked separately in PROVIDER_CAPABILITIES_PARTIAL below because
+# it has not yet reached dual-stack maturity (security stack not started).
 PROVIDER_CAPABILITIES: list[ProviderCapability] = [
     _GITHUB,
     _AWS,
@@ -403,8 +435,16 @@ PROVIDER_CAPABILITIES: list[ProviderCapability] = [
     _SHOPIFY,
 ]
 
-# Fast lookup by provider key.
-_BY_KEY: dict[str, ProviderCapability] = {p.provider: p for p in PROVIDER_CAPABILITIES}
+# Partial / in-progress providers — not counted in the canonical 8-provider matrix.
+PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
+    _AZURE,
+]
+
+# Fast lookup by provider key — includes both complete and partial providers.
+_BY_KEY: dict[str, ProviderCapability] = {
+    p.provider: p
+    for p in PROVIDER_CAPABILITIES + PROVIDER_CAPABILITIES_PARTIAL
+}
 
 
 def get_provider_capability(provider: str) -> ProviderCapability | None:

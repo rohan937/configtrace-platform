@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. All 8 providers are dual-stack complete.{" "}
+          demo cases. 8 providers are dual-stack complete; Azure is M77A in-progress (drift foundation only).{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -354,6 +354,7 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
   { provider: "firebase",   label: "Firebase",    category: "database / backend", drift: true, security: true, signals: true, correlations: true, demo: true },
   { provider: "stripe",     label: "Stripe",      category: "payments",           drift: true, security: true, signals: true, correlations: true, demo: true },
   { provider: "shopify",    label: "Shopify",     category: "ecommerce",          drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "azure",      label: "Azure",       category: "cloud",              drift: true, security: false, signals: false, correlations: false, demo: false },
 ];
 
 function Dot({ on }: { on: boolean }) {
