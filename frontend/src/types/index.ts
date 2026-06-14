@@ -2438,3 +2438,44 @@ export interface ProviderCapabilityMatrix {
   providers: ProviderCapability[];
   summary: ProviderCapabilityMatrixSummary;
 }
+
+// M76 — Dual-stack provider expansion framework types.
+export interface ExpansionStage {
+  stage_key: string;
+  label: string;
+  order: number;
+  description: string;
+  backend_touchpoints: string[];
+  frontend_touchpoints: string[];
+  required_tests: string[];
+  privacy_requirements: string[];
+  claim_discipline_requirements: string[];
+  capability_matrix_update: string;
+}
+export interface RecommendedNextProvider {
+  provider: string;
+  label: string;
+  category: string;
+  why_high_fit: string;
+  drift_surfaces: string[];
+  security_surfaces: string[];
+  sensitive_data_to_avoid: string[];
+  first_milestone_name: string;
+  notes: string;
+}
+export interface ProviderExpansionFramework {
+  template: {
+    stages: ExpansionStage[];
+    universal_privacy_requirements: string[];
+    forbidden_claim_phrases: string[];
+    required_safe_phrases: string[];
+  };
+  recommended_next_providers: RecommendedNextProvider[];
+  summary: {
+    stage_count: number;
+    recommended_provider_count: number;
+    next_provider: string | null;
+    next_milestone: string | null;
+    planned_next_stage: string;
+  };
+}

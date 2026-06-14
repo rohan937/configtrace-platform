@@ -797,6 +797,18 @@ export async function getProviderCapabilityMatrix(
   return apiFetch("/security/provider-capabilities", { token });
 }
 
+/**
+ * Fetch the dual-stack provider expansion framework (M76). Read access —
+ * any workspace member may call this. Returns the 6-stage template,
+ * recommended next-provider queue (starting with Twilio), and
+ * claim-discipline / privacy requirements every future provider must satisfy.
+ */
+export async function getProviderExpansionFramework(
+  token?: string | null,
+): Promise<import("@/types").ProviderExpansionFramework> {
+  return apiFetch("/security/provider-expansion-framework", { token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

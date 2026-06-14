@@ -262,6 +262,39 @@ export default function SecurityDemoScriptPage() {
         </p>
       </div>
 
+      {/* M76 — Next-provider expansion template */}
+      <SectionLabel>Next-provider expansion template</SectionLabel>
+      <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "14px 16px", marginBottom: "24px" }}>
+        <p style={{ margin: "0 0 10px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
+          Future providers should ship through the same dual-stack path:{" "}
+          <span style={{ color: "#e8eaf0", fontWeight: 500 }}>
+            drift foundation → security rules → activity ingestion → signals → correlations → demo + QA.
+          </span>
+          {" "}Each stage has canonical backend/frontend touchpoints, required tests, privacy constraints, and claim-discipline requirements.
+        </p>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "12px" }}>
+          {EXPANSION_STAGES_BRIEF.map((s, i) => (
+            <span key={s} style={{ fontSize: "11.5px", fontWeight: 500, color: "#6b9cf8", background: "#0e1422", border: "1px solid #1e2a44", borderRadius: "6px", padding: "3px 10px", whiteSpace: "nowrap" }}>
+              {i + 1}. {s}
+            </span>
+          ))}
+        </div>
+        <p style={{ margin: "0 0 6px", fontSize: "12px", color: "#8b90a0" }}>
+          <strong style={{ color: "#e8eaf0" }}>Recommended next providers</strong> — in suggested onboarding order:
+        </p>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          {NEXT_PROVIDERS_BRIEF.map(({ label, category, milestone }) => (
+            <div key={label} style={{ fontSize: "12px", background: "#1e2030", border: "1px solid #2a2d38", borderRadius: "8px", padding: "6px 12px" }}>
+              <div style={{ color: "#e8eaf0", fontWeight: 600 }}>{label}</div>
+              <div style={{ color: "#565b6e", fontSize: "11px" }}>{category} · {milestone}</div>
+            </div>
+          ))}
+        </div>
+        <p style={{ margin: "10px 0 0", fontSize: "11px", color: "#565b6e" }}>
+          See <code style={{ color: "#8b90a0" }}>GET /security/provider-expansion-framework</code> for the full stage checklist, privacy requirements, and provider queue.
+        </p>
+      </div>
+
       {/* 6. Quick links */}
       <SectionLabel>Quick links</SectionLabel>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
@@ -279,6 +312,25 @@ export default function SecurityDemoScriptPage() {
     </div>
   );
 }
+
+// M76 — Expansion template stage labels (ordered, short names for the pill row).
+const EXPANSION_STAGES_BRIEF: string[] = [
+  "Drift Foundation",
+  "Security Rules",
+  "Activity Ingestion",
+  "Signals",
+  "Correlations",
+  "Demo + QA",
+];
+
+// M76 — Recommended next providers (compact display data).
+const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
+  { label: "Twilio",    category: "communications", milestone: "M77A" },
+  { label: "SendGrid",  category: "communications", milestone: "M77B" },
+  { label: "Auth0",     category: "auth",           milestone: "M78A" },
+  { label: "Datadog",   category: "observability",  milestone: "M79A" },
+  { label: "Clerk",     category: "auth",           milestone: "M80A" },
+];
 
 // M75C — Static capability table data. Source of truth lives in the backend
 // service (provider_capability_matrix_service.py) and the GET

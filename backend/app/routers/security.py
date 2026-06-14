@@ -59,6 +59,7 @@ from app.schemas.security_demo_data import (
 )
 from app.schemas.security_coverage import SecurityCoverageResponse
 from app.services import provider_capability_matrix_service as capability_svc
+from app.services import provider_expansion_framework as expansion_svc
 from app.schemas.security_beta_event import (
     SecurityBetaEventCreate,
     SecurityBetaEventResponse,
@@ -735,6 +736,25 @@ def get_provider_capabilities(
     """
     _current_workspace_id(current_user, db)  # authenticate workspace membership
     return capability_svc.get_matrix()
+
+
+@router.get("/provider-expansion-framework")
+def get_provider_expansion_framework(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return the dual-stack provider expansion framework (M76).
+
+    Read-only — any authenticated workspace member may call this. Returns
+    the 6-stage provider expansion template, the recommended next-provider
+    queue (starting with Twilio), and claim-discipline / privacy requirements
+    every future provider must satisfy.
+
+    This is static metadata only — it never evaluates live provider state,
+    never calls external APIs, and never changes DB records.
+    """
+    _current_workspace_id(current_user, db)  # authenticate workspace membership
+    return expansion_svc.get_framework()
 
 
 # ── Beta usage instrumentation (M63.1) ────────────────────────────────────────
