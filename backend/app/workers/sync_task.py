@@ -275,6 +275,11 @@ def sync_integration(
 
                 connector = ShopifyConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "azure":
+                from app.connectors.azure import AzureConnector
+
+                connector = AzureConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",
