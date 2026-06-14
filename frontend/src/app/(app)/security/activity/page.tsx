@@ -34,6 +34,7 @@ import {
   syncFirebaseActivity,
   syncStripeActivity,
   syncShopifyActivity,
+  syncAzureActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -43,7 +44,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -216,9 +217,33 @@ const AWS_EVENT_TYPES = [
   "aws.vpc.flow.reject",
   "aws.vpc.flow.event",
 ];
+// M77D — Azure Activity Log control-plane management events.
+const AZURE_EVENT_TYPES = [
+  "azure.nsg.updated",
+  "azure.nsg.deleted",
+  "azure.nsg_rule.updated",
+  "azure.nsg_rule.deleted",
+  "azure.storage_account.updated",
+  "azure.storage_account.deleted",
+  "azure.key_vault.updated",
+  "azure.key_vault.deleted",
+  "azure.role_assignment.created",
+  "azure.role_assignment.deleted",
+  "azure.app_service.updated",
+  "azure.app_service.deleted",
+  "azure.app_service_config.updated",
+  "azure.sql_server.updated",
+  "azure.sql_server.deleted",
+  "azure.sql_firewall_rule.updated",
+  "azure.sql_firewall_rule.deleted",
+  "azure.aks_cluster.updated",
+  "azure.aks_cluster.deleted",
+  "azure.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -329,6 +354,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "azure") {
+        const r = await syncAzureActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Azure Activity Log access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -355,7 +388,9 @@ export default function ActivityEventsPage() {
                     ? "Could not sync Stripe activity. Please try again."
                     : provider === "shopify"
                       ? "Could not sync Shopify activity. Please try again."
-                      : "Could not sync GitHub activity. Please try again.",
+                      : provider === "azure"
+                        ? "Could not sync Azure Activity Log. Please try again."
+                        : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -507,6 +542,7 @@ export default function ActivityEventsPage() {
     : provider === "stripe" ? STRIPE_EVENT_TYPES
     : provider === "shopify" ? SHOPIFY_EVENT_TYPES
     : provider === "cloudflare" ? CLOUDFLARE_EVENT_TYPES
+    : provider === "azure" ? AZURE_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -549,7 +585,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -663,6 +699,7 @@ function SyncBar({
   const isFirebase = provider === "firebase";
   const isStripe = provider === "stripe";
   const isShopify = provider === "shopify";
+  const isAzure = provider === "azure";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -670,7 +707,8 @@ function SyncBar({
     : isSupabase ? "Sync Supabase activity"
     : isFirebase ? "Sync Firebase activity"
     : isStripe ? "Sync Stripe activity"
-    : isShopify ? "Sync Shopify activity" : "Sync GitHub activity";
+    : isShopify ? "Sync Shopify activity"
+    : isAzure ? "Sync Azure activity" : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
     : isAws
@@ -685,7 +723,9 @@ function SyncBar({
               ? "Sync review-safe Stripe configuration activity such as webhook, payment link, portal, and account setting changes. Available when the Stripe key has Events read access. Customer / payment / charge / invoice events are deliberately excluded."
               : isShopify
                 ? "Sync review-safe Shopify configuration activity such as webhook, app scope, domain, policy, and shop setting changes. Available when the Shopify Admin API token has Events read scope. Customer / order / checkout / cart / payment / fulfillment events are deliberately excluded."
-                : "Ingests recent GitHub audit-log activity into normalized events.";
+                : isAzure
+                  ? "Sync review-safe Azure Activity Log evidence for configuration changes across NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS. Requires the service principal to have the Reader role on the subscription. Only WRITE/DELETE management events are ingested — READ/LIST, data-plane, diagnostic, VM, and application logs are excluded."
+                  : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1041,6 +1081,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Run “Sync Shopify activity” above. Available when the Shopify Admin API token has Events read scope. Customer / order / checkout / cart / payment / fulfillment events are deliberately excluded."
                 : "An admin can sync Shopify activity. Available when the Shopify Admin API token has Events read scope. Customer / order / checkout / cart / payment / fulfillment events are deliberately excluded."
+            : provider === "azure"
+              ? isAdmin
+                ? "Run Sync Azure activity above to ingest Azure Activity Log management events. Requires the service principal to have the Reader role on the subscription."
+                : "An admin can sync Azure Activity Log management events. Requires the service principal to have the Reader role on the subscription."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

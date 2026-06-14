@@ -240,6 +240,36 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "domain_id",                 # Shopify shop-domain id (an identifier, not a secret)
         "domain_host",               # shop-domain host (a NAME, never DNS records)
         "policy_type",               # store policy type (e.g. "refund_policy") — a NAME, not body
+        # Azure Activity Log fields (M77D) — control-plane management events ONLY.
+        # NEVER the raw event payload (``properties``), caller email/UPN/name,
+        # principal ID/object-ID, authorization/claims objects, httpRequest body,
+        # correlation ID raw value, storage keys, SAS tokens, connection strings,
+        # Key Vault secret names/values, certificate material, key material,
+        # database contents, VM user data, app setting names/values, env var values,
+        # or any customer / workload data.
+        "subscription_id",           # Azure subscription GUID (an opaque identifier, not a secret)
+        "resource_group",            # resource group name (infra identifier)
+        "resource_id",               # full ARM resource ID path (infra identifier)
+        "resource_type",             # ARM resource type (e.g. Microsoft.Network/networkSecurityGroups)
+        "operation_name",            # ARM operationName (e.g. "Microsoft.Network/networkSecurityGroups/write")
+        "operation_family",          # operation namespace+resource (e.g. "Microsoft.Network/networkSecurityGroups")
+        "operation_action",          # operation verb (e.g. "write", "delete")
+        "azure_event_id",            # eventDataId UUID (opaque stable event identifier)
+        "azure_correlation_id_hash", # salted hash of correlationId (NEVER the raw GUID)
+        "scope_type",                # role assignment scope category (subscription/resource_group)
+        "role_definition_name",      # resolved built-in role name (Owner/Contributor/…; not PII)
+        "principal_type",            # principalType category string (User/Group/ServicePrincipal; not PII)
+        "nsg_name",                  # NSG resource name (infra identifier)
+        "nsg_rule_name",             # NSG security rule name (infra identifier)
+        "storage_account_name",      # Storage Account resource name (infra identifier)
+        "key_vault_name",            # Key Vault resource name (infra identifier)
+        "app_service_name",          # App Service resource name (infra identifier)
+        "sql_server_name",           # SQL Server resource name (infra identifier)
+        "sql_firewall_rule_name",    # SQL firewall rule resource name (infra identifier)
+        "aks_cluster_name",          # AKS managed cluster resource name (infra identifier)
+        "status",                    # operation status (e.g. "Succeeded") — not PII
+        "sub_status",                # operation sub-status (e.g. "Created") — not PII
+        "category",                  # Activity Log event category (e.g. "Administrative") — not PII
     }
 )
 

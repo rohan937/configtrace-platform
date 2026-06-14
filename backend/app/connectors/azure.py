@@ -67,6 +67,7 @@ are ever performed by this connector).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -116,12 +117,50 @@ _API_VERSION_ROLE_ASSIGNMENTS = "2022-04-01"
 _API_VERSION_APP_SERVICE = "2023-01-01"
 _API_VERSION_SQL_SERVER = "2021-11-01"
 _API_VERSION_AKS = "2023-10-01"
+# M77D addition — Azure Activity Log (management events)
+_API_VERSION_ACTIVITY_LOG = "2015-04-01"
 
 # Per-subscription caps to avoid excessive API calls (M77C surfaces require
 # sub-resource requests for App Service site config and SQL firewall rules).
 _MAX_APP_SERVICE_CONFIG_FETCHES = 20
 _MAX_SQL_FIREWALL_FETCHES = 20
 _MAX_ROLE_ASSIGNMENTS = 200
+# Activity Log: hard cap on events returned by list_activity_events().
+_MAX_ACTIVITY_LOG_EVENTS = 1000
+
+# ── Activity Log operation allowlist (M77D) ───────────────────────────────────
+# Only management/control-plane write and delete operations on resources that
+# ConfigTrace monitors are ingested. READ/LIST operations, data-plane operations,
+# diagnostic log events, VM logs, and application logs are deliberately excluded.
+# Comparison is done on the lowercased operationName.value field.
+_ALLOWED_OPERATION_NAMES: frozenset[str] = frozenset({
+    # Network Security Groups
+    "microsoft.network/networksecuritygroups/write",
+    "microsoft.network/networksecuritygroups/delete",
+    "microsoft.network/networksecuritygroups/securityrules/write",
+    "microsoft.network/networksecuritygroups/securityrules/delete",
+    # Storage Accounts
+    "microsoft.storage/storageaccounts/write",
+    "microsoft.storage/storageaccounts/delete",
+    # Key Vaults
+    "microsoft.keyvault/vaults/write",
+    "microsoft.keyvault/vaults/delete",
+    # Role Assignments (IAM)
+    "microsoft.authorization/roleassignments/write",
+    "microsoft.authorization/roleassignments/delete",
+    # App Service / Function Apps
+    "microsoft.web/sites/write",
+    "microsoft.web/sites/delete",
+    "microsoft.web/sites/config/write",
+    # SQL Servers
+    "microsoft.sql/servers/write",
+    "microsoft.sql/servers/delete",
+    "microsoft.sql/servers/firewallrules/write",
+    "microsoft.sql/servers/firewallrules/delete",
+    # AKS Clusters
+    "microsoft.containerservice/managedclusters/write",
+    "microsoft.containerservice/managedclusters/delete",
+})
 
 # ── Well-known Azure built-in role GUIDs → human names ───────────────────────
 # These are public constants documented by Microsoft; resolving the name here
@@ -880,6 +919,144 @@ class AzureConnector(BaseConnector):
             "public_network_access": public_network_access,
             "api_server_authorized_ip_range_count": ip_range_count,
         }
+
+    # ── Activity Log (M77D) ───────────────────────────────────────────────────
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch Azure Activity Log management events for ConfigTrace-monitored resources.
+
+        Returns a flat list of STRIPPED, SAFE event dicts. Raw Azure event fields
+        that could contain PII or secrets — ``caller``, ``claims``,
+        ``authorization``, ``properties``, ``httpRequest``, ``description``,
+        ``tenantId`` — are NEVER included in the returned dicts.
+
+        Only management/control-plane WRITE and DELETE operations on NSGs,
+        Storage Accounts, Key Vaults, role assignments, App Services, SQL Servers,
+        and AKS clusters are returned.  READ/LIST operations, data-plane
+        operations, diagnostic logs, VM logs, and application logs are excluded by
+        the client-side allowlist applied before any event data is returned.
+
+        Args:
+            credentials: Azure credentials dict (tenant_id, client_id,
+                client_secret, subscription_id).
+            max_events: Hard cap on the number of events returned (1–1000).
+                Excess events are dropped with a warning log.
+            lookback_hours: How far back to query the Activity Log (1–168 h).
+
+        Returns:
+            List of safe event dicts — each containing only safe fields.
+
+        Raises:
+            AuthenticationError, ConnectorError, RateLimitError, NetworkError.
+        """
+        max_events = max(1, min(max_events, _MAX_ACTIVITY_LOG_EVENTS))
+        lookback_hours = max(1, min(lookback_hours, 168))
+
+        subscription_id = credentials.get("subscription_id", "")
+        token = self._get_token(credentials)
+
+        now = datetime.now(tz=timezone.utc)
+        start = now - timedelta(hours=lookback_hours)
+        # Azure Activity Log API uses ISO 8601 timestamps with UTC marker.
+        start_str = start.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
+        end_str = now.strftime("%Y-%m-%dT%H:%M:%S.0000000Z")
+
+        # Server-side filter: time window + successful operations only.
+        # Filtering by operationName is NOT supported server-side, so we apply
+        # the operation allowlist client-side after fetching.
+        odata_filter = (
+            f"eventTimestamp ge '{start_str}' and "
+            f"eventTimestamp le '{end_str}' and "
+            f"status eq 'Succeeded'"
+        )
+
+        url = (
+            f"{_MGMT_BASE}/subscriptions/{subscription_id}"
+            f"/providers/microsoft.insights/eventtypes/management/values"
+            f"?api-version={_API_VERSION_ACTIVITY_LOG}"
+            f"&$filter={odata_filter}"
+        )
+
+        raw_items = self._paginate(token, url)
+
+        out: list[dict] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            # Extract operationName.value (never raw event body).
+            op_block = raw.get("operationName")
+            op_name = (
+                op_block.get("value", "") if isinstance(op_block, dict) else ""
+            )
+            if not isinstance(op_name, str):
+                op_name = ""
+            op_name_low = op_name.lower()
+
+            # Client-side allowlist — only ingest operations we care about.
+            if op_name_low not in _ALLOWED_OPERATION_NAMES:
+                continue
+
+            # ── Safe field extraction only ─────────────────────────────────
+            # The following fields are INTENTIONALLY NEVER read or returned:
+            #   caller (UPN/email/object-id — PII), claims, authorization,
+            #   properties (customer-controlled payload), httpRequest, description,
+            #   tenantId, submissionTimestamp, correlationId (returned below as-is
+            #   for hashing by the caller — not PII, just a UUID).
+
+            status_block = raw.get("status")
+            status_val = (
+                status_block.get("value", "") if isinstance(status_block, dict) else ""
+            )
+            sub_status_block = raw.get("subStatus")
+            sub_status_val = (
+                sub_status_block.get("value", "")
+                if isinstance(sub_status_block, dict)
+                else ""
+            )
+            category_block = raw.get("category")
+            category_val = (
+                category_block.get("value", "") if isinstance(category_block, dict) else ""
+            )
+            resource_type_block = raw.get("resourceType")
+            resource_type_val = (
+                resource_type_block.get("value", "")
+                if isinstance(resource_type_block, dict)
+                else ""
+            )
+
+            safe: dict[str, Any] = {
+                "event_data_id": _trunc(raw.get("eventDataId", "") or ""),
+                # correlationId is a GUID — no PII; caller hashes it before storing.
+                "correlation_id": _trunc(raw.get("correlationId", "") or ""),
+                "event_timestamp": _trunc(raw.get("eventTimestamp", "") or ""),
+                "subscription_id": _trunc(raw.get("subscriptionId", "") or ""),
+                "resource_group_name": _trunc(
+                    raw.get("resourceGroupName", "") or ""
+                ),
+                "resource_id": _trunc(raw.get("resourceId", "") or ""),
+                "resource_type": _trunc(resource_type_val),
+                "operation_name": _trunc(op_name),
+                "status": _trunc(status_val),
+                "sub_status": _trunc(sub_status_val),
+                "category": _trunc(category_val),
+            }
+
+            out.append(safe)
+            if len(out) >= max_events:
+                logger.warning(
+                    "azure: activity log event cap (%d) reached; "
+                    "remaining events skipped",
+                    max_events,
+                )
+                break
+
+        return out
 
     # ── Main fetch ────────────────────────────────────────────────────────────
 

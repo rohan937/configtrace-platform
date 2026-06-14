@@ -404,7 +404,7 @@ _AZURE = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -414,15 +414,16 @@ _AZURE = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Azure drift + expanded security foundation (M77A–M77C). Drift snapshots cover "
-        "subscription / resource group / NSG / storage account / Key Vault / role "
-        "assignments / App Service / SQL Server / AKS. Security rules cover NSG public "
-        "ingress, storage public access / weak TLS / shared-key, Key Vault network / "
-        "recovery / RBAC posture, broad role assignment privilege, App Service HTTPS / "
-        "FTP / TLS / public access, SQL Server public access / weak TLS, and AKS local "
-        "accounts / public API exposure / network policy. App registration rules deferred "
-        "to a Graph API expansion milestone; activity ingestion, signals, correlations, "
-        "and demo follow in M77D–M77G."
+        "Azure drift + expanded security + Activity Log ingestion (M77A–M77D). "
+        "Drift snapshots cover subscription / resource group / NSG / storage account / "
+        "Key Vault / role assignments / App Service / SQL Server / AKS. Security rules "
+        "cover NSG public ingress, storage public access / weak TLS / shared-key, Key "
+        "Vault network / recovery / RBAC posture, broad role assignment privilege, App "
+        "Service HTTPS / FTP / TLS / public access, SQL Server public access / weak TLS, "
+        "and AKS local accounts / public API exposure / network policy. Activity Log "
+        "ingestion covers WRITE/DELETE management events on NSGs, Storage, Key Vaults, "
+        "role assignments, App Services, SQL Servers, and AKS clusters. Activity signals "
+        "and correlations follow in M77E–M77F; demo in M77G."
     ),
 )
 

@@ -787,6 +787,24 @@ export async function syncShopifyActivity(
 }
 
 /**
+ * Sync Azure Activity Log management events (M77D).
+ *
+ * Admin-gated. Members can view the resulting events via the activity list.
+ * Non-fatal: permission/availability limits are reported in the summary. The
+ * service principal must have the Reader role on the subscription for Activity
+ * Log access.  Strict operation-name allowlist applied client-side: only
+ * WRITE/DELETE operations on NSGs, Storage Accounts, Key Vaults, role
+ * assignments, App Services, SQL Servers, and AKS clusters are ingested.
+ * READ/LIST operations, data-plane access, diagnostic logs, VM logs, and
+ * application logs are deliberately excluded.
+ */
+export async function syncAzureActivity(
+  token?: string | null,
+): Promise<import("@/types").AzureActivitySyncResponse> {
+  return apiFetch(`/security/azure-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.

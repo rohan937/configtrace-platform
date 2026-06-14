@@ -651,9 +651,10 @@ class TestProviderCapabilityMatrix:
         assert cap.maturity == "partial"
 
     def test_azure_unfinished_security_surfaces_still_false(self):
+        """Flipped in M77D: activity_ingestion now True; rest still False."""
         cap = get_provider_capability("azure")
         assert cap is not None
-        assert cap.security.activity_ingestion is False
+        assert cap.security.activity_ingestion is True   # flipped in M77D
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
@@ -661,10 +662,10 @@ class TestProviderCapabilityMatrix:
 
 class TestProviderExpansionFramework:
     def test_planned_next_stage_points_to_m77c(self):
-        """Flipped in M77C: planned_next_stage now points to M77D."""
+        """Flipped in M77D: planned_next_stage now points to M77E."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert "M77D" in stage, (
+        assert "M77E" in stage, (
             f"planned_next_stage should reference M77D after M77C, got: {stage!r}"
         )
 

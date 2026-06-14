@@ -192,6 +192,10 @@ from app.schemas.security_shopify_activity import (
     ShopifyActivitySignalGenerateRequest,
     ShopifyActivitySignalGenerateResponse,
 )
+from app.schemas.security_azure_activity import (
+    AzureActivitySyncRequest,
+    AzureActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -233,6 +237,7 @@ from app.services import stripe_activity_ingestion_service
 from app.services import stripe_activity_signal_service
 from app.services import shopify_activity_ingestion_service
 from app.services import shopify_activity_signal_service
+from app.services import azure_activity_ingestion_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -2943,3 +2948,69 @@ def generate_aws_security_signals(
         workspace_id=workspace_id, db=db
     )
     return AwsSignalGenerateResponse(**summary)
+
+
+@router.post("/azure-activity/sync", response_model=AzureActivitySyncResponse)
+def sync_azure_activity(
+    body: Optional[AzureActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> AzureActivitySyncResponse:
+    """Ingest Azure Activity Log management events (M77D).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised. The service principal must have the Reader role
+    on the subscription for Activity Log access.
+
+    Strict operation-name allowlist applied client-side: only WRITE/DELETE
+    operations on NSGs, Storage Accounts, Key Vaults, role assignments, App
+    Services, SQL Servers, and AKS clusters are ingested. READ/LIST operations,
+    data-plane access, diagnostic logs, VM logs, and application logs are
+    deliberately excluded.
+
+    Members can view the resulting events via
+    ``GET /security/activity/events?provider=azure``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "azure",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="Azure integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return AzureActivitySyncResponse(
+                attempted=False,
+                succeeded=False,
+                provider="azure",
+                source="azure_activity_log",
+                error_message="No active Azure integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+    summary = azure_activity_ingestion_service.ingest_azure_activity(
+        integration=integration,
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+    )
+    return AzureActivitySyncResponse(**summary)
