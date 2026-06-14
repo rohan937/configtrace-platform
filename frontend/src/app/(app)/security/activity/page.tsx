@@ -32,6 +32,7 @@ import {
   syncVercelActivity,
   syncSupabaseActivity,
   syncFirebaseActivity,
+  syncStripeActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -41,7 +42,20 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe";
+
+// M73B — Stripe Events API configuration-change events (strict allowlist).
+const STRIPE_EVENT_TYPES = [
+  "stripe.webhook_endpoint.created",
+  "stripe.webhook_endpoint.updated",
+  "stripe.webhook_endpoint.deleted",
+  "stripe.payment_link.created",
+  "stripe.payment_link.updated",
+  "stripe.portal_config.created",
+  "stripe.portal_config.updated",
+  "stripe.account.updated",
+  "stripe.capability.updated",
+];
 
 // M72B — Firebase / Google Cloud Audit Log control-plane change events.
 const FIREBASE_EVENT_TYPES = [
@@ -192,7 +206,7 @@ const AWS_EVENT_TYPES = [
 ];
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -287,6 +301,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "stripe") {
+        const r = await syncStripeActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Stripe Events API access is limited for this key. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -309,7 +331,9 @@ export default function ActivityEventsPage() {
                 ? "Could not sync Supabase activity. Please try again."
                 : provider === "firebase"
                   ? "Could not sync Firebase activity. Please try again."
-                  : "Could not sync GitHub activity. Please try again.",
+                  : provider === "stripe"
+                    ? "Could not sync Stripe activity. Please try again."
+                    : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -458,6 +482,7 @@ export default function ActivityEventsPage() {
     : provider === "vercel" ? VERCEL_EVENT_TYPES
     : provider === "supabase" ? SUPABASE_EVENT_TYPES
     : provider === "firebase" ? FIREBASE_EVENT_TYPES
+    : provider === "stripe" ? STRIPE_EVENT_TYPES
     : provider === "cloudflare" ? CLOUDFLARE_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
@@ -501,7 +526,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -613,12 +638,14 @@ function SyncBar({
   const isVercel = provider === "vercel";
   const isSupabase = provider === "supabase";
   const isFirebase = provider === "firebase";
+  const isStripe = provider === "stripe";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
     : isVercel ? "Sync Vercel activity"
     : isSupabase ? "Sync Supabase activity"
-    : isFirebase ? "Sync Firebase activity" : "Sync GitHub activity";
+    : isFirebase ? "Sync Firebase activity"
+    : isStripe ? "Sync Stripe activity" : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
     : isAws
@@ -629,7 +656,9 @@ function SyncBar({
           ? "Sync Supabase organization audit activity (project, table, RLS, policy, storage-bucket, Edge Function, and auth-config change events) into normalized events. Available when the Supabase token/project supports activity or audit-log access."
           : isFirebase
             ? "Sync Firebase control-plane change activity (Firestore/Realtime Database/Storage rules, auth-config, Cloud Function, Hosting, and project/app changes) into normalized events. Available when the Firebase credentials/project supports audit-log access."
-            : "Ingests recent GitHub audit-log activity into normalized events.";
+            : isStripe
+              ? "Sync review-safe Stripe configuration activity such as webhook, payment link, portal, and account setting changes. Available when the Stripe key has Events read access. Customer / payment / charge / invoice events are deliberately excluded."
+              : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -977,6 +1006,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Run “Sync Firebase activity” above. Available when the Firebase credentials/project supports audit-log access."
                 : "An admin can sync Firebase activity. Available when the Firebase credentials/project supports audit-log access."
+            : provider === "stripe"
+              ? isAdmin
+                ? "Run “Sync Stripe activity” above. Available when the Stripe key has Events read access. Customer / payment / charge / invoice events are deliberately excluded."
+                : "An admin can sync Stripe activity. Available when the Stripe key has Events read access. Customer / payment / charge / invoice events are deliberately excluded."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

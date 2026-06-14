@@ -774,6 +774,99 @@ class StripeConnector(BaseConnector):
         )
         return records
 
+    # ── Activity / Events API surface (M73B) ──────────────────────────────────
+    #
+    # Stripe surfaces account-config change activity through the public
+    # ``/v1/events`` API. ConfigTrace ingests ONLY a strict allowlist of
+    # configuration-oriented event types — never customer/payment/charge/invoice
+    # lifecycle events (which carry PII / payment data). When a restricted key
+    # lacks the "Events" permission this fails soft and the ingestion layer
+    # reports ``permission_limited`` (the existing Stripe configuration sync is
+    # NEVER broken). The connector itself stores nothing; the ingestion layer
+    # keeps only allowlisted, flat fields and NEVER raw event payloads, raw API
+    # responses, customer PII / emails, payment method data, card data, signing
+    # secrets, tokens, headers, request/response bodies, or bank-account details.
+
+    # Strict configuration-event allowlist. Customer/payment/charge/invoice
+    # lifecycle events are deliberately EXCLUDED.
+    _ALLOWED_EVENT_TYPES: tuple[str, ...] = (
+        "webhook_endpoint.created",
+        "webhook_endpoint.updated",
+        "webhook_endpoint.deleted",
+        "payment_link.created",
+        "payment_link.updated",
+        "billing_portal.configuration.created",
+        "billing_portal.configuration.updated",
+        "account.updated",
+        "capability.updated",
+    )
+
+    # Bounded pagination guard for the Stripe Events API.
+    _MAX_ACTIVITY_PAGES = 10
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch Stripe configuration-change events — metadata only (M73B).
+
+        Strict event-type allowlist (configuration changes only). Customer /
+        payment / charge / invoice / refund / dispute lifecycle events are
+        deliberately EXCLUDED at the API level — they are never requested,
+        scraped, or inferred from any other surface.
+
+        SECURITY: returns raw event dicts for the ingestion layer to normalize
+        through the metadata allowlist. The connector stores nothing; the
+        ingestion layer keeps only allowlisted, flat fields and NEVER customer
+        PII / emails, payment method data, card data, charges/payment intents/
+        invoices/customer records, raw event payloads, raw API responses,
+        OAuth tokens, signing secrets, headers, request/response bodies,
+        bank-account details, or tax IDs.
+
+        Raises ``AuthenticationError`` for an invalid key; ``ConnectorError`` for
+        permission or API errors so the ingestion layer can fail soft.
+        """
+        cap = max(1, min(int(max_events), 1000))
+        hours = max(1, min(int(lookback_hours or 24), 168))
+        # Lookback window: ``created[gte]`` is a Unix epoch in seconds. We pass a
+        # safe bounded floor; the upper bound is implicit (now).
+        try:
+            created_floor = int(time.time()) - hours * 3600
+        except Exception:
+            created_floor = 0
+
+        # The /v1/events API accepts repeated ``types[]=...`` query params to
+        # filter at the source — no client-side fan-in needed. Stripe caps
+        # ``limit`` at 100 per page; bound page-count via _MAX_ACTIVITY_PAGES.
+        per_page = min(cap, 100)
+        params: dict[str, Any] = {
+            "limit": per_page,
+            "created[gte]": created_floor,
+        }
+        # ``httpx`` encodes a list of values for a key as repeated query params.
+        params["types[]"] = list(self._ALLOWED_EVENT_TYPES)
+
+        events: list[dict] = []
+        for _page in range(self._MAX_ACTIVITY_PAGES):
+            data = self._get(credentials, "/v1/events", params=params)
+            batch = data.get("data") if isinstance(data, dict) else None
+            if not isinstance(batch, list):
+                break
+            for ev in batch:
+                events.append(ev)
+                if len(events) >= cap:
+                    return events[:cap]
+            if not data.get("has_more", False) or not batch:
+                break
+            last_id = batch[-1].get("id") if isinstance(batch[-1], dict) else None
+            if not last_id:
+                break
+            params = {**params, "starting_after": last_id}
+        return events[:cap]
+
     def validate_credentials(self, credentials: dict) -> bool:
         """Validate the Stripe API key using a least-privilege probe strategy.
 

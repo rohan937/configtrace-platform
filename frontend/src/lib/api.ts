@@ -755,6 +755,20 @@ export async function syncFirebaseActivity(
   return apiFetch(`/security/firebase-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Trigger Stripe Events API activity ingestion (M73B). Admin/owner only.
+ * Non-fatal: permission/availability limits are reported in the summary
+ * (Stripe Events API access requires the key to grant the Events permission).
+ * Strict configuration-event allowlist applied at the API level — webhook
+ * endpoint, payment link, billing portal configuration, account, and
+ * capability events only.
+ */
+export async function syncStripeActivity(
+  token?: string | null,
+): Promise<import("@/types").StripeActivitySyncResponse> {
+  return apiFetch(`/security/stripe-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

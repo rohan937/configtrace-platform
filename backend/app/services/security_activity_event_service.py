@@ -204,6 +204,23 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "app_id",                    # Firebase app id
         "app_platform",              # Firebase app platform (web/ios/android)
         "hosting_site_id",           # Firebase Hosting site id
+        # Stripe configuration-event fields (M73B) — control-plane change activity
+        # ONLY. NEVER customer PII / emails, payment method data, card data,
+        # charges / payment intents / invoices / customer records, raw event
+        # payloads, raw API responses, OAuth tokens, signing secrets, auth headers,
+        # request/response bodies, bank account details, or tax IDs.
+        "stripe_event_type",         # raw Stripe event type string (e.g. "webhook_endpoint.updated")
+        "object_type",               # data.object.object NAME (e.g. "webhook_endpoint")
+        "object_id",                 # data.object.id (e.g. "we_xxx") — a Stripe object id, never a secret
+        "webhook_endpoint_id",       # Stripe webhook endpoint id (we_xxx)
+        "webhook_url_domain",        # webhook delivery URL host only (NEVER query strings/full URL)
+        "webhook_url_scheme",        # webhook delivery URL scheme (http/https)
+        "payment_link_id",           # Stripe payment link id (plink_xxx)
+        "portal_config_id",          # Stripe billing-portal configuration id (bpc_xxx)
+        "capability",                # Stripe capability NAME (e.g. "card_payments") — a key, not a value
+        "capability_status",         # Stripe capability status (active/pending/inactive)
+        "tax_setting_name",          # Tax-settings setting NAME (deferred; supported for future use)
+        "livemode",                  # bool — Stripe live vs test mode
     }
 )
 

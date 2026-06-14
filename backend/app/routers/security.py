@@ -178,6 +178,10 @@ from app.schemas.security_supabase_activity import (
     SupabaseActivitySignalGenerateRequest,
     SupabaseActivitySignalGenerateResponse,
 )
+from app.schemas.security_stripe_activity import (
+    StripeActivitySyncRequest,
+    StripeActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -215,6 +219,7 @@ from app.services import vercel_activity_ingestion_service
 from app.services import vercel_activity_signal_service
 from app.services import supabase_activity_ingestion_service
 from app.services import firebase_activity_ingestion_service
+from app.services import stripe_activity_ingestion_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -2341,6 +2346,65 @@ def sync_firebase_activity(
         lookback_hours=lookback_hours, max_events=max_events,
     )
     return FirebaseActivitySyncResponse(**summary)
+
+
+@router.post("/stripe-activity/sync", response_model=StripeActivitySyncResponse)
+def sync_stripe_activity(
+    body: Optional[StripeActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> StripeActivitySyncResponse:
+    """Ingest Stripe configuration-change activity from the Events API (M73B).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised — Stripe Events API access requires the key to
+    grant the Events permission (a restricted key without it cannot read them).
+    Members can view the resulting events via
+    ``GET /security/activity/events?provider=stripe``.
+
+    Strict configuration-event allowlist applied at the API level: webhook
+    endpoint, payment link, billing portal configuration, account, and
+    capability events only. Customer / payment / charge / invoice / subscription
+    lifecycle events are NEVER requested.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "stripe",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(status_code=404, detail="Stripe integration not found.")
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return StripeActivitySyncResponse(
+                attempted=False, succeeded=False, provider="stripe",
+                source="stripe_events",
+                error_message="No active Stripe integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+    summary = stripe_activity_ingestion_service.ingest_stripe_activity(
+        integration=integration, workspace_id=workspace_id, db=db,
+        lookback_hours=lookback_hours, max_events=max_events,
+    )
+    return StripeActivitySyncResponse(**summary)
 
 
 @router.post(
