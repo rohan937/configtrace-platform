@@ -64,6 +64,10 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "firebase_rules_public",
         "firebase_storage_rules_public",
         "firebase_anonymous_auth_enabled",
+        # Firebase — M72A (Realtime Database rules + auth hardening)
+        "firebase_database_public_read",
+        "firebase_database_public_write",
+        "firebase_auth_protection_missing",
         # Stripe
         "stripe_webhook_http",
         # Vercel

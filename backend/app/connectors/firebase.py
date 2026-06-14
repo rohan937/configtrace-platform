@@ -87,6 +87,7 @@ from app.connectors.firebase_schema import (
     FIREBASE_AUTH_CONFIG,
     FIREBASE_AUTH_PROVIDER,
     FIREBASE_AUTHORIZED_DOMAIN,
+    FIREBASE_DATABASE_RULESET,
     FIREBASE_FIRESTORE_RULESET,
     FIREBASE_FUNCTION_METADATA,
     FIREBASE_HOSTING_DOMAIN,
@@ -256,6 +257,132 @@ def _analyze_rules(source: str) -> dict:
         "authenticated_only_detected": authenticated_only,
         "rule_summary": summary,
         "parser_confidence": confidence,
+    }
+
+
+def _is_public_rtdb_expr(value: Any) -> tuple[bool, bool]:
+    """Classify one Realtime Database ``.read``/``.write`` expression value.
+
+    RTDB rules are JSON whose ``.read``/``.write`` values are booleans or string
+    expressions (e.g. ``true``, ``"auth != null"``). Returns ``(is_public,
+    references_auth)``. ``is_public`` is True only for an unconditional ``true``
+    with no auth reference — conservative to avoid false positives.
+
+    SECURITY: only the boolean classification is kept; the raw expression text is
+    never returned or stored.
+    """
+    if value is True:
+        return True, False
+    if isinstance(value, str):
+        expr = value.strip().lower()
+        references_auth = "auth" in expr
+        # An unconditional "true" with no auth guard is public.
+        is_public = expr == "true" and not references_auth
+        return is_public, references_auth
+    return False, False
+
+
+def _analyze_rtdb_rules(rules_obj: Any) -> dict:
+    """Conservatively analyse Realtime Database rules JSON for public access.
+
+    SECURITY: The raw rules JSON is never stored — only a truncated SHA-256 hash
+    of its canonical serialization. Database data is NEVER read; the input is the
+    ``.settings/rules.json`` METADATA only.
+
+    Returns the same shape as ``_analyze_rules`` (rules_hash, public_read_detected,
+    public_write_detected, authenticated_only_detected, rule_summary,
+    parser_confidence) for uniform handling by the rule layer.
+    """
+    empty = {
+        "rules_hash": None,
+        "public_read_detected": False,
+        "public_write_detected": False,
+        "authenticated_only_detected": False,
+        "rule_summary": "No Realtime Database rules available.",
+        "parser_confidence": "low",
+    }
+    if not isinstance(rules_obj, dict) or not rules_obj:
+        return empty
+
+    try:
+        rules_hash = _sha256_prefix(json.dumps(rules_obj, sort_keys=True))
+    except (TypeError, ValueError):
+        return empty
+
+    public_read = False
+    public_write = False
+    references_auth = False
+
+    def _walk(node: Any) -> None:
+        nonlocal public_read, public_write, references_auth
+        if not isinstance(node, dict):
+            return
+        for key, val in node.items():
+            if key == ".read":
+                pub, auth = _is_public_rtdb_expr(val)
+                public_read = public_read or pub
+                references_auth = references_auth or auth
+            elif key == ".write":
+                pub, auth = _is_public_rtdb_expr(val)
+                public_write = public_write or pub
+                references_auth = references_auth or auth
+            elif isinstance(val, dict):
+                _walk(val)
+
+    # RTDB rules are wrapped in a top-level {"rules": {...}} object.
+    _walk(rules_obj.get("rules") if isinstance(rules_obj.get("rules"), dict) else rules_obj)
+
+    if public_read or public_write:
+        confidence = "high" if not references_auth else "medium"
+    else:
+        confidence = "medium"
+    authenticated_only = references_auth and not (public_read or public_write)
+
+    if public_write and public_read:
+        summary = "Realtime Database rules may allow public read and write without authentication. Verify this is intentional."
+    elif public_write:
+        summary = "Realtime Database rules may allow public write without authentication. Verify this is intentional."
+    elif public_read:
+        summary = "Realtime Database rules may allow public read without authentication. Verify this is intentional."
+    elif authenticated_only:
+        summary = "Realtime Database rules appear to require authentication for access."
+    else:
+        summary = "Realtime Database rules detected; no obvious public access patterns found."
+
+    return {
+        "rules_hash": rules_hash,
+        "public_read_detected": public_read,
+        "public_write_detected": public_write,
+        "authenticated_only_detected": authenticated_only,
+        "rule_summary": summary,
+        "parser_confidence": confidence,
+    }
+
+
+def _normalize_database_ruleset(
+    *, project_id: str, instance_name: str, rules_obj: Any
+) -> dict:
+    """Build a ``firebase_database_ruleset`` record from RTDB rules metadata.
+
+    SECURITY: only NAMES/hashes/booleans are stored — never the raw rules JSON,
+    database data, or the instance URL with any token.
+    """
+    analysis = _analyze_rtdb_rules(rules_obj)
+    instance_hash = _sha256_prefix(instance_name) if instance_name else ""
+    return {
+        "record_type": FIREBASE_DATABASE_RULESET,
+        "record_id": f"{project_id}/database/{instance_hash}",
+        "name": instance_name or "default",
+        "project_id": project_id,
+        "service": "realtime_database",
+        "instance_name_hash": instance_hash,
+        "rules_hash": analysis["rules_hash"],
+        "public_read_detected": analysis["public_read_detected"],
+        "public_write_detected": analysis["public_write_detected"],
+        "authenticated_only_detected": analysis["authenticated_only_detected"],
+        "rule_summary": analysis["rule_summary"],
+        "parser_confidence": analysis["parser_confidence"],
+        "config_fetch_warnings": [],
     }
 
 
@@ -723,6 +850,66 @@ class FirebaseConnector(BaseConnector):
             len(releases),
             len(records),
         )
+        return records
+
+    def _fetch_database_rules(
+        self,
+        access_token: str,
+        project_id: str,
+        warnings: list[str],
+    ) -> list[dict]:
+        """Fetch Realtime Database security-rule METADATA per instance — M72A.
+
+        Lists the project's Realtime Database instances, then reads each
+        instance's ``.settings/rules.json`` (rules metadata ONLY — never database
+        data). The raw rules JSON is hashed and discarded; only public-access
+        booleans + a hash are stored. Fail-soft: permission/availability/network
+        errors are recorded as a warning and skipped, never raised.
+        """
+        _MAX_DB_INSTANCES = 25
+        try:
+            list_url = (
+                "https://firebasedatabase.googleapis.com/v1beta/"
+                f"projects/{project_id}/locations/-/instances"
+            )
+            data = self._get(access_token, list_url)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                warnings.append(
+                    "firebase_database_ruleset: permission denied or no Realtime "
+                    "Database instance — skipped."
+                )
+                logger.info("firebase: database rules skipped (%s)", exc.status_code)
+                return []
+            raise
+
+        instances = data.get("instances") if isinstance(data, dict) else None
+        if not isinstance(instances, list):
+            return []
+
+        records: list[dict] = []
+        for inst in instances[:_MAX_DB_INSTANCES]:
+            if not isinstance(inst, dict):
+                continue
+            db_url = inst.get("databaseUrl")
+            inst_name = str(inst.get("name") or db_url or "")
+            if not isinstance(db_url, str) or not db_url:
+                continue
+            try:
+                rules_obj = self._get(
+                    access_token, f"{db_url.rstrip('/')}/.settings/rules.json"
+                )
+            except (ConnectorError, NetworkError, RateLimitError):
+                warnings.append(
+                    "firebase_database_ruleset: could not read rules for one "
+                    "instance — skipped."
+                )
+                continue
+            records.append(
+                _normalize_database_ruleset(
+                    project_id=project_id, instance_name=inst_name, rules_obj=rules_obj
+                )
+            )
         return records
 
     def _fetch_storage_buckets(
@@ -1262,6 +1449,20 @@ class FirebaseConnector(BaseConnector):
         except Exception as exc:
             logger.warning("firebase: rules fetch error %s", type(exc).__name__)
             warnings.append(f"rules fetch error: {type(exc).__name__}")
+
+        # 3b. Realtime Database security rules (optional — M72A). Only attempted
+        # when the project has a Realtime Database instance.
+        if project_record.get("has_realtime_db"):
+            try:
+                db_rules_records = self._fetch_database_rules(access_token, project_id, warnings)
+                records.extend(db_rules_records)
+                logger.info(
+                    "FirebaseConnector.fetch: database_rules_records count=%d",
+                    len(db_rules_records),
+                )
+            except Exception as exc:
+                logger.warning("firebase: database_rules fetch error %s", type(exc).__name__)
+                warnings.append(f"database_rules fetch error: {type(exc).__name__}")
 
         # 4. Storage buckets (optional)
         try:

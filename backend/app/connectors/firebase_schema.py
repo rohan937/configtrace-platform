@@ -70,6 +70,7 @@ FIREBASE_AUTH_CONFIG             = "firebase_auth_config"
 FIREBASE_AUTH_PROVIDER           = "firebase_auth_provider"
 FIREBASE_AUTHORIZED_DOMAIN       = "firebase_authorized_domain"
 FIREBASE_FIRESTORE_RULESET       = "firebase_firestore_ruleset"
+FIREBASE_DATABASE_RULESET        = "firebase_database_ruleset"   # M72A — Realtime Database rules
 FIREBASE_STORAGE_BUCKET          = "firebase_storage_bucket"
 FIREBASE_STORAGE_RULESET         = "firebase_storage_ruleset"
 FIREBASE_HOSTING_SITE            = "firebase_hosting_site"
@@ -93,6 +94,7 @@ FIREBASE_RECORD_TYPES: frozenset[str] = frozenset(
         FIREBASE_AUTH_PROVIDER,
         FIREBASE_AUTHORIZED_DOMAIN,
         FIREBASE_FIRESTORE_RULESET,
+        FIREBASE_DATABASE_RULESET,
         FIREBASE_STORAGE_BUCKET,
         FIREBASE_STORAGE_RULESET,
         FIREBASE_HOSTING_SITE,
@@ -209,6 +211,30 @@ class FirebaseFirestoreRulesetRecord(TypedDict, total=False):
     authenticated_only_detected: bool
     rule_summary: str
     parser_confidence: str          # "high" | "medium" | "low"
+    config_fetch_warnings: list[str]
+
+
+class FirebaseDatabaseRulesetRecord(TypedDict, total=False):
+    """Normalised firebase_database_ruleset record — M72A (Realtime Database rules).
+
+    Realtime Database security rules are JSON (``.read`` / ``.write`` expressions).
+    The raw rules JSON is NEVER stored — only a SHA-256 hash + conservative
+    public-access booleans. Database documents/data are NEVER read.
+    """
+
+    record_type: str        # "firebase_database_ruleset"
+    record_id: str          # "{project_id}/database/{instance_hash}"
+    name: str               # database instance display name
+
+    project_id: str
+    service: str            # always "realtime_database"
+    instance_name_hash: str  # SHA-256[:16] of the database instance name
+    rules_hash: Optional[str]           # SHA-256[:16] of raw rules JSON
+    public_read_detected: bool
+    public_write_detected: bool
+    authenticated_only_detected: bool
+    rule_summary: str
+    parser_confidence: str              # "high" | "medium" | "low"
     config_fetch_warnings: list[str]
 
 

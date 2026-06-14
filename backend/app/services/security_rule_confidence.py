@@ -88,6 +88,10 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "firebase_rules_public": (MEDIUM, "Low-confidence ruleset parses are skipped to avoid false positives."),
     "firebase_storage_rules_public": (MEDIUM, "Low-confidence ruleset parses are skipped to avoid false positives."),
     "firebase_anonymous_auth_enabled": (MEDIUM, "Risky mainly when paired with permissive rules; reported at medium severity."),
+    # Firebase — M72A
+    "firebase_database_public_read": (HIGH, "Only an explicit unconditional '.read': true (no auth guard) fires; low-confidence parses are skipped."),
+    "firebase_database_public_write": (HIGH, "Only an explicit unconditional '.write': true (no auth guard) fires; low-confidence parses are skipped."),
+    "firebase_auth_protection_missing": (MEDIUM, "Only an explicit mfa_enabled=false fires; missing/unknown is skipped."),
     # Stripe
     "stripe_webhook_http": (HIGH, "Only an explicit http scheme fires; disabled endpoints are not flagged."),
     # Vercel

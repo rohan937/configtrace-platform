@@ -95,6 +95,10 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "firebase_rules_public": ("firebase_firestore_ruleset",),
     "firebase_storage_rules_public": ("firebase_storage_ruleset",),
     "firebase_anonymous_auth_enabled": ("firebase_auth_config",),
+    # Firebase — M72A
+    "firebase_database_public_read": ("firebase_database_ruleset",),
+    "firebase_database_public_write": ("firebase_database_ruleset",),
+    "firebase_auth_protection_missing": ("firebase_auth_config",),
     # Stripe
     "stripe_webhook_http": ("stripe_webhook_endpoint",),
     # Vercel
@@ -115,7 +119,7 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
     "aws": ["Security group rules", "S3 buckets", "IAM policy attachments", "IAM access keys"],
     "cloudflare": ["Zone settings", "WAF rules", "DNS records"],
     "supabase": ["Row-level security", "Public table policies", "Auth configuration", "Edge Functions"],
-    "firebase": ["Firestore rules", "Storage rules", "Auth configuration"],
+    "firebase": ["Firestore rules", "Realtime Database rules", "Storage rules", "Auth configuration"],
     "stripe": ["Webhook endpoints"],
     "vercel": ["Deployment protection", "Production branch", "Domains", "Environment variables", "Deploy hooks"],
     "shopify": ["Webhook subscriptions"],
@@ -188,6 +192,10 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "firebase_firestore_ruleset": {
         "message": "Firestore ruleset metadata was not observed.",
         "hints": [],
+    },
+    "firebase_database_ruleset": {
+        "message": "Realtime Database ruleset metadata was not observed.",
+        "hints": ["A Realtime Database instance + rules read access are required."],
     },
     "firebase_storage_ruleset": {
         "message": "Storage ruleset metadata was not observed.",
