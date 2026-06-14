@@ -786,6 +786,17 @@ export async function syncShopifyActivity(
   return apiFetch(`/security/shopify-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Fetch the provider capability matrix (M75C). Read access — any workspace
+ * member may call this. Returns static metadata only; never evaluates live
+ * provider state, calls external APIs, or exposes secrets.
+ */
+export async function getProviderCapabilityMatrix(
+  token?: string | null,
+): Promise<import("@/types").ProviderCapabilityMatrix> {
+  return apiFetch("/security/provider-capabilities", { token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

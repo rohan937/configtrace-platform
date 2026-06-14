@@ -2399,3 +2399,42 @@ export interface SecurityCoverageResponse {
   providers: SecurityCoverageProvider[];
   summary: SecurityCoverageSummary;
 }
+
+// M75C — Provider capability matrix types.
+export interface ProviderDriftCapabilities {
+  drift_snapshots: boolean;
+  drift_diff: boolean;
+  drift_risk_classification: boolean;
+  drift_review_workflow: boolean;
+  drift_remediation_preview: boolean;
+}
+export interface ProviderSecurityCapabilities {
+  security_rules: boolean;
+  activity_ingestion: boolean;
+  activity_signals: boolean;
+  risk_activity_correlations: boolean;
+  demo_seed_clear: boolean;
+  case_report: boolean;
+  evidence_timeline: boolean;
+  evidence_graph: boolean;
+}
+export interface ProviderCapability {
+  provider: string;
+  label: string;
+  category: string;
+  drift: ProviderDriftCapabilities;
+  security: ProviderSecurityCapabilities;
+  maturity: "complete" | "partial" | "planned";
+  notes: string;
+}
+export interface ProviderCapabilityMatrixSummary {
+  total_providers: number;
+  security_complete_count: number;
+  drift_complete_count: number;
+  dual_stack_complete_count: number;
+  planned_next_stage: string;
+}
+export interface ProviderCapabilityMatrix {
+  providers: ProviderCapability[];
+  summary: ProviderCapabilityMatrixSummary;
+}

@@ -58,6 +58,7 @@ from app.schemas.security_demo_data import (
     SecurityDemoDataStatus,
 )
 from app.schemas.security_coverage import SecurityCoverageResponse
+from app.services import provider_capability_matrix_service as capability_svc
 from app.schemas.security_beta_event import (
     SecurityBetaEventCreate,
     SecurityBetaEventResponse,
@@ -715,6 +716,25 @@ def get_security_coverage(
     return SecurityCoverageResponse(
         **security_coverage_service.get_coverage(workspace_id, db)
     )
+
+
+@router.get("/provider-capabilities")
+def get_provider_capabilities(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return the canonical provider capability matrix (M75C).
+
+    Read-only — any authenticated workspace member may call this. Returns
+    which providers support drift monitoring, security rules, activity
+    ingestion, incident signals, risk × activity correlations, demo
+    seed/clear, case/report, evidence timeline, and evidence graph.
+
+    This is static metadata only — it never evaluates live provider state,
+    never calls external APIs, and never changes DB records.
+    """
+    _current_workspace_id(current_user, db)  # authenticate workspace membership
+    return capability_svc.get_matrix()
 
 
 # ── Beta usage instrumentation (M63.1) ────────────────────────────────────────

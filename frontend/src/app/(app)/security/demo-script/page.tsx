@@ -220,6 +220,48 @@ export default function SecurityDemoScriptPage() {
         </div>
       </div>
 
+      {/* M75C — Provider capability matrix */}
+      <SectionLabel>Provider capability matrix</SectionLabel>
+      <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "14px 16px", marginBottom: "24px" }}>
+        <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
+          Shows which providers currently support drift monitoring, security configuration
+          risk rules, activity evidence ingestion, Incident Signals, correlations, and
+          demo cases. All 8 providers are dual-stack complete.{" "}
+          <span style={{ color: "#565b6e" }}>
+            Future providers should follow the dual-stack template: drift foundation →
+            security rules → activity ingestion → signals → correlations → demo + QA.
+          </span>
+        </p>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "12px" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #2a2d38" }}>
+                {["Provider", "Category", "Drift", "Security rules", "Activity", "Signals", "Correlations", "Demo/case"].map((h) => (
+                  <th key={h} style={{ textAlign: "left", padding: "5px 10px 7px 0", color: "#565b6e", fontWeight: 500, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {PROVIDER_CAPABILITY_TABLE.map(({ provider, label, category, drift, security, signals, correlations, demo }) => (
+                <tr key={provider} style={{ borderBottom: "1px solid #1e2030" }}>
+                  <td style={{ padding: "6px 10px 6px 0", color: "#e8eaf0", fontWeight: 600 }}>{label}</td>
+                  <td style={{ padding: "6px 10px 6px 0", color: "#8b90a0" }}>{category}</td>
+                  <td style={{ padding: "6px 10px 6px 0" }}><Dot on={drift} /></td>
+                  <td style={{ padding: "6px 10px 6px 0" }}><Dot on={security} /></td>
+                  <td style={{ padding: "6px 10px 6px 0" }}><Dot on={true} /></td>
+                  <td style={{ padding: "6px 10px 6px 0" }}><Dot on={signals} /></td>
+                  <td style={{ padding: "6px 10px 6px 0" }}><Dot on={correlations} /></td>
+                  <td style={{ padding: "6px 10px 6px 0" }}><Dot on={demo} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p style={{ margin: "10px 0 0", fontSize: "11px", color: "#565b6e" }}>
+          ● = supported · ○ = partial / planned · Drift = snapshot + diff + risk + review workflow.
+        </p>
+      </div>
+
       {/* 6. Quick links */}
       <SectionLabel>Quick links</SectionLabel>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" }}>
@@ -235,6 +277,38 @@ export default function SecurityDemoScriptPage() {
         floating widget on Security pages.
       </p>
     </div>
+  );
+}
+
+// M75C — Static capability table data. Source of truth lives in the backend
+// service (provider_capability_matrix_service.py) and the GET
+// /security/provider-capabilities endpoint. This local copy keeps the UI
+// rendering without an extra network call so the demo-script page stays fast.
+const PROVIDER_CAPABILITY_TABLE: Array<{
+  provider: string;
+  label: string;
+  category: string;
+  drift: boolean;
+  security: boolean;
+  signals: boolean;
+  correlations: boolean;
+  demo: boolean;
+}> = [
+  { provider: "github",     label: "GitHub",     category: "devops",             drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "aws",        label: "AWS",         category: "cloud",              drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "cloudflare", label: "Cloudflare",  category: "edge / network",     drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "vercel",     label: "Vercel",      category: "devops",             drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "supabase",   label: "Supabase",    category: "database / backend", drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "firebase",   label: "Firebase",    category: "database / backend", drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "stripe",     label: "Stripe",      category: "payments",           drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "shopify",    label: "Shopify",     category: "ecommerce",          drift: true, security: true, signals: true, correlations: true, demo: true },
+];
+
+function Dot({ on }: { on: boolean }) {
+  return (
+    <span style={{ color: on ? "#3ccf7e" : "#565b6e", fontSize: "14px" }}>
+      {on ? "●" : "○"}
+    </span>
   );
 }
 
