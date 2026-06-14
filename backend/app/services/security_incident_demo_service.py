@@ -50,6 +50,7 @@ from app.services import aws_vpc_flow_signal_service as vpc_flow_svc
 from app.services import cloudflare_waf_signal_service as cf_waf_signal_svc
 from app.services import vercel_activity_signal_service as ve_sig
 from app.services import supabase_activity_signal_service as sb_sig
+from app.services import firebase_activity_signal_service as fb_sig
 
 logger = logging.getLogger(__name__)
 
@@ -1761,6 +1762,362 @@ def clear_supabase(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
 
     # 2. Supabase demo evidence anchored on the hidden Supabase demo integration.
     integ = get_supabase_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_finding_id.in_(finding_ids))
+        if activity_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids))
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids))
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── Firebase incident demo (M72E) ─────────────────────────────────────────────
+
+FIREBASE_DEMO_INTEGRATION_NAME = "ConfigTrace Firebase incident demo (sample data)"
+FIREBASE_DEMO_CASE_SOURCE = "demo_firebase_incident"
+FIREBASE_DEMO_PROJECT_ID = "configtrace-demo-fb"       # sample Firebase project id
+FIREBASE_DEMO_PROJECT_NAME = "configtrace-demo-fb"     # sample project name
+FIREBASE_DEMO_DB_INSTANCE = "configtrace-demo-default"  # RTDB instance NAME only
+FIREBASE_DEMO_BUCKET = "configtrace-demo.appspot.com"  # storage bucket NAME only
+
+
+def get_firebase_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == FIREBASE_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_firebase_demo_case(workspace_id: uuid.UUID, db: Session) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == FIREBASE_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_firebase_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_firebase_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_firebase(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Firebase demo incident chain (idempotent). No real sync.
+
+    One coherent Firebase story anchored on the same demo project:
+      Configuration Risks (Firestore rules public, Realtime Database rules public
+      write, Storage rules public, anonymous auth enabled, and MFA not enabled)
+      -> Firebase audit activity (Firestore/Realtime Database/Storage rules and
+      auth-config changes) for the same project -> Firebase activity Incident
+      Signals -> Firebase risk x activity correlations -> Case.
+
+    All objects are anchored on a hidden demo integration so ``clear_firebase``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace). Metadata is NAMES only —
+    NEVER Firestore documents, Realtime Database data, storage object contents,
+    auth users, emails, private keys, service-account JSON secrets, tokens,
+    headers, raw API responses, raw rule source, or Cloud Function env var values.
+    """
+    existing = _existing_firebase_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -> never shown / never synced).
+    integ = get_firebase_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({"demo": True, "dataset": "firebase_incident_demo_v1"})
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=FIREBASE_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    # 2. Demo Firebase project resource (provider_resource_id == project id).
+    resource = Resource(
+        integration_id=integ.id,
+        user_id=actor_user_id,
+        provider_resource_type="firebase_project",
+        provider_resource_id=FIREBASE_DEMO_PROJECT_ID,
+        display_name=FIREBASE_DEMO_PROJECT_NAME,
+        is_active=True,
+    )
+    db.add(resource)
+    db.flush()
+
+    # 3. Configuration Risk findings on the same project (names/booleans only).
+    firestore_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="firebase",
+        finding_key=f"firebase_rules_public:{FIREBASE_DEMO_PROJECT_ID}#firestore#demo",
+        severity="high", title="Demo: Firebase Firestore rules allow public access",
+        resource_id=resource.id,
+        description="Sample Firebase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "firebase_rules_public", "demo": True,
+            "release": "cloud.firestore", "public_read_detected": True,
+            "public_write_detected": False, "parser_confidence": "high",
+        },
+        remediation={"summary": "Tighten Firestore security rules to require auth."},
+    )
+    database_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="firebase",
+        finding_key=f"firebase_database_public_write:{FIREBASE_DEMO_PROJECT_ID}#database#demo",
+        severity="critical", title="Demo: Firebase Realtime Database rules allow public write",
+        resource_id=resource.id,
+        description="Sample Firebase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "firebase_database_public_write", "demo": True,
+            "service": "realtime_database", "database_instance": FIREBASE_DEMO_DB_INSTANCE,
+            "public_write_detected": True, "parser_confidence": "high",
+        },
+        remediation={"summary": "Require authentication in the Realtime Database rules."},
+    )
+    storage_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="firebase",
+        finding_key=f"firebase_storage_rules_public:{FIREBASE_DEMO_PROJECT_ID}#storage#demo",
+        severity="high", title="Demo: Firebase Storage rules allow public access",
+        resource_id=resource.id,
+        description="Sample Firebase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "firebase_storage_rules_public", "demo": True,
+            "release": "firebase.storage", "public_read_detected": True,
+            "parser_confidence": "high",
+        },
+        remediation={"summary": "Tighten Storage security rules to require auth."},
+    )
+    anon_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="firebase",
+        finding_key=f"firebase_anonymous_auth_enabled:{FIREBASE_DEMO_PROJECT_ID}#auth#demo",
+        severity="medium", title="Demo: Firebase anonymous authentication is enabled",
+        resource_id=resource.id,
+        description="Sample Firebase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "firebase_anonymous_auth_enabled", "demo": True,
+            "project_id": FIREBASE_DEMO_PROJECT_ID, "anonymous_enabled": True,
+        },
+        remediation={"summary": "Disable anonymous auth if not required."},
+    )
+    authprot_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="firebase",
+        finding_key=f"firebase_auth_protection_missing:{FIREBASE_DEMO_PROJECT_ID}#mfa#demo",
+        severity="medium", title="Demo: Firebase multi-factor authentication is not enabled",
+        resource_id=resource.id,
+        description="Sample Firebase configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "firebase_auth_protection_missing", "demo": True,
+            "project_id": FIREBASE_DEMO_PROJECT_ID, "mfa_enabled": False,
+        },
+        remediation={"summary": "Enable multi-factor authentication for Firebase Auth."},
+    )
+
+    # 4. Firebase audit activity (control-plane changes) for the same project.
+    def _mk_event(event_type, service, method, **md):
+        meta = {
+            "project_id": FIREBASE_DEMO_PROJECT_ID,
+            "event_action": method,
+            "event_source": "firebase_audit_log",
+            "service_name": service,
+            "method_name": method,
+        }
+        meta.update(md)
+        norm = activity_svc.normalize_activity_event(
+            provider="firebase", source="audit_log", event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-firebase-{uuid.uuid4().hex[:10]}",
+            actor_id=None, actor_type="user",
+            resource_type=md.get("target_type") or "project",
+            resource_id=md.get("target_name") or FIREBASE_DEMO_PROJECT_ID,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    firestore_event = _mk_event(
+        "firebase.firestore_rules.updated", "firebaserules.googleapis.com", "UpdateRelease",
+        target_type="release", ruleset_name="cloud.firestore", target_name="cloud.firestore",
+    )
+    database_event = _mk_event(
+        "firebase.database_rules.updated", "firebasedatabase.googleapis.com", "UpdateDatabaseRules",
+        target_type="database", database_instance=FIREBASE_DEMO_DB_INSTANCE,
+        target_name=FIREBASE_DEMO_DB_INSTANCE,
+    )
+    storage_event = _mk_event(
+        "firebase.storage_rules.updated", "firebaserules.googleapis.com", "UpdateRelease",
+        target_type="release", ruleset_name="firebase.storage",
+        storage_bucket_name=FIREBASE_DEMO_BUCKET, target_name="firebase.storage",
+    )
+    auth_event = _mk_event(
+        "firebase.auth_config.updated", "identitytoolkit.googleapis.com", "UpdateConfig",
+        target_type="auth_config", auth_setting_name="mfa",
+    )
+
+    # 5. Firebase activity Incident Signals (built directly from each event).
+    signals = []
+    for ev in (firestore_event, database_event, storage_event, auth_event):
+        sig_dict = fb_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db
+            )
+            signals.append(sig)
+
+    # 6. Firebase risk x activity correlations (M72D), built directly.
+    def _add_correlation(finding, event):
+        rule = corr_svc.FIREBASE_CORRELATION_RULES[corr_svc._base_rule(finding.finding_key)]
+        cdict = corr_svc.build_firebase_correlation(
+            finding=finding, event=event,
+            project_label=f'project "{FIREBASE_DEMO_PROJECT_NAME}"', rule=rule,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db
+        )
+        return corr
+
+    firestore_corr = _add_correlation(firestore_finding, firestore_event)
+    database_corr = _add_correlation(database_finding, database_event)
+    storage_corr = _add_correlation(storage_finding, storage_event)
+    anon_corr = _add_correlation(anon_finding, auth_event)
+    authprot_corr = _add_correlation(authprot_finding, auth_event)
+
+    correlations = [firestore_corr, database_corr, storage_corr, anon_corr, authprot_corr]
+    findings = [firestore_finding, database_finding, storage_finding, anon_finding, authprot_finding]
+    events = [firestore_event, database_event, storage_event, auth_event]
+
+    # 7. Case linking all the evidence (marked demo via metadata.source).
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Firebase incident investigation",
+        summary=(
+            "Demo investigation case. It groups Firebase security evidence: "
+            "configuration risks (Firestore rules allowing public access, "
+            "Realtime Database rules allowing public write, Storage rules "
+            "allowing public access, anonymous authentication enabled, and "
+            "multi-factor authentication not enabled), and Firebase audit "
+            "activity (Firestore/Realtime Database/Storage rules and "
+            "auth-configuration changes) for the same project - turned into "
+            "review signals and correlations. This is a human-reviewed case "
+            "presenting evidence for review and may require review. ConfigTrace "
+            "does not confirm data exposure, unauthorized access, or compromise."
+        ),
+        severity=database_corr.severity,
+        provider="firebase",
+        metadata={"source": FIREBASE_DEMO_CASE_SOURCE, "repository": FIREBASE_DEMO_PROJECT_NAME},
+        db=db,
+    )
+    for corr in correlations:
+        case_svc.link_object_to_case(case=case, object_type="correlation", object_id=corr.id, actor_user_id=actor_user_id, db=db)
+    for finding in findings:
+        case_svc.link_object_to_case(case=case, object_type="finding", object_id=finding.id, actor_user_id=actor_user_id, db=db)
+    for ev in events:
+        case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=ev.id, actor_user_id=actor_user_id, db=db)
+    for sig in signals:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=sig.id, actor_user_id=actor_user_id, db=db)
+    # Correlation-evidence signals (auto-created by upsert_correlation).
+    seen_signal_ids = {s.id for s in signals}
+    for corr in correlations:
+        if corr.linked_signal_id is not None and corr.linked_signal_id not in seen_signal_ids:
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(case=case, object_type="signal", object_id=corr.linked_signal_id, actor_user_id=actor_user_id, db=db)
+
+    logger.info("firebase_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_firebase(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Firebase demo incident objects (and nothing else)."""
+    # 1. Firebase demo cases (+ their links).
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == FIREBASE_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    # 2. Firebase demo evidence anchored on the hidden Firebase demo integration.
+    integ = get_firebase_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

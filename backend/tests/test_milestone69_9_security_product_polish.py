@@ -191,7 +191,8 @@ def test_clear_preserves_non_demo(
 # ── 5. provider label map is exactly GitHub / AWS / Cloudflare ───────────────
 
 def test_provider_labels_canonical():
-    # M70E added Vercel; M71E added Supabase to the canonical provider-label map.
+    # M70E added Vercel; M71E added Supabase; M72E added Firebase to the
+    # canonical provider-label map.
     assert report_svc._TIMELINE_PROVIDER_LABELS == {
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel",
-        "supabase": "Supabase"}
+        "supabase": "Supabase", "firebase": "Firebase"}
