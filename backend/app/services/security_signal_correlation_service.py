@@ -51,6 +51,7 @@ PROVIDER_VERCEL = "vercel"
 PROVIDER_SUPABASE = "supabase"
 PROVIDER_FIREBASE = "firebase"
 PROVIDER_STRIPE = "stripe"
+PROVIDER_SHOPIFY = "shopify"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -220,6 +221,26 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "capability_status",
         "tax_setting_name",
         "livemode",
+        # Shopify config-risk × activity correlation context (M74D) — safe shop /
+        # webhook / domain / policy / app-scope NAMES and identifiers only.
+        # NEVER Admin API access tokens, OAuth tokens, private app secrets,
+        # webhook signing secrets, raw webhook payloads, raw event payloads, raw
+        # API responses, customer PII / emails, orders, carts / checkouts with
+        # buyer data, payment method data, card data, refunds, fulfillments
+        # with customer/order data, authorization headers, request/response
+        # bodies, bank-account details, tax IDs, or staff names/emails.
+        "shop_domain",
+        "myshopify_domain",
+        "shopify_event_type",
+        "webhook_id",
+        "webhook_topic",
+        "webhook_endpoint_domain",
+        "webhook_endpoint_scheme",
+        "app_scope_count",
+        "app_scopes_sample",
+        "domain_id",
+        "domain_host",
+        "policy_type",
     }
 )
 
@@ -4907,6 +4928,331 @@ def generate_stripe_correlations(
 
     return {
         "provider": PROVIDER_STRIPE,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# M74D — Shopify configuration risk × Shopify configuration activity
+# ════════════════════════════════════════════════════════════════════════════
+
+_SHOPIFY_REVIEW_NOTE = (
+    "This is a correlation signal that may require review. ConfigTrace does "
+    "not confirm fraud, compromise, unauthorized access, or data exposure."
+)
+
+
+# Finding-rule → Shopify correlation rule. Only the rules whose finding side
+# exists AND whose evidence side M74B ingestion actually emits are mapped here.
+# The four DEFERRED rules from the M74D spec (app_scopes / customer_scope /
+# policy) intentionally appear NOWHERE in this map because M74B does not emit
+# ``shopify.app_scopes.updated`` or ``shopify.policy.*``; promoting them would
+# invent a correlation that has no evidence side. Their finding rules are
+# tracked in ``_SHOPIFY_DEFERRED_FINDING_RULES`` so the front-end and tests can
+# assert intent.
+SHOPIFY_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    "shopify_webhook_http": {
+        "correlation_type": "shopify_webhook_insecure_risk_activity",
+        "activity_types": {
+            "shopify.webhook.created",
+            "shopify.webhook.updated",
+            "shopify.webhook.deleted",
+        },
+        "narrow_key": "webhook_id",
+        "object_type": "Webhook",
+        "object_kind": "webhook",
+        "title": "Shopify insecure webhook risk aligned with webhook activity",
+        "subject": "Shopify insecure webhook risk",
+        "evidence_phrase": "webhook configuration activity",
+    },
+    "shopify_webhook_high_risk_topic": {
+        "correlation_type": "shopify_webhook_topic_risk_activity",
+        "activity_types": {
+            "shopify.webhook.created",
+            "shopify.webhook.updated",
+            "shopify.webhook.deleted",
+        },
+        "narrow_key": "webhook_id",
+        "object_type": "Webhook",
+        "object_kind": "webhook",
+        "title": "Shopify high-risk webhook topic aligned with webhook activity",
+        "subject": "Shopify high-risk webhook topic risk",
+        "evidence_phrase": "webhook configuration activity",
+    },
+    "shopify_domain_ssl_missing": {
+        "correlation_type": "shopify_domain_ssl_risk_activity",
+        "activity_types": {
+            "shopify.domain.created",
+            "shopify.domain.updated",
+            "shopify.domain.deleted",
+        },
+        "narrow_key": "domain_id",
+        "object_type": "Domain",
+        "object_kind": "domain",
+        "title": "Shopify domain SSL risk aligned with domain activity",
+        "subject": "Shopify domain SSL risk",
+        "evidence_phrase": "domain configuration activity",
+    },
+    "shopify_domain_unverified": {
+        "correlation_type": "shopify_domain_verification_risk_activity",
+        "activity_types": {
+            "shopify.domain.created",
+            "shopify.domain.updated",
+            "shopify.domain.deleted",
+        },
+        "narrow_key": "domain_id",
+        "object_type": "Domain",
+        "object_kind": "domain",
+        "title": "Shopify domain verification risk aligned with domain activity",
+        "subject": "Shopify domain verification risk",
+        "evidence_phrase": "domain configuration activity",
+    },
+}
+
+# Finding rules whose correlation is DEFERRED until M74B ingests the matching
+# activity event_type. The dispatcher must never synthesize correlations for
+# these. Pinned by M74D tests.
+_SHOPIFY_DEFERRED_FINDING_RULES: frozenset[str] = frozenset({
+    "shopify_app_broad_write_scopes",     # needs shopify.app_scopes.updated
+    "shopify_app_customer_data_scope",    # needs shopify.app_scopes.updated
+    "shopify_policy_missing",             # needs shopify.policy.{created,updated,deleted}
+})
+
+
+def _sh_event_md(ev: SecurityActivityEvent, key: str) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _sh_event_bool(ev: SecurityActivityEvent, key: str) -> Optional[bool]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v if isinstance(v, bool) else None
+
+
+def _sh_finding_object_id(finding: SecurityFinding) -> Optional[str]:
+    """Shopify object identifier (webhook id / domain id) for a finding.
+
+    Prefer the Resource.provider_resource_id (the canonical id from the
+    Shopify connector). Fall back to the finding_key suffix
+    (``<rule>:<record_id>`` from ``make_finding_key``). Never returns the
+    rule prefix alone, and never returns provider-only.
+    """
+    fk = finding.finding_key or ""
+    base = _base_rule(fk)
+    if fk and ":" in fk:
+        candidate = fk.split(":", 1)[1].strip()
+        if candidate and candidate != base:
+            return candidate
+    return None
+
+
+def build_shopify_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    object_label: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a Shopify correlation dict (not persisted) from finding + event."""
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['title']} ({object_label})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and {rule['evidence_phrase']} "
+        f"(\"{event.event_type}\") were observed for the same Shopify "
+        f"{object_label} within the review window. {_SHOPIFY_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "shop_domain": _sh_event_md(event, "shop_domain"),
+        "myshopify_domain": _sh_event_md(event, "myshopify_domain"),
+        "event_type": event.event_type,
+        "shopify_event_type": _sh_event_md(event, "shopify_event_type"),
+        "event_action": _sh_event_md(event, "event_action"),
+        "event_source": _sh_event_md(event, "event_source"),
+        "object_type": _sh_event_md(event, "object_type"),
+        "object_id": _sh_event_md(event, "object_id"),
+        "webhook_id": _sh_event_md(event, "webhook_id"),
+        "webhook_topic": _sh_event_md(event, "webhook_topic"),
+        "webhook_endpoint_domain": _sh_event_md(event, "webhook_endpoint_domain"),
+        "webhook_endpoint_scheme": _sh_event_md(event, "webhook_endpoint_scheme"),
+        "domain_id": _sh_event_md(event, "domain_id"),
+        "domain_host": _sh_event_md(event, "domain_host"),
+        "policy_type": _sh_event_md(event, "policy_type"),
+        "livemode": _sh_event_bool(event, "livemode"),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_SHOPIFY,
+        "correlation_key": rule["correlation_type"],
+        "correlation_type": rule["correlation_type"],
+        "severity": finding.severity or "medium",
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_shopify_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active Shopify config-risk findings with Shopify activity (M74D).
+
+    Conservative + object-scoped: a finding only matches an event for the SAME
+    Shopify object identity (webhook id or domain id), with an aligned
+    event_type, inside the finding's review window. The object id is read from
+    the finding's Resource.provider_resource_id (with a finding_key-suffix
+    fallback). The event's narrow-key metadata (webhook_id / domain_id) is
+    compared to that object id; ``object_id`` is accepted as a fallback when
+    ``object_type`` also matches. When both sides expose a shop identity
+    (shop_domain or myshopify_domain), they must agree — never provider-only.
+    Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_SHOPIFY,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in SHOPIFY_CORRELATION_RULES
+    ]
+
+    # Resolve each finding's Shopify object id via its Resource.
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    object_by_resource: dict[uuid.UUID, str] = {}
+    shop_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            if isinstance(r.provider_resource_id, str) and r.provider_resource_id:
+                object_by_resource[r.id] = r.provider_resource_id
+            # Look for a shop identity hint on the Resource. Shopify integrations
+            # tend to surface ``shop_domain`` / ``myshopify_domain`` via metadata
+            # rather than the resource id itself, but we are happy with anything
+            # that is a non-empty string and that lives on the Resource row.
+            for k in ("shop_domain", "myshopify_domain"):
+                v = getattr(r, k, None)
+                if isinstance(v, str) and v.strip():
+                    shop_by_resource[r.id] = v.strip()
+                    break
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_SHOPIFY,
+            SecurityActivityEvent.source == "shopify_events",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        rule = SHOPIFY_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        finding_object = (
+            object_by_resource.get(finding.resource_id)
+            if finding.resource_id is not None else None
+        ) or _sh_finding_object_id(finding)
+        if not finding_object:
+            continue
+
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        narrow_key = rule.get("narrow_key")
+        expected_object_type = rule.get("object_type")
+        finding_shop = shop_by_resource.get(finding.resource_id) if finding.resource_id else None
+
+        for ev in events:
+            if ev.event_type not in rule["activity_types"]:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            # Object guard (NEVER provider-only): the event's narrow-key
+            # metadata must equal the finding's object id; the event's
+            # object_id is accepted as a fallback when object_type matches.
+            ev_narrow = _sh_event_md(ev, narrow_key) if narrow_key else None
+            ev_object_id = _sh_event_md(ev, "object_id")
+            ev_object_type = _sh_event_md(ev, "object_type")
+            narrow_match = (ev_narrow is not None and ev_narrow == finding_object)
+            object_fallback = (
+                expected_object_type is not None
+                and ev_object_type == expected_object_type
+                and ev_object_id is not None
+                and ev_object_id == finding_object
+            )
+            if not (narrow_match or object_fallback):
+                continue
+            # Defense-in-depth on object_type (when set on the rule).
+            if expected_object_type is not None and ev_object_type is not None \
+                    and ev_object_type != expected_object_type:
+                continue
+            # Shop identity guard: if BOTH sides expose a shop identity, they
+            # must agree. Never provider-only.
+            ev_shop = (
+                _sh_event_md(ev, "myshopify_domain")
+                or _sh_event_md(ev, "shop_domain")
+            )
+            if finding_shop and ev_shop and finding_shop != ev_shop:
+                continue
+
+            object_label = f"{rule['object_kind']} \"{finding_object}\""
+            correlation = build_shopify_correlation(
+                finding=finding, event=ev, object_label=object_label, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_SHOPIFY,
         "findings_scanned": len(findings),
         "events_scanned": len(events),
         "correlations_created": created,
