@@ -192,7 +192,8 @@ def test_clear_preserves_non_demo(
 
 def test_provider_labels_canonical():
     # M70E added Vercel; M71E added Supabase; M72E added Firebase; M73E added
-    # Stripe to the canonical provider-label map.
+    # Stripe; M74E added Shopify to the canonical provider-label map.
     assert report_svc._TIMELINE_PROVIDER_LABELS == {
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel",
-        "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe"}
+        "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe",
+        "shopify": "Shopify"}

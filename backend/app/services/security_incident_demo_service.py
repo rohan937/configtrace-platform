@@ -52,6 +52,7 @@ from app.services import vercel_activity_signal_service as ve_sig
 from app.services import supabase_activity_signal_service as sb_sig
 from app.services import firebase_activity_signal_service as fb_sig
 from app.services import stripe_activity_signal_service as st_sig
+from app.services import shopify_activity_signal_service as sh_sig
 
 logger = logging.getLogger(__name__)
 
@@ -2524,6 +2525,439 @@ def clear_stripe(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
 
     # 2. Stripe demo evidence anchored on the hidden Stripe demo integration.
     integ = get_stripe_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_finding_id.in_(finding_ids))
+        if activity_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids))
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids))
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── Shopify incident demo (M74E) ──────────────────────────────────────────────
+
+SHOPIFY_DEMO_INTEGRATION_NAME = "ConfigTrace Shopify incident demo (sample data)"
+SHOPIFY_DEMO_CASE_SOURCE = "demo_shopify_incident"
+SHOPIFY_DEMO_SHOP_DOMAIN = "configtrace-demo.example.com"
+SHOPIFY_DEMO_MYSHOPIFY_DOMAIN = "configtrace-demo.myshopify.com"
+SHOPIFY_DEMO_WEBHOOK_ID = "9000000001"
+SHOPIFY_DEMO_HIGH_RISK_WEBHOOK_ID = "9000000002"
+SHOPIFY_DEMO_DOMAIN_ID = "9100000001"
+SHOPIFY_DEMO_APP_SCOPE_SUMMARY_ID = "app_scope_summary_demo"
+SHOPIFY_DEMO_POLICY_ID = "refund_policy"
+
+
+def get_shopify_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == SHOPIFY_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_shopify_demo_case(workspace_id: uuid.UUID, db: Session) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == SHOPIFY_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_shopify_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_shopify_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_shopify(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Shopify demo incident chain (idempotent). No real sync.
+
+    One coherent Shopify story anchored on the same demo shop/objects:
+      Shopify configuration risks (insecure webhook over HTTP, high-risk
+      webhook topic, primary domain without SSL, primary domain unverified,
+      plus a broad-write-scopes app risk and a missing-policy risk that
+      remain uncorrelated because M74B ingestion does not emit app-scope or
+      policy activity yet) -> Shopify configuration activity
+      (shopify.webhook.updated for both webhooks, shopify.domain.updated,
+      and shopify.shop.updated) -> Shopify activity Incident Signals ->
+      Shopify risk x activity correlations (webhook insecure, webhook
+      high-risk topic, domain SSL, domain verification) -> Case.
+
+    All objects are anchored on a hidden demo integration so
+    ``clear_shopify`` removes them and nothing else. Evidence is built
+    directly for the demo objects (never by scanning the real workspace).
+    Metadata is NAMES/booleans only - NEVER Admin API access tokens, OAuth
+    tokens, private app secrets, webhook signing secrets, raw webhook
+    payloads, raw event payloads, raw API responses, customer PII / emails,
+    orders, carts / checkouts with buyer data, payment method data, card
+    data, refunds, fulfillments with customer/order data, authorization
+    headers, request/response bodies, bank-account details, tax IDs, or
+    staff names/emails.
+    """
+    existing = _existing_shopify_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    integ = get_shopify_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({"demo": True, "dataset": "shopify_incident_demo_v1"})
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=SHOPIFY_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    def _mk_resource(kind: str, oid: str) -> Resource:
+        r = Resource(
+            integration_id=integ.id, user_id=actor_user_id,
+            provider_resource_type=kind, provider_resource_id=oid,
+            display_name=oid, is_active=True,
+        )
+        db.add(r); db.flush()
+        return r
+
+    webhook_resource = _mk_resource("shopify_webhook", SHOPIFY_DEMO_WEBHOOK_ID)
+    high_risk_webhook_resource = _mk_resource(
+        "shopify_webhook", SHOPIFY_DEMO_HIGH_RISK_WEBHOOK_ID)
+    domain_resource = _mk_resource("shopify_domain", SHOPIFY_DEMO_DOMAIN_ID)
+    app_scope_resource = _mk_resource(
+        "shopify_app_scope_summary", SHOPIFY_DEMO_APP_SCOPE_SUMMARY_ID)
+    policy_resource = _mk_resource("shopify_store_policy", SHOPIFY_DEMO_POLICY_ID)
+
+    webhook_http_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="shopify",
+        finding_key=f"shopify_webhook_http:{SHOPIFY_DEMO_WEBHOOK_ID}",
+        severity="critical",
+        title="Demo: Shopify webhook uses plain HTTP",
+        resource_id=webhook_resource.id,
+        description="Sample Shopify configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "shopify_webhook_http", "demo": True,
+            "topic": "products/update", "endpoint_domain": "insecure.example.com",
+            "endpoint_scheme": "http",
+        },
+        remediation={"summary": "Switch the webhook endpoint to HTTPS."},
+    )
+    webhook_topic_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="shopify",
+        finding_key=f"shopify_webhook_high_risk_topic:{SHOPIFY_DEMO_HIGH_RISK_WEBHOOK_ID}",
+        severity="medium",
+        title="Demo: Shopify webhook subscribes to a high-risk topic",
+        resource_id=high_risk_webhook_resource.id,
+        description="Sample Shopify configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "shopify_webhook_high_risk_topic", "demo": True,
+            "topic": "orders/create", "topic_family": "orders",
+            "endpoint_domain": "hooks.example.com",
+        },
+        remediation={"summary": "Confirm the receiving system is intended and trusted."},
+    )
+    domain_ssl_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="shopify",
+        finding_key=f"shopify_domain_ssl_missing:{SHOPIFY_DEMO_DOMAIN_ID}",
+        severity="high",
+        title="Demo: Shopify primary domain does not have SSL enabled",
+        resource_id=domain_resource.id,
+        description="Sample Shopify configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "shopify_domain_ssl_missing", "demo": True,
+            "host": "store.example.com", "primary": True, "ssl_enabled": False,
+        },
+        remediation={"summary": "Enable SSL on the primary domain."},
+    )
+    domain_verified_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="shopify",
+        finding_key=f"shopify_domain_unverified:{SHOPIFY_DEMO_DOMAIN_ID}",
+        severity="medium",
+        title="Demo: Shopify primary domain is unverified",
+        resource_id=domain_resource.id,
+        description="Sample Shopify configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "shopify_domain_unverified", "demo": True,
+            "host": "store.example.com", "primary": True, "verified": False,
+        },
+        remediation={"summary": "Verify the primary domain in the Shopify admin."},
+    )
+    app_scope_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="shopify",
+        finding_key=f"shopify_app_broad_write_scopes:{SHOPIFY_DEMO_APP_SCOPE_SUMMARY_ID}",
+        severity="medium",
+        title="Demo: Shopify app has broad high-risk write scopes",
+        resource_id=app_scope_resource.id,
+        description="Sample Shopify configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "shopify_app_broad_write_scopes", "demo": True,
+            "high_risk_write_scope_count": 3,
+            "high_risk_write_scopes": "write_customers,write_orders,write_products",
+        },
+        remediation={"summary": "Reduce the app's grant to least privilege."},
+    )
+    policy_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="shopify",
+        finding_key=f"shopify_policy_missing:{SHOPIFY_DEMO_POLICY_ID}",
+        severity="low",
+        title="Demo: Shopify 'refund_policy' policy is missing",
+        resource_id=policy_resource.id,
+        description="Sample Shopify configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "shopify_policy_missing", "demo": True,
+            "policy_type": "refund_policy", "present": False,
+        },
+        remediation={"summary": "Add the refund_policy policy in the Shopify admin."},
+    )
+
+    def _mk_event(event_type: str, *, object_type: str, object_id: str,
+                  extras: Optional[dict] = None) -> Any:
+        meta: dict[str, Any] = {
+            "shopify_event_type": (
+                event_type.removeprefix("shopify.").replace(".", "/")
+            ),
+            "event_action": event_type.removeprefix("shopify.").split(".")[-1],
+            "event_source": "shopify_events_api",
+            "shop_domain": SHOPIFY_DEMO_SHOP_DOMAIN,
+            "myshopify_domain": SHOPIFY_DEMO_MYSHOPIFY_DOMAIN,
+            "object_type": object_type,
+            "object_id": object_id,
+            "livemode": True,
+        }
+        if extras:
+            meta.update(extras)
+        norm = activity_svc.normalize_activity_event(
+            provider="shopify", source="shopify_events", event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-shopify-{uuid.uuid4().hex[:10]}",
+            actor_id=None, actor_type=None,
+            resource_type=object_type, resource_id=object_id, metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    webhook_event = _mk_event(
+        "shopify.webhook.updated",
+        object_type="Webhook", object_id=SHOPIFY_DEMO_WEBHOOK_ID,
+        extras={
+            "webhook_id": SHOPIFY_DEMO_WEBHOOK_ID,
+            "webhook_topic": "products/update",
+            "webhook_endpoint_domain": "insecure.example.com",
+            "webhook_endpoint_scheme": "http",
+        },
+    )
+    high_risk_webhook_event = _mk_event(
+        "shopify.webhook.updated",
+        object_type="Webhook", object_id=SHOPIFY_DEMO_HIGH_RISK_WEBHOOK_ID,
+        extras={
+            "webhook_id": SHOPIFY_DEMO_HIGH_RISK_WEBHOOK_ID,
+            "webhook_topic": "orders/create",
+            "webhook_endpoint_domain": "hooks.example.com",
+            "webhook_endpoint_scheme": "https",
+        },
+    )
+    domain_event = _mk_event(
+        "shopify.domain.updated",
+        object_type="Domain", object_id=SHOPIFY_DEMO_DOMAIN_ID,
+        extras={
+            "domain_id": SHOPIFY_DEMO_DOMAIN_ID,
+            "domain_host": "store.example.com",
+        },
+    )
+    shop_event = _mk_event(
+        "shopify.shop.updated",
+        object_type="Shop", object_id=SHOPIFY_DEMO_MYSHOPIFY_DOMAIN,
+    )
+
+    signals = []
+    for ev in (webhook_event, high_risk_webhook_event, domain_event, shop_event):
+        sig_dict = sh_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db
+            )
+            signals.append(sig)
+
+    def _add_correlation(finding, event, *, object_kind: str, object_id: str):
+        rule = corr_svc.SHOPIFY_CORRELATION_RULES[
+            corr_svc._base_rule(finding.finding_key)
+        ]
+        cdict = corr_svc.build_shopify_correlation(
+            finding=finding, event=event,
+            object_label=f'{object_kind} "{object_id}"', rule=rule,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db
+        )
+        return corr
+
+    webhook_http_corr = _add_correlation(
+        webhook_http_finding, webhook_event,
+        object_kind="webhook", object_id=SHOPIFY_DEMO_WEBHOOK_ID,
+    )
+    webhook_topic_corr = _add_correlation(
+        webhook_topic_finding, high_risk_webhook_event,
+        object_kind="webhook", object_id=SHOPIFY_DEMO_HIGH_RISK_WEBHOOK_ID,
+    )
+    domain_ssl_corr = _add_correlation(
+        domain_ssl_finding, domain_event,
+        object_kind="domain", object_id=SHOPIFY_DEMO_DOMAIN_ID,
+    )
+    domain_verified_corr = _add_correlation(
+        domain_verified_finding, domain_event,
+        object_kind="domain", object_id=SHOPIFY_DEMO_DOMAIN_ID,
+    )
+
+    correlations = [
+        webhook_http_corr, webhook_topic_corr,
+        domain_ssl_corr, domain_verified_corr,
+    ]
+    findings = [
+        webhook_http_finding, webhook_topic_finding,
+        domain_ssl_finding, domain_verified_finding,
+        app_scope_finding, policy_finding,
+    ]
+    events = [webhook_event, high_risk_webhook_event, domain_event, shop_event]
+
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Shopify incident investigation",
+        summary=(
+            "Demo investigation case. It groups Shopify security evidence: "
+            "configuration risks (insecure webhook, high-risk webhook topic, "
+            "primary domain without SSL, primary domain unverified, broad "
+            "app write scopes, and a missing standard policy), and Shopify "
+            "configuration activity (webhook subscription, shop-domain, and "
+            "shop setting changes) for the same shop/objects - turned into "
+            "review signals and correlations. This is a human-reviewed case "
+            "presenting evidence for review and may require review. "
+            "ConfigTrace does not confirm fraud, compromise, unauthorized "
+            "access, or data exposure."
+        ),
+        severity=webhook_http_corr.severity,
+        provider="shopify",
+        metadata={
+            "source": SHOPIFY_DEMO_CASE_SOURCE,
+            "repository": SHOPIFY_DEMO_MYSHOPIFY_DOMAIN,
+        },
+        db=db,
+    )
+    for corr in correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db)
+    for finding in findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=finding.id,
+            actor_user_id=actor_user_id, db=db)
+    for ev in events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db)
+    for sig in signals:
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db)
+    seen_signal_ids = {s.id for s in signals}
+    for corr in correlations:
+        if corr.linked_signal_id is not None and corr.linked_signal_id not in seen_signal_ids:
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal", object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db)
+
+    logger.info("shopify_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_shopify(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Shopify demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == SHOPIFY_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = get_shopify_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

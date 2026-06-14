@@ -70,7 +70,7 @@ def _ids_by_type(links: list[SecurityCaseLink]) -> dict[str, list[uuid.UUID]]:
 # response bodies). It correlates evidence for review — it does NOT confirm
 # compromise, attacker presence, unauthorized access, or breach.
 
-_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe"}
+_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify"}
 
 # Item-type tie-breaker order (stable, deterministic) when timestamps are equal.
 _TYPE_RANK = {"finding": 0, "activity_event": 1, "incident_signal": 2, "correlation": 3}
@@ -618,6 +618,7 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
     provider_label = {
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel",
         "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe",
+        "shopify": "Shopify",
     }.get(provider_key, provider_key)
     evidence_label = f"{provider_label} incident evidence".strip()
     executive_summary = (
