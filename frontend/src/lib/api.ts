@@ -838,6 +838,18 @@ export async function generateStripeActivitySignals(
   return apiFetch(`/security/stripe-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Shopify activity Incident Signals (M74C). Admin/owner only.
+ * Idempotent — re-running creates no duplicates. Promotes Shopify
+ * configuration-change activity (webhook subscription / shop settings /
+ * shop-domain changes) into review-worthy signals.
+ */
+export async function generateShopifyActivitySignals(
+  token?: string | null,
+): Promise<import("@/types").ShopifyActivitySignalGenerateResponse> {
+  return apiFetch(`/security/shopify-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

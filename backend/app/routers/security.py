@@ -187,6 +187,8 @@ from app.schemas.security_stripe_activity import (
 from app.schemas.security_shopify_activity import (
     ShopifyActivitySyncRequest,
     ShopifyActivitySyncResponse,
+    ShopifyActivitySignalGenerateRequest,
+    ShopifyActivitySignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -228,6 +230,7 @@ from app.services import firebase_activity_ingestion_service
 from app.services import stripe_activity_ingestion_service
 from app.services import stripe_activity_signal_service
 from app.services import shopify_activity_ingestion_service
+from app.services import shopify_activity_signal_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -2586,6 +2589,40 @@ def generate_stripe_activity_signals(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return StripeActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/shopify-activity/generate-signals",
+    response_model=ShopifyActivitySignalGenerateResponse,
+)
+def generate_shopify_activity_signals(
+    body: Optional[ShopifyActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ShopifyActivitySignalGenerateResponse:
+    """Generate Shopify activity Incident Signals (M74C).
+
+    Admin/owner only. Promotes Shopify configuration-change activity (webhook
+    subscription / shop settings / shop-domain changes) into review-worthy
+    signals. Idempotent — re-running creates no duplicates. These are review
+    signals; they do not confirm fraud, compromise, unauthorized access, or
+    customer-data / order / card-data exposure. Members can view the resulting
+    signals via ``GET /security/signals?provider=shopify``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = shopify_activity_signal_service.generate_shopify_activity_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return ShopifyActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

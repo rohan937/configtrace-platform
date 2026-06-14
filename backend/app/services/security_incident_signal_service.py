@@ -187,6 +187,27 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "capability_status",    # Stripe capability status (active/pending/inactive)
         "tax_setting_name",     # Tax-settings setting NAME (future use; safe key)
         "livemode",             # bool — Stripe live vs test mode
+        # Shopify activity signal fields (M74C) — safe control-plane change
+        # summary ONLY. NEVER Admin API access tokens, OAuth tokens, private
+        # app secrets, webhook signing secrets, raw webhook payloads, raw event
+        # payloads, raw API responses, customer PII / emails, orders, carts /
+        # checkouts with buyer data, payment method data, card data, refunds,
+        # fulfillments with customer/order data, authorization headers,
+        # request/response bodies, bank-account details, tax IDs, or staff
+        # names/emails.
+        "shop_domain",               # Shopify shop domain (e.g. "mystore.myshopify.com")
+        "myshopify_domain",          # canonical .myshopify.com domain
+        "shopify_event_type",        # raw "<Subject>/<verb>" (e.g. "Webhook/update")
+        "webhook_id",                # Shopify webhook id (numeric/string identifier)
+        "webhook_topic",             # webhook topic NAME (e.g. "products/update")
+        "webhook_endpoint_domain",   # webhook delivery URL host only
+        "webhook_endpoint_scheme",   # webhook URL scheme (http / https)
+        "app_scope_count",           # safe COUNT of granted app scopes
+        "app_scopes_sample",         # sanitized, truncated, joined NAME sample
+        "domain_id",                 # Shopify shop-domain id (identifier, not a secret)
+        "domain_host",               # shop-domain host (a NAME, never DNS records)
+        "policy_type",               # store policy type (e.g. "refund_policy") — NAME
+        "setting_name",              # shop setting NAME (never a secret value)
     }
 )
 
