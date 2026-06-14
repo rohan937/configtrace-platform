@@ -1587,6 +1587,8 @@ def incident_demo_status(
         status = security_incident_demo_service.get_aws_status(workspace_id, db)
     elif prov == "cloudflare":
         status = security_incident_demo_service.get_cloudflare_status(workspace_id, db)
+    elif prov == "vercel":
+        status = security_incident_demo_service.get_vercel_status(workspace_id, db)
     else:
         status = security_incident_demo_service.get_status(workspace_id, db)
     return IncidentDemoStatusResponse(**status)
@@ -1618,6 +1620,10 @@ def incident_demo_seed(
         summary = security_incident_demo_service.seed_cloudflare(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
         )
+    elif prov == "vercel":
+        summary = security_incident_demo_service.seed_vercel(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
     else:
         summary = security_incident_demo_service.seed(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
@@ -1645,6 +1651,8 @@ def incident_demo_clear(
         result = security_incident_demo_service.clear_aws(workspace_id=workspace_id, db=db)
     elif prov == "cloudflare":
         result = security_incident_demo_service.clear_cloudflare(workspace_id=workspace_id, db=db)
+    elif prov == "vercel":
+        result = security_incident_demo_service.clear_vercel(workspace_id=workspace_id, db=db)
     else:
         result = security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
     return IncidentDemoClearResponse(**result)

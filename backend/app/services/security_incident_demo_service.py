@@ -48,6 +48,7 @@ from app.services import aws_iam_behavior_service as behavior_svc
 from app.services import aws_s3_access_signal_service as s3_spike_svc
 from app.services import aws_vpc_flow_signal_service as vpc_flow_svc
 from app.services import cloudflare_waf_signal_service as cf_waf_signal_svc
+from app.services import vercel_activity_signal_service as ve_sig
 
 logger = logging.getLogger(__name__)
 
@@ -1074,6 +1075,331 @@ def clear_aws(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
 
     # 2. AWS demo evidence anchored on the hidden AWS demo integration.
     integ = get_aws_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_finding_id.in_(finding_ids))
+        if activity_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids))
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids))
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Vercel incident demo (M70E)
+# ───────────────────────────────────────────────────────────────────────────────
+#
+# A SEPARATE hidden demo integration + case source so "Clear Vercel demo" removes
+# only Vercel demo objects and never touches the GitHub / AWS / Cloudflare demos
+# or any real evidence. Same safety rules: clearly marked demo, no real sync, no
+# notifications, never touches a real Vercel integration, idempotent. One coherent
+# Vercel story anchored on the same project:
+#   Config risks (production branch unusual + sensitive env var broadly scoped +
+#   deploy hook targets production) -> Vercel audit activity (project.updated +
+#   env_var.updated + deploy_hook.created) -> Vercel activity Incident Signals ->
+#   Vercel risk x activity correlations -> human-reviewed case -> report.
+
+VERCEL_DEMO_INTEGRATION_NAME = "ConfigTrace Vercel incident demo (sample data)"
+VERCEL_DEMO_CASE_SOURCE = "demo_vercel_incident"
+VERCEL_DEMO_PROJECT_ID = "prj_configtrace_demo"        # sample Vercel project id
+VERCEL_DEMO_PROJECT_NAME = "configtrace-demo-app"      # sample project slug
+VERCEL_DEMO_BRANCH = "develop"                          # non-production branch
+VERCEL_DEMO_ENV_KEY = "DEMO_DATABASE_PASSWORD"         # secret-suggestive KEY NAME only
+VERCEL_DEMO_HOOK_NAME = "demo-nightly-production"      # deploy hook name (never the URL)
+
+
+def get_vercel_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == VERCEL_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_vercel_demo_case(workspace_id: uuid.UUID, db: Session) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == VERCEL_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_vercel_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_vercel_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_vercel(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Vercel demo incident chain (idempotent). No real sync.
+
+    One coherent Vercel story anchored on the same demo project:
+      Configuration Risks (production branch looks non-production + a
+      secret-suggestive env var broadly scoped + a deploy hook targeting the
+      production branch) -> Vercel audit activity (project.updated + env_var.updated
+      + deploy_hook.created) -> Vercel activity Incident Signals -> Vercel risk x
+      activity correlations -> Case.
+
+    All objects are anchored on a hidden demo integration so ``clear_vercel``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace). NEVER stores env var values,
+    deploy hook URLs, tokens, headers, raw payloads, or actor emails.
+    """
+    existing = _existing_vercel_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -> never shown / never synced).
+    integ = get_vercel_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({"demo": True, "dataset": "vercel_incident_demo_v1"})
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=VERCEL_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    # 2. Demo Vercel project resource (provider_resource_id == project id).
+    resource = Resource(
+        integration_id=integ.id,
+        user_id=actor_user_id,
+        provider_resource_type="vercel_project",
+        provider_resource_id=VERCEL_DEMO_PROJECT_ID,
+        display_name=VERCEL_DEMO_PROJECT_NAME,
+        is_active=True,
+    )
+    db.add(resource)
+    db.flush()
+
+    # 3. Configuration Risk findings on the same project.
+    branch_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="vercel",
+        finding_key=f"vercel_production_branch_unusual:{VERCEL_DEMO_PROJECT_ID}#demo",
+        severity="medium", title="Demo: Vercel production branch looks non-production",
+        resource_id=resource.id,
+        description="Sample Vercel configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "vercel_production_branch_unusual", "demo": True,
+            "project": VERCEL_DEMO_PROJECT_NAME, "production_branch": VERCEL_DEMO_BRANCH,
+        },
+        remediation={"summary": "Confirm the production branch is intentional."},
+    )
+    env_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="vercel",
+        finding_key=f"vercel_sensitive_env_var_broad_scope:{VERCEL_DEMO_PROJECT_ID}#demo",
+        severity="high", title="Demo: Sensitive-looking Vercel env var is broadly scoped",
+        resource_id=resource.id,
+        description="Sample Vercel configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "vercel_sensitive_env_var_broad_scope", "demo": True,
+            "env_var_name": VERCEL_DEMO_ENV_KEY, "target": ["preview", "production"],
+        },
+        remediation={"summary": "Scope sensitive env vars to production only."},
+    )
+    hook_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="vercel",
+        finding_key=f"vercel_deploy_hook_production_branch:{VERCEL_DEMO_PROJECT_ID}#deploy_hook#demo",
+        severity="medium", title="Demo: Vercel deploy hook targets the production branch",
+        resource_id=resource.id,
+        description="Sample Vercel configuration risk for the incident-workflow demo.",
+        evidence={
+            "rule": "vercel_deploy_hook_production_branch", "demo": True,
+            "hook_name": VERCEL_DEMO_HOOK_NAME, "hook_ref": "main",
+        },
+        remediation={"summary": "Confirm production deploy hooks are intended."},
+    )
+
+    # 4. Vercel audit activity (control-plane changes) for the same project.
+    def _mk_event(event_type, action, **md):
+        meta = {
+            "project_id": VERCEL_DEMO_PROJECT_ID,
+            "project_name": VERCEL_DEMO_PROJECT_NAME,
+            "team_id": "team_configtrace_demo",
+            "event_action": action,
+            "event_source": "vercel_audit_log",
+        }
+        meta.update(md)
+        norm = activity_svc.normalize_activity_event(
+            provider="vercel", source="audit_log", event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-vercel-{uuid.uuid4().hex[:10]}",
+            actor_id=None, actor_type="user",
+            resource_type=md.get("target_type") or "project",
+            resource_id=md.get("target_id") or VERCEL_DEMO_PROJECT_ID,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    project_event = _mk_event(
+        "vercel.project.updated", "project.update",
+        target_type="project", target_id=VERCEL_DEMO_PROJECT_ID,
+        target_name=VERCEL_DEMO_PROJECT_NAME, branch=VERCEL_DEMO_BRANCH,
+    )
+    env_event = _mk_event(
+        "vercel.env_var.updated", "env.update",
+        target_type="env", env_var_key=VERCEL_DEMO_ENV_KEY,
+    )
+    hook_event = _mk_event(
+        "vercel.deploy_hook.created", "deployHook.create",
+        target_type="deploy_hook", deploy_hook_name=VERCEL_DEMO_HOOK_NAME, branch="main",
+    )
+
+    # 5. Vercel activity Incident Signals (built directly from each event).
+    signals = []
+    for ev in (project_event, env_event, hook_event):
+        sig_dict = ve_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db
+            )
+            signals.append(sig)
+
+    # 6. Vercel risk x activity correlations (M70D), built directly.
+    def _add_correlation(finding, event):
+        rule = corr_svc.VERCEL_CORRELATION_RULES[corr_svc._base_rule(finding.finding_key)]
+        cdict = corr_svc.build_vercel_correlation(
+            finding=finding, event=event, project_key=VERCEL_DEMO_PROJECT_ID, rule=rule
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db
+        )
+        return corr
+
+    branch_corr = _add_correlation(branch_finding, project_event)
+    env_corr = _add_correlation(env_finding, env_event)
+    hook_corr = _add_correlation(hook_finding, hook_event)
+
+    # 7. Case linking all the evidence (marked demo via metadata.source).
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Vercel incident investigation",
+        summary=(
+            "Demo investigation case. It groups Vercel security evidence: "
+            "configuration risks (a non-production production branch, a "
+            "secret-suggestive environment variable scoped beyond production, and "
+            "a deploy hook targeting the production branch), and Vercel audit "
+            "activity (project, environment-variable, and deploy-hook changes) for "
+            "the same project - turned into review signals and correlations. This "
+            "is a human-reviewed case presenting evidence for review and may "
+            "require review. ConfigTrace does not confirm compromise or "
+            "unauthorized access."
+        ),
+        severity=env_corr.severity,
+        provider="vercel",
+        metadata={"source": VERCEL_DEMO_CASE_SOURCE, "repository": VERCEL_DEMO_PROJECT_NAME},
+        db=db,
+    )
+    for corr in (branch_corr, env_corr, hook_corr):
+        case_svc.link_object_to_case(case=case, object_type="correlation", object_id=corr.id, actor_user_id=actor_user_id, db=db)
+    for finding in (branch_finding, env_finding, hook_finding):
+        case_svc.link_object_to_case(case=case, object_type="finding", object_id=finding.id, actor_user_id=actor_user_id, db=db)
+    for ev in (project_event, env_event, hook_event):
+        case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=ev.id, actor_user_id=actor_user_id, db=db)
+    for sig in signals:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=sig.id, actor_user_id=actor_user_id, db=db)
+    # Correlation-evidence signals (auto-created by upsert_correlation).
+    for corr in (branch_corr, env_corr, hook_corr):
+        if corr.linked_signal_id is not None:
+            case_svc.link_object_to_case(case=case, object_type="signal", object_id=corr.linked_signal_id, actor_user_id=actor_user_id, db=db)
+
+    logger.info("vercel_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_vercel(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Vercel demo incident objects (and nothing else)."""
+    # 1. Vercel demo cases (+ their links).
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == VERCEL_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    # 2. Vercel demo evidence anchored on the hidden Vercel demo integration.
+    integ = get_vercel_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(
