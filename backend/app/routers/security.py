@@ -169,6 +169,8 @@ from app.schemas.security_vercel_activity import (
 from app.schemas.security_firebase_activity import (
     FirebaseActivitySyncRequest,
     FirebaseActivitySyncResponse,
+    FirebaseActivitySignalGenerateRequest,
+    FirebaseActivitySignalGenerateResponse,
 )
 from app.schemas.security_supabase_activity import (
     SupabaseActivitySyncRequest,
@@ -213,6 +215,7 @@ from app.services import vercel_activity_ingestion_service
 from app.services import vercel_activity_signal_service
 from app.services import supabase_activity_ingestion_service
 from app.services import firebase_activity_ingestion_service
+from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
 from app.services import workspace_service
@@ -2360,6 +2363,40 @@ def generate_supabase_activity_signals(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return SupabaseActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/firebase-activity/generate-signals",
+    response_model=FirebaseActivitySignalGenerateResponse,
+)
+def generate_firebase_activity_signals(
+    body: Optional[FirebaseActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FirebaseActivitySignalGenerateResponse:
+    """Generate Firebase activity Incident Signals (M72C).
+
+    Admin/owner only. Promotes Firebase audit activity (Firestore/Realtime
+    Database/Storage rules, auth-config, Cloud Function, Hosting, and project/app
+    changes) into review-worthy signals. Idempotent — re-running creates no
+    duplicates. These are review signals; they do not confirm data exposure,
+    unauthorized access, or compromise. Members can view the resulting signals via
+    ``GET /security/signals?provider=firebase``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = firebase_activity_signal_service.generate_firebase_activity_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return FirebaseActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

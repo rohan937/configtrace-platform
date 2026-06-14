@@ -156,6 +156,19 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "edge_function_id",     # Edge Function id/slug (never source or env var values)
         "edge_function_name",   # Edge Function name (never source or env var values)
         "auth_setting_name",    # auth configuration setting key NAME (never a secret value)
+        # Firebase activity signal fields (M72C) — safe control-plane change
+        # summary ONLY. NEVER Firestore documents, Realtime Database data, storage
+        # object contents, auth users, emails, private keys, service-account JSON
+        # secrets, tokens, headers, raw API responses, raw rule source, request/
+        # response bodies, or Cloud Function env var values.
+        "project_number",       # Firebase/GCP project number (identifier, not a secret)
+        "method_name",          # audit-log methodName (e.g. "...UpdateRelease")
+        "database_instance",    # Realtime Database instance name
+        "function_name",        # Cloud Function name (never source or env var values)
+        "function_region",      # Cloud Function region
+        "app_id",               # Firebase app id
+        "app_platform",         # Firebase app platform (web/ios/android)
+        "hosting_site_id",      # Firebase Hosting site id
     }
 )
 

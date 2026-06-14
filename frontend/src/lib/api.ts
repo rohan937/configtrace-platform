@@ -787,6 +787,16 @@ export async function generateSupabaseActivitySignals(
   return apiFetch(`/security/supabase-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Firebase activity Incident Signals (M72C). Admin/owner only.
+ * Idempotent — re-running creates no duplicates.
+ */
+export async function generateFirebaseActivitySignals(
+  token?: string | null,
+): Promise<import("@/types").FirebaseActivitySignalGenerateResponse> {
+  return apiFetch(`/security/firebase-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

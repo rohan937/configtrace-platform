@@ -2001,6 +2001,14 @@ export interface SupabaseActivitySignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface FirebaseActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface GitHubSecretScanningSignalGenerateResponse {
   provider: string;
   source: string;
