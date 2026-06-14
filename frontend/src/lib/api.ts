@@ -766,6 +766,16 @@ export async function generateVercelActivitySignals(
   return apiFetch(`/security/vercel-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Supabase activity Incident Signals (M71C). Admin/owner only.
+ * Idempotent — re-running creates no duplicates.
+ */
+export async function generateSupabaseActivitySignals(
+  token?: string | null,
+): Promise<import("@/types").SupabaseActivitySignalGenerateResponse> {
+  return apiFetch(`/security/supabase-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

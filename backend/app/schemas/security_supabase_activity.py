@@ -35,3 +35,21 @@ class SupabaseActivitySyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class SupabaseActivitySignalGenerateRequest(BaseModel):
+    """POST /security/supabase-activity/generate-signals body (M71C, all optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_signals: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class SupabaseActivitySignalGenerateResponse(BaseModel):
+    """Supabase activity Incident Signal generation summary (M71C)."""
+
+    provider: str
+    source: str
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

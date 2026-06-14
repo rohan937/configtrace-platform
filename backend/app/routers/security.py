@@ -169,6 +169,8 @@ from app.schemas.security_vercel_activity import (
 from app.schemas.security_supabase_activity import (
     SupabaseActivitySyncRequest,
     SupabaseActivitySyncResponse,
+    SupabaseActivitySignalGenerateRequest,
+    SupabaseActivitySignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -206,6 +208,7 @@ from app.services import cloudflare_waf_event_ingestion_service
 from app.services import vercel_activity_ingestion_service
 from app.services import vercel_activity_signal_service
 from app.services import supabase_activity_ingestion_service
+from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
 from app.services import workspace_service
 from app.services import workspace_permission_service
@@ -2252,6 +2255,40 @@ def sync_supabase_activity(
         lookback_hours=lookback_hours, max_events=max_events,
     )
     return SupabaseActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/supabase-activity/generate-signals",
+    response_model=SupabaseActivitySignalGenerateResponse,
+)
+def generate_supabase_activity_signals(
+    body: Optional[SupabaseActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SupabaseActivitySignalGenerateResponse:
+    """Generate Supabase activity Incident Signals (M71C).
+
+    Admin/owner only. Promotes Supabase organization audit activity (table/RLS,
+    policy, storage-bucket, Edge Function, auth-config, and project changes) into
+    review-worthy signals. Idempotent — re-running creates no duplicates. These
+    are review signals; they do not confirm data exposure, unauthorized access,
+    or compromise. Members can view the resulting signals via
+    ``GET /security/signals?provider=supabase``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = supabase_activity_signal_service.generate_supabase_activity_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return SupabaseActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

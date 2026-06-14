@@ -1981,6 +1981,14 @@ export interface VercelActivitySignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface SupabaseActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface GitHubSecretScanningSignalGenerateResponse {
   provider: string;
   source: string;
