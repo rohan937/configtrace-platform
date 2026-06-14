@@ -39,6 +39,7 @@ from app.models.snapshot import Snapshot
 from app.services import security_exposure_events as exposure_events
 from app.services import security_finding_service
 from app.services.security_rules import aws as aws_rules
+from app.services.security_rules import azure as azure_rules
 from app.services.security_rules import cloudflare as cloudflare_rules
 from app.services.security_rules import firebase as firebase_rules
 from app.services.security_rules import github as github_rules
@@ -61,6 +62,7 @@ _PROVIDER_RULES = {
     "cloudflare": [cloudflare_rules.evaluate],
     "vercel": [vercel_rules.evaluate],
     "shopify": [shopify_rules.evaluate],
+    "azure": [azure_rules.evaluate],
 }
 
 

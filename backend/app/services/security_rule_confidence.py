@@ -119,6 +119,17 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "shopify_domain_ssl_missing": (HIGH, "Only an explicit ssl_enabled=false on the primary domain fires."),
     "shopify_domain_unverified": (HIGH, "Only an explicit verified=false on the primary domain fires."),
     "shopify_policy_missing": (HIGH, "Only an explicit present=false on a canonical-policy baseline record fires."),
+    # Azure — M77B
+    "azure_nsg_public_admin_ingress": (HIGH, "Only Inbound+Allow rules from canonical public prefixes (*, 0.0.0.0/0, ::/0, Internet, Any) on a known admin/database/cache/search port fire."),
+    "azure_nsg_public_broad_ingress": (HIGH, "Only Inbound+Allow rules from canonical public prefixes with a broad/all-port destination range fire."),
+    "azure_storage_public_blob_access": (HIGH, "Only an explicit allowBlobPublicAccess=true on the storage account fires; container ACLs are not claimed."),
+    "azure_storage_public_network_access": (HIGH, "Only an explicit publicNetworkAccess=Enabled fires; severity bumps to high when defaultAction=Allow is also explicit."),
+    "azure_storage_weak_tls": (HIGH, "Only explicit minimumTlsVersion=TLS1_0/TLS1_1 fires; missing/unknown is skipped."),
+    "azure_storage_shared_key_enabled": (HIGH, "Only an explicit allowSharedKeyAccess=true fires; missing/unknown is skipped."),
+    "azure_key_vault_public_network_access": (HIGH, "Only an explicit publicNetworkAccess=Enabled fires; severity bumps to high when defaultAction=Allow is also explicit."),
+    "azure_key_vault_purge_protection_disabled": (HIGH, "Only an explicit enablePurgeProtection=false fires; missing/unknown is skipped."),
+    "azure_key_vault_soft_delete_disabled": (HIGH, "Only an explicit enableSoftDelete=false fires; missing/unknown is skipped."),
+    "azure_key_vault_rbac_disabled": (MEDIUM, "Fires only when enableRbacAuthorization=false AND access_policy_count > 0; vaults with no access policies are not flagged."),
 }
 
 

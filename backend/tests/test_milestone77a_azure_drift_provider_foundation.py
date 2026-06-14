@@ -359,7 +359,7 @@ class TestNormalizeSubscription:
         self.record = self.conn._normalize_subscription(_raw_subscription())
 
     def test_record_type_is_azure_subscription(self):
-        assert self.record["record_type"] == "AZURE_SUBSCRIPTION"
+        assert self.record["record_type"] == AZURE_SUBSCRIPTION
 
     def test_subscription_id_present(self):
         assert self.record["subscription_id"] == _SUB_ID
@@ -399,7 +399,7 @@ class TestNormalizeResourceGroup:
         self.record = self.conn._normalize_resource_group(self.raw, _SUB_ID)
 
     def test_record_type_is_azure_resource_group(self):
-        assert self.record["record_type"] == "AZURE_RESOURCE_GROUP"
+        assert self.record["record_type"] == AZURE_RESOURCE_GROUP
 
     def test_name_present(self):
         assert self.record["name"] == "rg-test"
@@ -452,7 +452,7 @@ class TestNormalizeNSG:
         self.record = self.conn._normalize_nsg(_raw_nsg())
 
     def test_record_type_is_azure_network_security_group(self):
-        assert self.record["record_type"] == "AZURE_NETWORK_SECURITY_GROUP"
+        assert self.record["record_type"] == AZURE_NETWORK_SECURITY_GROUP
 
     def test_nsg_name_present(self):
         assert self.record["nsg_name"] == "nsg-test"
@@ -529,7 +529,7 @@ class TestNormalizeStorageAccount:
         self.record = self.conn._normalize_storage_account(_raw_storage_account())
 
     def test_record_type_is_azure_storage_account(self):
-        assert self.record["record_type"] == "AZURE_STORAGE_ACCOUNT"
+        assert self.record["record_type"] == AZURE_STORAGE_ACCOUNT
 
     def test_account_name_present(self):
         assert self.record["account_name"] == "mystorageacct"
@@ -589,7 +589,7 @@ class TestNormalizeKeyVault:
         self.record = self.conn._normalize_key_vault(_raw_key_vault())
 
     def test_record_type_is_azure_key_vault(self):
-        assert self.record["record_type"] == "AZURE_KEY_VAULT"
+        assert self.record["record_type"] == AZURE_KEY_VAULT
 
     def test_vault_name_present(self):
         assert self.record["vault_name"] == "my-keyvault"
@@ -674,7 +674,7 @@ class TestFetchReturnsSafeRecords:
             "client_secret": "s-value", "subscription_id": _SUB_ID,
         })
         types_in_records = {r["record_type"] for r in records}
-        assert "AZURE_SUBSCRIPTION" in types_in_records
+        assert AZURE_SUBSCRIPTION in types_in_records
 
     def test_fetch_returns_resource_group_record(self, monkeypatch):
         monkeypatch.setattr(AzureConnector, "_get_token", _fake_get_token)
@@ -685,7 +685,7 @@ class TestFetchReturnsSafeRecords:
             "client_secret": "s-value", "subscription_id": _SUB_ID,
         })
         types_in_records = {r["record_type"] for r in records}
-        assert "AZURE_RESOURCE_GROUP" in types_in_records
+        assert AZURE_RESOURCE_GROUP in types_in_records
 
     def test_fetch_returns_nsg_record(self, monkeypatch):
         monkeypatch.setattr(AzureConnector, "_get_token", _fake_get_token)
@@ -696,7 +696,7 @@ class TestFetchReturnsSafeRecords:
             "client_secret": "s-value", "subscription_id": _SUB_ID,
         })
         types_in_records = {r["record_type"] for r in records}
-        assert "AZURE_NETWORK_SECURITY_GROUP" in types_in_records
+        assert AZURE_NETWORK_SECURITY_GROUP in types_in_records
 
     def test_fetch_returns_storage_account_record(self, monkeypatch):
         monkeypatch.setattr(AzureConnector, "_get_token", _fake_get_token)
@@ -707,7 +707,7 @@ class TestFetchReturnsSafeRecords:
             "client_secret": "s-value", "subscription_id": _SUB_ID,
         })
         types_in_records = {r["record_type"] for r in records}
-        assert "AZURE_STORAGE_ACCOUNT" in types_in_records
+        assert AZURE_STORAGE_ACCOUNT in types_in_records
 
     def test_fetch_returns_key_vault_record(self, monkeypatch):
         monkeypatch.setattr(AzureConnector, "_get_token", _fake_get_token)
@@ -718,7 +718,7 @@ class TestFetchReturnsSafeRecords:
             "client_secret": "s-value", "subscription_id": _SUB_ID,
         })
         types_in_records = {r["record_type"] for r in records}
-        assert "AZURE_KEY_VAULT" in types_in_records
+        assert AZURE_KEY_VAULT in types_in_records
 
     def test_fetch_token_not_in_any_record(self, monkeypatch):
         monkeypatch.setattr(AzureConnector, "_get_token", _fake_get_token)
@@ -1062,12 +1062,13 @@ def test_capability_matrix_azure_maturity_is_partial():
 
 
 def test_capability_matrix_azure_security_rules_is_false():
+    """Flipped in M77B: Azure security rules now wired (10 core rules)."""
     from app.services import provider_capability_matrix_service as svc
 
     azure_cap = svc.get_provider_capability("azure")
     assert azure_cap is not None
-    assert azure_cap.security.security_rules is False, (
-        "azure security_rules should be False at M77A (security rules are M77B)"
+    assert azure_cap.security.security_rules is True, (
+        "azure security_rules should be True after M77B (10 core rules added)"
     )
 
 
@@ -1100,12 +1101,11 @@ def test_capability_matrix_azure_category_is_cloud():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_azure_not_in_security_coverage_providers():
-    """Azure has no security rules yet (M77B), so it must not be in PROVIDERS."""
+    """Flipped in M77B: Azure is now in PROVIDERS with core security rules."""
     from app.services.security_coverage_service import PROVIDERS
 
-    assert "azure" not in PROVIDERS, (
-        "azure should not be in security_coverage_service.PROVIDERS until "
-        "security rules are added in M77B"
+    assert "azure" in PROVIDERS, (
+        "azure should be in security_coverage_service.PROVIDERS after M77B"
     )
 
 
@@ -1114,12 +1114,13 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
+    """Flipped in M77B: planned_next_stage now points to M77C."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M77B" in planned, (
-        f"planned_next_stage should reference M77B, got: {planned!r}"
+    assert "M77C" in planned, (
+        f"planned_next_stage should reference M77C after M77B, got: {planned!r}"
     )
 
 
@@ -1183,31 +1184,31 @@ class TestNormalizerEdgeCases:
     def test_normalize_subscription_empty_dict(self):
         conn = AzureConnector()
         rec = conn._normalize_subscription({})
-        assert rec["record_type"] == "AZURE_SUBSCRIPTION"
+        assert rec["record_type"] == AZURE_SUBSCRIPTION
         assert isinstance(rec["subscription_id"], str)
 
     def test_normalize_resource_group_empty_dict(self):
         conn = AzureConnector()
         rec = conn._normalize_resource_group({}, "sub-123")
-        assert rec["record_type"] == "AZURE_RESOURCE_GROUP"
+        assert rec["record_type"] == AZURE_RESOURCE_GROUP
         assert rec["tag_keys"] == []
 
     def test_normalize_nsg_empty_dict(self):
         conn = AzureConnector()
         rec = conn._normalize_nsg({})
-        assert rec["record_type"] == "AZURE_NETWORK_SECURITY_GROUP"
+        assert rec["record_type"] == AZURE_NETWORK_SECURITY_GROUP
         assert rec["rule_count"] == 0
         assert rec["rules_summary"] == []
 
     def test_normalize_storage_account_empty_dict(self):
         conn = AzureConnector()
         rec = conn._normalize_storage_account({})
-        assert rec["record_type"] == "AZURE_STORAGE_ACCOUNT"
+        assert rec["record_type"] == AZURE_STORAGE_ACCOUNT
 
     def test_normalize_key_vault_empty_dict(self):
         conn = AzureConnector()
         rec = conn._normalize_key_vault({})
-        assert rec["record_type"] == "AZURE_KEY_VAULT"
+        assert rec["record_type"] == AZURE_KEY_VAULT
         assert isinstance(rec["access_policy_count"], int)
         assert rec["access_policy_count"] == 0
 
@@ -1256,4 +1257,4 @@ class TestNormalizerEdgeCases:
         types_in_records = {r["record_type"] for r in records}
         # NSG should be absent (surface failed) but others present
         assert "AZURE_NETWORK_SECURITY_GROUP" not in types_in_records
-        assert "AZURE_SUBSCRIPTION" in types_in_records
+        assert AZURE_SUBSCRIPTION in types_in_records

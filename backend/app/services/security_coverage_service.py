@@ -40,6 +40,7 @@ PROVIDERS = [
     "stripe",
     "vercel",
     "shopify",
+    "azure",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -126,6 +127,17 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "shopify_domain_ssl_missing": ("shopify_domain",),
     "shopify_domain_unverified": ("shopify_domain",),
     "shopify_policy_missing": ("shopify_store_policy",),
+    # Azure — M77B
+    "azure_nsg_public_admin_ingress": ("azure_network_security_group",),
+    "azure_nsg_public_broad_ingress": ("azure_network_security_group",),
+    "azure_storage_public_blob_access": ("azure_storage_account",),
+    "azure_storage_public_network_access": ("azure_storage_account",),
+    "azure_storage_weak_tls": ("azure_storage_account",),
+    "azure_storage_shared_key_enabled": ("azure_storage_account",),
+    "azure_key_vault_public_network_access": ("azure_key_vault",),
+    "azure_key_vault_purge_protection_disabled": ("azure_key_vault",),
+    "azure_key_vault_soft_delete_disabled": ("azure_key_vault",),
+    "azure_key_vault_rbac_disabled": ("azure_key_vault",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -138,6 +150,7 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
     "stripe": ["Webhook endpoints", "Payment links", "Customer portal", "Account configuration"],
     "vercel": ["Deployment protection", "Production branch", "Domains", "Environment variables", "Deploy hooks"],
     "shopify": ["Webhook subscriptions", "App scopes", "Domains", "Store policies"],
+    "azure": ["Network security groups", "Storage accounts", "Key Vaults"],
 }
 
 

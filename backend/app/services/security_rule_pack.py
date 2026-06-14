@@ -119,6 +119,17 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "shopify_domain_ssl_missing": ("shopify", "high", "Domains"),
     "shopify_domain_unverified": ("shopify", "medium", "Domains"),
     "shopify_policy_missing": ("shopify", "low", "Store policies"),
+    # Azure — M77B
+    "azure_nsg_public_admin_ingress": ("azure", "critical", "Network security groups"),
+    "azure_nsg_public_broad_ingress": ("azure", "critical", "Network security groups"),
+    "azure_storage_public_blob_access": ("azure", "high", "Storage accounts"),
+    "azure_storage_public_network_access": ("azure", "high", "Storage accounts"),
+    "azure_storage_weak_tls": ("azure", "medium", "Storage accounts"),
+    "azure_storage_shared_key_enabled": ("azure", "medium", "Storage accounts"),
+    "azure_key_vault_public_network_access": ("azure", "high", "Key Vaults"),
+    "azure_key_vault_purge_protection_disabled": ("azure", "high", "Key Vaults"),
+    "azure_key_vault_soft_delete_disabled": ("azure", "medium", "Key Vaults"),
+    "azure_key_vault_rbac_disabled": ("azure", "medium", "Key Vaults"),
 }
 
 

@@ -69,6 +69,13 @@ from typing import Any
 
 import httpx
 
+from app.connectors.azure_schema import (
+    AZURE_KEY_VAULT,
+    AZURE_NETWORK_SECURITY_GROUP,
+    AZURE_RESOURCE_GROUP,
+    AZURE_STORAGE_ACCOUNT,
+    AZURE_SUBSCRIPTION,
+)
 from app.connectors.base import BaseConnector
 from app.connectors.exceptions import (
     AuthenticationError,
@@ -421,7 +428,7 @@ class AzureConnector(BaseConnector):
         """Normalise a raw Azure subscription object to safe fields only."""
         props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
         return {
-            "record_type": "AZURE_SUBSCRIPTION",
+            "record_type": AZURE_SUBSCRIPTION,
             "record_id": f"azure_subscription_{_trunc(raw.get('subscriptionId', ''))}",
             "subscription_id": _trunc(raw.get("subscriptionId", "")),
             "display_name": _trunc(raw.get("displayName", "")),
@@ -438,7 +445,7 @@ class AzureConnector(BaseConnector):
         """
         props = raw.get("properties") if isinstance(raw.get("properties"), dict) else {}
         return {
-            "record_type": "AZURE_RESOURCE_GROUP",
+            "record_type": AZURE_RESOURCE_GROUP,
             "record_id": (
                 f"azure_rg_{_trunc(subscription_id)}"
                 f"_{_trunc(raw.get('name', ''))}"
@@ -497,7 +504,7 @@ class AzureConnector(BaseConnector):
         ]
 
         return {
-            "record_type": "AZURE_NETWORK_SECURITY_GROUP",
+            "record_type": AZURE_NETWORK_SECURITY_GROUP,
             "record_id": f"azure_nsg_{_trunc(resource_id)}",
             "nsg_id": _trunc(resource_id),
             "nsg_name": _trunc(raw.get("name", "")),
@@ -530,7 +537,7 @@ class AzureConnector(BaseConnector):
         )
 
         return {
-            "record_type": "AZURE_STORAGE_ACCOUNT",
+            "record_type": AZURE_STORAGE_ACCOUNT,
             "record_id": f"azure_storage_{_trunc(resource_id)}",
             "account_id": _trunc(resource_id),
             "account_name": _trunc(raw.get("name", "")),
@@ -575,7 +582,7 @@ class AzureConnector(BaseConnector):
         )
 
         return {
-            "record_type": "AZURE_KEY_VAULT",
+            "record_type": AZURE_KEY_VAULT,
             "record_id": f"azure_kv_{_trunc(resource_id)}",
             "vault_id": _trunc(resource_id),
             "vault_name": _trunc(raw.get("name", "")),

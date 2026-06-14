@@ -95,6 +95,17 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "shopify_domain_ssl_missing",
         "shopify_domain_unverified",
         "shopify_policy_missing",
+        # Azure — M77B
+        "azure_nsg_public_admin_ingress",
+        "azure_nsg_public_broad_ingress",
+        "azure_storage_public_blob_access",
+        "azure_storage_public_network_access",
+        "azure_storage_weak_tls",
+        "azure_storage_shared_key_enabled",
+        "azure_key_vault_public_network_access",
+        "azure_key_vault_purge_protection_disabled",
+        "azure_key_vault_soft_delete_disabled",
+        "azure_key_vault_rbac_disabled",
     }
 )
 
