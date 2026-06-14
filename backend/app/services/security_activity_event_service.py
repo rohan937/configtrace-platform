@@ -172,6 +172,22 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "deployment_id",             # Vercel deployment id (dpl_xxx)
         "deployment_target",         # "production" / "preview" / "staging"
         "event_time",                # ISO event timestamp (string)
+        # Supabase audit/activity fields (M71B) — control-plane change activity
+        # ONLY. NEVER database row data, SQL result rows, auth users, emails, JWT
+        # secrets, service-role/anon keys, database passwords, tokens, headers,
+        # raw API responses, policy expressions, Edge Function env var values, or
+        # private member identities.
+        "project_ref",               # Supabase project reference (20-char slug, not a secret)
+        "organization_id",           # Supabase organization slug/id (when present)
+        "schema_name",               # affected schema name (e.g. "public")
+        "table_name",                # affected table name (a name, never row data)
+        "policy_name",               # RLS policy NAME only (never the USING/WITH CHECK expression)
+        "policy_command",            # policy command verb (SELECT/INSERT/UPDATE/DELETE/ALL)
+        "storage_bucket_id",         # storage bucket id (a name/identifier)
+        "storage_bucket_name",       # storage bucket name (never file contents/object names)
+        "edge_function_id",          # Edge Function id/slug (never source or env var values)
+        "edge_function_name",        # Edge Function name (never source or env var values)
+        "auth_setting_name",         # auth configuration setting key name (never a secret value)
     }
 )
 

@@ -1916,6 +1916,18 @@ export interface VercelActivitySyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+export interface SupabaseActivitySyncResponse {
+  attempted: boolean;
+  succeeded: boolean;
+  provider: string;
+  integration_id: string | null;
+  source: string;
+  events_seen: number;
+  events_inserted: number;
+  events_skipped: number;
+  permission_limited: boolean;
+  error_message: string | null;
+}
 export interface AwsSignalGenerateResponse {
   provider: string;
   activity_events_scanned: number;

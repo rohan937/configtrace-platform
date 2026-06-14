@@ -733,6 +733,17 @@ export async function syncVercelActivity(
   return apiFetch(`/security/vercel-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Trigger Supabase organization audit-log activity ingestion (M71B). Admin/owner
+ * only. Non-fatal: permission/availability limits are reported in the summary
+ * (audit logs need an organization slug with audit-log read access).
+ */
+export async function syncSupabaseActivity(
+  token?: string | null,
+): Promise<import("@/types").SupabaseActivitySyncResponse> {
+  return apiFetch(`/security/supabase-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateCloudflareSignals(
   token?: string | null,
 ): Promise<import("@/types").AwsSignalGenerateResponse> {

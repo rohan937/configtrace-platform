@@ -73,6 +73,9 @@ _BASE_URL = "https://api.supabase.com"
 _TIMEOUT = 20.0  # seconds per request
 _MAX_RETRIES = 2
 
+# Bounded pagination guard for the organization audit-log surface (M71B).
+_MAX_AUDIT_PAGES = 10
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -885,6 +888,77 @@ class SupabaseConnector(BaseConnector):
             },
             "config_fetch_warnings": [],
         }]
+
+    # ── Activity / audit-log surface (M71B) ───────────────────────────────────
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        organization_id: str | None = None,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch Supabase organization audit-log entries — metadata only (M71B).
+
+        Supabase audit logs are an ORGANIZATION-scoped surface: they require an
+        organization slug and an access token with organization audit-log read
+        access. A project-scoped personal access token (``access_token`` +
+        ``project_ref``) alone cannot read them, so when no organization slug is
+        configured this raises a typed connector error and the ingestion layer
+        reports ``permission_limited`` and fails soft — it NEVER breaks the
+        existing Supabase configuration sync.
+
+        SECURITY: this returns raw audit entries for the ingestion layer to
+        normalize through the metadata allowlist. The connector stores nothing;
+        the ingestion layer keeps only allowlisted, flat fields and never row
+        data, SQL output, auth users, emails, secrets, tokens, headers, or the
+        raw API response.
+
+        Raises:
+            AuthenticationError / ConnectorError / RateLimitError / NetworkError.
+        """
+        access_token = credentials["access_token"]
+        org_slug = (
+            organization_id
+            or credentials.get("organization_id")
+            or credentials.get("organization_slug")
+            or ""
+        )
+        project_ref = credentials.get("project_ref") or ""
+
+        if not org_slug:
+            # No organization scope → the audit-log surface is unavailable.
+            raise ConnectorError(
+                "Supabase audit log requires an organization slug with "
+                "audit-log read access.",
+                status_code=404,
+            )
+
+        cap = max(1, min(int(max_events), 1000))
+        events: list[dict] = []
+        params: dict[str, Any] = {}
+        if project_ref:
+            params["project_ref"] = project_ref
+
+        for _page in range(_MAX_AUDIT_PAGES):
+            data = self._get(
+                f"/v1/organizations/{org_slug}/audit",
+                access_token,
+                params=params or None,
+            )
+            batch = data.get("result") if isinstance(data, dict) else data
+            if not isinstance(batch, list):
+                break
+            for ev in batch:
+                events.append(ev)
+                if len(events) >= cap:
+                    return events[:cap]
+            # The audit surface is not cursor-paginated; one bounded page is the
+            # full retained window. Stop after the first page.
+            break
+
+        return events[:cap]
 
     # ── Public interface ──────────────────────────────────────────────────────
 
