@@ -277,8 +277,8 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Load a provider demo",
     talkTrack:
-      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, or Firebase (the latest provider-expansion example, covering security-rules posture). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
-    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, or Firebase incident demo.",
+      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, or Stripe (the latest provider-expansion example, covering payment-configuration posture). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
+    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, or Stripe incident demo.",
     emphasize: "One click seeds a full, clearly-marked evidence chain — no real provider sync.",
     avoid: "Don't present demo data as a live finding from the customer's environment.",
   },
@@ -343,7 +343,7 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Open a case",
     talkTrack:
-      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, or Firebase — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
+      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, or Stripe — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
     whatToClick: "Open a case and scroll to the chronological timeline and the evidence relationship map.",
     emphasize: "Timeline + relationship map turn linked evidence into a reviewable investigation, across providers.",
     avoid: "Don't describe the map as an attack path or call any relationship a confirmed compromise.",

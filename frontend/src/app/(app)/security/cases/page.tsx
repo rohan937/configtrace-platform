@@ -93,7 +93,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -112,7 +112,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -129,7 +129,9 @@ export default function CasesPage() {
                 ? "Supabase demo data cleared."
                 : provider === "firebase"
                   ? "Firebase demo data cleared."
-                  : "Demo data cleared.",
+                  : provider === "stripe"
+                    ? "Stripe demo data cleared."
+                    : "Demo data cleared.",
       );
       await load();
     } catch {
@@ -316,6 +318,35 @@ export default function CasesPage() {
             style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
           >
             Clear Firebase demo
+          </button>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div
+          className="bg-surface1 border border-border"
+          style={{ borderRadius: "12px", padding: "12px 16px", marginBottom: "20px", display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center" }}
+        >
+          <span style={{ fontSize: "12.5px", color: "#8b90a0", flex: 1, minWidth: "200px" }}>
+            <strong style={{ color: "#e8eaf0" }}>Try the Stripe security demo:</strong>{" "}
+            seed a Stripe demo to review webhook, payment link, portal, and
+            account activity evidence, generated signals, correlations, and a
+            case report (clearly marked demo, no real Stripe sync).
+          </span>
+          <button
+            onClick={() => onSeedDemo("stripe")}
+            disabled={demoBusy}
+            style={{ fontSize: "12.5px", fontWeight: 500, color: "#0b0d12", background: "#cbd5e1", border: "none", padding: "7px 14px", borderRadius: "8px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
+          >
+            {demoBusy ? "Working…" : "Load Stripe security demo"}
+          </button>
+          <button
+            onClick={() => onClearDemo("stripe")}
+            disabled={demoBusy}
+            className="bg-surface1 border border-border"
+            style={{ fontSize: "12.5px", fontWeight: 500, color: "#c4c8d4", borderRadius: "8px", padding: "7px 14px", cursor: demoBusy ? "not-allowed" : "pointer", opacity: demoBusy ? 0.7 : 1, whiteSpace: "nowrap" }}
+          >
+            Clear Stripe demo
           </button>
         </div>
       )}

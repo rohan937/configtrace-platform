@@ -51,6 +51,7 @@ from app.services import cloudflare_waf_signal_service as cf_waf_signal_svc
 from app.services import vercel_activity_signal_service as ve_sig
 from app.services import supabase_activity_signal_service as sb_sig
 from app.services import firebase_activity_signal_service as fb_sig
+from app.services import stripe_activity_signal_service as st_sig
 
 logger = logging.getLogger(__name__)
 
@@ -2118,6 +2119,411 @@ def clear_firebase(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
 
     # 2. Firebase demo evidence anchored on the hidden Firebase demo integration.
     integ = get_firebase_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_finding_id.in_(finding_ids))
+        if activity_ids:
+            corr_conds.append(SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids))
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids))
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── Stripe incident demo (M73E) ───────────────────────────────────────────────
+
+STRIPE_DEMO_INTEGRATION_NAME = "ConfigTrace Stripe incident demo (sample data)"
+STRIPE_DEMO_CASE_SOURCE = "demo_stripe_incident"
+STRIPE_DEMO_ACCOUNT_ID = "acct_configtrace_demo"     # sample Stripe account id
+STRIPE_DEMO_WEBHOOK_ID = "we_configtrace_demo_001"   # sample webhook endpoint id
+STRIPE_DEMO_PAYMENT_LINK_ID = "plink_configtrace_demo"  # sample payment link id
+STRIPE_DEMO_PORTAL_CONFIG_ID = "bpc_configtrace_demo"   # sample billing-portal config id
+
+
+def get_stripe_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == STRIPE_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_stripe_demo_case(workspace_id: uuid.UUID, db: Session) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == STRIPE_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_stripe_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_stripe_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_stripe(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Stripe demo incident chain (idempotent). No real sync.
+
+    One coherent Stripe story anchored on the same demo account/objects:
+      Configuration Risks (insecure webhook, broad webhook event set, payment
+      link with automatic tax off and promotion codes allowed, customer portal
+      with hosted login page on, and account not fully enabled for payments)
+      -> Stripe configuration activity (webhook endpoint / payment link / portal
+      configuration / account / capability changes) for the same objects ->
+      Stripe activity Incident Signals -> Stripe risk x activity correlations
+      -> Case.
+
+    All objects are anchored on a hidden demo integration so ``clear_stripe``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace). Metadata is NAMES/booleans
+    only — NEVER secret API keys, restricted key values, webhook signing
+    secrets, raw webhook/event payloads, raw API responses, customer PII /
+    emails, payment method data, card data, charges/payment intents/invoices/
+    customer records, OAuth tokens, authorization headers, request/response
+    bodies, bank-account details, or tax IDs.
+    """
+    existing = _existing_stripe_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -> never shown / never synced).
+    integ = get_stripe_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({"demo": True, "dataset": "stripe_incident_demo_v1"})
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=STRIPE_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    # 2. One Resource per Stripe object kind, so each finding's
+    #    Resource.provider_resource_id is the canonical Stripe object id
+    #    (we_*/plink_*/bpc_*/acct_*) the M73D correlation join expects.
+    def _mk_resource(kind: str, oid: str) -> Resource:
+        r = Resource(
+            integration_id=integ.id, user_id=actor_user_id,
+            provider_resource_type=kind, provider_resource_id=oid,
+            display_name=oid, is_active=True,
+        )
+        db.add(r); db.flush()
+        return r
+
+    webhook_resource = _mk_resource("stripe_webhook_endpoint", STRIPE_DEMO_WEBHOOK_ID)
+    payment_link_resource = _mk_resource("stripe_payment_link", STRIPE_DEMO_PAYMENT_LINK_ID)
+    portal_resource = _mk_resource("stripe_billing_portal_config", STRIPE_DEMO_PORTAL_CONFIG_ID)
+    account_resource = _mk_resource("stripe_account", STRIPE_DEMO_ACCOUNT_ID)
+
+    # 3. Configuration Risk findings (booleans/names only).
+    webhook_http_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="stripe",
+        finding_key=f"stripe_webhook_http:{STRIPE_DEMO_WEBHOOK_ID}",
+        severity="critical", title="Demo: Stripe webhook uses plain HTTP",
+        resource_id=webhook_resource.id,
+        description="Sample Stripe configuration risk for the incident-workflow demo.",
+        evidence={"rule": "stripe_webhook_http", "demo": True,
+                  "url": "http://insecure.example.com/stripe/hook"},
+        remediation={"summary": "Restore HTTPS on the webhook endpoint."},
+    )
+    webhook_broad_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="stripe",
+        finding_key=f"stripe_webhook_broad_events:{STRIPE_DEMO_WEBHOOK_ID}",
+        severity="medium",
+        title="Demo: Stripe webhook subscribes to a very broad set of events",
+        resource_id=webhook_resource.id,
+        description="Sample Stripe configuration risk for the incident-workflow demo.",
+        evidence={"rule": "stripe_webhook_broad_events", "demo": True,
+                  "enabled_events_count": 60, "subscribes_to_all_events": True},
+        remediation={"summary": "Scope the webhook to the events the integration needs."},
+    )
+    payment_link_tax_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="stripe",
+        finding_key=f"stripe_payment_link_tax_disabled:{STRIPE_DEMO_PAYMENT_LINK_ID}",
+        severity="medium", title="Demo: Stripe payment link has automatic tax disabled",
+        resource_id=payment_link_resource.id,
+        description="Sample Stripe configuration risk for the incident-workflow demo.",
+        evidence={"rule": "stripe_payment_link_tax_disabled", "demo": True,
+                  "active": True, "automatic_tax_enabled": False},
+        remediation={"summary": "Enable automatic tax on the payment link if expected."},
+    )
+    payment_link_promo_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="stripe",
+        finding_key=f"stripe_payment_link_promo_codes_enabled:{STRIPE_DEMO_PAYMENT_LINK_ID}",
+        severity="low", title="Demo: Stripe payment link allows promotion codes",
+        resource_id=payment_link_resource.id,
+        description="Sample Stripe configuration risk for the incident-workflow demo.",
+        evidence={"rule": "stripe_payment_link_promo_codes_enabled", "demo": True,
+                  "active": True, "allow_promotion_codes": True},
+        remediation={"summary": "Disable promotion codes on the link if not intended."},
+    )
+    portal_login_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="stripe",
+        finding_key=f"stripe_portal_login_enabled:{STRIPE_DEMO_PORTAL_CONFIG_ID}",
+        severity="medium",
+        title="Demo: Stripe customer portal login page is enabled",
+        resource_id=portal_resource.id,
+        description="Sample Stripe configuration risk for the incident-workflow demo.",
+        evidence={"rule": "stripe_portal_login_enabled", "demo": True,
+                  "active": True, "login_page_enabled": True},
+        remediation={"summary": "Disable the hosted portal login page if not intended."},
+    )
+    account_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="stripe",
+        finding_key=f"stripe_account_capability_incomplete:{STRIPE_DEMO_ACCOUNT_ID}",
+        severity="medium", title="Demo: Stripe account is not fully enabled for payments",
+        resource_id=account_resource.id,
+        description="Sample Stripe configuration risk for the incident-workflow demo.",
+        evidence={"rule": "stripe_account_capability_incomplete", "demo": True,
+                  "charges_enabled": False, "payouts_enabled": True,
+                  "details_submitted": False},
+        remediation={"summary": "Complete the account's required-information onboarding."},
+    )
+
+    # 4. Stripe configuration activity events for the same demo objects.
+    def _mk_event(event_type: str, *, object_type: str, object_id: str, extras: dict | None = None) -> Any:
+        meta: dict[str, Any] = {
+            "stripe_event_type": event_type.removeprefix("stripe."),
+            "event_action": event_type.removeprefix("stripe."),
+            "event_source": "stripe_events_api",
+            "account_id": STRIPE_DEMO_ACCOUNT_ID,
+            "object_type": object_type,
+            "object_id": object_id,
+            "livemode": True,
+        }
+        if extras:
+            meta.update(extras)
+        norm = activity_svc.normalize_activity_event(
+            provider="stripe", source="stripe_events", event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=f"demo-stripe-{uuid.uuid4().hex[:10]}",
+            actor_id=None, actor_type=None,
+            resource_type=object_type, resource_id=object_id, metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id, normalized=norm, db=db
+        )
+        return row
+
+    webhook_event = _mk_event(
+        "stripe.webhook_endpoint.updated",
+        object_type="webhook_endpoint", object_id=STRIPE_DEMO_WEBHOOK_ID,
+        extras={
+            "webhook_endpoint_id": STRIPE_DEMO_WEBHOOK_ID,
+            "webhook_url_domain": "insecure.example.com",
+            "webhook_url_scheme": "http",
+        },
+    )
+    payment_link_event = _mk_event(
+        "stripe.payment_link.updated",
+        object_type="payment_link", object_id=STRIPE_DEMO_PAYMENT_LINK_ID,
+        extras={"payment_link_id": STRIPE_DEMO_PAYMENT_LINK_ID},
+    )
+    portal_event = _mk_event(
+        "stripe.portal_config.updated",
+        object_type="billing_portal.configuration", object_id=STRIPE_DEMO_PORTAL_CONFIG_ID,
+        extras={"portal_config_id": STRIPE_DEMO_PORTAL_CONFIG_ID},
+    )
+    account_event = _mk_event(
+        "stripe.account.updated",
+        object_type="account", object_id=STRIPE_DEMO_ACCOUNT_ID,
+    )
+    capability_event = _mk_event(
+        "stripe.capability.updated",
+        object_type="capability", object_id="card_payments",
+        extras={"capability": "card_payments", "capability_status": "inactive"},
+    )
+
+    # 5. Stripe activity Incident Signals (built directly from each event).
+    signals = []
+    for ev in (webhook_event, payment_link_event, portal_event, account_event, capability_event):
+        sig_dict = st_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db
+            )
+            signals.append(sig)
+
+    # 6. Stripe risk x activity correlations (M73D), built directly.
+    def _add_correlation(finding, event, *, object_kind: str, object_id: str):
+        rule = corr_svc.STRIPE_CORRELATION_RULES[corr_svc._base_rule(finding.finding_key)]
+        cdict = corr_svc.build_stripe_correlation(
+            finding=finding, event=event,
+            object_label=f'{object_kind} "{object_id}"', rule=rule,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db
+        )
+        return corr
+
+    webhook_http_corr = _add_correlation(
+        webhook_http_finding, webhook_event,
+        object_kind="webhook endpoint", object_id=STRIPE_DEMO_WEBHOOK_ID,
+    )
+    webhook_broad_corr = _add_correlation(
+        webhook_broad_finding, webhook_event,
+        object_kind="webhook endpoint", object_id=STRIPE_DEMO_WEBHOOK_ID,
+    )
+    payment_link_tax_corr = _add_correlation(
+        payment_link_tax_finding, payment_link_event,
+        object_kind="payment link", object_id=STRIPE_DEMO_PAYMENT_LINK_ID,
+    )
+    payment_link_promo_corr = _add_correlation(
+        payment_link_promo_finding, payment_link_event,
+        object_kind="payment link", object_id=STRIPE_DEMO_PAYMENT_LINK_ID,
+    )
+    portal_login_corr = _add_correlation(
+        portal_login_finding, portal_event,
+        object_kind="portal configuration", object_id=STRIPE_DEMO_PORTAL_CONFIG_ID,
+    )
+    account_corr = _add_correlation(
+        account_finding, account_event,
+        object_kind="account", object_id=STRIPE_DEMO_ACCOUNT_ID,
+    )
+
+    correlations = [
+        webhook_http_corr, webhook_broad_corr,
+        payment_link_tax_corr, payment_link_promo_corr,
+        portal_login_corr, account_corr,
+    ]
+    findings = [
+        webhook_http_finding, webhook_broad_finding,
+        payment_link_tax_finding, payment_link_promo_finding,
+        portal_login_finding, account_finding,
+    ]
+    events = [webhook_event, payment_link_event, portal_event, account_event, capability_event]
+
+    # 7. Case linking all the evidence (marked demo via metadata.source).
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Stripe incident investigation",
+        summary=(
+            "Demo investigation case. It groups Stripe security evidence: "
+            "configuration risks (insecure webhook, broad webhook event set, "
+            "payment link with automatic tax off and promotion codes allowed, "
+            "customer portal with hosted login page on, and an account not "
+            "fully enabled for payments), and Stripe configuration activity "
+            "(webhook endpoint, payment link, portal configuration, account, "
+            "and capability changes) for the same account/objects - turned "
+            "into review signals and correlations. This is a human-reviewed "
+            "case presenting evidence for review and may require review. "
+            "ConfigTrace does not confirm fraud, compromise, unauthorized "
+            "access, or data exposure."
+        ),
+        severity=webhook_http_corr.severity,
+        provider="stripe",
+        metadata={"source": STRIPE_DEMO_CASE_SOURCE,
+                  "repository": STRIPE_DEMO_ACCOUNT_ID},
+        db=db,
+    )
+    for corr in correlations:
+        case_svc.link_object_to_case(case=case, object_type="correlation", object_id=corr.id, actor_user_id=actor_user_id, db=db)
+    for finding in findings:
+        case_svc.link_object_to_case(case=case, object_type="finding", object_id=finding.id, actor_user_id=actor_user_id, db=db)
+    for ev in events:
+        case_svc.link_object_to_case(case=case, object_type="activity_event", object_id=ev.id, actor_user_id=actor_user_id, db=db)
+    for sig in signals:
+        case_svc.link_object_to_case(case=case, object_type="signal", object_id=sig.id, actor_user_id=actor_user_id, db=db)
+    # Correlation-evidence signals (auto-created by upsert_correlation).
+    seen_signal_ids = {s.id for s in signals}
+    for corr in correlations:
+        if corr.linked_signal_id is not None and corr.linked_signal_id not in seen_signal_ids:
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(case=case, object_type="signal", object_id=corr.linked_signal_id, actor_user_id=actor_user_id, db=db)
+
+    logger.info("stripe_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id)
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_stripe(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Stripe demo incident objects (and nothing else)."""
+    # 1. Stripe demo cases (+ their links).
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == STRIPE_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    # 2. Stripe demo evidence anchored on the hidden Stripe demo integration.
+    integ = get_stripe_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(
