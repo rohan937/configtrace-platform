@@ -50,6 +50,7 @@ PROVIDER_CLOUDFLARE = "cloudflare"
 PROVIDER_VERCEL = "vercel"
 PROVIDER_SUPABASE = "supabase"
 PROVIDER_FIREBASE = "firebase"
+PROVIDER_STRIPE = "stripe"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -200,6 +201,25 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "app_id",
         "app_platform",
         "hosting_site_id",
+        # Stripe config-risk × activity correlation context (M73D) — safe
+        # account/object identifiers and event-class labels only. NEVER secret
+        # / restricted API key values, webhook signing secrets, raw webhook
+        # payloads, raw event payloads, raw API responses, customer PII /
+        # emails, payment method data, card data, charges/payment intents/
+        # invoices/customer records, OAuth tokens, authorization headers,
+        # request/response bodies, bank-account details, or tax IDs.
+        "stripe_event_type",
+        "object_type",
+        "object_id",
+        "webhook_endpoint_id",
+        "webhook_url_domain",
+        "webhook_url_scheme",
+        "payment_link_id",
+        "portal_config_id",
+        "capability",
+        "capability_status",
+        "tax_setting_name",
+        "livemode",
     }
 )
 
@@ -4534,3 +4554,361 @@ def get_correlation(
         )
         .first()
     )
+
+
+# ── Stripe config-risk × activity correlations (M73D) ────────────────────────
+
+_STRIPE_REVIEW_NOTE = (
+    "This may require review. ConfigTrace does not confirm fraud, compromise, "
+    "unauthorized access, or data exposure."
+)
+
+# Stripe finding BASE rule key → correlation rule.
+#
+# ``narrow_key`` (when set) is the activity-event metadata field carrying the
+# Stripe object id; the join requires it to match the finding's
+# Resource.provider_resource_id (or the finding_key suffix, both of which are
+# the canonical Stripe object id `we_*`/`plink_*`/`bpc_*`/`acct_*`). For the
+# account-capability rule, ``narrow_key`` is ``account_id`` which makes the join
+# account-scoped. Object-id matches are account-unique by construction, so
+# webhook/payment-link/portal rules do not need a separate account guard.
+#
+# ``object_type`` (when set) is the event's ``object_type`` (data.object.object
+# name) which must also match — defense in depth against object-id collisions
+# across object families.
+STRIPE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    "stripe_webhook_http": {
+        "correlation_type": "stripe_webhook_insecure_risk_activity",
+        "activity_types": {
+            "stripe.webhook_endpoint.created",
+            "stripe.webhook_endpoint.updated",
+            "stripe.webhook_endpoint.deleted",
+        },
+        "narrow_key": "webhook_endpoint_id",
+        "object_type": "webhook_endpoint",
+        "title": "Stripe insecure webhook risk aligned with webhook activity",
+        "subject": "Stripe insecure webhook risk",
+        "evidence_phrase": "webhook configuration activity",
+        "object_label": "endpoint",
+        "object_kind": "webhook endpoint",
+    },
+    "stripe_webhook_disabled": {
+        "correlation_type": "stripe_webhook_disabled_risk_activity",
+        "activity_types": {
+            "stripe.webhook_endpoint.updated",
+            "stripe.webhook_endpoint.deleted",
+        },
+        "narrow_key": "webhook_endpoint_id",
+        "object_type": "webhook_endpoint",
+        "title": "Stripe disabled webhook risk aligned with webhook activity",
+        "subject": "Stripe disabled webhook risk",
+        "evidence_phrase": "webhook configuration activity",
+        "object_label": "endpoint",
+        "object_kind": "webhook endpoint",
+    },
+    "stripe_webhook_broad_events": {
+        "correlation_type": "stripe_webhook_broad_events_risk_activity",
+        "activity_types": {
+            "stripe.webhook_endpoint.created",
+            "stripe.webhook_endpoint.updated",
+        },
+        "narrow_key": "webhook_endpoint_id",
+        "object_type": "webhook_endpoint",
+        "title": "Stripe broad webhook event risk aligned with webhook activity",
+        "subject": "Stripe broad webhook event risk",
+        "evidence_phrase": "webhook configuration activity",
+        "object_label": "endpoint",
+        "object_kind": "webhook endpoint",
+    },
+    "stripe_payment_link_tax_disabled": {
+        "correlation_type": "stripe_payment_link_tax_risk_activity",
+        "activity_types": {
+            "stripe.payment_link.created",
+            "stripe.payment_link.updated",
+        },
+        "narrow_key": "payment_link_id",
+        "object_type": "payment_link",
+        "title": "Stripe payment link tax risk aligned with payment link activity",
+        "subject": "Stripe payment link tax risk",
+        "evidence_phrase": "payment link configuration activity",
+        "object_label": "payment link",
+        "object_kind": "payment link",
+    },
+    "stripe_payment_link_promo_codes_enabled": {
+        "correlation_type": "stripe_payment_link_promo_risk_activity",
+        "activity_types": {
+            "stripe.payment_link.created",
+            "stripe.payment_link.updated",
+        },
+        "narrow_key": "payment_link_id",
+        "object_type": "payment_link",
+        "title": "Stripe payment link promotion-code risk aligned with payment link activity",
+        "subject": "Stripe payment link promotion-code risk",
+        "evidence_phrase": "payment link configuration activity",
+        "object_label": "payment link",
+        "object_kind": "payment link",
+    },
+    "stripe_portal_subscription_cancel_enabled": {
+        "correlation_type": "stripe_portal_cancel_risk_activity",
+        "activity_types": {
+            "stripe.portal_config.created",
+            "stripe.portal_config.updated",
+        },
+        "narrow_key": "portal_config_id",
+        "object_type": "billing_portal.configuration",
+        "title": "Stripe customer portal cancellation risk aligned with portal activity",
+        "subject": "Stripe customer portal cancellation risk",
+        "evidence_phrase": "portal configuration activity",
+        "object_label": "portal configuration",
+        "object_kind": "portal configuration",
+    },
+    "stripe_portal_login_enabled": {
+        "correlation_type": "stripe_portal_login_risk_activity",
+        "activity_types": {
+            "stripe.portal_config.created",
+            "stripe.portal_config.updated",
+        },
+        "narrow_key": "portal_config_id",
+        "object_type": "billing_portal.configuration",
+        "title": "Stripe customer portal login risk aligned with portal activity",
+        "subject": "Stripe customer portal login risk",
+        "evidence_phrase": "portal configuration activity",
+        "object_label": "portal configuration",
+        "object_kind": "portal configuration",
+    },
+    "stripe_account_capability_incomplete": {
+        "correlation_type": "stripe_account_capability_risk_activity",
+        "activity_types": {
+            "stripe.account.updated",
+            "stripe.capability.updated",
+        },
+        # The account is the join. Capability matching is optional (used only
+        # when the finding's evidence carries a capability NAME, which today is
+        # not stored — so this is account-scoped in practice).
+        "narrow_key": "account_id",
+        # Both account and capability are valid object_types here; we don't
+        # constrain object_type for this rule.
+        "object_type": None,
+        "title": "Stripe account capability risk aligned with account activity",
+        "subject": "Stripe account capability risk",
+        "evidence_phrase": "account configuration activity",
+        "object_label": "account",
+        "object_kind": "account",
+    },
+}
+
+
+def _st_event_md(ev: SecurityActivityEvent, key: str) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _st_event_bool(ev: SecurityActivityEvent, key: str) -> Optional[bool]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v if isinstance(v, bool) else None
+
+
+def _st_evidence_str(finding: SecurityFinding, key: str) -> Optional[str]:
+    ev = finding.evidence if isinstance(finding.evidence, dict) else {}
+    v = ev.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _st_finding_object_id(finding: SecurityFinding) -> Optional[str]:
+    """Stripe object id for a finding (we_*/plink_*/bpc_*/acct_*).
+
+    Prefer the Resource.provider_resource_id (the canonical object id from
+    M73A's connector); fall back to the finding_key suffix (rule_key:record_id
+    pattern from ``make_finding_key``). Never returns the rule prefix alone.
+    """
+    fk = finding.finding_key or ""
+    base = _base_rule(fk)
+    if fk and ":" in fk:
+        candidate = fk.split(":", 1)[1].strip()
+        if candidate and candidate != base:
+            return candidate
+    return None
+
+
+def build_stripe_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    object_label: str,
+    rule: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a Stripe correlation dict (not persisted) from a finding + event."""
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['title']} ({object_label})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and {rule['evidence_phrase']} "
+        f"(\"{event.event_type}\") were observed for the same Stripe "
+        f"{object_label} within the review window. {_STRIPE_REVIEW_NOTE}"
+    )
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": event.event_type,
+        "stripe_event_type": _st_event_md(event, "stripe_event_type"),
+        "event_action": _st_event_md(event, "event_action"),
+        "event_source": _st_event_md(event, "event_source"),
+        "account_id": _st_event_md(event, "account_id"),
+        "object_type": _st_event_md(event, "object_type"),
+        "object_id": _st_event_md(event, "object_id"),
+        "webhook_endpoint_id": _st_event_md(event, "webhook_endpoint_id"),
+        "webhook_url_domain": _st_event_md(event, "webhook_url_domain"),
+        "webhook_url_scheme": _st_event_md(event, "webhook_url_scheme"),
+        "payment_link_id": _st_event_md(event, "payment_link_id"),
+        "portal_config_id": _st_event_md(event, "portal_config_id"),
+        "capability": _st_event_md(event, "capability"),
+        "capability_status": _st_event_md(event, "capability_status"),
+        "tax_setting_name": _st_event_md(event, "tax_setting_name"),
+        "livemode": _st_event_bool(event, "livemode"),
+        "window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_STRIPE,
+        "correlation_key": rule["correlation_type"],
+        "correlation_type": rule["correlation_type"],
+        "severity": finding.severity or "medium",
+        "confidence": "medium",
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_stripe_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate active Stripe config-risk findings with Stripe activity (M73D).
+
+    Conservative + object-scoped: a finding only matches an event for the SAME
+    Stripe object identity — webhook endpoint, payment link, portal configuration,
+    or account id — with an aligned event_type, inside the finding's review
+    window. The object id is read from the finding's Resource.provider_resource_id
+    (with a finding_key-suffix fallback). Never provider-only — a finding with
+    no resolvable object id is skipped. Idempotent. Returns a generation summary.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_STRIPE,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in STRIPE_CORRELATION_RULES
+    ]
+
+    # Resolve each finding's Stripe object id via its Resource.
+    resource_ids = {f.resource_id for f in findings if f.resource_id is not None}
+    object_by_resource: dict[uuid.UUID, str] = {}
+    if resource_ids:
+        for r in db.query(Resource).filter(Resource.id.in_(resource_ids)).all():
+            if isinstance(r.provider_resource_id, str) and r.provider_resource_id:
+                object_by_resource[r.id] = r.provider_resource_id
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_STRIPE,
+            SecurityActivityEvent.source == "stripe_events",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        rule = STRIPE_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        # Object identity: Resource.provider_resource_id, with the finding_key
+        # suffix as a fallback. Never provider-only.
+        finding_object = (
+            object_by_resource.get(finding.resource_id)
+            if finding.resource_id is not None else None
+        ) or _st_finding_object_id(finding)
+        if not finding_object:
+            continue
+
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        narrow_key = rule.get("narrow_key")
+        expected_object_type = rule.get("object_type")
+
+        for ev in events:
+            if ev.event_type not in rule["activity_types"]:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+            # Object guard (NEVER provider-only): the event's narrow-key metadata
+            # must equal the finding's object id; the event's object_id is
+            # accepted as a fallback. Object_type (when set on the rule) must
+            # also match for defense in depth.
+            ev_narrow = _st_event_md(ev, narrow_key) if narrow_key else None
+            ev_object = _st_event_md(ev, "object_id")
+            if ev_narrow != finding_object and ev_object != finding_object:
+                continue
+            if expected_object_type is not None:
+                ev_object_type = _st_event_md(ev, "object_type")
+                if ev_object_type != expected_object_type:
+                    continue
+
+            object_label = f"{rule['object_kind']} \"{finding_object}\""
+            correlation = build_stripe_correlation(
+                finding=finding, event=ev, object_label=object_label, rule=rule
+            )
+            outcome, _row = upsert_correlation(
+                workspace_id=workspace_id, correlation=correlation, db=db
+            )
+            if outcome == "created":
+                created += 1
+            else:
+                skipped += 1
+
+    return {
+        "provider": PROVIDER_STRIPE,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }

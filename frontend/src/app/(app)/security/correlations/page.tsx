@@ -32,7 +32,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -107,6 +107,17 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "firebase_storage_rules_risk_activity",
     "firebase_anonymous_auth_risk_activity",
     "firebase_auth_protection_risk_activity",
+  ],
+  stripe: [
+    // M73D — Stripe Configuration Risk × Stripe configuration activity.
+    "stripe_webhook_insecure_risk_activity",
+    "stripe_webhook_disabled_risk_activity",
+    "stripe_webhook_broad_events_risk_activity",
+    "stripe_payment_link_tax_risk_activity",
+    "stripe_payment_link_promo_risk_activity",
+    "stripe_portal_cancel_risk_activity",
+    "stripe_portal_login_risk_activity",
+    "stripe_account_capability_risk_activity",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
@@ -312,7 +323,9 @@ function GenerateBar({
             ? "Correlate Supabase configuration risks with Supabase activity evidence (table/RLS, access policy, Edge Function, and auth-configuration activity) for the same table/function/project within the review window."
             : provider === "firebase"
               ? "Correlate Firebase configuration risks with Firebase activity evidence (Firestore/Realtime Database/Storage rules and auth-configuration activity) for the same project within the review window."
-              : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+              : provider === "stripe"
+                ? "Correlate Stripe configuration risks with Stripe configuration activity evidence (webhook endpoint, payment link, customer portal, and account / capability changes) for the same Stripe object within the review window."
+                : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -485,7 +498,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
             ? "the same Supabase table, function, or project"
             : provider === "firebase"
               ? "the same Firebase project"
-              : "the same GitHub repository";
+              : provider === "stripe"
+                ? "the same Stripe webhook endpoint, payment link, portal configuration, or account"
+                : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

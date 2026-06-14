@@ -1248,6 +1248,10 @@ def generate_security_correlations(
         summary = security_signal_correlation_service.generate_firebase_correlations(
             workspace_id=workspace_id, db=db
         )
+    elif provider == "stripe":
+        summary = security_signal_correlation_service.generate_stripe_correlations(
+            workspace_id=workspace_id, db=db
+        )
     else:
         return SecurityCorrelationGenerateResponse(provider=provider)
 
