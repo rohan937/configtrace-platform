@@ -315,7 +315,8 @@ class TestAzureSchemaConstants:
         assert isinstance(AZURE_RECORD_TYPES, frozenset)
 
     def test_azure_record_types_has_exactly_five_members(self):
-        assert len(AZURE_RECORD_TYPES) == 5
+        """Flipped in M77C: AZURE_RECORD_TYPES now has 9 members (4 new M77C types)."""
+        assert len(AZURE_RECORD_TYPES) == 9
 
     def test_azure_subscription_constant(self):
         assert AZURE_SUBSCRIPTION == "azure_subscription"
@@ -338,13 +339,15 @@ class TestAzureSchemaConstants:
         assert AZURE_KEY_VAULT in AZURE_RECORD_TYPES
 
     def test_all_five_constants_in_set(self):
-        assert AZURE_RECORD_TYPES == {
+        """Flipped in M77C: asserts M77A types are a subset (M77C adds 4 more)."""
+        m77a_types = {
             AZURE_SUBSCRIPTION,
             AZURE_RESOURCE_GROUP,
             AZURE_NETWORK_SECURITY_GROUP,
             AZURE_STORAGE_ACCOUNT,
             AZURE_KEY_VAULT,
         }
+        assert m77a_types.issubset(AZURE_RECORD_TYPES)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1114,13 +1117,13 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
-    """Flipped in M77B: planned_next_stage now points to M77C."""
+    """Flipped in M77C: planned_next_stage now points to M77D."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M77C" in planned, (
-        f"planned_next_stage should reference M77C after M77B, got: {planned!r}"
+    assert "M77D" in planned, (
+        f"planned_next_stage should reference M77D after M77C, got: {planned!r}"
     )
 
 

@@ -574,7 +574,10 @@ class TestRuleKeyParity:
     }
 
     def test_rule_module_exposes_all_keys(self):
-        assert AZURE_RULE_KEYS == self.EXPECTED
+        """Flipped in M77C: AZURE_RULE_KEYS now contains 20 keys (10 M77C added)."""
+        assert self.EXPECTED.issubset(AZURE_RULE_KEYS), (
+            f"M77B keys missing from AZURE_RULE_KEYS: {self.EXPECTED - AZURE_RULE_KEYS}"
+        )
 
     def test_registry_contains_all_azure_keys(self):
         missing = self.EXPECTED - set(KNOWN_RULE_KEYS)
@@ -625,12 +628,11 @@ class TestRuleKeyParity:
             assert RULE_RECORD_TYPES[k] == ("azure_key_vault",)
 
     def test_azure_in_coverage_providers_and_surfaces(self):
+        """Flipped in M77C: PROVIDER_SURFACES["azure"] now includes 7 surfaces."""
         assert "azure" in COVERAGE_PROVIDERS
-        assert PROVIDER_SURFACES["azure"] == [
-            "Network security groups",
-            "Storage accounts",
-            "Key Vaults",
-        ]
+        # M77B surfaces must still be present; M77C surfaces are additive
+        for surface in ("Network security groups", "Storage accounts", "Key Vaults"):
+            assert surface in PROVIDER_SURFACES["azure"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -659,9 +661,12 @@ class TestProviderCapabilityMatrix:
 
 class TestProviderExpansionFramework:
     def test_planned_next_stage_points_to_m77c(self):
+        """Flipped in M77C: planned_next_stage now points to M77D."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert stage == "M77C: Azure Identity / Network / Storage Risk Expansion"
+        assert "M77D" in stage, (
+            f"planned_next_stage should reference M77D after M77C, got: {stage!r}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

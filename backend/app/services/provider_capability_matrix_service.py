@@ -414,13 +414,15 @@ _AZURE = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Azure drift + core security foundation (M77A/M77B). Covers subscription / "
-        "resource group / NSG / storage account / Key Vault drift snapshots and core "
-        "security rules (NSG public admin ingress and broad ingress, storage public "
-        "blob and network access, weak TLS, shared-key access, Key Vault public "
-        "network access, soft-delete / purge protection, and RBAC posture). Identity / "
-        "App Service / SQL / AKS expansion in M77C; activity ingestion, signals, "
-        "correlations, and demo follow in M77D–M77G."
+        "Azure drift + expanded security foundation (M77A–M77C). Drift snapshots cover "
+        "subscription / resource group / NSG / storage account / Key Vault / role "
+        "assignments / App Service / SQL Server / AKS. Security rules cover NSG public "
+        "ingress, storage public access / weak TLS / shared-key, Key Vault network / "
+        "recovery / RBAC posture, broad role assignment privilege, App Service HTTPS / "
+        "FTP / TLS / public access, SQL Server public access / weak TLS, and AKS local "
+        "accounts / public API exposure / network policy. App registration rules deferred "
+        "to a Graph API expansion milestone; activity ingestion, signals, correlations, "
+        "and demo follow in M77D–M77G."
     ),
 )
 

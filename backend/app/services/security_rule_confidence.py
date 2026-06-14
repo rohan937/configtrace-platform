@@ -130,6 +130,17 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "azure_key_vault_purge_protection_disabled": (HIGH, "Only an explicit enablePurgeProtection=false fires; missing/unknown is skipped."),
     "azure_key_vault_soft_delete_disabled": (HIGH, "Only an explicit enableSoftDelete=false fires; missing/unknown is skipped."),
     "azure_key_vault_rbac_disabled": (MEDIUM, "Fires only when enableRbacAuthorization=false AND access_policy_count > 0; vaults with no access policies are not flagged."),
+    # Azure — M77C
+    "azure_role_assignment_broad_privilege": (HIGH, "Fires only when role_definition_name is a known broad built-in role (Owner/Contributor/User Access Administrator) resolved from a static GUID map, AND scope_type is subscription or resource_group."),
+    "azure_app_service_https_disabled": (HIGH, "Only an explicit httpsOnly=false on the App Service fires; missing/unknown is skipped."),
+    "azure_app_service_ftp_enabled": (HIGH, "Only an explicit ftpsState=AllAllowed fires; FtpsOnly and Disabled do not fire."),
+    "azure_app_service_weak_tls": (HIGH, "Only explicit minTlsVersion='1.0' or '1.1' fires; missing/unknown is skipped."),
+    "azure_app_service_public_network_access": (HIGH, "Only an explicit publicNetworkAccess=Enabled/true fires; missing/unknown is skipped."),
+    "azure_sql_public_network_access": (HIGH, "Only an explicit publicNetworkAccess=Enabled fires; severity bumps to high when has_allow_azure_services_rule=true."),
+    "azure_sql_weak_tls": (HIGH, "Only explicit minimalTlsVersion='1.0' or '1.1' fires; missing/unknown is skipped."),
+    "azure_aks_local_accounts_enabled": (HIGH, "Only an explicit disableLocalAccounts=false fires; missing/unknown is skipped."),
+    "azure_aks_public_api_access": (HIGH, "Fires only when private_cluster_enabled=false AND api_server_authorized_ip_range_count=0; partial data (None count) is not flagged."),
+    "azure_aks_network_policy_missing": (MEDIUM, "Fires when network_policy is absent or 'none'; absence of a network policy is the default state so medium confidence is used."),
 }
 
 

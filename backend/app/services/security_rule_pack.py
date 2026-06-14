@@ -130,6 +130,17 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "azure_key_vault_purge_protection_disabled": ("azure", "high", "Key Vaults"),
     "azure_key_vault_soft_delete_disabled": ("azure", "medium", "Key Vaults"),
     "azure_key_vault_rbac_disabled": ("azure", "medium", "Key Vaults"),
+    # Azure — M77C
+    "azure_role_assignment_broad_privilege": ("azure", "high", "Identity / Role assignments"),
+    "azure_app_service_https_disabled": ("azure", "high", "App Service / Functions"),
+    "azure_app_service_ftp_enabled": ("azure", "medium", "App Service / Functions"),
+    "azure_app_service_weak_tls": ("azure", "medium", "App Service / Functions"),
+    "azure_app_service_public_network_access": ("azure", "medium", "App Service / Functions"),
+    "azure_sql_public_network_access": ("azure", "high", "SQL Servers"),
+    "azure_sql_weak_tls": ("azure", "medium", "SQL Servers"),
+    "azure_aks_local_accounts_enabled": ("azure", "medium", "AKS Clusters"),
+    "azure_aks_public_api_access": ("azure", "high", "AKS Clusters"),
+    "azure_aks_network_policy_missing": ("azure", "medium", "AKS Clusters"),
 }
 
 

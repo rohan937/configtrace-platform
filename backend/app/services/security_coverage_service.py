@@ -138,6 +138,17 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "azure_key_vault_purge_protection_disabled": ("azure_key_vault",),
     "azure_key_vault_soft_delete_disabled": ("azure_key_vault",),
     "azure_key_vault_rbac_disabled": ("azure_key_vault",),
+    # Azure — M77C
+    "azure_role_assignment_broad_privilege": ("azure_role_assignment",),
+    "azure_app_service_https_disabled": ("azure_app_service",),
+    "azure_app_service_ftp_enabled": ("azure_app_service",),
+    "azure_app_service_weak_tls": ("azure_app_service",),
+    "azure_app_service_public_network_access": ("azure_app_service",),
+    "azure_sql_public_network_access": ("azure_sql_server",),
+    "azure_sql_weak_tls": ("azure_sql_server",),
+    "azure_aks_local_accounts_enabled": ("azure_aks_cluster",),
+    "azure_aks_public_api_access": ("azure_aks_cluster",),
+    "azure_aks_network_policy_missing": ("azure_aks_cluster",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -150,7 +161,15 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
     "stripe": ["Webhook endpoints", "Payment links", "Customer portal", "Account configuration"],
     "vercel": ["Deployment protection", "Production branch", "Domains", "Environment variables", "Deploy hooks"],
     "shopify": ["Webhook subscriptions", "App scopes", "Domains", "Store policies"],
-    "azure": ["Network security groups", "Storage accounts", "Key Vaults"],
+    "azure": [
+        "Network security groups",
+        "Storage accounts",
+        "Key Vaults",
+        "Identity / Role assignments",
+        "App Service / Functions",
+        "SQL Servers",
+        "AKS Clusters",
+    ],
 }
 
 

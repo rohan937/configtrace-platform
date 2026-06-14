@@ -106,6 +106,17 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "azure_key_vault_purge_protection_disabled",
         "azure_key_vault_soft_delete_disabled",
         "azure_key_vault_rbac_disabled",
+        # Azure — M77C
+        "azure_role_assignment_broad_privilege",
+        "azure_app_service_https_disabled",
+        "azure_app_service_ftp_enabled",
+        "azure_app_service_weak_tls",
+        "azure_app_service_public_network_access",
+        "azure_sql_public_network_access",
+        "azure_sql_weak_tls",
+        "azure_aks_local_accounts_enabled",
+        "azure_aks_public_api_access",
+        "azure_aks_network_policy_missing",
     }
 )
 
