@@ -65,6 +65,7 @@ from app.connectors.exceptions import (
 from app.connectors.stripe_schema import (
     STRIPE_ACCOUNT_SETTINGS,
     STRIPE_BILLING_PORTAL_CONFIG,
+    STRIPE_PAYMENT_LINK,
     STRIPE_PAYMENT_METHOD_CONFIGURATION,
     STRIPE_PAYMENT_METHOD_DOMAIN,
     STRIPE_WEBHOOK_ENDPOINT,
@@ -88,6 +89,26 @@ _VALIDATE_PROBE_ENDPOINTS = [
     "/v1/events",
     "/v1/account",
 ]
+
+
+def _url_origin(url: Any) -> str | None:
+    """Reduce a URL to its scheme+host (origin) form — M73A.
+
+    SECURITY: query strings and path segments may carry tokens or customer
+    identifiers; only ``scheme://netloc`` is ever retained. Returns None when
+    the input is empty or unparseable.
+    """
+    if not url or not isinstance(url, str):
+        return None
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        return None
+    return None
 
 
 class StripeConnector(BaseConnector):
@@ -359,6 +380,9 @@ class StripeConnector(BaseConnector):
             # Operational flags
             "charges_enabled": bool(data.get("charges_enabled", False)),
             "payouts_enabled": bool(data.get("payouts_enabled", False)),
+            # Onboarding completeness — whether the account finished Stripe's
+            # required-information submission (M73A). A boolean only.
+            "details_submitted": bool(data.get("details_submitted", False)),
             # Platform controller
             "controller_type": (data.get("controller") or {}).get("type"),
         }
@@ -599,6 +623,71 @@ class StripeConnector(BaseConnector):
             )
         return records
 
+    def _fetch_payment_links(self, credentials: dict) -> list[dict]:
+        """Fetch GET /v1/payment_links and normalise records — M73A.
+
+        Returns one ``stripe_payment_link`` record per payment link. Returns an
+        empty list when the endpoint is inaccessible (403, common for restricted
+        keys without Payment Links read access) or the surface is unavailable.
+
+        SECURITY / DATA MINIMISATION
+        ----------------------------
+        - No customer PII, card data, charges, or checkout-session data is
+          fetched. A payment link object is account configuration, not customer
+          data.
+        - ``url`` / ``after_completion`` redirect URLs are reduced to their
+          scheme+host (origin) form; query strings (which may carry
+          ``{CHECKOUT_SESSION_ID}`` or customer-supplied tokens) are never stored.
+        - Line-item details and price amounts are not fetched (line_items are not
+          expanded); only safe configuration booleans + counts are kept.
+        """
+        try:
+            raw = self._get_list(credentials, "/v1/payment_links")
+        except AuthenticationError:
+            # 401 = key is invalid — propagate so the caller surfaces an auth error.
+            raise
+        except Exception as exc:
+            # 403 = key lacks permission (expected for most restricted keys).
+            # Other errors (404, 5xx, network, or test-mock exhaustion) are
+            # treated as "surface unavailable" and skipped gracefully.
+            logger.info(
+                "stripe: payment_links unavailable (%s) — skipping",
+                type(exc).__name__,
+            )
+            return []
+
+        records: list[dict] = []
+        for link in raw:
+            link_id = link.get("id", "")
+            automatic_tax = link.get("automatic_tax") or {}
+            after_completion = link.get("after_completion") or {}
+            pm_types = link.get("payment_method_types") or []
+            metadata = link.get("metadata") or {}
+
+            records.append(
+                {
+                    "record_type": STRIPE_PAYMENT_LINK,
+                    "record_id":   link_id,
+                    "name":        link_id,
+                    "active":      bool(link.get("active", False)),
+                    "allow_promotion_codes": bool(link.get("allow_promotion_codes", False)),
+                    "automatic_tax_enabled": bool(automatic_tax.get("enabled", False)),
+                    "after_completion_type": after_completion.get("type"),
+                    "after_completion_redirect_origin": _url_origin(
+                        (after_completion.get("redirect") or {}).get("url")
+                    ),
+                    "success_url_origin": _url_origin(link.get("url")),
+                    "customer_creation": link.get("customer_creation"),
+                    "payment_method_collection": link.get("payment_method_collection"),
+                    "payment_method_types_count": len(pm_types) if isinstance(pm_types, list) else 0,
+                    "application_fee_amount": link.get("application_fee_amount"),
+                    "application_fee_percent": link.get("application_fee_percent"),
+                    "metadata_key_count": len(metadata) if isinstance(metadata, dict) else 0,
+                    "livemode": bool(link.get("livemode", False)),
+                }
+            )
+        return records
+
     # ── Public interface ───────────────────────────────────────────────────────
 
     def fetch(self, credentials: dict) -> list[dict]:
@@ -669,6 +758,14 @@ class StripeConnector(BaseConnector):
         logger.info(
             "StripeConnector.fetch: billing_portal_configs fetched count=%d",
             len(bp_config_records),
+        )
+
+        # 6. Payment links — skipped on 403 or unavailable (M73A).
+        payment_link_records = self._fetch_payment_links(credentials)
+        records.extend(payment_link_records)
+        logger.info(
+            "StripeConnector.fetch: payment_links fetched count=%d",
+            len(payment_link_records),
         )
 
         logger.info(

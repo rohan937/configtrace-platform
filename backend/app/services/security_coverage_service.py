@@ -101,6 +101,14 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "firebase_auth_protection_missing": ("firebase_auth_config",),
     # Stripe
     "stripe_webhook_http": ("stripe_webhook_endpoint",),
+    # Stripe — M73A
+    "stripe_webhook_disabled": ("stripe_webhook_endpoint",),
+    "stripe_webhook_broad_events": ("stripe_webhook_endpoint",),
+    "stripe_payment_link_tax_disabled": ("stripe_payment_link",),
+    "stripe_payment_link_promo_codes_enabled": ("stripe_payment_link",),
+    "stripe_portal_subscription_cancel_enabled": ("stripe_billing_portal_config",),
+    "stripe_portal_login_enabled": ("stripe_billing_portal_config",),
+    "stripe_account_capability_incomplete": ("stripe_account_settings",),
     # Vercel
     "vercel_preview_unprotected": ("vercel_deployment_protection",),
     "vercel_production_branch_missing": ("vercel_project",),
@@ -120,7 +128,7 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
     "cloudflare": ["Zone settings", "WAF rules", "DNS records"],
     "supabase": ["Row-level security", "Public table policies", "Auth configuration", "Edge Functions"],
     "firebase": ["Firestore rules", "Realtime Database rules", "Storage rules", "Auth configuration"],
-    "stripe": ["Webhook endpoints"],
+    "stripe": ["Webhook endpoints", "Payment links", "Customer portal", "Account configuration"],
     "vercel": ["Deployment protection", "Production branch", "Domains", "Environment variables", "Deploy hooks"],
     "shopify": ["Webhook subscriptions"],
 }
@@ -209,6 +217,18 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "stripe_webhook_endpoint": {
         "message": "Webhook endpoint metadata was not observed.",
         "hints": ["Verify the API key can list webhook endpoints."],
+    },
+    "stripe_payment_link": {
+        "message": "Payment link metadata was not observed.",
+        "hints": ["Verify the API key has read access to Payment Links."],
+    },
+    "stripe_billing_portal_config": {
+        "message": "Customer portal configuration metadata was not observed.",
+        "hints": ["Verify the API key has read access to Billing Portal configurations."],
+    },
+    "stripe_account_settings": {
+        "message": "Account settings metadata was not observed.",
+        "hints": ["A restricted key without the Account permission cannot read account settings."],
     },
     # Vercel
     "vercel_deployment_protection": {

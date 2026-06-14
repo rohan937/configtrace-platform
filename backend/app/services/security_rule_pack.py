@@ -94,6 +94,14 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "firebase_auth_protection_missing": ("firebase", "medium", "Auth"),
     # Stripe
     "stripe_webhook_http": ("stripe", "critical", "Webhooks"),
+    # Stripe — M73A
+    "stripe_webhook_disabled": ("stripe", "medium", "Webhooks"),
+    "stripe_webhook_broad_events": ("stripe", "medium", "Webhooks"),
+    "stripe_payment_link_tax_disabled": ("stripe", "medium", "Payment links"),
+    "stripe_payment_link_promo_codes_enabled": ("stripe", "low", "Payment links"),
+    "stripe_portal_subscription_cancel_enabled": ("stripe", "low", "Customer portal"),
+    "stripe_portal_login_enabled": ("stripe", "medium", "Customer portal"),
+    "stripe_account_capability_incomplete": ("stripe", "medium", "Account"),
     # Vercel
     "vercel_preview_unprotected": ("vercel", "medium", "Deployment protection"),
     "vercel_production_branch_missing": ("vercel", "medium", "Deployment configuration"),

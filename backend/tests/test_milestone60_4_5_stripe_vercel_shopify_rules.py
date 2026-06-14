@@ -97,8 +97,13 @@ def test_stripe_https_safe():
 
 
 def test_stripe_disabled_http_not_flagged():
-    # disabled endpoint is not flagged (existing behavior).
-    assert st.evaluate(_stripe_wh(url="http://x", status="disabled")) == []
+    # The plain-HTTP rule never fires on a disabled endpoint (delivery is off).
+    # M73A: a disabled endpoint now raises the separate stripe_webhook_disabled
+    # business-critical configuration finding instead.
+    out = st.evaluate(_stripe_wh(url="http://x", status="disabled"))
+    keys = {c.rule_key for c in out}
+    assert "stripe_webhook_http" not in keys
+    assert keys == {"stripe_webhook_disabled"}
 
 
 # ── Vercel ───────────────────────────────────────────────────────────────────

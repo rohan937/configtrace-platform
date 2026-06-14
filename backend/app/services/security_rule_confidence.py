@@ -94,6 +94,14 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "firebase_auth_protection_missing": (MEDIUM, "Only an explicit mfa_enabled=false fires; missing/unknown is skipped."),
     # Stripe
     "stripe_webhook_http": (HIGH, "Only an explicit http scheme fires; disabled endpoints are not flagged."),
+    # Stripe — M73A
+    "stripe_webhook_disabled": (HIGH, "Only an explicit status='disabled' fires; enabled/unknown is skipped."),
+    "stripe_webhook_broad_events": (MEDIUM, "Fires on the wildcard '*' or a large explicit event count; a normal scoped list is not flagged."),
+    "stripe_payment_link_tax_disabled": (HIGH, "Only an active link with an explicit automatic_tax_enabled=false fires."),
+    "stripe_payment_link_promo_codes_enabled": (HIGH, "Only an active link with an explicit allow_promotion_codes=true fires; a config-review item, not an exposure."),
+    "stripe_portal_subscription_cancel_enabled": (HIGH, "Only an active portal config with an explicit subscription_cancel_enabled=true fires."),
+    "stripe_portal_login_enabled": (HIGH, "Only an active portal config with an explicit login_page_enabled=true fires."),
+    "stripe_account_capability_incomplete": (HIGH, "Only an explicit charges/payouts/details flag of false fires; missing/unknown is skipped."),
     # Vercel
     "vercel_preview_unprotected": (MEDIUM, "Only fires when every protection mechanism is off; previews are not production data."),
     "vercel_production_branch_missing": (MEDIUM, "Only fires when a git repository is connected but no production branch is configured."),

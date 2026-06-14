@@ -159,6 +159,8 @@ class StripeAccountSettingsRecord(TypedDict, total=False):
     # Charges enabled / payouts enabled (operational flags)
     charges_enabled: bool
     payouts_enabled: bool
+    # Whether the account finished Stripe's required-information onboarding (M73A)
+    details_submitted: bool
 
     # Controller / platform info
     controller_type: str | None

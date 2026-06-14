@@ -70,6 +70,14 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "firebase_auth_protection_missing",
         # Stripe
         "stripe_webhook_http",
+        # Stripe — M73A (webhook posture + payment links + portal + account)
+        "stripe_webhook_disabled",
+        "stripe_webhook_broad_events",
+        "stripe_payment_link_tax_disabled",
+        "stripe_payment_link_promo_codes_enabled",
+        "stripe_portal_subscription_cancel_enabled",
+        "stripe_portal_login_enabled",
+        "stripe_account_capability_incomplete",
         # Vercel
         "vercel_preview_unprotected",
         "vercel_production_branch_missing",
