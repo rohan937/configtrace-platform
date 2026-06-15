@@ -463,58 +463,11 @@ class RecommendedProvider:
 
 
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="google_cloud",
-        label="Google Cloud",
-        category="cloud",
-        why_high_fit=(
-            "Google Cloud rounds out the three major hyperscalers beside AWS "
-            "(complete) and Azure (demo-ready partial). Project-level IAM, "
-            "Cloud Storage bucket posture, Cloud SQL instance posture, GKE "
-            "cluster posture, and Cloud Audit Logs map cleanly to the dual-"
-            "stack template ConfigTrace already runs for AWS and Azure: "
-            "drift snapshots → security rules → activity ingestion → signals "
-            "→ correlations → demo + case evidence."
-        ),
-        drift_surfaces=(
-            "project_metadata",
-            "iam_policy_bindings",
-            "cloud_storage_buckets",
-            "cloud_sql_instances",
-            "gke_clusters",
-            "vpc_firewall_rules",
-            "service_account_keys",
-        ),
-        security_surfaces=(
-            "iam_broad_role_binding",
-            "cloud_storage_public_access",
-            "cloud_sql_public_network_access",
-            "gke_local_accounts_or_public_api",
-            "vpc_public_admin_ingress",
-            "service_account_key_age",
-        ),
-        sensitive_data_to_avoid=(
-            "user_emails_or_principal_ids",
-            "service_account_key_material",
-            "iam_policy_etag_internals",
-            "cloud_audit_log_payloads",
-            "object_contents_and_metadata",
-            "cloud_sql_data_rows",
-            "gke_kubeconfig_or_node_data",
-            "personal_identifiable_information",
-        ),
-        first_milestone_name="M78A: Google Cloud Drift Provider Foundation",
-        notes=(
-            "Start with the Resource Manager API (projects, IAM policy), "
-            "Cloud Storage (buckets), Cloud SQL (instances), GKE Container "
-            "API (clusters), and Cloud Audit Logs (admin-activity write/"
-            "delete management events). Never store user emails, principal "
-            "object IDs, service-account key material, audit-log raw "
-            "payloads, or object contents. Mirror the M77B/M77F evidence "
-            "shape used for Azure so the same matchers and case-report "
-            "preview allowlist apply with minimal extension."
-        ),
-    ),
+    # NOTE: M77I added "google_cloud" at the head of this queue as the next
+    # recommended provider. M78A launched the Google Cloud drift foundation,
+    # so it was promoted out of the recommended queue and into
+    # PROVIDER_CAPABILITIES_PARTIAL in provider_capability_matrix_service.py.
+    # Twilio is now the head of the recommended-next queue.
     RecommendedProvider(
         provider="twilio",
         label="Twilio",
@@ -898,6 +851,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M78A: Google Cloud Drift Provider Foundation",
+            "planned_next_stage": "M78B: Google Cloud Core Security Foundation",
         },
     }

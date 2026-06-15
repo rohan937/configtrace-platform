@@ -207,7 +207,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
 
     Behaviour per integration:
 
-    1. Filter to all supported providers (cloudflare, github, vercel, stripe, aws, firebase, supabase, shopify, azure)
+    1. Filter to all supported providers (cloudflare, github, vercel, stripe, aws, firebase, supabase, shopify, azure, google_cloud)
        with ``status == 'active'`` AND ``scheduled_sync_enabled == True``.
        Paused / deleted integrations are excluded by status.  Integrations
        whose user explicitly disabled auto-sync (``scheduled_sync_enabled=False``)
@@ -263,7 +263,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     # this tuple so its integrations are automatically included in scheduling.
     _SUPPORTED_PROVIDERS = (
         "cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase", "shopify",
-        "azure",
+        "azure", "google_cloud",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

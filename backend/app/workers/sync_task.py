@@ -280,6 +280,11 @@ def sync_integration(
 
                 connector = AzureConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "google_cloud":
+                from app.connectors.google_cloud import GoogleCloudConnector
+
+                connector = GoogleCloudConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

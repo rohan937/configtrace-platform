@@ -858,7 +858,7 @@ class TestExpansionFramework:
         """Flipped in M77I: Azure arc closed → M78A Google Cloud."""
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M78A" in stage
+        assert "M78B" in stage
 
 
 # ──────────────────────────────────────────────────────────────────────────────

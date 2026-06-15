@@ -60,9 +60,9 @@ EXPECTED_STAGE_KEYS_IN_ORDER = [
 ]
 
 EXPECTED_NEXT_PROVIDER_ORDER = [
-    # M77I added Google Cloud at the top of the queue (the next dual-stack arc
-    # after Azure M77A-M77I closes).
-    "google_cloud",
+    # M77I added Google Cloud at the top of the queue; M78A launched it (it
+    # moved into PROVIDER_CAPABILITIES_PARTIAL and Twilio promoted back to
+    # the head of the recommended-next queue).
     "twilio",
     "sendgrid",
     "auth0",
@@ -256,12 +256,12 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # M77I flipped the top of the queue to Google Cloud (next dual-stack arc
-    # after Azure M77A-M77I closes).
-    assert summary["next_provider"] == "Google Cloud"
-    assert "M78A" in summary["next_milestone"]
+    # M77I flipped the queue head to Google Cloud; M78A launched it (moving it
+    # into PROVIDER_CAPABILITIES_PARTIAL) and Twilio promoted back to head.
+    assert summary["next_provider"] == "Twilio"
+    assert "M77" in summary["next_milestone"] or "Twilio" in summary["next_milestone"]
     assert (
-        "M78A" in summary["planned_next_stage"]
+        "M78B" in summary["planned_next_stage"]
         or "Google Cloud" in summary["planned_next_stage"]
     )
 
@@ -273,14 +273,15 @@ def test_framework_is_static_no_db_needed():
 
 
 def test_get_next_provider_recommendations_first_is_twilio():
-    """Flipped in M77I: Google Cloud now leads, Twilio is now second."""
+    """Flipped in M78A: GCP launched and moved into PROVIDER_CAPABILITIES_PARTIAL;
+    Twilio reclaims the head of the recommended-next queue."""
     recs = svc.get_next_provider_recommendations()
-    assert recs[0]["provider"] == "google_cloud"
-    assert recs[0]["label"] == "Google Cloud"
+    assert recs[0]["provider"] == "twilio"
+    assert recs[0]["label"] == "Twilio"
     assert len(recs[0]["sensitive_data_to_avoid"]) >= 3
-    # Twilio rolls down to slot 2.
-    assert recs[1]["provider"] == "twilio"
-    assert recs[1]["label"] == "Twilio"
+    # google_cloud must no longer be in this list.
+    providers = [r["provider"] for r in recs]
+    assert "google_cloud" not in providers
 
 
 def test_capability_matrix_planned_next_stage_references_dual_stack():
@@ -304,8 +305,8 @@ def test_endpoint_returns_framework(client):
     body = r.json()
     assert "template" in body and "recommended_next_providers" in body
     assert body["summary"]["stage_count"] == 6
-    # M77I: Google Cloud leads the queue.
-    assert body["summary"]["next_provider"] == "Google Cloud"
+    # M78A: GCP launched (now in PARTIAL); Twilio reclaims the queue head.
+    assert body["summary"]["next_provider"] == "Twilio"
 
 
 def test_endpoint_stages_in_order(client):

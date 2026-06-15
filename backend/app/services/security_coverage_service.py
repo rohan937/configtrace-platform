@@ -41,6 +41,7 @@ PROVIDERS = [
     "vercel",
     "shopify",
     "azure",
+    "google_cloud",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -169,6 +170,13 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "App Service / Functions",
         "SQL Servers",
         "AKS Clusters",
+    ],
+    "google_cloud": [
+        "Project metadata",
+        "IAM policy bindings",
+        "VPC networks",
+        "VPC firewall rules",
+        "Cloud Storage buckets",
     ],
 }
 

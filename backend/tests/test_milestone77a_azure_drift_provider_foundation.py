@@ -1117,27 +1117,26 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
-    """Flipped in M77I: Azure arc closed, planned_next_stage now points to M78A."""
+    """Flipped in M78A: GCP drift foundation launched; next stage is M78B."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M78A" in planned, (
-        f"planned_next_stage should reference M78A after M77I, got: {planned!r}"
+    assert "M78B" in planned, (
+        f"planned_next_stage should reference M78B after M78A, got: {planned!r}"
     )
 
 
 def test_expansion_framework_planned_next_stage_mentions_azure():
-    """Flipped in M77I: Azure arc closed, so planned_next_stage now references
-    the NEXT non-Azure arc (Google Cloud M78A). The provider_capability_matrix
-    notes carry the Azure status; the expansion framework just points forward.
+    """Flipped in M78A: GCP drift foundation launched; the NEXT arc inside
+    the GCP series (Core Security Foundation) is now the planned stage.
     """
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
     assert "Google Cloud" in planned, (
-        f"planned_next_stage should reference Google Cloud after M77I, "
+        f"planned_next_stage should reference Google Cloud after M78A, "
         f"got: {planned!r}"
     )
 

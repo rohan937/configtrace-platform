@@ -434,6 +434,40 @@ _AZURE = ProviderCapability(
 )
 
 
+_GOOGLE_CLOUD = ProviderCapability(
+    provider="google_cloud",
+    label="Google Cloud",
+    category="cloud",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=True,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Google Cloud drift foundation (M78A). Covers project metadata, "
+        "IAM policy summary (counts only — principal emails and member "
+        "identifiers are never stored), VPC networks, firewall rules, and "
+        "Cloud Storage buckets. Security rules, activity ingestion, signals, "
+        "correlations, and demo follow in M78B–M78G; Cloud SQL / Cloud Run / "
+        "GKE / Secret Manager / Service Account Key surfaces are deferred to "
+        "M78C."
+    ),
+)
+
+
 # Public ordered list — canonical 8-provider dual-stack matrix (M75A/M75C).
 # Azure is tracked separately in PROVIDER_CAPABILITIES_PARTIAL below because
 # it has not yet reached dual-stack maturity (security stack not started).
@@ -451,6 +485,7 @@ PROVIDER_CAPABILITIES: list[ProviderCapability] = [
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
+    _GOOGLE_CLOUD,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

@@ -112,52 +112,49 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
 
 
 def test_expansion_framework_next_stage_is_m78a_google_cloud():
+    """Flipped in M78A: GCP drift foundation launched; next stage is M78B."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78A" in stage
+    assert "M78B" in stage
     assert "Google Cloud" in stage
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():
-    """Google Cloud is at the head of the recommended-next-providers queue."""
+    """Flipped in M78A: GCP moved out of the recommended queue and into
+    PROVIDER_CAPABILITIES_PARTIAL (launched). Twilio is now the head."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "google_cloud"
-    assert top["label"] == "Google Cloud"
-    assert top["first_milestone_name"] == "M78A: Google Cloud Drift Provider Foundation"
-    assert top["category"] == "cloud"
+    assert top["provider"] == "twilio"
+    assert top["label"] == "Twilio"
+    # GCP must no longer be in the recommended list.
+    providers = [r["provider"] for r in recs]
+    assert "google_cloud" not in providers
 
 
 def test_expansion_framework_google_cloud_recommendation_is_complete():
-    """GCP recommendation has every dual-stack template field populated."""
-    fw = exp_svc.get_framework()
-    gcp = fw["recommended_next_providers"][0]
-    # All eight RecommendedProvider fields must be present and non-empty.
-    for field in (
-        "provider", "label", "category", "why_high_fit",
-        "drift_surfaces", "security_surfaces",
-        "sensitive_data_to_avoid", "first_milestone_name", "notes",
-    ):
-        assert gcp.get(field), f"GCP recommendation missing {field!r}"
-
-    # Drift surfaces cover the core GCP shapes.
-    assert "iam_policy_bindings" in gcp["drift_surfaces"]
-    assert "cloud_storage_buckets" in gcp["drift_surfaces"]
-    # Security surfaces mirror Azure shape (broad role, public access, weak TLS).
-    assert any("broad" in s for s in gcp["security_surfaces"])
-    # Sensitive-data avoidance list pins the data we will NEVER ingest.
-    avoid = " ".join(gcp["sensitive_data_to_avoid"])
-    for token in ("emails", "key_material", "audit_log_payloads", "personal"):
-        assert token in avoid
+    """Flipped in M78A: GCP is no longer in RECOMMENDED_NEXT_PROVIDERS — it
+    launched. Confirm it now lives in PROVIDER_CAPABILITIES_PARTIAL instead."""
+    from app.services.provider_capability_matrix_service import (
+        PROVIDER_CAPABILITIES_PARTIAL, get_provider_capability,
+    )
+    partial = {p.provider for p in PROVIDER_CAPABILITIES_PARTIAL}
+    assert "google_cloud" in partial
+    cap = get_provider_capability("google_cloud")
+    assert cap is not None
+    assert cap.label == "Google Cloud"
+    assert cap.maturity == "partial"
+    # Drift snapshots true; security still gated until M78B.
+    assert cap.drift.drift_snapshots is True
+    assert cap.security.security_rules is False
 
 
 def test_expansion_framework_summary_next_provider_is_google_cloud():
-    """The summary's next_provider mirrors the top recommendation."""
+    """Flipped in M78A: Twilio is now the head of the recommended queue."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Google Cloud"
-    assert fw["summary"]["next_milestone"] == "M78A: Google Cloud Drift Provider Foundation"
+    assert fw["summary"]["next_provider"] == "Twilio"
+    assert "Twilio" in fw["summary"]["next_milestone"]
 
 
 # ════════════════════════════════════════════════════════════════════════════
