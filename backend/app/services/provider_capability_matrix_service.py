@@ -406,7 +406,7 @@ _AZURE = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -414,19 +414,18 @@ _AZURE = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Azure drift + expanded security + Activity Log ingestion + signals (M77A–M77E). "
-        "Drift snapshots: subscription / RG / NSG / Storage / KV / role assignments / "
-        "App Service / SQL Server / AKS. Security rules: 20 rules covering NSG / storage / "
-        "KV / role assignment / App Service / SQL / AKS posture. Activity Log ingestion: "
-        "WRITE/DELETE management events across all monitored surfaces. Activity signals: "
-        "14 signal types (azure_network_exposure_changed, azure_nsg_deleted, "
-        "azure_storage_config_changed, azure_storage_account_deleted, "
-        "azure_key_vault_config_changed, azure_key_vault_deleted, "
-        "azure_role_assignment_changed, azure_app_service_config_changed, "
-        "azure_app_service_deleted, azure_sql_network_config_changed, "
-        "azure_sql_server_deleted, azure_aks_cluster_config_changed, "
-        "azure_aks_cluster_deleted, azure_config_activity). "
-        "Correlations and demo follow in M77F–M77G."
+        "Azure drift + expanded security + Activity Log ingestion + signals + "
+        "risk×activity correlations (M77A–M77F). Drift snapshots: subscription / "
+        "RG / NSG / Storage / KV / role assignments / App Service / SQL Server / "
+        "AKS. Security rules: 20 rules covering NSG / storage / KV / role "
+        "assignment / App Service / SQL / AKS posture. Activity Log ingestion: "
+        "WRITE/DELETE management events across all monitored surfaces. Activity "
+        "signals: 14 signal types covering NSG / Storage / KV / role assignment "
+        "/ App Service / SQL / AKS configuration changes. Correlations: 6 "
+        "correlation types joining configuration risks to Activity Log evidence "
+        "on the SAME Azure resource (NSG, storage account, Key Vault, App "
+        "Service, SQL Server, AKS cluster) plus role-assignment broad-privilege "
+        "× role-assignment activity. Demo + cases follow in M77G–M77I."
     ),
 )
 

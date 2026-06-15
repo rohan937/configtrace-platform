@@ -32,7 +32,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -128,6 +128,18 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "shopify_webhook_topic_risk_activity",
     "shopify_domain_ssl_risk_activity",
     "shopify_domain_verification_risk_activity",
+  ],
+  azure: [
+    // M77F — Azure Configuration Risk × Azure Activity Log evidence.
+    // Resource-name-scoped matching for NSG / Storage / Key Vault / App Service
+    // / SQL / AKS; role-assignment match for broad-privilege role assignments.
+    "azure_nsg_exposure_activity_correlation",
+    "azure_storage_risk_activity_correlation",
+    "azure_key_vault_risk_activity_correlation",
+    "azure_role_assignment_risk_activity_correlation",
+    "azure_app_service_risk_activity_correlation",
+    "azure_sql_risk_activity_correlation",
+    "azure_aks_risk_activity_correlation",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
@@ -337,7 +349,9 @@ function GenerateBar({
                 ? "Correlate Stripe configuration risks with Stripe configuration activity evidence (webhook endpoint, payment link, customer portal, and account / capability changes) for the same Stripe object within the review window."
                 : provider === "shopify"
                   ? "Correlate Shopify configuration risks with Shopify configuration activity evidence (webhook subscription and shop-domain changes) for the same Shopify webhook or domain within the review window."
-                  : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                  : provider === "azure"
+                    ? "Correlate Azure configuration risks with recent Azure Activity Log signals across NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS — matching on the same resource (and resource group when both sides agree) within the review window."
+                    : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -514,7 +528,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                 ? "the same Stripe webhook endpoint, payment link, portal configuration, or account"
                 : provider === "shopify"
                   ? "the same Shopify webhook or shop-domain"
-                  : "the same GitHub repository";
+                  : provider === "azure"
+                    ? "the same Azure resource (NSG / Storage / Key Vault / App Service / SQL Server / AKS cluster), or the same role + scope for role-assignment risks. Sync Azure activity and generate Azure signals first, then generate correlations."
+                    : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

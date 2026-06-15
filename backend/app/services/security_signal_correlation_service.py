@@ -52,6 +52,7 @@ PROVIDER_SUPABASE = "supabase"
 PROVIDER_FIREBASE = "firebase"
 PROVIDER_STRIPE = "stripe"
 PROVIDER_SHOPIFY = "shopify"
+PROVIDER_AZURE = "azure"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -241,6 +242,37 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "domain_id",
         "domain_host",
         "policy_type",
+        # Azure risk × activity correlation context (M77F) — safe Azure
+        # subscription / resource group / resource NAMES and ARM identifiers
+        # only. NEVER caller email/UPN/name, principal IDs, object IDs, raw
+        # correlationId, claims, authorization objects, properties payload,
+        # httpRequest body, raw event payload, storage keys, SAS tokens,
+        # connection strings, Key Vault secret names/values, certificate
+        # material, key material, database contents, VM user data, app setting
+        # names/values, env var values, customer/workload data, or PII.
+        "subscription_id",            # Azure subscription GUID (an opaque identifier)
+        "resource_group",             # resource group name (infra identifier)
+        "azure_event_id",             # Azure eventDataId UUID (opaque)
+        "azure_correlation_id_hash",  # salted hash of correlationId (NEVER raw)
+        "operation_name",             # ARM operationName
+        "operation_family",           # operation namespace+resource type prefix
+        "operation_action",           # operation verb (write / delete)
+        "nsg_name",                   # NSG resource name (infra identifier)
+        "nsg_rule_name",              # NSG security rule name
+        "storage_account_name",       # Storage Account resource name
+        "key_vault_name",             # Key Vault resource name
+        "app_service_name",           # App Service resource name
+        "sql_server_name",            # SQL Server resource name
+        "sql_firewall_rule_name",     # SQL firewall rule resource name
+        "aks_cluster_name",           # AKS managed cluster resource name
+        "scope_type",                 # role assignment scope category
+        "role_definition_name",       # resolved built-in role name (Owner/Contributor/…)
+        "principal_type",             # principalType (User/Group/ServicePrincipal; not PII)
+        "category",                   # Activity Log event category (e.g. "Administrative")
+        "status",                     # operation status (e.g. "Succeeded")
+        "matched_on",                 # which join key matched (e.g. "nsg_name+resource_group")
+        "match_confidence",           # human label for join confidence ("high"/"medium")
+        "time_window_hours",          # review-window size in hours
     }
 )
 
@@ -5253,6 +5285,583 @@ def generate_shopify_correlations(
 
     return {
         "provider": PROVIDER_SHOPIFY,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# AZURE — M77F config-risk × Azure Activity Log correlations
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Joins ACTIVE Azure security findings (provider="azure") to Azure Activity
+# Log events (source="azure_activity_log") on the SAME Azure resource within
+# the finding's review window.
+#
+# Matching strategy (conservative, defense-in-depth):
+#
+#   1. Resource-name match — for NSG/Storage/KV/App Service/SQL/AKS findings,
+#      the finding's evidence dict carries the resource name (e.g. nsg_name,
+#      storage_account_name, key_vault_name, app_service_name, sql_server_name,
+#      aks_cluster_name) AND the event's metadata carries the same field. We
+#      require an EXACT name match. When BOTH sides carry a resource_group we
+#      additionally require that to match (defense-in-depth).
+#
+#   2. Role assignment match — for role-assignment broad-privilege findings,
+#      we require role_definition_name overlap AND scope_type overlap. We
+#      NEVER use principal ID / principal email / principal name.
+#
+# Provider-only or subscription-only matches are NEVER produced — at least the
+# resource-name (or role + scope) must match.
+
+_AZURE_REVIEW_NOTE = (
+    "This is a correlation signal that may require review. ConfigTrace does "
+    "not confirm public reachability, compromise, unauthorized access, or "
+    "data exposure."
+)
+
+# Azure built-in role names considered "broad privilege" by M77E.
+_AZURE_BROAD_ROLES: frozenset[str] = frozenset({
+    "Owner", "Contributor", "User Access Administrator",
+})
+
+# Finding base rule → correlation rule.
+AZURE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    # ── NSG rules ────────────────────────────────────────────────────────────
+    "azure_nsg_public_admin_ingress": {
+        "correlation_type": "azure_nsg_exposure_activity_correlation",
+        "activity_types": {
+            "azure.nsg.updated", "azure.nsg.deleted",
+            "azure.nsg_rule.updated", "azure.nsg_rule.deleted",
+        },
+        "name_field": "nsg_name",
+        "event_name_field": "nsg_name",
+        "kind": "NSG",
+        "title": "Azure NSG exposure risk aligned with NSG activity",
+        "subject": "Azure NSG public admin ingress risk",
+        "evidence_phrase": "NSG configuration activity",
+    },
+    "azure_nsg_public_broad_ingress": {
+        "correlation_type": "azure_nsg_exposure_activity_correlation",
+        "activity_types": {
+            "azure.nsg.updated", "azure.nsg.deleted",
+            "azure.nsg_rule.updated", "azure.nsg_rule.deleted",
+        },
+        "name_field": "nsg_name",
+        "event_name_field": "nsg_name",
+        "kind": "NSG",
+        "title": "Azure NSG broad-ingress risk aligned with NSG activity",
+        "subject": "Azure NSG public broad ingress risk",
+        "evidence_phrase": "NSG configuration activity",
+    },
+    # ── Storage rules ────────────────────────────────────────────────────────
+    "azure_storage_public_blob_access": {
+        "correlation_type": "azure_storage_risk_activity_correlation",
+        "activity_types": {
+            "azure.storage_account.updated", "azure.storage_account.deleted",
+        },
+        "name_field": "account_name",
+        "event_name_field": "storage_account_name",
+        "kind": "Storage account",
+        "title": "Azure Storage public-blob risk aligned with storage activity",
+        "subject": "Azure Storage public blob access risk",
+        "evidence_phrase": "storage account configuration activity",
+    },
+    "azure_storage_public_network_access": {
+        "correlation_type": "azure_storage_risk_activity_correlation",
+        "activity_types": {
+            "azure.storage_account.updated", "azure.storage_account.deleted",
+        },
+        "name_field": "account_name",
+        "event_name_field": "storage_account_name",
+        "kind": "Storage account",
+        "title": "Azure Storage public-network risk aligned with storage activity",
+        "subject": "Azure Storage public network access risk",
+        "evidence_phrase": "storage account configuration activity",
+    },
+    "azure_storage_weak_tls": {
+        "correlation_type": "azure_storage_risk_activity_correlation",
+        "activity_types": {
+            "azure.storage_account.updated", "azure.storage_account.deleted",
+        },
+        "name_field": "account_name",
+        "event_name_field": "storage_account_name",
+        "kind": "Storage account",
+        "title": "Azure Storage weak-TLS risk aligned with storage activity",
+        "subject": "Azure Storage weak TLS risk",
+        "evidence_phrase": "storage account configuration activity",
+    },
+    "azure_storage_shared_key_enabled": {
+        "correlation_type": "azure_storage_risk_activity_correlation",
+        "activity_types": {
+            "azure.storage_account.updated", "azure.storage_account.deleted",
+        },
+        "name_field": "account_name",
+        "event_name_field": "storage_account_name",
+        "kind": "Storage account",
+        "title": "Azure Storage shared-key risk aligned with storage activity",
+        "subject": "Azure Storage shared-key access risk",
+        "evidence_phrase": "storage account configuration activity",
+    },
+    # ── Key Vault rules ──────────────────────────────────────────────────────
+    "azure_key_vault_public_network_access": {
+        "correlation_type": "azure_key_vault_risk_activity_correlation",
+        "activity_types": {
+            "azure.key_vault.updated", "azure.key_vault.deleted",
+        },
+        "name_field": "vault_name",
+        "event_name_field": "key_vault_name",
+        "kind": "Key Vault",
+        "title": "Azure Key Vault public-network risk aligned with Key Vault activity",
+        "subject": "Azure Key Vault public network access risk",
+        "evidence_phrase": "Key Vault configuration activity",
+    },
+    "azure_key_vault_purge_protection_disabled": {
+        "correlation_type": "azure_key_vault_risk_activity_correlation",
+        "activity_types": {
+            "azure.key_vault.updated", "azure.key_vault.deleted",
+        },
+        "name_field": "vault_name",
+        "event_name_field": "key_vault_name",
+        "kind": "Key Vault",
+        "title": "Azure Key Vault purge-protection risk aligned with Key Vault activity",
+        "subject": "Azure Key Vault purge-protection-disabled risk",
+        "evidence_phrase": "Key Vault configuration activity",
+    },
+    "azure_key_vault_soft_delete_disabled": {
+        "correlation_type": "azure_key_vault_risk_activity_correlation",
+        "activity_types": {
+            "azure.key_vault.updated", "azure.key_vault.deleted",
+        },
+        "name_field": "vault_name",
+        "event_name_field": "key_vault_name",
+        "kind": "Key Vault",
+        "title": "Azure Key Vault soft-delete risk aligned with Key Vault activity",
+        "subject": "Azure Key Vault soft-delete-disabled risk",
+        "evidence_phrase": "Key Vault configuration activity",
+    },
+    "azure_key_vault_rbac_disabled": {
+        "correlation_type": "azure_key_vault_risk_activity_correlation",
+        "activity_types": {
+            "azure.key_vault.updated", "azure.key_vault.deleted",
+        },
+        "name_field": "vault_name",
+        "event_name_field": "key_vault_name",
+        "kind": "Key Vault",
+        "title": "Azure Key Vault RBAC risk aligned with Key Vault activity",
+        "subject": "Azure Key Vault RBAC-disabled risk",
+        "evidence_phrase": "Key Vault configuration activity",
+    },
+    # ── App Service rules ────────────────────────────────────────────────────
+    "azure_app_service_https_disabled": {
+        "correlation_type": "azure_app_service_risk_activity_correlation",
+        "activity_types": {
+            "azure.app_service.updated", "azure.app_service.deleted",
+            "azure.app_service_config.updated",
+        },
+        "name_field": "app_name",
+        "event_name_field": "app_service_name",
+        "kind": "App Service",
+        "title": "Azure App Service HTTPS risk aligned with App Service activity",
+        "subject": "Azure App Service HTTPS-disabled risk",
+        "evidence_phrase": "App Service configuration activity",
+    },
+    "azure_app_service_ftp_enabled": {
+        "correlation_type": "azure_app_service_risk_activity_correlation",
+        "activity_types": {
+            "azure.app_service.updated", "azure.app_service.deleted",
+            "azure.app_service_config.updated",
+        },
+        "name_field": "app_name",
+        "event_name_field": "app_service_name",
+        "kind": "App Service",
+        "title": "Azure App Service FTP risk aligned with App Service activity",
+        "subject": "Azure App Service FTP-enabled risk",
+        "evidence_phrase": "App Service configuration activity",
+    },
+    "azure_app_service_weak_tls": {
+        "correlation_type": "azure_app_service_risk_activity_correlation",
+        "activity_types": {
+            "azure.app_service.updated", "azure.app_service.deleted",
+            "azure.app_service_config.updated",
+        },
+        "name_field": "app_name",
+        "event_name_field": "app_service_name",
+        "kind": "App Service",
+        "title": "Azure App Service weak-TLS risk aligned with App Service activity",
+        "subject": "Azure App Service weak TLS risk",
+        "evidence_phrase": "App Service configuration activity",
+    },
+    "azure_app_service_public_network_access": {
+        "correlation_type": "azure_app_service_risk_activity_correlation",
+        "activity_types": {
+            "azure.app_service.updated", "azure.app_service.deleted",
+            "azure.app_service_config.updated",
+        },
+        "name_field": "app_name",
+        "event_name_field": "app_service_name",
+        "kind": "App Service",
+        "title": "Azure App Service public-network risk aligned with App Service activity",
+        "subject": "Azure App Service public network access risk",
+        "evidence_phrase": "App Service configuration activity",
+    },
+    # ── SQL Server rules ─────────────────────────────────────────────────────
+    "azure_sql_public_network_access": {
+        "correlation_type": "azure_sql_risk_activity_correlation",
+        "activity_types": {
+            "azure.sql_server.updated", "azure.sql_server.deleted",
+            "azure.sql_firewall_rule.updated", "azure.sql_firewall_rule.deleted",
+        },
+        "name_field": "server_name",
+        "event_name_field": "sql_server_name",
+        "kind": "SQL Server",
+        "title": "Azure SQL public-network risk aligned with SQL activity",
+        "subject": "Azure SQL public network access risk",
+        "evidence_phrase": "SQL Server configuration activity",
+    },
+    "azure_sql_weak_tls": {
+        "correlation_type": "azure_sql_risk_activity_correlation",
+        "activity_types": {
+            "azure.sql_server.updated", "azure.sql_server.deleted",
+            "azure.sql_firewall_rule.updated", "azure.sql_firewall_rule.deleted",
+        },
+        "name_field": "server_name",
+        "event_name_field": "sql_server_name",
+        "kind": "SQL Server",
+        "title": "Azure SQL weak-TLS risk aligned with SQL activity",
+        "subject": "Azure SQL weak TLS risk",
+        "evidence_phrase": "SQL Server configuration activity",
+    },
+    # ── AKS rules ────────────────────────────────────────────────────────────
+    "azure_aks_local_accounts_enabled": {
+        "correlation_type": "azure_aks_risk_activity_correlation",
+        "activity_types": {
+            "azure.aks_cluster.updated", "azure.aks_cluster.deleted",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "aks_cluster_name",
+        "kind": "AKS cluster",
+        "title": "Azure AKS local-accounts risk aligned with AKS activity",
+        "subject": "Azure AKS local-accounts-enabled risk",
+        "evidence_phrase": "AKS cluster configuration activity",
+    },
+    "azure_aks_public_api_access": {
+        "correlation_type": "azure_aks_risk_activity_correlation",
+        "activity_types": {
+            "azure.aks_cluster.updated", "azure.aks_cluster.deleted",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "aks_cluster_name",
+        "kind": "AKS cluster",
+        "title": "Azure AKS public-API risk aligned with AKS activity",
+        "subject": "Azure AKS public-API-access risk",
+        "evidence_phrase": "AKS cluster configuration activity",
+    },
+    "azure_aks_network_policy_missing": {
+        "correlation_type": "azure_aks_risk_activity_correlation",
+        "activity_types": {
+            "azure.aks_cluster.updated", "azure.aks_cluster.deleted",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "aks_cluster_name",
+        "kind": "AKS cluster",
+        "title": "Azure AKS network-policy risk aligned with AKS activity",
+        "subject": "Azure AKS network-policy-missing risk",
+        "evidence_phrase": "AKS cluster configuration activity",
+    },
+    # ── Role assignment (special handling — joins on role + scope) ───────────
+    "azure_role_assignment_broad_privilege": {
+        "correlation_type": "azure_role_assignment_risk_activity_correlation",
+        "activity_types": {
+            "azure.role_assignment.created", "azure.role_assignment.deleted",
+        },
+        # Role assignment rules do not use a resource-name field; the matcher
+        # switches to role+scope matching when name_field is None.
+        "name_field": None,
+        "event_name_field": None,
+        "kind": "role assignment",
+        "title": "Azure broad role-assignment risk aligned with role-assignment activity",
+        "subject": "Azure broad role-assignment risk",
+        "evidence_phrase": "role-assignment configuration activity",
+    },
+}
+
+
+def _az_event_md(ev: SecurityActivityEvent, key: str) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _az_finding_evidence(finding: SecurityFinding, key: str) -> Optional[str]:
+    ev = finding.evidence if isinstance(finding.evidence, dict) else None
+    if ev is None:
+        return None
+    v = ev.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _az_finding_resource_name(
+    finding: SecurityFinding, rule: dict[str, Any]
+) -> Optional[str]:
+    """Read the resource name from the finding's evidence dict (e.g. nsg_name)."""
+    name_field = rule.get("name_field")
+    if not name_field:
+        return None
+    return _az_finding_evidence(finding, name_field)
+
+
+def _az_match_resource(
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    rule: dict[str, Any],
+) -> Optional[str]:
+    """Return a 'matched_on' label when finding ↔ event match the same resource.
+
+    Match criteria:
+      1. Resource NAME match — finding.evidence[name_field] must equal
+         event.metadata[event_name_field], both non-empty.
+      2. Resource group AGREEMENT (defense-in-depth) — if both sides carry
+         resource_group, they must match. If one side omits it, accept.
+    """
+    name_field = rule.get("name_field")
+    event_name_field = rule.get("event_name_field")
+    if not name_field or not event_name_field:
+        return None
+
+    finding_name = _az_finding_resource_name(finding, rule)
+    event_name = _az_event_md(event, event_name_field)
+    if not finding_name or not event_name:
+        return None
+    if finding_name != event_name:
+        return None
+
+    finding_rg = _az_finding_evidence(finding, "resource_group")
+    event_rg = _az_event_md(event, "resource_group")
+    if finding_rg and event_rg and finding_rg != event_rg:
+        return None
+
+    if finding_rg and event_rg:
+        return f"{event_name_field}+resource_group"
+    return event_name_field
+
+
+def _az_match_role_assignment(
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+) -> Optional[str]:
+    """Return a 'matched_on' label when role + scope overlap (no principal use)."""
+    finding_role = _az_finding_evidence(finding, "role_definition_name")
+    event_role = _az_event_md(event, "role_definition_name")
+    if not finding_role or not event_role:
+        return None
+    if finding_role != event_role:
+        return None
+    # Only flag broad roles to avoid noise on routine RBAC churn.
+    if finding_role not in _AZURE_BROAD_ROLES:
+        return None
+    finding_scope = _az_finding_evidence(finding, "scope_type")
+    event_scope = _az_event_md(event, "scope_type")
+    if finding_scope and event_scope and finding_scope != event_scope:
+        return None
+
+    if finding_scope and event_scope:
+        return "role_definition_name+scope_type"
+    return "role_definition_name"
+
+
+def _az_resource_label(
+    finding: SecurityFinding,
+    rule: dict[str, Any],
+    matched_name: Optional[str],
+) -> str:
+    kind = rule.get("kind", "resource")
+    if matched_name:
+        return f'{kind} "{matched_name}"'
+    role = _az_finding_evidence(finding, "role_definition_name") or ""
+    if role:
+        return f'{kind} "{role}"'
+    return kind
+
+
+def build_azure_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    rule: dict[str, Any],
+    matched_on: str,
+    resource_label: str,
+) -> dict[str, Any]:
+    """Build an Azure correlation dict (not persisted)."""
+    sev = (finding.severity or "medium").lower()
+    if sev not in {"critical", "high", "medium"}:
+        sev = "medium"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['title']} ({resource_label})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and {rule['evidence_phrase']} "
+        f"(\"{event.event_type}\") were observed for the same Azure "
+        f"{resource_label} within the review window. {_AZURE_REVIEW_NOTE}"
+    )
+
+    # "+" in matched_on means resource_group / scope also matched → high confidence.
+    match_confidence = "high" if "+" in matched_on else "medium"
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": event.event_type,
+        "subscription_id": _az_event_md(event, "subscription_id"),
+        "resource_group": _az_event_md(event, "resource_group"),
+        "azure_event_id": _az_event_md(event, "azure_event_id"),
+        "azure_correlation_id_hash": _az_event_md(event, "azure_correlation_id_hash"),
+        "operation_name": _az_event_md(event, "operation_name"),
+        "operation_family": _az_event_md(event, "operation_family"),
+        "operation_action": _az_event_md(event, "operation_action"),
+        "nsg_name": _az_event_md(event, "nsg_name"),
+        "nsg_rule_name": _az_event_md(event, "nsg_rule_name"),
+        "storage_account_name": _az_event_md(event, "storage_account_name"),
+        "key_vault_name": _az_event_md(event, "key_vault_name"),
+        "app_service_name": _az_event_md(event, "app_service_name"),
+        "sql_server_name": _az_event_md(event, "sql_server_name"),
+        "sql_firewall_rule_name": _az_event_md(event, "sql_firewall_rule_name"),
+        "aks_cluster_name": _az_event_md(event, "aks_cluster_name"),
+        "scope_type": _az_event_md(event, "scope_type"),
+        "role_definition_name": _az_event_md(event, "role_definition_name"),
+        "principal_type": _az_event_md(event, "principal_type"),
+        "category": _az_event_md(event, "category"),
+        "status": _az_event_md(event, "status"),
+        "matched_on": matched_on,
+        "match_confidence": match_confidence,
+        "time_window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_AZURE,
+        "correlation_key": rule["correlation_type"],
+        "correlation_type": rule["correlation_type"],
+        "severity": sev,
+        "confidence": match_confidence,
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_azure_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate Azure config-risk findings with Azure Activity Log events (M77F).
+
+    Conservative, resource-name-scoped matching. Provider-only and
+    subscription-only matches are NEVER produced. Idempotent.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_AZURE,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings if _base_rule(f.finding_key) in AZURE_CORRELATION_RULES
+    ]
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_AZURE,
+            SecurityActivityEvent.source == "azure_activity_log",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        rule = AZURE_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        finding_name = _az_finding_resource_name(finding, rule)
+        is_role_rule = rule.get("name_field") is None
+
+        for ev in events:
+            if ev.event_type not in rule["activity_types"]:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+
+            if is_role_rule:
+                matched_on = _az_match_role_assignment(finding, ev)
+                resource_label = _az_resource_label(finding, rule, None)
+            else:
+                matched_on = _az_match_resource(finding, ev, rule)
+                resource_label = _az_resource_label(finding, rule, finding_name)
+            if not matched_on:
+                continue
+
+            try:
+                correlation = build_azure_correlation(
+                    finding=finding,
+                    event=ev,
+                    rule=rule,
+                    matched_on=matched_on,
+                    resource_label=resource_label,
+                )
+                outcome, _row = upsert_correlation(
+                    workspace_id=workspace_id, correlation=correlation, db=db
+                )
+                if outcome == "created":
+                    created += 1
+                else:
+                    skipped += 1
+            except Exception:  # noqa: BLE001
+                import logging
+                logging.getLogger(__name__).warning(
+                    "azure_correlations: failed one correlation; continuing"
+                )
+                continue
+
+    return {
+        "provider": PROVIDER_AZURE,
         "findings_scanned": len(findings),
         "events_scanned": len(events),
         "correlations_created": created,
