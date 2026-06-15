@@ -906,16 +906,16 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78H" in planned, (
+        assert "M78I" in planned, (
             f"planned_next_stage should point to M78H, got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_depth_or_qa(self):
+    def test_planned_next_stage_mentions_polish_or_ux(self):
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "Depth" in planned or "QA" in planned or "depth" in planned.lower(), (
-            f"planned_next_stage should mention Depth/QA, got: {planned!r}"
+        assert "Polish" in planned or "UX" in planned or "polish" in planned.lower(), (
+            f"planned_next_stage should mention Polish/UX, got: {planned!r}"
         )
 
     def test_m78f_not_in_planned_next_stage(self):

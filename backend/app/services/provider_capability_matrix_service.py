@@ -490,10 +490,16 @@ _GOOGLE_CLOUD = ProviderCapability(
         "access tokens, raw payloads, principal emails, service-account "
         "emails, raw caller IPs, secret names/values, database names/users, "
         "connection strings, env-var names/values, kubeconfig, certs, logs, "
-        "customer data, or PII are ever stored in the demo chain. Maturity "
-        "remains partial — Google Cloud is not yet in the canonical 8-provider "
-        "matrix; broader provider-depth QA follows in M78H and cross-cloud "
-        "UX polish in M78I."
+        "customer data, or PII are ever stored in the demo chain. M78H "
+        "provider-depth QA pinned end-to-end taxonomy parity (record types ↔ "
+        "rule keys ↔ ingested method names ↔ event types ↔ signal types ↔ "
+        "correlation rules ↔ correlation activity types), privacy denylist "
+        "discipline on the live signal/correlation/demo pipeline, claim "
+        "discipline across every Google Cloud production module, false-"
+        "positive behavior for resource-name / aggregate matching, demo "
+        "isolation across providers, and router admin/member guards. "
+        "Maturity remains partial — Google Cloud is not yet in the canonical "
+        "8-provider matrix; cross-cloud UX polish lands in M78I."
     ),
 )
 

@@ -1166,7 +1166,7 @@ class TestProviderExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "M78H" in planned, (
+        assert "M78I" in planned, (
             f"planned_next_stage should point to M78H, got: {planned!r}"
         )
 

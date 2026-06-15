@@ -1025,12 +1025,12 @@ class TestExpansionFramework:
         """Rolled forward in M78G: demo landed → M78H."""
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78H" in planned
+        assert "M78I" in planned
 
-    def test_planned_next_stage_mentions_depth_or_qa(self):
+    def test_planned_next_stage_mentions_polish_or_ux(self):
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "Depth" in planned or "QA" in planned or "depth" in planned.lower()
+        assert "Polish" in planned or "UX" in planned or "polish" in planned.lower()
 
     def test_m78f_not_in_planned_next_stage(self):
         fw = get_framework()

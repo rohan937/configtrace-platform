@@ -484,7 +484,7 @@ def test_expansion_framework_next_stage_is_m78h():
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78H" in stage
+    assert "M78I" in stage
     assert "Google Cloud" in stage
     # And no longer references the just-finished M78G.
     assert "M78G" not in stage
