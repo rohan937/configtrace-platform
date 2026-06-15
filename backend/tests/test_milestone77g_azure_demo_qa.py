@@ -388,10 +388,11 @@ def test_capability_matrix_marks_azure_demo_ready():
 
 
 def test_expansion_framework_next_stage_is_m77h():
+    """Flipped in M77H: planned_next_stage now points to M77I."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M77H" in stage
+    assert "M77I" in stage
 
 
 # ── 11. demo case copy is review-safe (no overclaim) ────────────────────────

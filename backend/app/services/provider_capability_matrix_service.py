@@ -414,18 +414,22 @@ _AZURE = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Azure full security review flow (M77A–M77G). Drift snapshots: "
-        "subscription / RG / NSG / Storage / KV / role assignments / App "
-        "Service / SQL Server / AKS. Security rules: 20 rules covering NSG / "
-        "storage / KV / role assignment / App Service / SQL / AKS posture. "
-        "Activity Log ingestion: WRITE/DELETE management events across all "
-        "monitored surfaces. Activity signals: 14 signal types. Correlations: "
-        "7 correlation types joining configuration risks to Activity Log "
+        "Azure full security review flow (M77A–M77G), hardened by M77H "
+        "provider-depth QA guardrails. Drift snapshots: subscription / RG / "
+        "NSG / Storage / KV / role assignments / App Service / SQL Server / "
+        "AKS. Security rules: 20 rules covering NSG / storage / KV / role "
+        "assignment / App Service / SQL / AKS posture. Activity Log "
+        "ingestion: WRITE/DELETE management events across all monitored "
+        "surfaces. Activity signals: 14 signal types. Correlations: 7 "
+        "correlation types joining configuration risks to Activity Log "
         "evidence on the SAME Azure resource. M77G demo-ready Azure security "
         "review flow: drift findings, Activity Log evidence, signals, "
         "correlations, and a demo case anchored on a hidden demo integration. "
-        "Case report / timeline / graph render with the 'Azure' provider label. "
-        "QA + cross-cloud polish in M77H–M77I."
+        "Case report / timeline / graph render with the 'Azure' provider "
+        "label. M77H pins taxonomy parity (record types ↔ rules ↔ signals ↔ "
+        "correlations), privacy/sanitization guardrails, false-positive "
+        "behavior, demo isolation, and router admin-only guards. Cross-cloud "
+        "UX polish lands in M77I."
     ),
 )
 

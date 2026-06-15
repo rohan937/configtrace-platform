@@ -662,10 +662,10 @@ class TestProviderCapabilityMatrix:
 
 class TestProviderExpansionFramework:
     def test_planned_next_stage_points_to_m77c(self):
-        """Flipped in M77G: planned_next_stage now points to M77H."""
+        """Flipped in M77H: planned_next_stage now points to M77I."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert "M77H" in stage, (
+        assert "M77I" in stage, (
             f"planned_next_stage should reference M77D after M77C, got: {stage!r}"
         )
 

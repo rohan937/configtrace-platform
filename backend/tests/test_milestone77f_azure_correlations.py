@@ -804,10 +804,10 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_next_stage_is_m77g(self):
-        """Flipped in M77G: planned_next_stage now points to M77H."""
+        """Flipped in M77H: planned_next_stage now points to M77I."""
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M77H" in stage
+        assert "M77I" in stage
 
 
 # ──────────────────────────────────────────────────────────────────────────────
