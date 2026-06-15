@@ -209,6 +209,8 @@ from app.schemas.security_twilio_activity import (
     TwilioActivitySyncResponse,
     TwilioActivitySignalGenerateRequest,
     TwilioActivitySignalGenerateResponse,
+    TwilioCorrelationGenerateRequest,
+    TwilioCorrelationGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -3219,6 +3221,53 @@ def generate_twilio_activity_signals_endpoint(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return TwilioActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/twilio-correlations/generate",
+    response_model=TwilioCorrelationGenerateResponse,
+)
+def generate_twilio_risk_activity_correlations(
+    body: Optional[TwilioCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TwilioCorrelationGenerateResponse:
+    """Generate Twilio Risk × Activity correlations (M79F).
+
+    Admin/owner only. Joins active Twilio configuration-risk findings with
+    Twilio activity signals using safe resource identifiers (phone_number_last4,
+    messaging_service_sid, verify_service_sid, api_key_sid) or provider+family
+    aggregate matching when no per-resource identity is available.
+
+    Covers five correlation families: phone_number, messaging_service,
+    verify_service, api_key, and account.
+
+    Message bodies, call logs, recordings, media, full phone numbers, auth
+    tokens, API key secrets, webhook URL strings, and customer communication
+    data are never used or stored. Does not confirm compromise, unauthorized
+    access, or data exposure. Idempotent — re-running creates no duplicates.
+
+    Members can view the resulting correlations via
+    ``GET /security/correlations?provider=twilio``.
+    """
+    from app.services.twilio_risk_activity_correlation_service import (
+        generate_twilio_correlations,
+    )
+
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs2: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs2["lookback_hours"] = body.lookback_hours
+        if body.max_correlations is not None:
+            kwargs2["max_correlations"] = body.max_correlations
+    result = generate_twilio_correlations(
+        workspace_id=workspace_id, db=db, **kwargs2
+    )
+    return TwilioCorrelationGenerateResponse(**result)
 
 
 @router.post(

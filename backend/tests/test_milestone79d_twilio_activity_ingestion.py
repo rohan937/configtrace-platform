@@ -856,8 +856,8 @@ class TestCapabilityMatrix:
         assert self._cap().security.activity_signals is True
 
     def test_e3_risk_activity_correlations_is_false(self):
-        """E3: get_provider_capability("twilio").security.risk_activity_correlations is False."""
-        assert self._cap().security.risk_activity_correlations is False
+        """E3: get_provider_capability("twilio").security.risk_activity_correlations is True (M79F complete; rolled forward)."""
+        assert self._cap().security.risk_activity_correlations is True
 
     def test_e4_demo_seed_clear_is_false(self):
         """E4: get_provider_capability("twilio").security.demo_seed_clear is False."""
@@ -881,10 +881,10 @@ class TestExpansionFramework:
         return svc.get_framework()
 
     def test_f1_planned_next_stage_contains_m79e(self):
-        """F1: planned_next_stage contains 'M79F' (M79E complete; rolled forward)."""
+        """F1: planned_next_stage contains 'M79G' (M79F complete; rolled forward)."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M79F" in stage, (
-            f"planned_next_stage should contain 'M79F', got: {stage!r}"
+        assert "M79G" in stage, (
+            f"planned_next_stage should contain 'M79G', got: {stage!r}"
         )
 
     def test_f2_planned_next_stage_contains_twilio_or_signal(self):

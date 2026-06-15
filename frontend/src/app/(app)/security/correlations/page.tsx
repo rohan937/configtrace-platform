@@ -18,8 +18,9 @@ import { useAuth } from "@clerk/nextjs";
 import type {
   SecuritySignalCorrelation,
   SecurityCorrelationGenerateResponse,
+  TwilioCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -32,7 +33,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -155,6 +156,16 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "google_cloud_service_account_key_risk_activity_correlation",
     "google_cloud_secret_manager_risk_activity_correlation",
   ],
+  twilio: [
+    // M79F — Twilio Configuration Risk × Twilio Activity evidence.
+    // Resource-identity-scoped matching for phone numbers / messaging services /
+    // Verify services / API keys; account-level match for account risks.
+    "twilio_phone_number_risk_activity_correlation",
+    "twilio_messaging_service_risk_activity_correlation",
+    "twilio_verify_service_risk_activity_correlation",
+    "twilio_api_key_risk_activity_correlation",
+    "twilio_account_risk_activity_correlation",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 
@@ -175,7 +186,7 @@ export default function CorrelationsPage() {
   const typeOptions = TYPE_OPTIONS_BY_PROVIDER[provider] ?? [];
 
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<SecurityCorrelationGenerateResponse | null>(null);
+  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse) | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -212,8 +223,13 @@ export default function CorrelationsPage() {
     setGenResult(null);
     try {
       const token = await getToken();
-      const res = await generateSecurityCorrelations({ provider }, token);
-      setGenResult(res);
+      if (provider === "twilio") {
+        const res = await generateTwilioCorrelations(token);
+        setGenResult(res);
+      } else {
+        const res = await generateSecurityCorrelations({ provider }, token);
+        setGenResult(res);
+      }
       await load();
     } catch {
       setGenError("Could not generate correlations. Please try again.");
@@ -344,7 +360,7 @@ function GenerateBar({
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
-  genResult: SecurityCorrelationGenerateResponse | null;
+  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse) | null;
   genError: string | null;
   onGenerate: () => void;
 }) {
@@ -367,7 +383,9 @@ function GenerateBar({
                     ? "Correlate Azure configuration risks with recent Azure Activity Log signals across NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS — matching on the same resource (and resource group when both sides agree) within the review window."
                     : provider === "google_cloud"
                       ? "Correlate Google Cloud configuration risks with recent Audit Log signals across IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, service accounts, and Secret Manager. Resource-name matches for firewall / Storage / SQL / Cloud Run / GKE; project + family aggregate matches for IAM / service-account-key / Secret Manager. Provider-only matches are never produced."
-                      : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                      : provider === "twilio"
+                        ? "Correlate Twilio configuration risks with Twilio activity signals across phone numbers, messaging services, Verify services, API keys, and account configuration. Matches on safe resource identifiers (phone_number_last4, messaging_service_sid, verify_service_sid, api_key_sid) or provider+family aggregate. Message bodies, call logs, recordings, full phone numbers, auth tokens, and API secrets are never used."
+                        : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -392,8 +410,11 @@ function GenerateBar({
         </div>
         {genResult && (
           <div style={{ fontSize: "12px", color: "#3ccf7e", marginTop: "6px" }}>
-            Scanned {genResult.findings_scanned} risks · {genResult.events_scanned} events ·{" "}
-            {genResult.correlations_created} created · {genResult.correlations_skipped} skipped.
+            Scanned {genResult.findings_scanned} risks ·{" "}
+            {"signals_scanned" in genResult
+              ? `${genResult.signals_scanned} signals`
+              : `${"events_scanned" in genResult ? genResult.events_scanned : 0} events`}{" "}
+            · {genResult.correlations_created} created · {genResult.correlations_skipped} skipped.
           </div>
         )}
         {genError && <div style={{ fontSize: "12px", color: "#e84040", marginTop: "6px" }}>{genError}</div>}
@@ -548,7 +569,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                     ? "the same Azure resource (NSG / Storage account / Key Vault / App Service / SQL Server / AKS cluster), or the same role + scope for role-assignment risks. Sync Azure activity, generate Azure signals, then generate Azure correlations to align configuration risks with Activity Log evidence on the same resource."
                     : provider === "google_cloud"
                       ? "the same Google Cloud resource (firewall rule / Cloud Storage bucket / Cloud SQL instance / Cloud Run service / GKE cluster), or the same project + family for IAM, service-account-key, and Secret Manager risks. Sync Google Cloud activity, generate Google Cloud signals, then generate Google Cloud correlations."
-                      : "the same GitHub repository";
+                      : provider === "twilio"
+                        ? "the same Twilio resource (phone number / messaging service / Verify service / API key), or the same account + family for account and config-level risks. Sync Twilio activity, generate Twilio signals, then generate Twilio correlations."
+                        : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

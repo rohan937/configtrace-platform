@@ -291,6 +291,25 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "status_code",                # protoPayload.status.code (int; 0 = success)
         "resource_name",              # GCP resource path (no email segments)
         "finding_family",             # logical family label (iam / firewall / storage / sql / run / gke / service_account_key / secret_manager)
+        # Twilio risk × activity correlation context (M79F) — safe resource
+        # identifiers and posture labels only. NEVER auth tokens, API key
+        # secrets, full account SIDs, full phone number strings, webhook/
+        # callback URL strings, message bodies, call SIDs, call legs,
+        # recording data, customer PII, raw Twilio API responses, raw HTTP
+        # request or response bodies, or any value that could re-identify a
+        # customer or expose a credential.
+        "twilio_resource_sid_prefix",  # SID prefix (opaque resource handle)
+        "messaging_service_sid",       # Messaging Service SID (opaque)
+        "verify_service_sid",          # Verify Service SID (opaque)
+        "api_key_sid",                 # API Key SID (opaque; never the secret)
+        "phone_number_last4",          # ONLY the last 4 digits (never full number)
+        "match_reason",                # short safe match label (e.g. "phone_number_last4_match")
+        "match_strength",              # "high" (exact SID) or "medium" (family aggregate)
+        "risk_family",                 # logical risk family label
+        "activity_family",             # logical activity family label
+        "event_types",                 # comma-separated safe event-type list
+        "finding_severity",            # severity label from the source finding
+        "pattern",                     # pattern label (safe string)
     }
 )
 

@@ -971,6 +971,25 @@ export async function generateTwilioActivitySignals(
   return apiFetch(`/security/twilio-activity/generate-signals`, { method: "POST", body: JSON.stringify(opts ?? {}), token });
 }
 
+/**
+ * Generate Twilio Risk × Activity correlations (M79F). Admin/owner only.
+ * Joins active Twilio configuration-risk findings with Twilio activity signals
+ * using safe resource identifiers (phone_number_last4, messaging_service_sid,
+ * verify_service_sid, api_key_sid) or provider+family aggregate matching.
+ * Message bodies, call logs, recordings, full phone numbers, auth tokens, and
+ * API secrets are never stored. Does not confirm compromise or unauthorized access.
+ */
+export async function generateTwilioCorrelations(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").TwilioCorrelationGenerateResponse> {
+  return apiFetch(`/security/twilio-correlations/generate`, {
+    method: "POST",
+    body: JSON.stringify(opts ?? {}),
+    token,
+  });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {
