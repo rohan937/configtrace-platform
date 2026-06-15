@@ -179,6 +179,15 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "twilio_verify_short_code_length": (HIGH, "Only fires when code_length is an explicit integer < 6; missing/unknown values are skipped."),
     "twilio_verify_lookup_disabled": (MEDIUM, "Only an explicit lookup_enabled=false fires; missing/unknown is skipped."),
     "twilio_account_suspended": (MEDIUM, "Fires when account status is not 'active' or empty; missing/unknown is skipped."),
+    # Twilio — M79C
+    "twilio_api_key_stale": (MEDIUM, "Fires when date_updated or date_created indicates the key is 180+ days old; keys with no date metadata are skipped. Long-lived read-only keys may fire intentionally."),
+    "twilio_messaging_service_observability_gap": (HIGH, "Only fires when both fallback_url_configured=false AND status_callback_url_configured=false are simultaneously true on a twilio_messaging_service record."),
+    "twilio_messaging_service_number_level_inbound_webhook": (MEDIUM, "Fires when use_inbound_webhook_on_number=true AND inbound_request_url_configured=false; number-level delegation is a valid but fragmented pattern."),
+    "twilio_messaging_service_long_validity_period": (MEDIUM, "Only fires when validity_period is an explicit integer > 86400; missing/unknown values are skipped."),
+    "twilio_phone_number_messaging_observability_gap": (HIGH, "Only fires when capability_sms=true AND both sms_url_configured=false AND status_callback_configured=false on a twilio_incoming_phone_number record."),
+    "twilio_phone_number_voice_observability_gap": (HIGH, "Only fires when capability_voice=true AND both voice_url_configured=false AND status_callback_configured=false on a twilio_incoming_phone_number record."),
+    "twilio_verify_psd2_disabled": (MEDIUM, "Only an explicit psd2_enabled=false fires; missing/unknown is skipped. PSD2 is only relevant for financial transaction verification in regulated markets."),
+    "twilio_verify_sms_to_landlines_allowed": (MEDIUM, "Only an explicit skip_sms_to_landlines=false fires; missing/unknown is skipped."),
 }
 
 

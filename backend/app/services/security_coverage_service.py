@@ -189,6 +189,15 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "twilio_verify_short_code_length": ("twilio_verify_service",),
     "twilio_verify_lookup_disabled": ("twilio_verify_service",),
     "twilio_account_suspended": ("twilio_account",),
+    # Twilio — M79C
+    "twilio_api_key_stale": ("twilio_api_key_summary",),
+    "twilio_messaging_service_observability_gap": ("twilio_messaging_service",),
+    "twilio_messaging_service_number_level_inbound_webhook": ("twilio_messaging_service",),
+    "twilio_messaging_service_long_validity_period": ("twilio_messaging_service",),
+    "twilio_phone_number_messaging_observability_gap": ("twilio_incoming_phone_number",),
+    "twilio_phone_number_voice_observability_gap": ("twilio_incoming_phone_number",),
+    "twilio_verify_psd2_disabled": ("twilio_verify_service",),
+    "twilio_verify_sms_to_landlines_allowed": ("twilio_verify_service",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -365,6 +374,10 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "twilio_verify_service": {
         "message": "Twilio Verify Service metadata was not observed.",
         "hints": ["Verify the credentials can list Verify Services via the Twilio Verify API. This surface may be absent if no Verify Services are configured."],
+    },
+    "twilio_api_key_summary": {
+        "message": "Twilio API key metadata was not observed.",
+        "hints": ["Verify the credentials can list API keys via the Twilio REST API. This surface may be absent if no API keys have been created."],
     },
     # Google Cloud — M78C
     "google_cloud_sql_instance": {

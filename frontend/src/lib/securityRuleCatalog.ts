@@ -2049,6 +2049,175 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when account status is not 'active'; missing or empty status is not flagged.",
   },
+  // ── Twilio — M79C ──────────────────────────────────────────────────────────
+  {
+    key: "twilio_api_key_stale",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio API key has not been updated recently",
+    category: "API key hygiene",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Twilio API key metadata indicates the key has not been updated in over 180 days. Stale API keys may require review to confirm they are still in use and meet current security requirements.",
+    whatItChecks:
+      "date_updated or date_created older than 180 days on a twilio_api_key_summary record.",
+    whyItMatters:
+      "API keys that have not been rotated or reviewed for an extended period may represent unnecessary long-lived credentials. Regular review helps ensure only needed keys remain active.",
+    evidence:
+      "api_key_sid, friendly_name, date_created, date_updated. No API key secret is stored.",
+    remediation:
+      "Review active API keys in the Twilio Console under Account > API keys & tokens. Rotate or deactivate any keys that are no longer needed or no longer meet policy requirements.",
+    falsePositiveGuard:
+      "Long-lived read-only API keys used for stable integrations may intentionally not be rotated frequently. Only fires when date metadata is present and indicates 180+ days without an update.",
+  },
+  {
+    key: "twilio_messaging_service_observability_gap",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio Messaging Service has neither fallback URL nor status callback configured",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This Messaging Service has neither a fallback URL nor a status callback URL configured. Message delivery issues may not be detectable or recoverable.",
+    whatItChecks:
+      "fallback_url_configured=false AND status_callback_url_configured=false simultaneously on a twilio_messaging_service record.",
+    whyItMatters:
+      "Without both a fallback and a status callback, a primary webhook failure may go undetected and message delivery outcomes will not be observable.",
+    evidence:
+      "messaging_service_sid, friendly_name, fallback_url_configured, status_callback_url_configured. No URL strings are stored.",
+    remediation:
+      "Configure a fallback URL and a status callback URL in Twilio Console under Messaging > Services > Integration settings.",
+    falsePositiveGuard:
+      "Only fires when both fallback_url_configured and status_callback_url_configured are simultaneously false. Services that use number-level callbacks instead may still fire.",
+  },
+  {
+    key: "twilio_messaging_service_number_level_inbound_webhook",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio Messaging Service delegates inbound webhook handling to individual phone numbers",
+    category: "Webhook configuration",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Messaging Service delegates inbound webhook handling to individual phone numbers rather than a service-level URL. Ensure all associated phone numbers have inbound webhooks configured.",
+    whatItChecks:
+      "use_inbound_webhook_on_number=true AND inbound_request_url_configured=false on a twilio_messaging_service record.",
+    whyItMatters:
+      "Number-level webhook delegation may fragment inbound handling across many phone numbers. If any associated number lacks a webhook, inbound messages to that number may not be processed.",
+    evidence:
+      "messaging_service_sid, friendly_name, use_inbound_webhook_on_number, inbound_request_url_configured. No URL strings are stored.",
+    remediation:
+      "Verify that all phone numbers associated with this Messaging Service have inbound SMS webhooks configured, or switch to a service-level inbound webhook URL.",
+    falsePositiveGuard:
+      "Number-level webhook delegation is a supported Twilio pattern. This finding requires review of associated phone numbers, not necessarily a configuration change.",
+  },
+  {
+    key: "twilio_messaging_service_long_validity_period",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio Messaging Service has a validity period longer than 24 hours",
+    category: "Messaging service configuration",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Messaging Service has a validity period longer than 24 hours. Extended validity periods mean messages may be retried and delivered long after they were originally sent.",
+    whatItChecks:
+      "validity_period > 86400 (an explicit integer) on a twilio_messaging_service record.",
+    whyItMatters:
+      "Very long validity periods may cause time-sensitive messages (such as alerts or one-time codes) to be delivered after they are no longer relevant.",
+    evidence:
+      "messaging_service_sid, friendly_name, validity_period.",
+    remediation:
+      "Review the validity period in Twilio Console under Messaging > Services and reduce it if messages should not be retried after a shorter window.",
+    falsePositiveGuard:
+      "Only fires when validity_period is an explicit integer greater than 86400; missing or unknown values are skipped. Some use cases legitimately require long validity periods.",
+  },
+  {
+    key: "twilio_phone_number_messaging_observability_gap",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio phone number has SMS capability but no inbound webhook or status callback configured",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This phone number has SMS capability but no inbound webhook or status callback is configured. Inbound SMS messages may be silently dropped and delivery status may not be observable.",
+    whatItChecks:
+      "capability_sms=true AND sms_url_configured=false AND status_callback_configured=false on a twilio_incoming_phone_number record.",
+    whyItMatters:
+      "With both the inbound webhook and the status callback absent, neither inbound message processing nor delivery status tracking is available for this number.",
+    evidence:
+      "phone_number_sid, friendly_name, phone_number_last4 (last 4 digits only), iso_country, capability_sms. No full phone number or URL is stored.",
+    remediation:
+      "Configure an SMS webhook URL and a status callback URL for this phone number in Twilio Console under Phone Numbers > Manage > Active numbers.",
+    falsePositiveGuard:
+      "Only fires when all three conditions are simultaneously true. Phone numbers used only for outbound SMS may not need an inbound webhook.",
+  },
+  {
+    key: "twilio_phone_number_voice_observability_gap",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio phone number has voice capability but no inbound webhook or status callback configured",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This phone number has voice capability but no inbound webhook or status callback is configured. Inbound calls may not be handled and call status may not be observable.",
+    whatItChecks:
+      "capability_voice=true AND voice_url_configured=false AND status_callback_configured=false on a twilio_incoming_phone_number record.",
+    whyItMatters:
+      "With both the voice webhook and the status callback absent, neither inbound call handling nor call status tracking is available for this number.",
+    evidence:
+      "phone_number_sid, friendly_name, phone_number_last4 (last 4 digits only), iso_country, capability_voice. No full phone number or URL is stored.",
+    remediation:
+      "Configure a voice webhook URL and a status callback URL for this phone number in Twilio Console under Phone Numbers > Manage > Active numbers.",
+    falsePositiveGuard:
+      "Only fires when all three conditions are simultaneously true. Phone numbers used only for outbound calls may not need an inbound voice webhook.",
+  },
+  {
+    key: "twilio_verify_psd2_disabled",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio Verify Service does not have PSD2 (Strong Customer Authentication) enabled",
+    category: "Verify services",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Verify Service does not have PSD2 (Strong Customer Authentication) enabled. If this service is used for financial transaction verification in regulated markets, PSD2 compliance may require review.",
+    whatItChecks:
+      "psd2_enabled=false (an explicit boolean) on a twilio_verify_service record.",
+    whyItMatters:
+      "PSD2/SCA is required for financial transaction authentication in the EU and certain other markets. Services used for payment verification without PSD2 enabled may not meet regulatory requirements.",
+    evidence:
+      "verify_service_sid, friendly_name, psd2_enabled. No customer verification data is stored.",
+    remediation:
+      "Review whether PSD2 should be enabled in Twilio Console under Verify > Services. Enable PSD2 if this service is used for financial transaction verification in regulated markets.",
+    falsePositiveGuard:
+      "Only an explicit psd2_enabled=false fires; missing or unknown values are skipped. PSD2 is only relevant for financial transaction verification use cases in regulated markets.",
+  },
+  {
+    key: "twilio_verify_sms_to_landlines_allowed",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio Verify Service is configured to send verification SMS to landlines",
+    category: "Verify services",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Verify Service is configured to send verification SMS to landlines, which cannot receive SMS. This may result in verification failures and additional costs.",
+    whatItChecks:
+      "skip_sms_to_landlines=false (an explicit boolean) on a twilio_verify_service record.",
+    whyItMatters:
+      "Sending SMS verification codes to landlines always fails, wasting message credits and degrading the user verification experience.",
+    evidence:
+      "verify_service_sid, friendly_name, skip_sms_to_landlines. No customer phone numbers or PII are stored.",
+    remediation:
+      "Enable landline SMS filtering in Twilio Console under Verify > Services by setting 'Skip SMS to landlines' to enabled.",
+    falsePositiveGuard:
+      "Only an explicit skip_sms_to_landlines=false fires; missing or unknown values are skipped. Some deployments may intentionally allow all number types.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -2189,6 +2358,7 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "Messaging services",
       "Verify services",
       "Account metadata",
+      "API keys",
     ],
   },
 ];

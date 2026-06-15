@@ -176,10 +176,22 @@ class TestRuleKeyExistence:
         assert _ACCOUNT_SUSPENDED in self.keys
 
     def test_exactly_nine_rule_keys(self):
-        assert len(self.keys) == 9
+        # M79C added 8 new keys; total is now 17
+        assert len(self.keys) == 17
 
     def test_no_extra_unexpected_keys(self):
-        extra = self.keys - ALL_M79B_RULE_KEYS
+        # M79C keys are now also present; accept the full combined set
+        ALL_M79C_NEW_RULE_KEYS = frozenset({
+            "twilio_api_key_stale",
+            "twilio_messaging_service_observability_gap",
+            "twilio_messaging_service_number_level_inbound_webhook",
+            "twilio_messaging_service_long_validity_period",
+            "twilio_phone_number_messaging_observability_gap",
+            "twilio_phone_number_voice_observability_gap",
+            "twilio_verify_psd2_disabled",
+            "twilio_verify_sms_to_landlines_allowed",
+        })
+        extra = self.keys - ALL_M79B_RULE_KEYS - ALL_M79C_NEW_RULE_KEYS
         assert extra == frozenset(), f"unexpected rule keys: {extra}"
 
     def test_all_expected_keys_present(self):
@@ -627,8 +639,8 @@ class TestExpansionFramework:
         self.stage = self.fw["summary"]["planned_next_stage"]
 
     def test_planned_next_stage_contains_m79c(self):
-        assert "M79C" in self.stage, (
-            f"expected 'M79C' in planned_next_stage, got: {self.stage!r}"
+        assert "M79D" in self.stage, (
+            f"expected 'M79D' in planned_next_stage, got: {self.stage!r}"
         )
 
     def test_planned_next_stage_contains_twilio(self):

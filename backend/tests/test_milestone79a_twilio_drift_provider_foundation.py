@@ -1078,11 +1078,11 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_planned_next_stage_contains_m79b():
-    """Rolled forward in M79B: Core Security Foundation complete; next stage is M79C."""
+    """Rolled forward in M79C: Messaging/Webhook Risk Expansion complete; next stage is M79D."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M79C" in stage
+    assert "M79D" in stage
 
 
 def test_expansion_framework_planned_next_stage_contains_twilio():

@@ -151,6 +151,15 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "twilio_verify_short_code_length",
         "twilio_verify_lookup_disabled",
         "twilio_account_suspended",
+        # Twilio — M79C
+        "twilio_api_key_stale",
+        "twilio_messaging_service_observability_gap",
+        "twilio_messaging_service_number_level_inbound_webhook",
+        "twilio_messaging_service_long_validity_period",
+        "twilio_phone_number_messaging_observability_gap",
+        "twilio_phone_number_voice_observability_gap",
+        "twilio_verify_psd2_disabled",
+        "twilio_verify_sms_to_landlines_allowed",
     }
 )
 

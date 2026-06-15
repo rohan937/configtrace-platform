@@ -179,6 +179,15 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "twilio_verify_short_code_length": ("twilio", "medium", "Verify services"),
     "twilio_verify_lookup_disabled": ("twilio", "low", "Verify services"),
     "twilio_account_suspended": ("twilio", "low", "Account"),
+    # Twilio — M79C
+    "twilio_api_key_stale": ("twilio", "medium", "API key hygiene"),
+    "twilio_messaging_service_observability_gap": ("twilio", "medium", "Webhook configuration"),
+    "twilio_messaging_service_number_level_inbound_webhook": ("twilio", "low", "Webhook configuration"),
+    "twilio_messaging_service_long_validity_period": ("twilio", "low", "Messaging service configuration"),
+    "twilio_phone_number_messaging_observability_gap": ("twilio", "medium", "Webhook configuration"),
+    "twilio_phone_number_voice_observability_gap": ("twilio", "medium", "Webhook configuration"),
+    "twilio_verify_psd2_disabled": ("twilio", "low", "Verify services"),
+    "twilio_verify_sms_to_landlines_allowed": ("twilio", "low", "Verify services"),
 }
 
 
