@@ -198,9 +198,23 @@ def test_correlation_generator_exists(
 def test_provider_labels_canonical():
     """The canonical label map carries every completed provider with the
     expected display label. ``_TIMELINE_PROVIDER_LABELS`` is the source of
-    truth used by both ``build_case_report`` and ``build_case_evidence_timeline``."""
+    truth used by both ``build_case_report`` and ``build_case_evidence_timeline``.
+
+    M77G added Azure to the label map (demo-ready Azure security review flow).
+    Azure is NOT in the canonical 8 dual-stack-complete provider set, but its
+    label is required so case timelines/graphs render "Azure" correctly.
+    """
     actual = report_svc._TIMELINE_PROVIDER_LABELS
-    assert actual == PROVIDER_LABELS_EXPECTED
+    # The canonical 8 dual-stack-complete providers must all be present with
+    # their expected labels.
+    for key, label in PROVIDER_LABELS_EXPECTED.items():
+        assert actual.get(key) == label, (
+            f"canonical provider {key!r} label mismatch in _TIMELINE_PROVIDER_LABELS"
+        )
+    # Azure was added in M77G — partial provider, but appears in the label map.
+    assert actual.get("azure") == "Azure", (
+        "Azure label missing from _TIMELINE_PROVIDER_LABELS (M77G demo-ready)"
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════

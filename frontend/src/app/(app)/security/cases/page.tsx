@@ -47,7 +47,7 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 // "Load <Label> security demo" / "Clear <Label> demo".
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
-  | "supabase" | "firebase" | "stripe" | "shopify";
+  | "supabase" | "firebase" | "stripe" | "shopify" | "azure";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -143,6 +143,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Shopify demo",
     seedColor: "#a3e635",
   },
+  {
+    provider: "azure",
+    label: "Azure",
+    intro: "Try the Azure security demo:",
+    description:
+      "seed an Azure demo to review NSG, Storage, Key Vault, and broad role assignment configuration evidence, Activity Log control-plane activity, generated signals, risk x activity correlations, and a case report (clearly marked demo, no real Azure sync).",
+    seedButton: "Load Azure security demo",
+    clearButton: "Clear Azure demo",
+    seedColor: "#0078d4",
+  },
 ];
 
 export default function CasesPage() {
@@ -201,7 +211,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -220,7 +230,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -241,7 +251,9 @@ export default function CasesPage() {
                     ? "Stripe demo data cleared."
                     : provider === "shopify"
                       ? "Shopify demo data cleared."
-                      : "Demo data cleared.",
+                      : provider === "azure"
+                        ? "Azure demo data cleared."
+                        : "Demo data cleared.",
       );
       await load();
     } catch {

@@ -70,7 +70,7 @@ def _ids_by_type(links: list[SecurityCaseLink]) -> dict[str, list[uuid.UUID]]:
 # response bodies). It correlates evidence for review — it does NOT confirm
 # compromise, attacker presence, unauthorized access, or breach.
 
-_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify"}
+_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure"}
 
 # Item-type tie-breaker order (stable, deterministic) when timestamps are equal.
 _TYPE_RANK = {"finding": 0, "activity_event": 1, "incident_signal": 2, "correlation": 3}
@@ -98,6 +98,13 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     # generic cross-provider safe classifiers
     "service", "region", "resource_type", "event_name", "finding_type",
     "zone", "zone_name", "policy_name", "setting_name",
+    # Azure-safe resource identifiers (M77G) — infra NAMES only, never PII,
+    # principal IDs, raw correlationId, claims, properties, or app settings.
+    "subscription_id", "resource_group",
+    "nsg_name", "storage_account_name", "key_vault_name",
+    "app_service_name", "sql_server_name", "aks_cluster_name",
+    "role_definition_name", "principal_type", "scope_type",
+    "operation_name", "operation_action",
 })
 
 

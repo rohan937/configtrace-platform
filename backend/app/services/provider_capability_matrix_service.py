@@ -407,25 +407,25 @@ _AZURE = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
-        "Azure drift + expanded security + Activity Log ingestion + signals + "
-        "risk×activity correlations (M77A–M77F). Drift snapshots: subscription / "
-        "RG / NSG / Storage / KV / role assignments / App Service / SQL Server / "
-        "AKS. Security rules: 20 rules covering NSG / storage / KV / role "
-        "assignment / App Service / SQL / AKS posture. Activity Log ingestion: "
-        "WRITE/DELETE management events across all monitored surfaces. Activity "
-        "signals: 14 signal types covering NSG / Storage / KV / role assignment "
-        "/ App Service / SQL / AKS configuration changes. Correlations: 6 "
-        "correlation types joining configuration risks to Activity Log evidence "
-        "on the SAME Azure resource (NSG, storage account, Key Vault, App "
-        "Service, SQL Server, AKS cluster) plus role-assignment broad-privilege "
-        "× role-assignment activity. Demo + cases follow in M77G–M77I."
+        "Azure full security review flow (M77A–M77G). Drift snapshots: "
+        "subscription / RG / NSG / Storage / KV / role assignments / App "
+        "Service / SQL Server / AKS. Security rules: 20 rules covering NSG / "
+        "storage / KV / role assignment / App Service / SQL / AKS posture. "
+        "Activity Log ingestion: WRITE/DELETE management events across all "
+        "monitored surfaces. Activity signals: 14 signal types. Correlations: "
+        "7 correlation types joining configuration risks to Activity Log "
+        "evidence on the SAME Azure resource. M77G demo-ready Azure security "
+        "review flow: drift findings, Activity Log evidence, signals, "
+        "correlations, and a demo case anchored on a hidden demo integration. "
+        "Case report / timeline / graph render with the 'Azure' provider label. "
+        "QA + cross-cloud polish in M77H–M77I."
     ),
 )
 

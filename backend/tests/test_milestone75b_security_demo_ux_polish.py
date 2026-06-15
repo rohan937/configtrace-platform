@@ -278,9 +278,15 @@ def test_demo_script_uses_review_window_and_does_not_confirm():
 
 def test_backend_provider_label_map_remains_canonical():
     """Belt-and-suspenders pin on top of M75A's same check, so a future copy
-    change cannot break the cross-page label story without this file failing."""
+    change cannot break the cross-page label story without this file failing.
+
+    M77G added Azure to the canonical map (demo-ready Azure security review
+    flow). Azure remains tracked as a partial provider in the capability
+    matrix but appears in the timeline label map so case timelines/graphs
+    render "Azure" as the dominant-provider label.
+    """
     assert report_svc._TIMELINE_PROVIDER_LABELS == {
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare",
         "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase",
-        "stripe": "Stripe", "shopify": "Shopify",
+        "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure",
     }

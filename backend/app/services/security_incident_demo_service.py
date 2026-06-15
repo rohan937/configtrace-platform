@@ -53,6 +53,7 @@ from app.services import supabase_activity_signal_service as sb_sig
 from app.services import firebase_activity_signal_service as fb_sig
 from app.services import stripe_activity_signal_service as st_sig
 from app.services import shopify_activity_signal_service as sh_sig
+from app.services import azure_activity_signal_service as az_sig
 
 logger = logging.getLogger(__name__)
 
@@ -2982,6 +2983,545 @@ def clear_shopify(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
         if activity_ids:
             sig_conds.append(SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids))
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+
+# ── Azure incident demo (M77G) ────────────────────────────────────────────────
+# A SEPARATE hidden demo integration + case source so "Clear Azure demo"
+# removes only Azure demo objects and never touches any other provider's
+# demo (or any real Azure integration). Same safety rules as every other
+# provider demo: clearly marked demo, no real sync, no notifications, never
+# touches a real Azure integration, idempotent.
+#
+# The chain is one coherent Azure story anchored on a hidden demo subscription
+# + resource group, with risky configuration evidence on four Azure resources
+# (NSG, Storage account, Key Vault, and one broad role assignment), four
+# matching Azure Activity Log management events, the four corresponding
+# review signals, and four risk x activity correlations linking each finding
+# to its same-resource activity event:
+#
+#   Azure configuration risks (NSG public admin ingress, Storage public blob,
+#   Key Vault public network access, broad Owner role assignment at the
+#   subscription) -> Azure Activity Log activity (azure.nsg_rule.updated,
+#   azure.storage_account.updated, azure.key_vault.updated,
+#   azure.role_assignment.created) -> Azure activity signals -> Azure risk x
+#   activity correlations -> Case.
+#
+# All resource identifiers are RFC-style synthetic placeholders. No real
+# subscription, no real tenant, no real principal IDs / emails / UPNs, no
+# raw correlationId, no claims, no authorization, no properties payload, no
+# storage keys, no SAS tokens, no connection strings, no Key Vault secret
+# names/values, no certificate material, no key material, no app setting
+# names/values, no env var values, no database contents, no VM user data,
+# no customer/workload data, no PII.
+
+AZURE_DEMO_INTEGRATION_NAME = "ConfigTrace Azure incident demo (sample data)"
+AZURE_DEMO_CASE_SOURCE = "demo_azure_incident"
+AZURE_DEMO_DATASET = "azure_incident_demo_v1"
+
+AZURE_DEMO_SUBSCRIPTION_ID = "00000000-0000-0000-0000-000000000000"
+AZURE_DEMO_RESOURCE_GROUP = "configtrace-demo-rg"
+AZURE_DEMO_LOCATION = "eastus"
+AZURE_DEMO_NSG_NAME = "configtrace-demo-nsg"
+AZURE_DEMO_STORAGE_NAME = "configtracedemoacct"
+AZURE_DEMO_VAULT_NAME = "configtrace-demo-kv"
+AZURE_DEMO_ROLE_ASSIGNMENT_ID = "11111111-1111-1111-1111-111111111111"
+
+
+def _az_arm_path(*, kind: str, name: str) -> str:
+    """Build a synthetic ARM resource id for demo resources."""
+    return (
+        f"/subscriptions/{AZURE_DEMO_SUBSCRIPTION_ID}"
+        f"/resourceGroups/{AZURE_DEMO_RESOURCE_GROUP}"
+        f"/providers/{kind}/{name}"
+    )
+
+
+def get_azure_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == AZURE_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_azure_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == AZURE_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_azure_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_azure_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_azure(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Azure demo incident chain (idempotent). No real Azure sync.
+
+    Builds one coherent Azure story anchored on the same demo subscription
+    + resource group:
+      Azure configuration risks (NSG public admin ingress, Storage public blob,
+      Key Vault public network access, broad Owner role assignment) -> Azure
+      Activity Log activity (azure.nsg_rule.updated, azure.storage_account.
+      updated, azure.key_vault.updated, azure.role_assignment.created) ->
+      Azure activity signals -> Azure risk x activity correlations -> Case.
+
+    All objects are anchored on a hidden demo integration so ``clear_azure``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace). Metadata is allowlisted
+    NAMES / booleans / categories only - NEVER caller email/UPN/name,
+    principal IDs, raw correlationId, claims, authorization, properties
+    payload, httpRequest body, tenantId, storage keys, SAS tokens, connection
+    strings, Key Vault secret names/values, certificate material, key
+    material, app setting names/values, env var values, customer/workload
+    data, or PII.
+    """
+    existing = _existing_azure_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    integ = get_azure_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({"demo": True, "dataset": AZURE_DEMO_DATASET})
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=AZURE_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    def _mk_resource(kind: str, arm_id: str, display: str) -> Resource:
+        r = Resource(
+            integration_id=integ.id, user_id=actor_user_id,
+            provider_resource_type=kind, provider_resource_id=arm_id,
+            display_name=display, is_active=True,
+        )
+        db.add(r); db.flush()
+        return r
+
+    nsg_arm = _az_arm_path(
+        kind="Microsoft.Network/networkSecurityGroups", name=AZURE_DEMO_NSG_NAME
+    )
+    storage_arm = _az_arm_path(
+        kind="Microsoft.Storage/storageAccounts", name=AZURE_DEMO_STORAGE_NAME
+    )
+    kv_arm = _az_arm_path(
+        kind="Microsoft.KeyVault/vaults", name=AZURE_DEMO_VAULT_NAME
+    )
+    role_arm = (
+        f"/subscriptions/{AZURE_DEMO_SUBSCRIPTION_ID}"
+        f"/providers/Microsoft.Authorization/roleAssignments/"
+        f"{AZURE_DEMO_ROLE_ASSIGNMENT_ID}"
+    )
+
+    nsg_resource = _mk_resource(
+        "azure_network_security_group", nsg_arm, AZURE_DEMO_NSG_NAME
+    )
+    storage_resource = _mk_resource(
+        "azure_storage_account", storage_arm, AZURE_DEMO_STORAGE_NAME
+    )
+    kv_resource = _mk_resource(
+        "azure_key_vault", kv_arm, AZURE_DEMO_VAULT_NAME
+    )
+    role_resource = _mk_resource(
+        "azure_role_assignment", role_arm, "Owner @ subscription"
+    )
+
+    nsg_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="azure",
+        finding_key=f"azure_nsg_public_admin_ingress:{nsg_arm}",
+        severity="critical",
+        title="Demo: Azure NSG allows public inbound on an administrative port",
+        resource_id=nsg_resource.id,
+        description=(
+            "Sample Azure NSG configuration risk for the incident-workflow demo. "
+            "This is evidence for review and does not confirm compromise, "
+            "unauthorized access, or data exposure."
+        ),
+        evidence={
+            "rule": "azure_nsg_public_admin_ingress", "demo": True,
+            "nsg_name": AZURE_DEMO_NSG_NAME,
+            "resource_group": AZURE_DEMO_RESOURCE_GROUP,
+            "location": AZURE_DEMO_LOCATION,
+            "admin_port": 3389,
+            "source_address_prefix": "*",
+            "destination_port_range": "3389",
+            "protocol": "Tcp",
+            "public_source": True,
+        },
+        remediation={
+            "summary": "Restrict the NSG source range or remove the rule.",
+        },
+    )
+    storage_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="azure",
+        finding_key=f"azure_storage_public_blob_access:{storage_arm}",
+        severity="high",
+        title="Demo: Azure Storage account permits public blob access",
+        resource_id=storage_resource.id,
+        description=(
+            "Sample Azure Storage configuration risk for the incident-workflow "
+            "demo. This is evidence for review and does not confirm data exposure."
+        ),
+        evidence={
+            "rule": "azure_storage_public_blob_access", "demo": True,
+            "account_name": AZURE_DEMO_STORAGE_NAME,
+            "resource_group": AZURE_DEMO_RESOURCE_GROUP,
+            "location": AZURE_DEMO_LOCATION,
+            "allow_blob_public_access": True,
+        },
+        remediation={
+            "summary": "Disable Allow Blob public access on the storage account.",
+        },
+    )
+    kv_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="azure",
+        finding_key=f"azure_key_vault_public_network_access:{kv_arm}",
+        severity="high",
+        title="Demo: Azure Key Vault allows public network access",
+        resource_id=kv_resource.id,
+        description=(
+            "Sample Azure Key Vault configuration risk for the incident-workflow "
+            "demo. This is evidence for review and does not confirm secret "
+            "exposure or unauthorized access."
+        ),
+        evidence={
+            "rule": "azure_key_vault_public_network_access", "demo": True,
+            "vault_name": AZURE_DEMO_VAULT_NAME,
+            "resource_group": AZURE_DEMO_RESOURCE_GROUP,
+            "location": AZURE_DEMO_LOCATION,
+            "public_network_access": "Enabled",
+            "network_default_action": "Allow",
+        },
+        remediation={
+            "summary": "Restrict to selected networks or disable public access.",
+        },
+    )
+    role_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id, provider="azure",
+        finding_key=f"azure_role_assignment_broad_privilege:{role_arm}",
+        severity="high",
+        title="Demo: Azure role assignment grants 'Owner' at subscription scope",
+        resource_id=role_resource.id,
+        description=(
+            "Sample Azure access-governance risk for the incident-workflow demo. "
+            "This is evidence for review and does not confirm compromise or "
+            "unauthorized access. Principal ID/email/name is never stored."
+        ),
+        evidence={
+            "rule": "azure_role_assignment_broad_privilege", "demo": True,
+            "assignment_id": AZURE_DEMO_ROLE_ASSIGNMENT_ID,
+            "scope_type": "subscription",
+            "resource_group": "",
+            "role_definition_name": "Owner",
+            "principal_type": "ServicePrincipal",
+        },
+        remediation={
+            "summary": (
+                "Replace with a narrower built-in role or restrict scope/condition."
+            ),
+        },
+    )
+
+    def _mk_event(
+        *, event_type: str, resource_arm: str, resource_type: str,
+        extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "event_source": "azure_activity_log",
+            "subscription_id": AZURE_DEMO_SUBSCRIPTION_ID,
+            "resource_group": AZURE_DEMO_RESOURCE_GROUP,
+            "resource_id": resource_arm,
+            "resource_type": resource_type,
+            "status": "Succeeded",
+            "category": "Administrative",
+            "azure_event_id": f"demo-az-{uuid.uuid4().hex[:10]}",
+            "azure_correlation_id_hash": ("d" * 32),
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="azure", source="azure_activity_log",
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=meta["azure_event_id"],
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_arm,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    nsg_event = _mk_event(
+        event_type="azure.nsg_rule.updated",
+        resource_arm=nsg_arm,
+        resource_type="Microsoft.Network/networkSecurityGroups",
+        extra={
+            "operation_name": (
+                "Microsoft.Network/networkSecurityGroups/securityRules/write"
+            ),
+            "operation_family": (
+                "Microsoft.Network/networkSecurityGroups/securityRules"
+            ),
+            "operation_action": "write",
+            "nsg_name": AZURE_DEMO_NSG_NAME,
+            "nsg_rule_name": "allow-rdp",
+        },
+    )
+    storage_event = _mk_event(
+        event_type="azure.storage_account.updated",
+        resource_arm=storage_arm,
+        resource_type="Microsoft.Storage/storageAccounts",
+        extra={
+            "operation_name": "Microsoft.Storage/storageAccounts/write",
+            "operation_family": "Microsoft.Storage/storageAccounts",
+            "operation_action": "write",
+            "storage_account_name": AZURE_DEMO_STORAGE_NAME,
+        },
+    )
+    kv_event = _mk_event(
+        event_type="azure.key_vault.updated",
+        resource_arm=kv_arm,
+        resource_type="Microsoft.KeyVault/vaults",
+        extra={
+            "operation_name": "Microsoft.KeyVault/vaults/write",
+            "operation_family": "Microsoft.KeyVault/vaults",
+            "operation_action": "write",
+            "key_vault_name": AZURE_DEMO_VAULT_NAME,
+        },
+    )
+    role_event = _mk_event(
+        event_type="azure.role_assignment.created",
+        resource_arm=role_arm,
+        resource_type="Microsoft.Authorization/roleAssignments",
+        extra={
+            "operation_name": "Microsoft.Authorization/roleAssignments/write",
+            "operation_family": "Microsoft.Authorization/roleAssignments",
+            "operation_action": "write",
+            "role_definition_name": "Owner",
+            "scope_type": "subscription",
+            "principal_type": "ServicePrincipal",
+        },
+    )
+
+    signals: list[SecurityIncidentSignal] = []
+    for ev in (nsg_event, storage_event, kv_event, role_event):
+        sig_dict = az_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db
+            )
+            signals.append(sig)
+
+    def _add_correlation(
+        *, finding: SecurityFinding, event: SecurityActivityEvent,
+        matched_on: str, resource_label: str,
+    ) -> SecuritySignalCorrelation:
+        rule = corr_svc.AZURE_CORRELATION_RULES[
+            corr_svc._base_rule(finding.finding_key)
+        ]
+        cdict = corr_svc.build_azure_correlation(
+            finding=finding, event=event, rule=rule,
+            matched_on=matched_on, resource_label=resource_label,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        return corr
+
+    nsg_corr = _add_correlation(
+        finding=nsg_finding, event=nsg_event,
+        matched_on="nsg_name+resource_group",
+        resource_label=f'NSG "{AZURE_DEMO_NSG_NAME}"',
+    )
+    storage_corr = _add_correlation(
+        finding=storage_finding, event=storage_event,
+        matched_on="storage_account_name+resource_group",
+        resource_label=f'Storage account "{AZURE_DEMO_STORAGE_NAME}"',
+    )
+    kv_corr = _add_correlation(
+        finding=kv_finding, event=kv_event,
+        matched_on="key_vault_name+resource_group",
+        resource_label=f'Key Vault "{AZURE_DEMO_VAULT_NAME}"',
+    )
+    role_corr = _add_correlation(
+        finding=role_finding, event=role_event,
+        matched_on="role_definition_name+scope_type",
+        resource_label='role assignment "Owner"',
+    )
+
+    correlations = [nsg_corr, storage_corr, kv_corr, role_corr]
+    findings = [nsg_finding, storage_finding, kv_finding, role_finding]
+    events = [nsg_event, storage_event, kv_event, role_event]
+
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Azure configuration review",
+        summary=(
+            "Demo Azure exposure and access-governance review. It groups Azure "
+            "security evidence: configuration risks (NSG public admin ingress, "
+            "Storage public blob access, Key Vault public network access, and a "
+            "broad Owner role assignment at subscription scope), and Azure "
+            "Activity Log control-plane activity (NSG rule, storage account, "
+            "Key Vault, and role assignment changes) for the same resources - "
+            "turned into review signals and risk x activity correlations. This "
+            "is a human-reviewed case presenting evidence for review and may "
+            "require review. ConfigTrace does not confirm compromise, "
+            "unauthorized access, or data exposure."
+        ),
+        severity=nsg_corr.severity,
+        provider="azure",
+        metadata={
+            "source": AZURE_DEMO_CASE_SOURCE,
+            "repository": AZURE_DEMO_RESOURCE_GROUP,
+        },
+        db=db,
+    )
+    for corr in correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for finding in findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=finding.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for ev in events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for sig in signals:
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    seen_signal_ids = {s.id for s in signals}
+    for corr in correlations:
+        if corr.linked_signal_id is not None and corr.linked_signal_id not in seen_signal_ids:
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal", object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    logger.info(
+        "azure_incident_demo: seeded workspace=%s case=%s", workspace_id, case.id
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_azure(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Azure demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == AZURE_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = get_azure_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
         db.query(SecurityIncidentSignal).filter(
             SecurityIncidentSignal.workspace_id == workspace_id,
             or_(*sig_conds),
