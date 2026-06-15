@@ -112,10 +112,10 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
 
 
 def test_expansion_framework_next_stage_is_beyond_m79d():
-    """Rolled forward in M79D: Twilio Activity Ingestion complete; next stage is M79E."""
+    """Rolled forward in M79E: Twilio Activity Signals complete; next stage is M79F."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M79E" in stage
+    assert "M79F" in stage
     assert "Twilio" in stage
 
 

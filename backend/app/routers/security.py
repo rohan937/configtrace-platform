@@ -207,6 +207,8 @@ from app.schemas.security_google_cloud_activity import (
 from app.schemas.security_twilio_activity import (
     TwilioActivitySyncRequest,
     TwilioActivitySyncResponse,
+    TwilioActivitySignalGenerateRequest,
+    TwilioActivitySignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -254,6 +256,7 @@ from app.services import azure_activity_signal_service
 from app.services import google_cloud_activity_ingestion_service
 from app.services import google_cloud_activity_signal_service
 from app.services import twilio_activity_ingestion_service
+from app.services import twilio_activity_signal_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -3175,6 +3178,47 @@ def sync_twilio_activity_events(
         db=db,
     )
     return TwilioActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/twilio-activity/generate-signals",
+    response_model=TwilioActivitySignalGenerateResponse,
+)
+def generate_twilio_activity_signals_endpoint(
+    body: Optional[TwilioActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TwilioActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe Twilio configuration activity events (M79E).
+
+    Admin/owner only. Promotes ingested Twilio Monitor config-change events
+    (phone number, messaging service, Verify service, API key, and account
+    configuration changes) into review-priority Incident Signals. Groups events
+    by resource identity within the lookback window. Idempotent — re-running
+    creates no duplicates.
+
+    Message bodies, call logs, recordings, media, full phone numbers, auth
+    tokens, API secrets, webhook URL strings, and customer PII are never stored.
+    These are review signals; they do not confirm compromise, unauthorized
+    access, leaked credentials, or data exposure.
+
+    Members can view the resulting signals via
+    ``GET /security/signals?provider=twilio``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = twilio_activity_signal_service.generate_twilio_activity_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return TwilioActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

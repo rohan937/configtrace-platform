@@ -956,6 +956,21 @@ export async function generateGoogleCloudActivitySignals(
   return apiFetch(`/security/google-cloud-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Twilio Monitor Activity Incident Signals (M79E). Admin/owner only.
+ * Promotes ingested Twilio Monitor config-change events (phone number, messaging
+ * service, Verify service, API key, account changes) into review-worthy signals.
+ * Stores resource identifiers and activity summaries only — never message bodies,
+ * call logs, recordings, full phone numbers, auth tokens, or API secrets.
+ * Does not confirm compromise or unauthorized access.
+ */
+export async function generateTwilioActivitySignals(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").TwilioActivitySignalGenerateResponse> {
+  return apiFetch(`/security/twilio-activity/generate-signals`, { method: "POST", body: JSON.stringify(opts ?? {}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

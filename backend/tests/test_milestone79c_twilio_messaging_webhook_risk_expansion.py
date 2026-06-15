@@ -640,8 +640,8 @@ class TestCapabilityMatrixAndExpansion:
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M79E" in stage, (
-            f"expected 'M79E' in planned_next_stage, got: {stage!r}"
+        assert "M79F" in stage, (
+            f"expected 'M79F' in planned_next_stage (M79E complete), got: {stage!r}"
         )
 
     def test_planned_next_stage_contains_twilio_or_signal(self):

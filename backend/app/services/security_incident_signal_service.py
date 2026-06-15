@@ -258,6 +258,18 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "run_service_name",          # Cloud Run service name (infra identifier)
         "gke_cluster_name",          # GKE cluster name (infra identifier)
         "status_code",               # protoPayload.status.code (int — 0 = success)
+        # Twilio activity signal fields (M79E) — safe control-plane change
+        # summary ONLY. NEVER auth tokens, API key secrets, full account SIDs,
+        # full phone number strings, webhook/callback URL strings, message bodies,
+        # call SIDs, call legs, recording data, customer PII (caller name,
+        # verification payloads), raw Twilio API response dicts, raw HTTP request
+        # or response bodies, or any value that could re-identify a customer or
+        # expose a credential.
+        "twilio_resource_sid_prefix",  # first 8 chars of resource SID (opaque, not a secret)
+        "messaging_service_sid",       # messaging service SID (identifier, not a secret)
+        "verify_service_sid",          # Verify service SID (identifier, not a secret)
+        "api_key_sid",                 # API key SID (identifier only — NEVER the secret)
+        "phone_number_last4",          # last 4 digits of phone number — NEVER full number
     }
 )
 
