@@ -1084,10 +1084,11 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("google_cloud")
         assert cap.security.risk_activity_correlations is True  # M78F complete
 
-    def test_demo_seed_clear_still_false(self):
+    def test_demo_seed_clear_now_true(self):
+        """Flipped in M78G."""
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("google_cloud")
-        assert cap.security.demo_seed_clear is False
+        assert cap.security.demo_seed_clear is True
 
     def test_google_cloud_still_partial(self):
         from app.services.provider_capability_matrix_service import (
@@ -1108,20 +1109,21 @@ class TestCapabilityMatrix:
 class TestExpansionFramework:
     """Verify planned_next_stage points to M78G after M78F is complete."""
 
-    def test_planned_next_stage_is_m78g(self):
+    def test_planned_next_stage_is_m78h(self):
+        """Rolled forward in M78G: demo landed → M78H."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78G" in planned, (
-            f"planned_next_stage should point to M78G, got: {planned!r}"
+        assert "M78H" in planned, (
+            f"planned_next_stage should point to M78H, got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_demo(self):
+    def test_planned_next_stage_mentions_depth_or_qa(self):
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "Demo" in planned or "demo" in planned.lower(), (
-            f"planned_next_stage should mention Demo, got: {planned!r}"
+        assert "Depth" in planned or "QA" in planned or "depth" in planned.lower(), (
+            f"planned_next_stage should mention Depth/QA, got: {planned!r}"
         )
 
     def test_m78f_not_in_planned_next_stage(self):

@@ -133,10 +133,12 @@ def test_cases_page_uses_provider_demo_cards_array():
     for key in ("intro:", "description:", "seedButton:", "clearButton:", "seedColor:"):
         assert key in text, f"PROVIDER_DEMO_CARDS missing {key} field"
     # No "Try the …:" intro string is hand-rolled outside the array map.
-    # The array carries exactly 8 entries; sanity-check by counting the
-    # ``intro: "Try the `` literal (filters out comments / prose).
-    assert text.count('intro: "Try the ') == 8, (
-        "expected exactly 8 PROVIDER_DEMO_CARDS intros"
+    # The array carries one entry per provider with a demo: 8 canonical
+    # providers plus Azure (M77G) plus Google Cloud (M78G) = 10. Sanity-
+    # check by counting the ``intro: "Try the `` literal (filters out
+    # comments / prose).
+    assert text.count('intro: "Try the ') == 10, (
+        "expected exactly 10 PROVIDER_DEMO_CARDS intros"
     )
 
 
@@ -280,13 +282,15 @@ def test_backend_provider_label_map_remains_canonical():
     """Belt-and-suspenders pin on top of M75A's same check, so a future copy
     change cannot break the cross-page label story without this file failing.
 
-    M77G added Azure to the canonical map (demo-ready Azure security review
-    flow). Azure remains tracked as a partial provider in the capability
-    matrix but appears in the timeline label map so case timelines/graphs
-    render "Azure" as the dominant-provider label.
+    M77G added Azure and M78G added Google Cloud to the canonical map
+    (demo-ready security review flow). Both remain tracked as partial
+    providers in the capability matrix but appear in the timeline label
+    map so case timelines/graphs render their friendly labels as the
+    dominant-provider label.
     """
     assert report_svc._TIMELINE_PROVIDER_LABELS == {
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare",
         "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase",
         "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure",
+        "google_cloud": "Google Cloud",
     }

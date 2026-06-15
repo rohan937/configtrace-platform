@@ -47,7 +47,8 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 // "Load <Label> security demo" / "Clear <Label> demo".
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
-  | "supabase" | "firebase" | "stripe" | "shopify" | "azure";
+  | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
+  | "google_cloud";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -153,6 +154,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Azure demo",
     seedColor: "#0078d4",
   },
+  {
+    provider: "google_cloud",
+    label: "Google Cloud",
+    intro: "Try the Google Cloud security demo:",
+    description:
+      "seed a review-safe Google Cloud security demo with drift findings (IAM, firewall, Cloud Storage, Cloud SQL, Cloud Run, GKE, service account keys, Secret Manager), Audit Log evidence, activity signals, risk × activity correlations, and a case (clearly marked demo, no real Google Cloud sync).",
+    seedButton: "Load Google Cloud security demo",
+    clearButton: "Clear Google Cloud demo",
+    seedColor: "#4285f4",
+  },
 ];
 
 export default function CasesPage() {
@@ -211,7 +222,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -230,7 +241,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -253,7 +264,9 @@ export default function CasesPage() {
                       ? "Shopify demo data cleared."
                       : provider === "azure"
                         ? "Azure demo data cleared."
-                        : "Demo data cleared.",
+                        : provider === "google_cloud"
+                          ? "Google Cloud demo data cleared."
+                          : "Demo data cleared.",
       );
       await load();
     } catch {

@@ -1127,10 +1127,11 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("google_cloud")
         assert cap.security.risk_activity_correlations is True  # M78F complete
 
-    def test_google_cloud_demo_seed_clear_false(self):
+    def test_google_cloud_demo_seed_clear_now_true(self):
+        """Flipped in M78G."""
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("google_cloud")
-        assert cap.security.demo_seed_clear is False
+        assert cap.security.demo_seed_clear is True
 
     def test_google_cloud_security_rules_true(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -1149,26 +1150,24 @@ class TestCapabilityMatrix:
 class TestProviderExpansionFramework:
     """Verify the expansion framework next stage is beyond M78E (M78C is done)."""
 
-    def test_planned_next_stage_is_beyond_m78e(self):
-        """M78E is complete; planned next stage must be M78F or later."""
+    def test_planned_next_stage_is_beyond_m78g(self):
+        """M78G is complete; planned next stage must be M78H or later."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
         assert "M78" in planned, (
             f"planned_next_stage should still be in the M78 arc, got: {planned!r}"
         )
-        assert "M78C" not in planned, "M78C is done; pointer has advanced"
-        assert "M78D" not in planned, "M78D is done; pointer has advanced"
-        assert "M78E" not in planned, "M78E is done; pointer has advanced"
-        assert "M78F" not in planned, "M78F is done; pointer has advanced"
+        for done in ("M78C", "M78D", "M78E", "M78F", "M78G"):
+            assert done not in planned, f"{done} is done; pointer has advanced"
 
-    def test_google_cloud_next_stage_is_m78g(self):
-        """M78F complete; planned next stage now points to M78G (Demo)."""
+    def test_google_cloud_next_stage_is_m78h(self):
+        """M78G complete; planned next stage now points to M78H (Provider Depth QA)."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "M78G" in planned, (
-            f"planned_next_stage should point to M78G, got: {planned!r}"
+        assert "M78H" in planned, (
+            f"planned_next_stage should point to M78H, got: {planned!r}"
         )
 
 

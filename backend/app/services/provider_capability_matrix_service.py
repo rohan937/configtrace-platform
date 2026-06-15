@@ -450,10 +450,10 @@ _GOOGLE_CLOUD = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
@@ -482,7 +482,18 @@ _GOOGLE_CLOUD = ProviderCapability(
         "Cloud Storage buckets, Cloud SQL instances, Cloud Run services, and GKE "
         "clusters; project+family aggregate matches for IAM, service-account-key, "
         "and Secret Manager risks. Provider-only and project-only matches for "
-        "resource-bearing findings are never produced. Demo follows in M78G."
+        "resource-bearing findings are never produced. M78G demo-ready Google "
+        "Cloud security review flow: drift findings, Audit Log evidence, "
+        "activity signals, risk × activity correlations, and demo case. Demo "
+        "evidence is clearly marked and seeded on a hidden demo integration "
+        "with allowlisted metadata only — no service-account private keys, "
+        "access tokens, raw payloads, principal emails, service-account "
+        "emails, raw caller IPs, secret names/values, database names/users, "
+        "connection strings, env-var names/values, kubeconfig, certs, logs, "
+        "customer data, or PII are ever stored in the demo chain. Maturity "
+        "remains partial — Google Cloud is not yet in the canonical 8-provider "
+        "matrix; broader provider-depth QA follows in M78H and cross-cloud "
+        "UX polish in M78I."
     ),
 )
 

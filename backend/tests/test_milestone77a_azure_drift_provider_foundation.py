@@ -1122,7 +1122,7 @@ def test_expansion_framework_planned_next_stage_is_m77b():
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M78G" in planned, (
+    assert "M78H" in planned, (
         f"planned_next_stage should reference M78D after M78C, got: {planned!r}"
     )
 

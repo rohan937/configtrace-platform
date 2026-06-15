@@ -54,6 +54,7 @@ from app.services import firebase_activity_signal_service as fb_sig
 from app.services import stripe_activity_signal_service as st_sig
 from app.services import shopify_activity_signal_service as sh_sig
 from app.services import azure_activity_signal_service as az_sig
+from app.services import google_cloud_activity_signal_service as gcp_sig
 
 logger = logging.getLogger(__name__)
 
@@ -3492,6 +3493,818 @@ def clear_azure(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         ).delete(synchronize_session=False)
 
     integ = get_azure_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Cloud incident demo (M78G) — a SEPARATE hidden demo integration + case
+# source so "Clear Google Cloud demo" removes only Google Cloud demo objects
+# and never touches the GitHub / AWS / Cloudflare / Vercel / Supabase / Firebase
+# / Stripe / Shopify / Azure demos (and vice-versa). Same safety rules:
+#   - clearly marked demo, no real Google Cloud sync, no notifications
+#   - never touches a real Google Cloud integration
+#   - idempotent
+#
+# Forbidden in demo evidence: service account private keys / private_key_id,
+# access tokens, refresh tokens, signed JWTs, authorization headers, raw Cloud
+# Logging entries, protoPayload raw object, request/response objects,
+# authenticationInfo, authorizationInfo, principal emails / IDs, service
+# account emails, user names, group names, full IAM bindings, database
+# names/users/passwords, connection strings, query data, env var names/values,
+# secret names/values, secret payloads, container args, kubeconfig, certs,
+# node names, workload data, pod specs, logs, customer data, raw caller IPs,
+# userAgent, PII.
+
+GOOGLE_CLOUD_DEMO_INTEGRATION_NAME = (
+    "ConfigTrace Google Cloud incident demo (sample data)"
+)
+GOOGLE_CLOUD_DEMO_CASE_SOURCE = "demo_google_cloud_incident"
+GOOGLE_CLOUD_DEMO_DATASET = "google_cloud_incident_demo_v1"
+
+# Safe synthetic identifiers (RFC-style placeholders). No real project, no real
+# resource names, no real principals, no real keys.
+GOOGLE_CLOUD_DEMO_PROJECT_ID = "demo-gcp-project"
+GOOGLE_CLOUD_DEMO_FIREWALL_NAME = "demo-admin-firewall"
+GOOGLE_CLOUD_DEMO_NETWORK_NAME = "demo-vpc"
+GOOGLE_CLOUD_DEMO_BUCKET_NAME = "demo-storage-bucket"
+GOOGLE_CLOUD_DEMO_SQL_INSTANCE_NAME = "demo-sql-instance"
+GOOGLE_CLOUD_DEMO_RUN_SERVICE_NAME = "demo-run-service"
+GOOGLE_CLOUD_DEMO_GKE_CLUSTER_NAME = "demo-gke-cluster"
+GOOGLE_CLOUD_DEMO_SAKEY_SUMMARY_ID = "demo-service-account-key-summary"
+GOOGLE_CLOUD_DEMO_SECRET_SUMMARY_ID = "demo-secret-manager-summary"
+GOOGLE_CLOUD_DEMO_IAM_SUMMARY_ID = "demo-iam-policy-summary"
+
+
+def _gcp_resource_name(*, kind: str, name: str) -> str:
+    """Build a synthetic Google Cloud resource path for demo resources."""
+    return f"projects/{GOOGLE_CLOUD_DEMO_PROJECT_ID}/{kind}/{name}"
+
+
+def get_google_cloud_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == GOOGLE_CLOUD_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_google_cloud_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == GOOGLE_CLOUD_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_google_cloud_status(
+    workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    case = _existing_google_cloud_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_google_cloud(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Google Cloud demo incident chain (idempotent). No real GCP sync.
+
+    All objects are anchored on a hidden demo integration so
+    ``clear_google_cloud`` removes them and nothing else. Evidence is built
+    directly for the demo objects (never by scanning the real workspace).
+    Metadata is allowlisted via ``security_activity_event_service.
+    sanitize_activity_metadata`` — anything not on the allowlist is silently
+    dropped (defense-in-depth on top of the explicit safe shape used here).
+    """
+    existing = _existing_google_cloud_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    integ = get_google_cloud_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": GOOGLE_CLOUD_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=GOOGLE_CLOUD_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    def _mk_resource(kind: str, gcp_path: str, display: str) -> Resource:
+        r = Resource(
+            integration_id=integ.id, user_id=actor_user_id,
+            provider_resource_type=kind, provider_resource_id=gcp_path,
+            display_name=display, is_active=True,
+        )
+        db.add(r); db.flush()
+        return r
+
+    # Synthetic resource paths — same shape as real Google APIs use.
+    iam_path = _gcp_resource_name(
+        kind="iam_policy_summary", name=GOOGLE_CLOUD_DEMO_IAM_SUMMARY_ID
+    )
+    fw_path = _gcp_resource_name(
+        kind="firewall_rules", name=GOOGLE_CLOUD_DEMO_FIREWALL_NAME
+    )
+    bucket_path = f"projects/_/buckets/{GOOGLE_CLOUD_DEMO_BUCKET_NAME}"
+    sql_path = _gcp_resource_name(
+        kind="sql_instances", name=GOOGLE_CLOUD_DEMO_SQL_INSTANCE_NAME
+    )
+    run_path = _gcp_resource_name(
+        kind="locations/us-central1/services",
+        name=GOOGLE_CLOUD_DEMO_RUN_SERVICE_NAME,
+    )
+    gke_path = _gcp_resource_name(
+        kind="locations/us-central1/clusters",
+        name=GOOGLE_CLOUD_DEMO_GKE_CLUSTER_NAME,
+    )
+    sa_key_path = _gcp_resource_name(
+        kind="service_account_key_summary",
+        name=GOOGLE_CLOUD_DEMO_SAKEY_SUMMARY_ID,
+    )
+    secret_path = _gcp_resource_name(
+        kind="secret_manager_summary",
+        name=GOOGLE_CLOUD_DEMO_SECRET_SUMMARY_ID,
+    )
+
+    iam_res = _mk_resource(
+        "google_cloud_iam_policy_summary", iam_path,
+        f"IAM policy ({GOOGLE_CLOUD_DEMO_PROJECT_ID})",
+    )
+    fw_res = _mk_resource(
+        "google_cloud_firewall_rule", fw_path, GOOGLE_CLOUD_DEMO_FIREWALL_NAME,
+    )
+    bucket_res = _mk_resource(
+        "google_cloud_storage_bucket", bucket_path,
+        GOOGLE_CLOUD_DEMO_BUCKET_NAME,
+    )
+    sql_res = _mk_resource(
+        "google_cloud_sql_instance", sql_path,
+        GOOGLE_CLOUD_DEMO_SQL_INSTANCE_NAME,
+    )
+    run_res = _mk_resource(
+        "google_cloud_run_service", run_path,
+        GOOGLE_CLOUD_DEMO_RUN_SERVICE_NAME,
+    )
+    gke_res = _mk_resource(
+        "google_cloud_gke_cluster", gke_path,
+        GOOGLE_CLOUD_DEMO_GKE_CLUSTER_NAME,
+    )
+    sa_key_res = _mk_resource(
+        "google_cloud_service_account_key_summary", sa_key_path,
+        "Service account key summary (demo project)",
+    )
+    secret_res = _mk_resource(
+        "google_cloud_secret_manager_summary", secret_path,
+        "Secret Manager summary (demo project)",
+    )
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    iam_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=f"google_cloud_iam_public_member:{iam_path}",
+        severity="high",
+        title="Demo: Google Cloud IAM policy includes a public member",
+        resource_id=iam_res.id,
+        description=(
+            "Sample Google Cloud IAM configuration risk for the incident-"
+            "workflow demo. The project IAM policy is shown including the "
+            f"allUsers sentinel. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "google_cloud_iam_public_member", "demo": True,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "allusers_binding_present": True,
+            "allauthenticatedusers_binding_present": False,
+            "binding_count": 4,
+        },
+        remediation={
+            "summary": (
+                "Remove the allUsers / allAuthenticatedUsers binding from "
+                "the project IAM policy."
+            ),
+        },
+    )
+
+    fw_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=f"google_cloud_firewall_public_admin_ingress:{fw_path}",
+        severity="critical",
+        title="Demo: Google Cloud firewall rule allows public inbound on RDP",
+        resource_id=fw_res.id,
+        description=(
+            "Sample Google Cloud firewall configuration risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "google_cloud_firewall_public_admin_ingress", "demo": True,
+            "firewall_rule_name": GOOGLE_CLOUD_DEMO_FIREWALL_NAME,
+            "network_name": GOOGLE_CLOUD_DEMO_NETWORK_NAME,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "direction": "INGRESS",
+            "admin_port": 3389,
+            "public_source": True,
+        },
+        remediation={
+            "summary": (
+                "Restrict the source range to known IPs or remove the rule."
+            ),
+        },
+    )
+
+    bucket_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=(
+            f"google_cloud_storage_public_access_prevention_disabled:{bucket_path}"
+        ),
+        severity="high",
+        title=(
+            "Demo: Google Cloud Storage bucket does not enforce public "
+            "access prevention"
+        ),
+        resource_id=bucket_res.id,
+        description=(
+            "Sample Google Cloud Storage posture risk for the incident-"
+            f"workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "google_cloud_storage_public_access_prevention_disabled",
+            "demo": True,
+            "bucket_name": GOOGLE_CLOUD_DEMO_BUCKET_NAME,
+            "location": "US",
+            "storage_class": "STANDARD",
+            "public_access_prevention": "inherited",
+            "uniform_bucket_level_access_enabled": False,
+        },
+        remediation={
+            "summary": (
+                "Set publicAccessPrevention to 'enforced' and enable uniform "
+                "bucket-level access."
+            ),
+        },
+    )
+
+    sql_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=f"google_cloud_sql_public_network_access:{sql_path}",
+        severity="high",
+        title="Demo: Google Cloud SQL instance permits public network access",
+        resource_id=sql_res.id,
+        description=(
+            "Sample Google Cloud SQL configuration risk for the incident-"
+            f"workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "google_cloud_sql_public_network_access", "demo": True,
+            "sql_instance_name": GOOGLE_CLOUD_DEMO_SQL_INSTANCE_NAME,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "ipv4_enabled": True,
+            "authorized_network_count": 0,
+            "require_ssl": False,
+        },
+        remediation={
+            "summary": (
+                "Disable public IPv4 or restrict authorizedNetworks to "
+                "known ranges; require SSL."
+            ),
+        },
+    )
+
+    run_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=f"google_cloud_run_public_invoker:{run_path}",
+        severity="high",
+        title=(
+            "Demo: Google Cloud Run service allows public unauthenticated "
+            "invocation"
+        ),
+        resource_id=run_res.id,
+        description=(
+            "Sample Google Cloud Run configuration risk for the incident-"
+            f"workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "google_cloud_run_public_invoker", "demo": True,
+            "run_service_name": GOOGLE_CLOUD_DEMO_RUN_SERVICE_NAME,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "allusers_invoker_present": True,
+            "ingress": "all",
+        },
+        remediation={
+            "summary": (
+                "Remove allUsers from the run.invoker role and restrict "
+                "ingress to internal traffic."
+            ),
+        },
+    )
+
+    gke_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=f"google_cloud_gke_public_control_plane:{gke_path}",
+        severity="high",
+        title="Demo: Google Cloud GKE cluster has a public control plane",
+        resource_id=gke_res.id,
+        description=(
+            "Sample Google Kubernetes Engine configuration risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "google_cloud_gke_public_control_plane", "demo": True,
+            "gke_cluster_name": GOOGLE_CLOUD_DEMO_GKE_CLUSTER_NAME,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "private_cluster": False,
+            "master_authorized_networks_count": 0,
+        },
+        remediation={
+            "summary": (
+                "Enable private cluster or configure masterAuthorizedNetworks "
+                "to known ranges."
+            ),
+        },
+    )
+
+    sa_key_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=f"google_cloud_service_account_old_keys:{sa_key_path}",
+        severity="medium",
+        title=(
+            "Demo: Google Cloud service account has long-lived user-managed "
+            "keys"
+        ),
+        resource_id=sa_key_res.id,
+        description=(
+            "Sample Google Cloud service-account-key hygiene risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "google_cloud_service_account_old_keys", "demo": True,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "user_managed_key_count": 2,
+            "user_managed_key_old_count": 1,
+            "user_managed_key_max_age_days": 420,
+        },
+        remediation={
+            "summary": (
+                "Rotate or delete user-managed service account keys older "
+                "than 90 days; prefer Workload Identity."
+            ),
+        },
+    )
+
+    secret_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="google_cloud",
+        finding_key=(
+            "google_cloud_secret_manager_auto_replication_without_cmek:"
+            f"{secret_path}"
+        ),
+        severity="medium",
+        title=(
+            "Demo: Google Cloud Secret Manager uses automatic replication "
+            "without CMEK"
+        ),
+        resource_id=secret_res.id,
+        description=(
+            "Sample Google Cloud Secret Manager posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": (
+                "google_cloud_secret_manager_auto_replication_without_cmek"
+            ),
+            "demo": True,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "auto_replicated_secret_count": 3,
+            "auto_replicated_without_cmek_count": 3,
+        },
+        remediation={
+            "summary": (
+                "Use user-managed replication with a Cloud KMS key (CMEK) "
+                "for sensitive secrets."
+            ),
+        },
+    )
+
+    # ── Activity events ────────────────────────────────────────────────────
+    # Each event uses provider="google_cloud" + source="google_cloud_audit_log"
+    # so the M78E signal generator and M78F correlator both treat them just
+    # like real Cloud Logging entries. Metadata uses only allowlisted keys.
+    SOURCE = "google_cloud_audit_log"
+
+    def _mk_event(
+        *, event_type: str, resource_path: str, resource_type: str,
+        extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "event_source": SOURCE,
+            "project_id": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+            "google_cloud_event_id": f"demo-gcp-{uuid.uuid4().hex[:12]}",
+            "resource_name": resource_path,
+            "resource_type": resource_type,
+            "status_code": 0,
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="google_cloud", source=SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=meta["google_cloud_event_id"],
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_path,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    iam_event = _mk_event(
+        event_type="google_cloud.iam_policy.updated",
+        resource_path=f"projects/{GOOGLE_CLOUD_DEMO_PROJECT_ID}",
+        resource_type="cloudresourcemanager.googleapis.com/Project",
+        extra={
+            "method_name": "SetIamPolicy",
+            "service_name": "cloudresourcemanager.googleapis.com",
+            "operation_name": "SetIamPolicy",
+            "operation_family": "iam",
+            "operation_action": "update",
+        },
+    )
+    fw_event = _mk_event(
+        event_type="google_cloud.firewall_rule.updated",
+        resource_path=fw_path,
+        resource_type="compute.googleapis.com/Firewall",
+        extra={
+            "method_name": "v1.compute.firewalls.patch",
+            "service_name": "compute.googleapis.com",
+            "operation_name": "v1.compute.firewalls.patch",
+            "operation_family": "compute.firewalls",
+            "operation_action": "patch",
+            "firewall_rule_name": GOOGLE_CLOUD_DEMO_FIREWALL_NAME,
+            "network_name": GOOGLE_CLOUD_DEMO_NETWORK_NAME,
+        },
+    )
+    bucket_event = _mk_event(
+        event_type="google_cloud.storage_bucket.updated",
+        resource_path=bucket_path,
+        resource_type="storage.googleapis.com/Bucket",
+        extra={
+            "method_name": "storage.buckets.update",
+            "service_name": "storage.googleapis.com",
+            "operation_name": "storage.buckets.update",
+            "operation_family": "storage.buckets",
+            "operation_action": "update",
+            "bucket_name": GOOGLE_CLOUD_DEMO_BUCKET_NAME,
+        },
+    )
+    sql_event = _mk_event(
+        event_type="google_cloud.sql_instance.updated",
+        resource_path=sql_path,
+        resource_type="sqladmin.googleapis.com/Instance",
+        extra={
+            "method_name": "cloudsql.instances.update",
+            "service_name": "sqladmin.googleapis.com",
+            "operation_name": "cloudsql.instances.update",
+            "operation_family": "cloudsql.instances",
+            "operation_action": "update",
+            "sql_instance_name": GOOGLE_CLOUD_DEMO_SQL_INSTANCE_NAME,
+        },
+    )
+    run_event = _mk_event(
+        event_type="google_cloud.run_service.updated",
+        resource_path=run_path,
+        resource_type="run.googleapis.com/Service",
+        extra={
+            "method_name": "google.cloud.run.v2.Services.UpdateService",
+            "service_name": "run.googleapis.com",
+            "operation_name": "google.cloud.run.v2.Services.UpdateService",
+            "operation_family": "run.services",
+            "operation_action": "update",
+            "run_service_name": GOOGLE_CLOUD_DEMO_RUN_SERVICE_NAME,
+        },
+    )
+    gke_event = _mk_event(
+        event_type="google_cloud.gke_cluster.updated",
+        resource_path=gke_path,
+        resource_type="container.googleapis.com/Cluster",
+        extra={
+            "method_name": (
+                "google.container.v1.ClusterManager.UpdateCluster"
+            ),
+            "service_name": "container.googleapis.com",
+            "operation_name": (
+                "google.container.v1.ClusterManager.UpdateCluster"
+            ),
+            "operation_family": "container.clusters",
+            "operation_action": "update",
+            "gke_cluster_name": GOOGLE_CLOUD_DEMO_GKE_CLUSTER_NAME,
+        },
+    )
+    sa_key_event = _mk_event(
+        event_type="google_cloud.service_account_key.created",
+        resource_path=sa_key_path,
+        resource_type="iam.googleapis.com/ServiceAccountKey",
+        extra={
+            "method_name": (
+                "google.iam.admin.v1.CreateServiceAccountKey"
+            ),
+            "service_name": "iam.googleapis.com",
+            "operation_name": (
+                "google.iam.admin.v1.CreateServiceAccountKey"
+            ),
+            "operation_family": "iam.service_account_keys",
+            "operation_action": "create",
+        },
+    )
+    secret_event = _mk_event(
+        event_type="google_cloud.secret.updated",
+        resource_path=secret_path,
+        resource_type="secretmanager.googleapis.com/Secret",
+        extra={
+            "method_name": "google.cloud.secretmanager.v1.UpdateSecret",
+            "service_name": "secretmanager.googleapis.com",
+            "operation_name": (
+                "google.cloud.secretmanager.v1.UpdateSecret"
+            ),
+            "operation_family": "secretmanager.secrets",
+            "operation_action": "update",
+        },
+    )
+
+    events = [
+        iam_event, fw_event, bucket_event, sql_event, run_event, gke_event,
+        sa_key_event, secret_event,
+    ]
+
+    # ── Signals via the real M78E generator ────────────────────────────────
+    signals: list[SecurityIncidentSignal] = []
+    for ev in events:
+        sig_dict = gcp_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            signals.append(sig)
+
+    # ── Correlations via the real M78F builder ─────────────────────────────
+    def _add_correlation(
+        *, finding: SecurityFinding, event: SecurityActivityEvent,
+        matched_on: str, resource_label: str,
+    ) -> SecuritySignalCorrelation:
+        rule = corr_svc.GOOGLE_CLOUD_CORRELATION_RULES[
+            corr_svc._base_rule(finding.finding_key)
+        ]
+        cdict = corr_svc.build_google_cloud_correlation(
+            finding=finding, event=event, rule=rule,
+            matched_on=matched_on, resource_label=resource_label,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        return corr
+
+    iam_corr = _add_correlation(
+        finding=iam_finding, event=iam_event,
+        matched_on="project_id+family",
+        resource_label=f"IAM policy in project '{GOOGLE_CLOUD_DEMO_PROJECT_ID}'",
+    )
+    fw_corr = _add_correlation(
+        finding=fw_finding, event=fw_event,
+        matched_on="firewall_rule_name+project_id",
+        resource_label=f'firewall rule "{GOOGLE_CLOUD_DEMO_FIREWALL_NAME}"',
+    )
+    bucket_corr = _add_correlation(
+        finding=bucket_finding, event=bucket_event,
+        matched_on="bucket_name",
+        resource_label=f'Cloud Storage bucket "{GOOGLE_CLOUD_DEMO_BUCKET_NAME}"',
+    )
+    sql_corr = _add_correlation(
+        finding=sql_finding, event=sql_event,
+        matched_on="sql_instance_name+project_id",
+        resource_label=(
+            f'Cloud SQL instance "{GOOGLE_CLOUD_DEMO_SQL_INSTANCE_NAME}"'
+        ),
+    )
+    run_corr = _add_correlation(
+        finding=run_finding, event=run_event,
+        matched_on="run_service_name+project_id",
+        resource_label=(
+            f'Cloud Run service "{GOOGLE_CLOUD_DEMO_RUN_SERVICE_NAME}"'
+        ),
+    )
+    gke_corr = _add_correlation(
+        finding=gke_finding, event=gke_event,
+        matched_on="gke_cluster_name+project_id",
+        resource_label=f'GKE cluster "{GOOGLE_CLOUD_DEMO_GKE_CLUSTER_NAME}"',
+    )
+    sa_key_corr = _add_correlation(
+        finding=sa_key_finding, event=sa_key_event,
+        matched_on="project_id+family",
+        resource_label=(
+            "service-account-key hygiene in project "
+            f"'{GOOGLE_CLOUD_DEMO_PROJECT_ID}'"
+        ),
+    )
+    secret_corr = _add_correlation(
+        finding=secret_finding, event=secret_event,
+        matched_on="project_id+family",
+        resource_label=(
+            "Secret Manager posture in project "
+            f"'{GOOGLE_CLOUD_DEMO_PROJECT_ID}'"
+        ),
+    )
+
+    correlations = [
+        iam_corr, fw_corr, bucket_corr, sql_corr, run_corr, gke_corr,
+        sa_key_corr, secret_corr,
+    ]
+    findings = [
+        iam_finding, fw_finding, bucket_finding, sql_finding, run_finding,
+        gke_finding, sa_key_finding, secret_finding,
+    ]
+
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Google Cloud configuration review",
+        summary=(
+            "Demo Google Cloud security review. It groups Google Cloud "
+            "configuration findings (IAM public member, firewall public "
+            "admin ingress, Cloud Storage public-access-prevention disabled, "
+            "Cloud SQL public network access, Cloud Run public invoker, GKE "
+            "public control plane, long-lived user-managed service account "
+            "keys, and Secret Manager auto-replication without CMEK) with "
+            "Google Cloud Audit Log control-plane activity for the same "
+            "resources, plus the matching activity signals and risk x "
+            "activity correlations. This is a human-reviewed case "
+            "presenting evidence for review and may require review. "
+            "ConfigTrace does not confirm compromise, unauthorized access, "
+            "or data exposure."
+        ),
+        severity=fw_corr.severity,  # critical (firewall admin port)
+        provider="google_cloud",
+        metadata={
+            "source": GOOGLE_CLOUD_DEMO_CASE_SOURCE,
+            "repository": GOOGLE_CLOUD_DEMO_PROJECT_ID,
+        },
+        db=db,
+    )
+    for corr in correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for finding in findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=finding.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for ev in events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for sig in signals:
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    seen_signal_ids = {s.id for s in signals}
+    for corr in correlations:
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids
+        ):
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    logger.info(
+        "google_cloud_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_google_cloud(
+    *, workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Remove exactly the Google Cloud demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == GOOGLE_CLOUD_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = get_google_cloud_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

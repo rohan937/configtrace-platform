@@ -992,13 +992,15 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("google_cloud")
         assert cap.security.activity_ingestion is True
 
-    def test_demo_seed_clear_still_false(self):
+    def test_demo_seed_clear_now_true(self):
+        """Flipped in M78G."""
         cap = get_provider_capability("google_cloud")
-        assert cap.security.demo_seed_clear is False
+        assert cap.security.demo_seed_clear is True
 
-    def test_case_report_still_false(self):
+    def test_case_report_now_true(self):
+        """Flipped in M78G (generic case report renderer supports google_cloud)."""
         cap = get_provider_capability("google_cloud")
-        assert cap.security.case_report is False
+        assert cap.security.case_report is True
 
     def test_maturity_still_partial(self):
         cap = get_provider_capability("google_cloud")
@@ -1019,15 +1021,16 @@ class TestCapabilityMatrix:
 
 
 class TestExpansionFramework:
-    def test_planned_next_stage_is_m78g(self):
+    def test_planned_next_stage_is_m78h(self):
+        """Rolled forward in M78G: demo landed → M78H."""
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78G" in planned
+        assert "M78H" in planned
 
-    def test_planned_next_stage_mentions_demo(self):
+    def test_planned_next_stage_mentions_depth_or_qa(self):
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "Demo" in planned or "demo" in planned.lower()
+        assert "Depth" in planned or "QA" in planned or "depth" in planned.lower()
 
     def test_m78f_not_in_planned_next_stage(self):
         fw = get_framework()

@@ -349,18 +349,26 @@ _SEC = "app/(app)/security"
 _ACTIVITY_PROVIDERS = [
     "github", "aws", "cloudflare", "vercel", "supabase", "firebase",
     "stripe", "shopify",
+    # M77D added Azure activity ingestion.
+    "azure",
+    # M78D added Google Cloud Audit Log ingestion.
+    "google_cloud",
 ]
 _SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 _CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 
 
 def _provider_selector_array(text: str) -> list[str] | None:
-    """Extract the first ``options={["a","b",...]}`` provider selector array."""
+    """Extract the first ``options={["a","b",...]}`` provider selector array.
+
+    M78D added ``google_cloud`` which contains an underscore — the literal
+    parser now accepts ``[a-z_]+`` so it matches that provider id too.
+    """
     m = re.search(
-        r"options=\{\s*\[\s*((?:\"[a-z]+\"\s*,?\s*)+)\]\s*\}", text)
+        r"options=\{\s*\[\s*((?:\"[a-z_]+\"\s*,?\s*)+)\]\s*\}", text)
     if not m:
         return None
-    return re.findall(r"\"([a-z]+)\"", m.group(1))
+    return re.findall(r"\"([a-z_]+)\"", m.group(1))
 
 
 def test_fe_activity_provider_selector_has_all():
@@ -381,32 +389,43 @@ def test_fe_signals_provider_selector_has_all():
 
 def test_fe_correlations_provider_selector_has_all():
     text = _read_fe(f"{_SEC}/correlations/page.tsx")
-    # Correlations page uses ``PROVIDER_OPTIONS``, not an inline literal in
-    # the Select. Check that constant.
+    # Correlations page may declare ``PROVIDER_OPTIONS`` OR inline the
+    # options list directly on the <Select> — accept either shape. ``[a-z_]+``
+    # accommodates ``google_cloud``.
     m = re.search(
-        r"const\s+PROVIDER_OPTIONS\s*=\s*\[\s*((?:\"[a-z]+\"\s*,?\s*)+)\]", text)
-    assert m is not None, "PROVIDER_OPTIONS not found on correlations page"
-    arr = re.findall(r"\"([a-z]+)\"", m.group(1))
+        r"const\s+PROVIDER_OPTIONS\s*=\s*\[\s*((?:\"[a-z_]+\"\s*,?\s*)+)\]", text)
+    if m is None:
+        m = re.search(
+            r"options=\{\s*\[\s*((?:\"[a-z_]+\"\s*,?\s*)+)\]\s*\}", text)
+    assert m is not None, "PROVIDER_OPTIONS / inline literal not found on correlations page"
+    arr = re.findall(r"\"([a-z_]+)\"", m.group(1))
     assert arr == _CORRELATIONS_PROVIDERS, (
         f"correlations PROVIDER_OPTIONS drift: {arr}"
     )
 
 
 def test_fe_cases_has_each_demo_provider_label():
-    """Each provider with a demo gets a banner card on /security/cases."""
+    """Each provider with a demo gets a banner card on /security/cases.
+
+    M75B refactored the page to render banners from a single
+    ``PROVIDER_DEMO_CARDS`` array via ``.map(card => ... onSeedDemo(card.provider))``
+    instead of hand-rolled inline ``onSeedDemo("<provider>")`` calls. We pin
+    that each provider id and CTA label is present in the array.
+    """
     text = _read_fe(f"{_SEC}/cases/page.tsx")
-    # Each provider demo CTA includes ``onSeedDemo("<provider>")`` exactly once.
     for provider, label, *_ in PROVIDERS:
         if provider == "github":
-            # GitHub demo CTA label is "Load GitHub incident demo".
             assert "Load GitHub incident demo" in text
         else:
-            # Other providers use "Load <Label> security demo".
             assert f"Load {label} security demo" in text, (
                 f"cases page missing '{label}' security demo CTA"
             )
-        assert f'onSeedDemo("{provider}")' in text
-        assert f'onClearDemo("{provider}")' in text
+        assert f'provider: "{provider}"' in text, (
+            f"cases page missing demo card for {provider!r}"
+        )
+    # Sanity: cards are dispatched through the array map (not inline calls).
+    assert 'onSeedDemo(card.provider)' in text
+    assert 'onClearDemo(card.provider)' in text
 
 
 def test_fe_api_demo_provider_union_has_all():
