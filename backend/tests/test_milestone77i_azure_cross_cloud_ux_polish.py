@@ -111,11 +111,11 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
     assert "canonical" in notes or "cross-provider" in notes
 
 
-def test_expansion_framework_next_stage_is_beyond_m78i():
-    """Rolled forward in M79C: Twilio Messaging/Webhook Risk Expansion complete; next stage is M79D."""
+def test_expansion_framework_next_stage_is_beyond_m79d():
+    """Rolled forward in M79D: Twilio Activity Ingestion complete; next stage is M79E."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M79D" in stage
+    assert "M79E" in stage
     assert "Twilio" in stage
 
 

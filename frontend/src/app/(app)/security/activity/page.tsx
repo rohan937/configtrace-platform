@@ -36,6 +36,7 @@ import {
   syncShopifyActivity,
   syncAzureActivity,
   syncGoogleCloudActivity,
+  syncTwilioActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -45,7 +46,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -276,9 +277,27 @@ const GOOGLE_CLOUD_EVENT_TYPES = [
   "google_cloud.secret.deleted",
 ];
 
+// M79D — Twilio Monitor event log control-plane configuration change events.
+const TWILIO_EVENT_TYPES = [
+  "twilio.account.updated",
+  "twilio.phone_number.created",
+  "twilio.phone_number.updated",
+  "twilio.phone_number.deleted",
+  "twilio.messaging_service.created",
+  "twilio.messaging_service.updated",
+  "twilio.messaging_service.deleted",
+  "twilio.verify_service.created",
+  "twilio.verify_service.updated",
+  "twilio.verify_service.deleted",
+  "twilio.api_key.created",
+  "twilio.api_key.updated",
+  "twilio.api_key.deleted",
+  "twilio.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -405,6 +424,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "twilio") {
+        const r = await syncTwilioActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Twilio Monitor event access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -435,7 +462,9 @@ export default function ActivityEventsPage() {
                         ? "Could not sync Azure Activity Log. Please try again."
                         : provider === "google_cloud"
                           ? "Could not sync Google Cloud activity. Please try again."
-                          : "Could not sync GitHub activity. Please try again.",
+                          : provider === "twilio"
+                            ? "Could not sync Twilio activity. Please try again."
+                            : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -589,6 +618,7 @@ export default function ActivityEventsPage() {
     : provider === "cloudflare" ? CLOUDFLARE_EVENT_TYPES
     : provider === "azure" ? AZURE_EVENT_TYPES
     : provider === "google_cloud" ? GOOGLE_CLOUD_EVENT_TYPES
+    : provider === "twilio" ? TWILIO_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -631,7 +661,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -747,6 +777,7 @@ function SyncBar({
   const isShopify = provider === "shopify";
   const isAzure = provider === "azure";
   const isGoogleCloud = provider === "google_cloud";
+  const isTwilio = provider === "twilio";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -757,6 +788,7 @@ function SyncBar({
     : isShopify ? "Sync Shopify activity"
     : isAzure ? "Sync Azure activity"
     : isGoogleCloud ? "Sync Google Cloud activity"
+    : isTwilio ? "Sync Twilio activity"
     : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
@@ -776,7 +808,9 @@ function SyncBar({
                   ? "Sync review-safe Azure Activity Log evidence for configuration changes across NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS. Requires the service principal to have the Reader role on the subscription. Only WRITE/DELETE management events are ingested — READ/LIST, data-plane, diagnostic, VM, and application logs are excluded."
                   : isGoogleCloud
                     ? "Sync review-safe Google Cloud Audit Log evidence for configuration changes across IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, and Secret Manager. Requires the service account to have the roles/logging.viewer role on the project. Only Admin Activity audit log entries for control-plane CREATE/UPDATE/DELETE operations are ingested — data-plane access, secret access events, storage object reads, VM logs, and application logs are excluded."
-                    : "Ingests recent GitHub audit-log activity into normalized events.";
+                    : isTwilio
+                      ? "Sync review-safe Twilio configuration activity — phone number, messaging service, Verify service, and API key create/update/delete events. Message bodies, call logs, recordings, and customer data are never stored."
+                      : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -886,7 +920,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -910,7 +944,7 @@ function SyncBar({
             Sync GitHub secret scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && (
           <button
             onClick={onSyncGithubCodeScanning}
             disabled={!isAdmin || syncing}
@@ -934,7 +968,7 @@ function SyncBar({
             Sync GitHub code scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && (
           <button
             onClick={onSyncGithubDependabot}
             disabled={!isAdmin || syncing}
@@ -1140,6 +1174,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync Google Cloud activity first to collect review-safe Audit Log evidence — Admin Activity control-plane CREATE/UPDATE/DELETE events on IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, and Secret Manager. Requires the service account to have roles/logging.viewer on the project."
                 : "An admin can sync Google Cloud activity to collect review-safe Audit Log evidence. Requires the service account to have roles/logging.viewer on the project."
+            : provider === "twilio"
+              ? isAdmin
+                ? "Sync Twilio activity first to collect review-safe Monitor event evidence — account, phone number, messaging service, Verify service, and API key configuration changes. Message bodies, call logs, recordings, and customer phone numbers are never stored."
+                : "An admin can sync Twilio activity to collect review-safe Monitor event evidence."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

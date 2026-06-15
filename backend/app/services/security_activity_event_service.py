@@ -297,6 +297,29 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "run_service_name",          # Cloud Run service name (infra identifier)
         "gke_cluster_name",          # GKE cluster name (infra identifier)
         "event_time",                # ISO event timestamp (string)
+        # Twilio Monitor activity fields (M79D) — control-plane configuration-change
+        # events ONLY. NEVER auth_token, API key secrets, full account SID, full phone
+        # number strings, webhook / callback URL strings, message bodies, call SIDs,
+        # call legs, recording data, customer PII (caller name, verification payloads),
+        # raw Twilio API response dicts, raw HTTP request or response bodies, or any
+        # value that could re-identify a customer or expose a credential.
+        "twilio_event_id",           # Twilio Monitor event SID (opaque, safe identifier)
+        "twilio_resource_sid_prefix",  # first 8 chars of resource SID only (never full SID)
+        "account_sid_prefix",        # first 8 chars of account SID only (never full SID)
+        "messaging_service_sid",     # Messaging Service SID (resource identifier)
+        "verify_service_sid",        # Verify Service SID (resource identifier)
+        "api_key_sid",               # API key SID (identifier only; secret is NEVER stored)
+        "phone_number_last4",        # last 4 digits of phone number only (never full number)
+        "sender_pool_count",         # safe count of numbers in a sender pool (int)
+        "webhook_configured",        # bool — whether a webhook URL is configured
+        "sms_url_configured",        # bool — whether an SMS webhook URL is configured
+        "voice_url_configured",      # bool — whether a voice webhook URL is configured
+        "status_callback_configured",  # bool — whether a status callback URL is configured
+        "fallback_url_configured",   # bool — whether a fallback URL is configured
+        "inbound_request_url_configured",  # bool — whether an inbound request URL is configured
+        "capability_sms",            # bool — SMS capability enabled on the resource
+        "capability_voice",          # bool — voice capability enabled on the resource
+        "capability_mms",            # bool — MMS capability enabled on the resource
     }
 )
 

@@ -171,13 +171,13 @@ def test_capability_matrix_google_cloud_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78i():
-    """After M79C, planned_next_stage points to M79D (Twilio Activity/Event Ingestion)."""
+    """After M79D, planned_next_stage points to M79E (Twilio Activity Signals)."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M78I" not in stage, (
         f"planned_next_stage still points to M78I after arc closed: {stage!r}"
     )
-    assert "M79D" in stage
+    assert "M79E" in stage
     assert "Twilio" in stage
 
 

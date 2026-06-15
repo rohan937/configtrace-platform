@@ -633,23 +633,23 @@ class TestCapabilityMatrixAndExpansion:
     def test_maturity_is_partial(self):
         assert self.cap.maturity == "partial"
 
-    def test_activity_ingestion_is_false(self):
-        assert self.cap.security.activity_ingestion is False
+    def test_activity_ingestion_is_true(self):
+        assert self.cap.security.activity_ingestion is True
 
-    def test_planned_next_stage_contains_m79d(self):
+    def test_planned_next_stage_contains_m79e(self):
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M79D" in stage, (
-            f"expected 'M79D' in planned_next_stage, got: {stage!r}"
+        assert "M79E" in stage, (
+            f"expected 'M79E' in planned_next_stage, got: {stage!r}"
         )
 
-    def test_planned_next_stage_contains_twilio_or_activity(self):
+    def test_planned_next_stage_contains_twilio_or_signal(self):
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "Twilio" in stage or "Activity" in stage, (
-            f"expected 'Twilio' or 'Activity' in planned_next_stage, got: {stage!r}"
+        assert "Twilio" in stage or "Signal" in stage, (
+            f"expected 'Twilio' or 'Signal' in planned_next_stage, got: {stage!r}"
         )
 
     def test_planned_next_stage_does_not_contain_m79c(self):

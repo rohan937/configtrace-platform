@@ -786,3 +786,209 @@ class TwilioConnector(BaseConnector):
             len(records),
         )
         return records
+
+    # ── Activity event ingestion (M79D) ────────────────────────────────────────
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch review-safe Twilio Monitor configuration/control-plane events.
+
+        Returns only account/resource configuration change events — never
+        message bodies, call logs, recordings, media, or customer data.
+
+        CLAIM DISCIPLINE: events are configuration evidence for review.
+        This does not confirm compromise, unauthorized access, or data exposure.
+
+        PRIVACY:
+        - No auth tokens, API secrets, raw phone numbers, webhook URLs, or PII.
+        - No message bodies, call logs, recordings, or conversation content.
+        - Raw To/From fields, request/response bodies, and signatures are excluded.
+        - Metadata is scalar allowlisted before return.
+        """
+        max_events = min(max_events, 1000)
+        lookback_hours = min(lookback_hours, 168)
+
+        account_sid = credentials.get("account_sid", "")
+        auth_token = credentials.get("auth_token", "")
+
+        # Monitor Events API base URL
+        monitor_base = "https://monitor.twilio.com/v1/Events"
+
+        from datetime import datetime, timezone, timedelta
+        start_date = (
+            datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        results: list[dict] = []
+        page_size = min(50, max_events)
+        next_url: str | None = monitor_base
+        page_count = 0
+        max_pages = min(max_events // page_size + 1, _MAX_PAGES)
+
+        try:
+            with httpx.Client(
+                auth=(account_sid, auth_token),
+                headers={"User-Agent": "ConfigTrace/1.0"},
+                timeout=30.0,
+            ) as client:
+                while next_url and page_count < max_pages and len(results) < max_events:
+                    params: dict = {}
+                    if page_count == 0:
+                        params = {
+                            "StartDate": start_date,
+                            "PageSize": page_size,
+                        }
+                    resp = client.get(next_url, params=params if page_count == 0 else None)
+                    if resp.status_code == 401:
+                        raise AuthenticationError("Twilio Monitor: invalid credentials")
+                    if resp.status_code == 429:
+                        raise RateLimitError("Twilio Monitor: rate limited")
+                    if resp.status_code in (403, 404):
+                        # Monitor API may not be available on all plans — fail soft
+                        return []
+                    if resp.status_code >= 400:
+                        raise ConnectorError(
+                            f"Twilio Monitor: unexpected status {resp.status_code}"
+                        )
+                    data = resp.json()
+                    raw_events = data.get("events", [])
+                    for ev in raw_events:
+                        normalized = self._normalize_monitor_event(ev, account_sid)
+                        if normalized:
+                            results.append(normalized)
+                        if len(results) >= max_events:
+                            break
+                    # Follow next page link
+                    meta_info = data.get("meta", {})
+                    next_url_candidate = meta_info.get("next_page_url") or data.get("next_page_uri")
+                    if next_url_candidate and next_url_candidate != next_url:
+                        next_url = next_url_candidate
+                        if not next_url.startswith("http"):
+                            next_url = f"https://monitor.twilio.com{next_url}"
+                    else:
+                        next_url = None
+                    page_count += 1
+        except (AuthenticationError, RateLimitError, ConnectorError):
+            raise
+        except httpx.TimeoutException as exc:
+            raise NetworkError(f"Twilio Monitor: timeout — {exc}") from exc
+        except httpx.RequestError as exc:
+            raise NetworkError(f"Twilio Monitor: network error — {exc}") from exc
+
+        return results
+
+    def _normalize_monitor_event(self, event: dict, account_sid: str) -> dict | None:
+        """Normalize one Twilio Monitor event to a safe metadata record.
+
+        Returns None if the event type is not in the allowlisted config/control-plane
+        set, or if required safe fields are missing.
+
+        PRIVACY: raw payloads, URLs, phone numbers, message content, and customer
+        data are never included.
+        """
+        resource_type = (event.get("resource_type") or "").lower()
+        event_type = (event.get("event_type") or "").lower()
+        description = (event.get("description") or "")
+
+        # ── Event type allowlist — only config/control-plane events ─────────────
+        # Explicitly allowed resource types
+        _ALLOWED_RESOURCE_TYPES = frozenset({
+            "account", "subaccount",
+            "incoming-phone-number", "incoming_phone_number", "phone-number",
+            "messaging-service", "messaging_service",
+            "verify-service", "verify_service",
+            "api-key", "api_key",
+            "application", "app",
+        })
+        # Allowed event types (Monitor API event_type strings)
+        _ALLOWED_EVENT_TYPES = frozenset({
+            "account.updated",
+            "subaccount.created", "subaccount.updated",
+            "incoming-phone-number.created", "incoming-phone-number.updated",
+            "incoming-phone-number.deleted",
+            "messaging-service.created", "messaging-service.updated",
+            "messaging-service.deleted",
+            "verify-service.created", "verify-service.updated",
+            "verify-service.deleted",
+            "api-key.created", "api-key.updated", "api-key.deleted",
+            "application.created", "application.updated", "application.deleted",
+        })
+
+        # Accept if either resource_type or event_type is allowlisted
+        resource_ok = resource_type in _ALLOWED_RESOURCE_TYPES
+        event_ok = event_type in _ALLOWED_EVENT_TYPES
+        if not resource_ok and not event_ok:
+            return None
+
+        # Normalize event_type to canonical dotted form
+        normalized_event_type = _normalize_twilio_event_type(event_type, resource_type)
+
+        # ── Build safe metadata dict ─────────────────────────────────────────────
+        safe_meta: dict = {}
+
+        # Safe identifiers — SID prefix only, never full SID unless it is a safe sub-resource
+        event_sid = (event.get("sid") or "")
+        if event_sid:
+            safe_meta["twilio_event_id"] = event_sid  # Monitor event SID is safe — not account SID
+
+        resource_sid = (event.get("resource_sid") or "")
+        if resource_sid:
+            # Store as prefix only to avoid exposing full Twilio SIDs
+            safe_meta["twilio_resource_sid_prefix"] = resource_sid[:8]
+
+        safe_meta["resource_type"] = resource_type or "unknown"
+        safe_meta["event_action"] = normalized_event_type
+
+        # Account SID prefix only
+        safe_meta["account_sid_prefix"] = account_sid[:8]
+
+        # Description — strip raw content but keep operation label
+        if description:
+            safe_meta["operation_name"] = _trunc(description, 200)
+
+        # Event time as-is (ISO timestamp — safe)
+        event_time = event.get("event_date") or event.get("date_created") or ""
+        if event_time:
+            safe_meta["event_time"] = event_time
+
+        return {
+            "event_type": normalized_event_type,
+            "provider": "twilio",
+            "source": "twilio_activity_event",
+            "event_source": "twilio_activity_event",
+            "provider_event_id": event_sid or "",
+            "metadata": safe_meta,
+        }
+
+
+# ── Module-level event type helper (M79D) ─────────────────────────────────────
+
+
+def _normalize_twilio_event_type(event_type: str, resource_type: str) -> str:
+    """Convert Twilio Monitor event_type to a canonical ConfigTrace event type string."""
+    _MAP = {
+        "account.updated": "twilio.account.updated",
+        "subaccount.created": "twilio.account.updated",
+        "subaccount.updated": "twilio.account.updated",
+        "incoming-phone-number.created": "twilio.phone_number.created",
+        "incoming-phone-number.updated": "twilio.phone_number.updated",
+        "incoming-phone-number.deleted": "twilio.phone_number.deleted",
+        "messaging-service.created": "twilio.messaging_service.created",
+        "messaging-service.updated": "twilio.messaging_service.updated",
+        "messaging-service.deleted": "twilio.messaging_service.deleted",
+        "verify-service.created": "twilio.verify_service.created",
+        "verify-service.updated": "twilio.verify_service.updated",
+        "verify-service.deleted": "twilio.verify_service.deleted",
+        "api-key.created": "twilio.api_key.created",
+        "api-key.updated": "twilio.api_key.updated",
+        "api-key.deleted": "twilio.api_key.deleted",
+        "application.created": "twilio.config.event",
+        "application.updated": "twilio.config.event",
+        "application.deleted": "twilio.config.event",
+    }
+    return _MAP.get(event_type, "twilio.config.event")

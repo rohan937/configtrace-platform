@@ -406,11 +406,11 @@ def test_capability_matrix_pins_google_cloud_partial_demo_ready():
     assert "Audit Log" in notes
 
 
-def test_expansion_framework_points_to_m78i():
-    """M79C is now complete — planned_next_stage rolls to M79D (Twilio Activity/Event Ingestion)."""
+def test_expansion_framework_points_beyond_m79d():
+    """M79D is now complete — planned_next_stage rolls to M79E (Twilio Activity Signals)."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M79D" in planned, planned
+    assert "M79E" in planned, planned
     assert "Twilio" in planned
     assert "M78H" not in planned, "M78H is done; pointer must advance past it"
     assert "M78I" not in planned, "M78I is done; pointer must advance past it"

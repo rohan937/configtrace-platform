@@ -818,6 +818,31 @@ export async function syncGoogleCloudActivity(
 }
 
 /**
+ * Sync Twilio Monitor event log entries (M79D). Admin/owner only.
+ * Ingests review-safe control-plane configuration change events — phone number,
+ * messaging service, Verify service, and API key create/update/delete events.
+ * Message bodies, call logs, recordings, and customer phone numbers are never
+ * stored.
+ */
+export async function syncTwilioActivity(
+  token?: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").TwilioActivitySyncResponse> {
+  const r = await apiFetch<import("@/types").TwilioActivitySyncResponse>(
+    "/security/twilio-activity/sync",
+    {
+      method: "POST",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(opts ?? {}),
+    },
+  );
+  return r;
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.

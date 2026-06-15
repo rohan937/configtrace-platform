@@ -204,6 +204,10 @@ from app.schemas.security_google_cloud_activity import (
     GoogleCloudActivitySignalGenerateRequest,
     GoogleCloudActivitySignalGenerateResponse,
 )
+from app.schemas.security_twilio_activity import (
+    TwilioActivitySyncRequest,
+    TwilioActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -249,6 +253,7 @@ from app.services import azure_activity_ingestion_service
 from app.services import azure_activity_signal_service
 from app.services import google_cloud_activity_ingestion_service
 from app.services import google_cloud_activity_signal_service
+from app.services import twilio_activity_ingestion_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -3125,6 +3130,51 @@ def sync_google_cloud_activity(
         max_events=max_events,
     )
     return GoogleCloudActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/twilio-activity/sync",
+    response_model=TwilioActivitySyncResponse,
+)
+def sync_twilio_activity_events(
+    body: Optional[TwilioActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TwilioActivitySyncResponse:
+    """Sync review-safe Twilio configuration activity events (M79D).
+
+    Admin/owner only. Ingests control-plane configuration-change events from
+    the Twilio Monitor API. Only account/phone-number/messaging-service/
+    Verify-service/API-key create/update/delete events are ingested.
+
+    Message bodies, call logs, recordings, media, SMS/MMS content, customer
+    communication data, full phone numbers, webhook URL strings, auth tokens,
+    API secrets, and customer PII are never stored.
+
+    Non-fatal: permission/availability limits are reported in the summary,
+    never raised. Members can view the resulting events via
+    ``GET /security/activity/events?provider=twilio``.
+
+    Evidence is configuration-change metadata only. Does not confirm breach,
+    compromise, unauthorized access, or data exposure.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = twilio_activity_ingestion_service.sync_twilio_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return TwilioActivitySyncResponse(**summary)
 
 
 @router.post(

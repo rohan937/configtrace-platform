@@ -519,7 +519,7 @@ _TWILIO = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -530,13 +530,13 @@ _TWILIO = ProviderCapability(
     maturity="partial",
     notes=(
         "Twilio drift + core security foundation (M79A/M79B) + messaging/webhook "
-        "risk expansion (M79C). Drift snapshots cover Twilio account metadata, "
-        "incoming phone numbers (last-4 only — no full numbers stored), messaging "
-        "services (webhook configuration as booleans — no raw URLs stored), Verify "
-        "services, and API key metadata. No auth tokens, API secrets, message bodies, "
-        "call logs, recordings, customer phone numbers, webhook URLs, or customer data "
-        "are ever stored. M79B adds 9 security rules covering webhook/verify/account "
-        "posture. M79C adds 8 additional rules: API key staleness "
+        "risk expansion (M79C) + Monitor activity ingestion (M79D). Drift snapshots "
+        "cover Twilio account metadata, incoming phone numbers (last-4 only — no full "
+        "numbers stored), messaging services (webhook configuration as booleans — no "
+        "raw URLs stored), Verify services, and API key metadata. No auth tokens, API "
+        "secrets, message bodies, call logs, recordings, customer phone numbers, webhook "
+        "URLs, or customer data are ever stored. M79B adds 9 security rules covering "
+        "webhook/verify/account posture. M79C adds 8 additional rules: API key staleness "
         "(twilio_api_key_stale), messaging service observability gap "
         "(twilio_messaging_service_observability_gap), number-level inbound webhook "
         "delegation (twilio_messaging_service_number_level_inbound_webhook), long "
@@ -545,8 +545,10 @@ _TWILIO = ProviderCapability(
         "(twilio_phone_number_messaging_observability_gap, "
         "twilio_phone_number_voice_observability_gap), and Verify PSD2/landline "
         "posture (twilio_verify_psd2_disabled, twilio_verify_sms_to_landlines_allowed). "
-        "Activity ingestion, signals, correlations, and demo seed/clear are planned "
-        "for future Twilio arc milestones (M79D–M79I)."
+        "M79D adds Monitor API activity ingestion — account/phone-number/messaging-service/"
+        "Verify-service/API-key create/update/delete events via POST "
+        "/security/twilio-activity/sync. Activity signals, correlations, and demo "
+        "seed/clear are planned for future Twilio arc milestones (M79E–M79I)."
     ),
 )
 

@@ -605,8 +605,8 @@ class TestCapabilityMatrix:
     def test_drift_risk_classification_is_true(self):
         assert self.cap.drift.drift_risk_classification is True
 
-    def test_activity_ingestion_is_false(self):
-        assert self.cap.security.activity_ingestion is False
+    def test_activity_ingestion_is_true(self):
+        assert self.cap.security.activity_ingestion is True
 
     def test_demo_seed_clear_is_false(self):
         assert self.cap.security.demo_seed_clear is False
@@ -638,9 +638,9 @@ class TestExpansionFramework:
         self.fw = svc.get_framework()
         self.stage = self.fw["summary"]["planned_next_stage"]
 
-    def test_planned_next_stage_contains_m79c(self):
-        assert "M79D" in self.stage, (
-            f"expected 'M79D' in planned_next_stage, got: {self.stage!r}"
+    def test_planned_next_stage_contains_m79e(self):
+        assert "M79E" in self.stage, (
+            f"expected 'M79E' in planned_next_stage, got: {self.stage!r}"
         )
 
     def test_planned_next_stage_contains_twilio(self):
