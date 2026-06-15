@@ -270,6 +270,33 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "status",                    # operation status (e.g. "Succeeded") — not PII
         "sub_status",                # operation sub-status (e.g. "Created") — not PII
         "category",                  # Activity Log event category (e.g. "Administrative") — not PII
+        # Google Cloud Audit Log fields (M78D) — Admin Activity control-plane events ONLY.
+        # NEVER the raw protoPayload object, request/response/metadata objects,
+        # authenticationInfo (principalEmail), authorizationInfo, requestMetadata
+        # (callerIp, userAgent), serviceAccountDelegationInfo, resource.labels
+        # (may contain SA emails), raw operation IDs, raw correlation IDs,
+        # secret names/values, database names/users/passwords, connection strings,
+        # Cloud SQL query logs, Cloud Storage object keys, Cloud Run env var
+        # names/values, service account emails, or any customer/workload data.
+        "project_id",                # GCP project id (infra identifier, not a secret)
+        "google_cloud_event_id",     # Cloud Logging insertId (opaque stable entry id)
+        "google_cloud_operation_id_hash",  # salted hash of operation.id (NEVER raw)
+        "method_name",               # audit-log methodName (e.g. "compute.firewalls.insert")
+        "service_name",              # audit-log serviceName (e.g. "compute.googleapis.com")
+        "resource_name",             # GCP resource path — only if no email segment
+        "resource_type",             # Cloud Logging resource.type (e.g. "gce_firewall_rule")
+        "operation_name",            # mirrors method_name for cross-provider consistency
+        "operation_family",          # method namespace (e.g. "compute.firewalls")
+        "operation_action",          # method final verb (e.g. "insert")
+        "status_code",               # protoPayload.status.code (int — 0 = success)
+        "status_message_safe",       # truncated, safe protoPayload.status.message
+        "network_name",              # VPC network name (infra identifier)
+        "firewall_rule_name",        # GCE firewall rule name (infra identifier)
+        "bucket_name",               # Cloud Storage bucket name (infra identifier)
+        "sql_instance_name",         # Cloud SQL instance name (infra identifier)
+        "run_service_name",          # Cloud Run service name (infra identifier)
+        "gke_cluster_name",          # GKE cluster name (infra identifier)
+        "event_time",                # ISO event timestamp (string)
     }
 )
 

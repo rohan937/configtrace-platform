@@ -115,7 +115,7 @@ def test_expansion_framework_next_stage_is_m78a_google_cloud():
     """Rolled forward in M78B: core security foundation landed; next stage is M78C."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78D" in stage
+    assert "M78E" in stage
     assert "Google Cloud" in stage
 
 

@@ -665,7 +665,7 @@ class TestProviderExpansionFramework:
         """Flipped in M77I: Azure arc closed → M78A Google Cloud."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert "M78D" in stage, (
+        assert "M78E" in stage, (
             f"planned_next_stage should reference M78C after M78B, got: {stage!r}"
         )
 

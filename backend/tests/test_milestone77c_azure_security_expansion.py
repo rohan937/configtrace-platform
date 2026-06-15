@@ -858,7 +858,7 @@ class TestExpansionFramework:
         """Rolled forward in M78B: GCP core security foundation landed → M78C."""
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M78D" in stage
+        assert "M78E" in stage
 
 
 # ──────────────────────────────────────────────────────────────────────────────

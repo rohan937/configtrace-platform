@@ -805,6 +805,19 @@ export async function syncAzureActivity(
 }
 
 /**
+ * Sync Google Cloud Admin Activity audit log entries (M78D). Admin/owner only.
+ * Ingests review-safe control-plane change events — only Admin Activity audit
+ * log entries for IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, and
+ * Secret Manager. Data-plane access, secret access events, and application logs
+ * are deliberately excluded. Principal emails and raw protoPayload are never stored.
+ */
+export async function syncGoogleCloudActivity(
+  token?: string | null,
+): Promise<import("@/types").GoogleCloudActivitySyncResponse> {
+  return apiFetch(`/security/google-cloud-activity/sync`, { method: "POST", body: JSON.stringify({}), token });
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.

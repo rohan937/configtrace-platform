@@ -859,12 +859,12 @@ class TestCapabilityMatrix:
         assert cap.security.security_rules is True
 
     def test_other_security_capabilities_still_false(self):
-        """M78B is just security rules — activity/correlation/demo stay deferred."""
+        """M78D landed activity ingestion; signals/correlation/demo still deferred."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("google_cloud")
-        assert cap.security.activity_ingestion is False
+        assert cap.security.activity_ingestion is True  # M78D complete
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
@@ -911,12 +911,13 @@ class TestExpansionFramework:
         assert "M78" in stage
         assert "M78C" not in stage  # M78C done; pointer advanced
 
-    def test_planned_next_stage_mentions_audit_log(self):
-        """M78D is Google Cloud Audit Log Ingestion."""
+    def test_planned_next_stage_is_beyond_m78d(self):
+        """M78D is complete; planned next stage must be M78E or later."""
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M78D" in stage
+        assert "M78" in stage
+        assert "M78D" not in stage  # M78D done; pointer advanced
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -447,7 +447,7 @@ _GOOGLE_CLOUD = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -457,17 +457,22 @@ _GOOGLE_CLOUD = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Google Cloud drift + core and expanded security foundation (M78A–M78C). "
-        "Drift snapshots cover project metadata, IAM policy summary (counts only — "
-        "principal emails and member identifiers are never stored), VPC networks, "
-        "firewall rules, Cloud Storage buckets, Cloud SQL instances, Cloud Run "
-        "services, GKE clusters, service account key aggregate summary (counts only "
-        "— SA emails and key material are never stored), and Secret Manager "
-        "aggregate summary (counts only — secret names and values are never stored). "
-        "Security rules: 22 rules across IAM, Firewall, Storage, Cloud SQL, "
-        "Cloud Run, GKE, Service Account Keys, and Secret Manager. Activity "
-        "ingestion, signals, correlations, and demo follow in upcoming milestones "
-        "(M78D onward)."
+        "Google Cloud drift + core and expanded security foundation + Audit Log "
+        "ingestion (M78A–M78D). Drift snapshots cover project metadata, IAM policy "
+        "summary (counts only — principal emails and member identifiers are never "
+        "stored), VPC networks, firewall rules, Cloud Storage buckets, Cloud SQL "
+        "instances, Cloud Run services, GKE clusters, service account key aggregate "
+        "summary (counts only — SA emails and key material are never stored), and "
+        "Secret Manager aggregate summary (counts only — secret names and values are "
+        "never stored). Security rules: 22 rules across IAM, Firewall, Storage, "
+        "Cloud SQL, Cloud Run, GKE, Service Account Keys, and Secret Manager. "
+        "Activity ingestion: Google Cloud Admin Activity audit log entries via Cloud "
+        "Logging — only CREATE/UPDATE/DELETE control-plane operations on IAM, "
+        "firewall rules, VPC networks, Cloud Storage, Cloud SQL, Cloud Run, GKE, "
+        "and Secret Manager are ingested. Data-plane access, secret access events, "
+        "and application logs are deliberately excluded. Principal emails, caller "
+        "IPs, raw protoPayload, and request/response objects are never stored. "
+        "Activity signals, correlations, and demo follow in M78E onward."
     ),
 )
 

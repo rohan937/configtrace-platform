@@ -198,6 +198,10 @@ from app.schemas.security_azure_activity import (
     AzureActivitySignalGenerateRequest,
     AzureActivitySignalGenerateResponse,
 )
+from app.schemas.security_google_cloud_activity import (
+    GoogleCloudActivitySyncRequest,
+    GoogleCloudActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -241,6 +245,7 @@ from app.services import shopify_activity_ingestion_service
 from app.services import shopify_activity_signal_service
 from app.services import azure_activity_ingestion_service
 from app.services import azure_activity_signal_service
+from app.services import google_cloud_activity_ingestion_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -3029,6 +3034,82 @@ def sync_azure_activity(
         max_events=max_events,
     )
     return AzureActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/google-cloud-activity/sync",
+    response_model=GoogleCloudActivitySyncResponse,
+)
+def sync_google_cloud_activity(
+    body: Optional[GoogleCloudActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GoogleCloudActivitySyncResponse:
+    """Ingest Google Cloud Admin Activity audit log entries (M78D).
+
+    Admin/owner only. Non-fatal: permission/availability limits are reported in
+    the summary, never raised. The service account must have the
+    roles/logging.viewer role (or logging.logEntries.list permission) on the
+    project for Cloud Logging access.
+
+    Strict methodName allowlist applied client-side: only CREATE/UPDATE/DELETE
+    operations on IAM, firewall rules, VPC networks, Cloud Storage buckets,
+    Cloud SQL instances, Cloud Run services, GKE clusters, and Secret Manager
+    secrets are ingested. READ/LIST operations, data-plane access (Cloud SQL
+    query logs, secret access events, storage object reads), VM logs, Kubernetes
+    workload logs, and application logs are deliberately excluded.
+
+    Members can view the resulting events via
+    ``GET /security/activity/events?provider=google_cloud``.
+
+    Evidence is configuration-change metadata only. Does not confirm breach,
+    compromise, unauthorized access, or data exposure.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    q = db.query(Integration).filter(
+        Integration.user_id == current_user.id,
+        Integration.provider == "google_cloud",
+    )
+    requested_id = body.integration_id if body else None
+    if requested_id:
+        try:
+            iid = uuid.UUID(str(requested_id))
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid integration_id.")
+        integration = q.filter(Integration.id == iid).first()
+        if integration is None:
+            raise HTTPException(
+                status_code=404, detail="Google Cloud integration not found."
+            )
+    else:
+        integration = (
+            q.filter(Integration.status == "active")
+            .order_by(Integration.created_at.asc())
+            .first()
+        )
+        if integration is None:
+            return GoogleCloudActivitySyncResponse(
+                attempted=False,
+                succeeded=False,
+                provider="google_cloud",
+                source="google_cloud_audit_log",
+                error_message="No active Google Cloud integration found.",
+            )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+    summary = google_cloud_activity_ingestion_service.ingest_google_cloud_activity(
+        integration=integration,
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+    )
+    return GoogleCloudActivitySyncResponse(**summary)
 
 
 @router.post(

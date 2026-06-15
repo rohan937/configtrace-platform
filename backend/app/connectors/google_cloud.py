@@ -136,6 +136,9 @@ _CONTAINER_BASE = "https://container.googleapis.com"
 _IAM_BASE = "https://iam.googleapis.com"
 _SECRETMANAGER_BASE = "https://secretmanager.googleapis.com"
 
+# M78D: Cloud Logging entries:list endpoint for Admin Activity audit logs.
+_LOGGING_BASE = "https://logging.googleapis.com"
+
 _TIMEOUT = 30.0
 _MAX_PAGES = 10
 _MAX_STR_LEN = 200
@@ -155,6 +158,63 @@ _MAX_SA_KEY_FETCH = 50
 _MAX_SECRETS = 500
 # Key age threshold for "old user-managed key" classification (days).
 _OLD_KEY_AGE_DAYS = 90
+
+# M78D: Audit log ingestion caps.
+_MAX_AUDIT_EVENTS = 1000
+_MAX_AUDIT_LOOKBACK_HOURS = 168  # 7 days
+
+# M78D: Strict control-plane operation allowlist for Google Cloud Audit Logs.
+# Only Admin Activity log entries whose protoPayload.methodName matches one of
+# these prefixes/exact strings are returned. Data-plane access, read operations,
+# application logs, VM logs, Kubernetes workload logs, secret access events,
+# and storage object read/write events are deliberately excluded.
+#
+# Security note: the connector filters by logName (cloudaudit.googleapis.com/activity)
+# at the API level AND by methodName here — defense in depth.
+_AUDIT_ALLOWED_METHOD_PREFIXES: tuple[str, ...] = (
+    # IAM / service accounts
+    "google.iam.admin.v1.IAM.SetIamPolicy",
+    "SetIamPolicy",
+    "google.iam.admin.v1.IAM.CreateServiceAccount",
+    "google.iam.admin.v1.IAM.DeleteServiceAccount",
+    "google.iam.admin.v1.IAM.UpdateServiceAccount",
+    "google.iam.admin.v1.IAM.CreateServiceAccountKey",
+    "google.iam.admin.v1.IAM.DeleteServiceAccountKey",
+    # Firewall / VPC (Compute API method names)
+    "compute.firewalls.insert",
+    "compute.firewalls.patch",
+    "compute.firewalls.update",
+    "compute.firewalls.delete",
+    "compute.networks.insert",
+    "compute.networks.patch",
+    "compute.networks.delete",
+    # Cloud Storage
+    "storage.buckets.create",
+    "storage.buckets.update",
+    "storage.buckets.delete",
+    "storage.setIamPermissions",
+    # Cloud SQL
+    "cloudsql.instances.create",
+    "cloudsql.instances.update",
+    "cloudsql.instances.delete",
+    # Cloud Run (v2 and v1)
+    "google.cloud.run.v2.Services.CreateService",
+    "google.cloud.run.v2.Services.UpdateService",
+    "google.cloud.run.v2.Services.DeleteService",
+    "google.cloud.run.v1.namespaces.services.create",
+    "google.cloud.run.v1.namespaces.services.replaceService",
+    "google.cloud.run.v1.namespaces.services.delete",
+    # GKE
+    "google.container.v1.ClusterManager.CreateCluster",
+    "google.container.v1.ClusterManager.UpdateCluster",
+    "google.container.v1.ClusterManager.DeleteCluster",
+    "google.container.v1.ClusterManager.SetNetworkPolicy",
+    "google.container.v1.ClusterManager.SetMasterAuth",
+    # Secret Manager (metadata changes only — NOT secret access/versions)
+    "google.cloud.secretmanager.v1.SecretManagerService.CreateSecret",
+    "google.cloud.secretmanager.v1.SecretManagerService.UpdateSecret",
+    "google.cloud.secretmanager.v1.SecretManagerService.DeleteSecret",
+)
 # IAM policy summary caps: at most 20 role names surfaced and at most 100
 # bindings considered before stopping the principal-type bucketing.
 _MAX_IAM_ROLE_NAMES = 20
@@ -1177,6 +1237,300 @@ class GoogleCloudConnector(BaseConnector):
             "user_managed_replication_count": user_managed_replication_count,
             "customer_managed_encryption_count": customer_managed_encryption_count,
         }
+
+    # ── M78D: Audit log method ────────────────────────────────────────────────
+
+    def _post(
+        self,
+        token: str,
+        url: str,
+        body: dict | None = None,
+    ) -> Any:
+        """Perform a single authenticated POST against a Google Cloud REST API.
+
+        The Authorization header (bearer token) is constructed inline and is
+        never stored or logged. Mirrors _get() error-mapping behaviour.
+        """
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = httpx.post(
+                url,
+                headers=headers,
+                json=body or {},
+                timeout=_TIMEOUT,
+            )
+        except httpx.ConnectError as exc:
+            raise NetworkError(
+                f"gcp: POST network error for {_trunc(url)}: {exc}"
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise NetworkError(f"gcp: POST timed out for {_trunc(url)}") from exc
+        except httpx.HTTPError as exc:
+            raise NetworkError(f"gcp: POST request error: {exc}") from exc
+
+        if resp.status_code == 401:
+            raise AuthenticationError(
+                "gcp: API returned 401 — credentials may be expired or invalid",
+                status_code=401,
+            )
+        if resp.status_code == 429:
+            retry_after: float | None = None
+            try:
+                retry_after = float(resp.headers.get("Retry-After", ""))
+            except (ValueError, TypeError):
+                retry_after = None
+            raise RateLimitError(
+                "gcp: rate limit hit (429)",
+                retry_after=retry_after,
+            )
+        if resp.status_code in (403, 404, 422):
+            raise ConnectorError(
+                f"gcp: API returned HTTP {resp.status_code} for {_trunc(url)}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 500:
+            raise ConnectorError(
+                f"gcp: API returned server error HTTP {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code >= 400:
+            raise ConnectorError(
+                f"gcp: API returned HTTP {resp.status_code}",
+                status_code=resp.status_code,
+            )
+
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise ConnectorError(
+                "gcp: POST response was not valid JSON"
+            ) from exc
+
+    @staticmethod
+    def _is_allowed_audit_method(method_name: str) -> bool:
+        """Return True when methodName is in the M78D control-plane allowlist.
+
+        Applies the strict allowlist as a defense-in-depth filter after the
+        Cloud Logging API has already filtered to Admin Activity logs. Comparison
+        is case-insensitive to handle API variants.
+
+        Never returns True for read/list operations, data-plane access, secret
+        access events, storage object reads, VM logs, or app logs.
+        """
+        if not isinstance(method_name, str) or not method_name.strip():
+            return False
+        m = method_name.strip().lower()
+        for allowed in _AUDIT_ALLOWED_METHOD_PREFIXES:
+            if m == allowed.lower():
+                return True
+        return False
+
+    def _strip_audit_entry(self, entry: dict) -> dict | None:
+        """Extract safe, flat fields from a raw Cloud Logging audit entry.
+
+        The raw Cloud Logging entry looks like:
+            {
+                "insertId": "...",
+                "logName": "projects/my-proj/logs/cloudaudit.googleapis.com%2Factivity",
+                "operation": {"id": "...", "producer": "..."},
+                "protoPayload": {
+                    "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+                    "serviceName": "iam.googleapis.com",
+                    "methodName": "google.iam.admin.v1.IAM.CreateServiceAccountKey",
+                    "resourceName": "projects/my-proj/serviceAccounts/-/keys/-",
+                    "status": {"code": 0, "message": "OK"},
+                    "authenticationInfo": {...},   ← NEVER STORED
+                    "authorizationInfo": [...],    ← NEVER STORED
+                    "request": {...},              ← NEVER STORED
+                    "response": {...},             ← NEVER STORED
+                    "metadata": {...},             ← NEVER STORED
+                    "requestMetadata": {           ← NEVER STORED
+                        "callerIp": "1.2.3.4",    ← NEVER STORED
+                        "callerUserAgent": "..."   ← NEVER STORED
+                    }
+                },
+                "resource": {
+                    "type": "service_account",
+                    "labels": {...}   ← NEVER STORED (may contain SA email)
+                },
+                "severity": "NOTICE",
+                "timestamp": "2024-01-15T10:00:00.000Z"
+            }
+
+        SECURITY / PRIVACY:
+        - protoPayload is decomposed only for its safe, flat fields; the raw
+          object is NEVER returned.
+        - request, response, metadata, requestMetadata are NEVER touched.
+        - authenticationInfo (principalEmail etc.) is NEVER stored.
+        - authorizationInfo is NEVER stored.
+        - resource.labels (may contain SA emails) are NEVER stored.
+        - callerIp / userAgent / operation id are NEVER stored.
+        - insertId is returned only as an opaque event identifier.
+
+        Returns a safe stripped dict, or None if the entry is unusable.
+        """
+        if not isinstance(entry, dict):
+            return None
+
+        proto = entry.get("protoPayload")
+        if not isinstance(proto, dict):
+            return None
+
+        method_name = _trunc(proto.get("methodName") or "")
+        if not method_name:
+            return None
+
+        service_name = _trunc(proto.get("serviceName") or "")
+        # resourceName is a hierarchical GCP resource path (safe identifier).
+        # e.g. "projects/my-proj/global/firewalls/my-fw-rule"
+        # We store it only if it doesn't look like it contains an email.
+        resource_name_raw = proto.get("resourceName") or ""
+        resource_name: str | None = None
+        if isinstance(resource_name_raw, str) and "@" not in resource_name_raw:
+            resource_name = _trunc(resource_name_raw)
+
+        # Status code (integer 0 = success; non-zero = error).
+        status_obj = proto.get("status") if isinstance(proto.get("status"), dict) else {}
+        status_code: int | None = status_obj.get("code")
+        if not isinstance(status_code, int):
+            status_code = None
+        # Status message is potentially user-controlled — truncate safely.
+        status_message_raw = status_obj.get("message", "") or ""
+        status_message_safe = _trunc(status_message_raw)[:80] if isinstance(status_message_raw, str) else None
+
+        # Log name (safe — contains only the project-id and log identifier).
+        log_name = _trunc(entry.get("logName") or "")
+        insert_id = _trunc(entry.get("insertId") or "")
+        timestamp = _trunc(entry.get("timestamp") or "")
+
+        # Resource type (e.g. "gce_firewall_rule", "iam_service_account").
+        # resource.labels may contain PII (SA email) — never stored.
+        resource_obj = entry.get("resource") if isinstance(entry.get("resource"), dict) else {}
+        resource_type = _trunc(resource_obj.get("type") or "")
+
+        # severity is a safe, well-known string (NOTICE / WARNING / ERROR / …).
+        severity = _trunc(entry.get("severity") or "")
+
+        return {
+            "insert_id": insert_id or None,
+            "log_name": log_name or None,
+            "timestamp": timestamp or None,
+            "severity": severity or None,
+            "method_name": method_name,
+            "service_name": service_name or None,
+            "resource_name": resource_name,
+            "resource_type": resource_type or None,
+            "status_code": status_code,
+            "status_message_safe": status_message_safe or None,
+        }
+
+    def list_audit_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Fetch Google Cloud Admin Activity audit log entries (M78D).
+
+        Uses the Cloud Logging entries:list API with a filter restricted to
+        Admin Activity audit logs (cloudaudit.googleapis.com/activity) within
+        the requested lookback window. Applies defense-in-depth filtering via
+        the M78D allowlist before returning.
+
+        Args:
+            credentials:    Provider credentials (same dict accepted by fetch()).
+            max_events:     Maximum entries to return (clamped to 1–1000).
+            lookback_hours: Lookback window in hours (clamped to 1–168).
+
+        Returns:
+            List of safe, stripped audit entry dicts. NEVER contains raw
+            protoPayload, request/response/metadata objects, principal emails,
+            caller IPs, or any raw audit payload.
+
+        Raises:
+            AuthenticationError: 401 from the Logging API.
+            ConnectorError:      403/404/422/5xx from the Logging API.
+            RateLimitError:      429 from the Logging API.
+            NetworkError:        Transport-level failure.
+        """
+        from datetime import timezone
+
+        max_events = max(1, min(int(max_events), _MAX_AUDIT_EVENTS))
+        lookback_hours = max(1, min(int(lookback_hours), _MAX_AUDIT_LOOKBACK_HOURS))
+
+        project_id = self._project_id(credentials)
+        if not project_id:
+            raise ConnectorError("gcp: project_id is required for audit log access", status_code=None)
+
+        token = self._get_token(credentials)
+
+        # Compute the start timestamp (UTC ISO 8601 with 'Z' suffix).
+        now = datetime.now(timezone.utc)
+        from datetime import timedelta
+        window_start = now - timedelta(hours=lookback_hours)
+        start_ts = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Cloud Logging filter: Admin Activity audit logs only, within window,
+        # for this project. Data Access logs (cloudaudit.googleapis.com/data_access)
+        # are explicitly excluded by using the /activity log name.
+        log_filter = (
+            f'logName="projects/{project_id}/logs/cloudaudit.googleapis.com%2Factivity" '
+            f'AND timestamp>="{start_ts}"'
+        )
+
+        url = f"{_LOGGING_BASE}/v2/entries:list"
+        page_size = min(max_events, 100)  # Cloud Logging max page size is 1000; we cap lower
+
+        results: list[dict] = []
+        page_token: str | None = None
+        pages = 0
+
+        while pages < _MAX_PAGES and len(results) < max_events:
+            body: dict[str, Any] = {
+                "resourceNames": [f"projects/{project_id}"],
+                "filter": log_filter,
+                "orderBy": "timestamp desc",
+                "pageSize": page_size,
+            }
+            if page_token:
+                body["pageToken"] = page_token
+
+            data = self._post(token, url, body)
+            pages += 1
+
+            if not isinstance(data, dict):
+                break
+
+            entries = data.get("entries", [])
+            if not isinstance(entries, list):
+                break
+
+            for entry in entries:
+                if len(results) >= max_events:
+                    break
+                stripped = self._strip_audit_entry(entry)
+                if stripped is None:
+                    continue
+                if not self._is_allowed_audit_method(stripped.get("method_name") or ""):
+                    continue
+                results.append(stripped)
+
+            page_token = data.get("nextPageToken") or None
+            if not page_token:
+                break
+
+        logger.info(
+            "gcp: audit log fetch complete — %d entries collected (pages: %d, project: %s)",
+            len(results),
+            pages,
+            _trunc(project_id),
+        )
+        return results
 
     # ── Main fetch ────────────────────────────────────────────────────────────
 

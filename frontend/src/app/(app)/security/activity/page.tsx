@@ -35,6 +35,7 @@ import {
   syncStripeActivity,
   syncShopifyActivity,
   syncAzureActivity,
+  syncGoogleCloudActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -44,7 +45,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -241,9 +242,43 @@ const AZURE_EVENT_TYPES = [
   "azure.config.event",
 ];
 
+// M78D — Google Cloud Admin Activity audit log control-plane events.
+const GOOGLE_CLOUD_EVENT_TYPES = [
+  "google_cloud.iam_policy.updated",
+  "google_cloud.service_account.created",
+  "google_cloud.service_account.deleted",
+  "google_cloud.service_account.updated",
+  "google_cloud.service_account_key.created",
+  "google_cloud.service_account_key.deleted",
+  "google_cloud.firewall_rule.created",
+  "google_cloud.firewall_rule.updated",
+  "google_cloud.firewall_rule.deleted",
+  "google_cloud.vpc_network.created",
+  "google_cloud.vpc_network.updated",
+  "google_cloud.vpc_network.deleted",
+  "google_cloud.storage_bucket.created",
+  "google_cloud.storage_bucket.updated",
+  "google_cloud.storage_bucket.deleted",
+  "google_cloud.storage_iam.updated",
+  "google_cloud.sql_instance.created",
+  "google_cloud.sql_instance.updated",
+  "google_cloud.sql_instance.deleted",
+  "google_cloud.run_service.created",
+  "google_cloud.run_service.updated",
+  "google_cloud.run_service.deleted",
+  "google_cloud.gke_cluster.created",
+  "google_cloud.gke_cluster.updated",
+  "google_cloud.gke_cluster.deleted",
+  "google_cloud.gke_network_policy.updated",
+  "google_cloud.gke_master_auth.updated",
+  "google_cloud.secret.created",
+  "google_cloud.secret.updated",
+  "google_cloud.secret.deleted",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -362,6 +397,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "google_cloud") {
+        const r = await syncGoogleCloudActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Google Cloud Audit Log access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -390,7 +433,9 @@ export default function ActivityEventsPage() {
                       ? "Could not sync Shopify activity. Please try again."
                       : provider === "azure"
                         ? "Could not sync Azure Activity Log. Please try again."
-                        : "Could not sync GitHub activity. Please try again.",
+                        : provider === "google_cloud"
+                          ? "Could not sync Google Cloud activity. Please try again."
+                          : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -543,6 +588,7 @@ export default function ActivityEventsPage() {
     : provider === "shopify" ? SHOPIFY_EVENT_TYPES
     : provider === "cloudflare" ? CLOUDFLARE_EVENT_TYPES
     : provider === "azure" ? AZURE_EVENT_TYPES
+    : provider === "google_cloud" ? GOOGLE_CLOUD_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -585,7 +631,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -700,6 +746,7 @@ function SyncBar({
   const isStripe = provider === "stripe";
   const isShopify = provider === "shopify";
   const isAzure = provider === "azure";
+  const isGoogleCloud = provider === "google_cloud";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -708,7 +755,9 @@ function SyncBar({
     : isFirebase ? "Sync Firebase activity"
     : isStripe ? "Sync Stripe activity"
     : isShopify ? "Sync Shopify activity"
-    : isAzure ? "Sync Azure activity" : "Sync GitHub activity";
+    : isAzure ? "Sync Azure activity"
+    : isGoogleCloud ? "Sync Google Cloud activity"
+    : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
     : isAws
@@ -725,7 +774,9 @@ function SyncBar({
                 ? "Sync review-safe Shopify configuration activity such as webhook, app scope, domain, policy, and shop setting changes. Available when the Shopify Admin API token has Events read scope. Customer / order / checkout / cart / payment / fulfillment events are deliberately excluded."
                 : isAzure
                   ? "Sync review-safe Azure Activity Log evidence for configuration changes across NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS. Requires the service principal to have the Reader role on the subscription. Only WRITE/DELETE management events are ingested — READ/LIST, data-plane, diagnostic, VM, and application logs are excluded."
-                  : "Ingests recent GitHub audit-log activity into normalized events.";
+                  : isGoogleCloud
+                    ? "Sync review-safe Google Cloud Audit Log evidence for configuration changes across IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, and Secret Manager. Requires the service account to have the roles/logging.viewer role on the project. Only Admin Activity audit log entries for control-plane CREATE/UPDATE/DELETE operations are ingested — data-plane access, secret access events, storage object reads, VM logs, and application logs are excluded."
+                    : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -835,7 +886,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -1085,6 +1136,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync Azure activity first to collect review-safe Activity Log evidence — control-plane WRITE/DELETE events on NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS. Requires the service principal to have the Reader role on the subscription."
                 : "An admin can sync Azure activity to collect review-safe Activity Log evidence. Requires the service principal to have the Reader role on the subscription."
+            : provider === "google_cloud"
+              ? isAdmin
+                ? "Sync Google Cloud activity first to collect review-safe Audit Log evidence — Admin Activity control-plane CREATE/UPDATE/DELETE events on IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, and Secret Manager. Requires the service account to have roles/logging.viewer on the project."
+                : "An admin can sync Google Cloud activity to collect review-safe Audit Log evidence. Requires the service account to have roles/logging.viewer on the project."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

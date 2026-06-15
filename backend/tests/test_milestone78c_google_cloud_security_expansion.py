@@ -1109,11 +1109,12 @@ class TestCapabilityMatrix:
         providers = {p.provider for p in PROVIDER_CAPABILITIES}
         assert "google_cloud" not in providers
 
-    def test_google_cloud_activity_ingestion_false(self):
+    def test_google_cloud_activity_ingestion_true(self):
+        """M78D complete — activity_ingestion is now True."""
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("google_cloud")
         assert cap is not None
-        assert cap.security.activity_ingestion is False
+        assert cap.security.activity_ingestion is True
 
     def test_google_cloud_activity_signals_false(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -1145,22 +1146,26 @@ class TestCapabilityMatrix:
 
 
 class TestProviderExpansionFramework:
-    """Verify the expansion framework next stage is updated to M78D."""
+    """Verify the expansion framework next stage is beyond M78D (M78C is done)."""
 
-    def test_planned_next_stage_is_m78d(self):
+    def test_planned_next_stage_is_beyond_m78d(self):
+        """M78D is complete; planned next stage must be M78E or later."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "M78D" in planned, (
-            f"planned_next_stage should point to M78D, got: {planned!r}"
+        assert "M78" in planned, (
+            f"planned_next_stage should still be in the M78 arc, got: {planned!r}"
         )
+        assert "M78C" not in planned, "M78C is done; pointer has advanced"
+        assert "M78D" not in planned, "M78D is done; pointer has advanced"
 
-    def test_google_cloud_next_stage_contains_audit_log(self):
+    def test_google_cloud_next_stage_mentions_signals(self):
+        """M78E is Google Cloud Activity Signals."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "Audit Log" in planned or "audit_log" in planned.lower(), (
-            f"planned_next_stage should mention Audit Log, got: {planned!r}"
+        assert "M78E" in planned, (
+            f"planned_next_stage should point to M78E, got: {planned!r}"
         )
 
 
