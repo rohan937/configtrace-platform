@@ -141,6 +141,16 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "azure_aks_local_accounts_enabled": ("azure", "medium", "AKS Clusters"),
     "azure_aks_public_api_access": ("azure", "high", "AKS Clusters"),
     "azure_aks_network_policy_missing": ("azure", "medium", "AKS Clusters"),
+    # Google Cloud — M78B
+    "google_cloud_iam_public_member": ("google_cloud", "high", "IAM policies"),
+    "google_cloud_iam_broad_privileged_role": ("google_cloud", "high", "IAM policies"),
+    "google_cloud_firewall_public_admin_ingress": ("google_cloud", "critical", "Firewall rules"),
+    "google_cloud_firewall_public_broad_ingress": ("google_cloud", "critical", "Firewall rules"),
+    "google_cloud_firewall_rule_no_targets": ("google_cloud", "medium", "Firewall rules"),
+    "google_cloud_storage_public_access_prevention_disabled": ("google_cloud", "high", "Cloud Storage buckets"),
+    "google_cloud_storage_uniform_access_disabled": ("google_cloud", "medium", "Cloud Storage buckets"),
+    "google_cloud_storage_versioning_disabled": ("google_cloud", "low", "Cloud Storage buckets"),
+    "google_cloud_storage_retention_not_locked": ("google_cloud", "medium", "Cloud Storage buckets"),
 }
 
 

@@ -112,10 +112,10 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
 
 
 def test_expansion_framework_next_stage_is_m78a_google_cloud():
-    """Flipped in M78A: GCP drift foundation launched; next stage is M78B."""
+    """Rolled forward in M78B: core security foundation landed; next stage is M78C."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78B" in stage
+    assert "M78C" in stage
     assert "Google Cloud" in stage
 
 
@@ -145,9 +145,9 @@ def test_expansion_framework_google_cloud_recommendation_is_complete():
     assert cap is not None
     assert cap.label == "Google Cloud"
     assert cap.maturity == "partial"
-    # Drift snapshots true; security still gated until M78B.
+    # Drift snapshots true; security_rules flipped on in M78B.
     assert cap.drift.drift_snapshots is True
-    assert cap.security.security_rules is False
+    assert cap.security.security_rules is True
 
 
 def test_expansion_framework_summary_next_provider_is_google_cloud():

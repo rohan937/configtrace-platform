@@ -43,6 +43,7 @@ from app.services.security_rules import azure as azure_rules
 from app.services.security_rules import cloudflare as cloudflare_rules
 from app.services.security_rules import firebase as firebase_rules
 from app.services.security_rules import github as github_rules
+from app.services.security_rules import google_cloud as google_cloud_rules
 from app.services.security_rules import shopify as shopify_rules
 from app.services.security_rules import stripe as stripe_rules
 from app.services.security_rules import supabase as supabase_rules
@@ -63,6 +64,7 @@ _PROVIDER_RULES = {
     "vercel": [vercel_rules.evaluate],
     "shopify": [shopify_rules.evaluate],
     "azure": [azure_rules.evaluate],
+    "google_cloud": [google_cloud_rules.evaluate],
 }
 
 

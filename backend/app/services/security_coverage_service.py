@@ -150,6 +150,16 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "azure_aks_local_accounts_enabled": ("azure_aks_cluster",),
     "azure_aks_public_api_access": ("azure_aks_cluster",),
     "azure_aks_network_policy_missing": ("azure_aks_cluster",),
+    # Google Cloud — M78B
+    "google_cloud_iam_public_member": ("google_cloud_iam_policy_summary",),
+    "google_cloud_iam_broad_privileged_role": ("google_cloud_iam_policy_summary",),
+    "google_cloud_firewall_public_admin_ingress": ("google_cloud_firewall_rule",),
+    "google_cloud_firewall_public_broad_ingress": ("google_cloud_firewall_rule",),
+    "google_cloud_firewall_rule_no_targets": ("google_cloud_firewall_rule",),
+    "google_cloud_storage_public_access_prevention_disabled": ("google_cloud_storage_bucket",),
+    "google_cloud_storage_uniform_access_disabled": ("google_cloud_storage_bucket",),
+    "google_cloud_storage_versioning_disabled": ("google_cloud_storage_bucket",),
+    "google_cloud_storage_retention_not_locked": ("google_cloud_storage_bucket",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -429,6 +439,11 @@ def _diagnose(
 
 
 def _provider_of(rule_key: str) -> str:
+    # Multi-word provider prefixes must be checked first; otherwise a naive
+    # split would map "google_cloud_*" to "google" and break coverage joins.
+    for multi_word in ("google_cloud",):
+        if rule_key.startswith(multi_word + "_"):
+            return multi_word
     return rule_key.split("_", 1)[0]
 
 

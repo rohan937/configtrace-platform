@@ -141,6 +141,16 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "azure_aks_local_accounts_enabled": (HIGH, "Only an explicit disableLocalAccounts=false fires; missing/unknown is skipped."),
     "azure_aks_public_api_access": (HIGH, "Fires only when private_cluster_enabled=false AND api_server_authorized_ip_range_count=0; partial data (None count) is not flagged."),
     "azure_aks_network_policy_missing": (MEDIUM, "Fires when network_policy is absent or 'none'; absence of a network policy is the default state so medium confidence is used."),
+    # Google Cloud — M78B
+    "google_cloud_iam_public_member": (HIGH, "Only an explicit allUsers / allAuthenticatedUsers sentinel binding on the project IAM policy fires; member identities are never read."),
+    "google_cloud_iam_broad_privileged_role": (HIGH, "Only a curated set of broad project-level role names (roles/owner, roles/editor, roles/iam.securityAdmin, roles/resourcemanager.projectIamAdmin, roles/iam.serviceAccountAdmin, roles/iam.serviceAccountKeyAdmin) fires."),
+    "google_cloud_firewall_public_admin_ingress": (HIGH, "Only INGRESS+allow rules with a 0.0.0.0/0 or ::/0 source range on a known admin/database/cache/search port fire; disabled rules are skipped."),
+    "google_cloud_firewall_public_broad_ingress": (HIGH, "Only INGRESS+allow rules with a 0.0.0.0/0 or ::/0 source range that also cover all ports (or the 'all' protocol) fire; disabled rules are skipped."),
+    "google_cloud_firewall_rule_no_targets": (MEDIUM, "Fires only when an INGRESS+allow rule from a public source range has target_tag_count=0 AND target_service_account_count=0; severity bumps to high when the same rule is also a broad/admin public ingress."),
+    "google_cloud_storage_public_access_prevention_disabled": (HIGH, "Only fires when public_access_prevention is missing/inherited/unspecified or any value other than 'enforced'; severity bumps to high when uniform bucket-level access is also disabled."),
+    "google_cloud_storage_uniform_access_disabled": (HIGH, "Only an explicit uniform_bucket_level_access_enabled=false fires; missing/unknown is skipped."),
+    "google_cloud_storage_versioning_disabled": (HIGH, "Only an explicit versioning_enabled=false fires; missing/unknown is skipped."),
+    "google_cloud_storage_retention_not_locked": (MEDIUM, "Fires when no retention policy is set OR retention_policy_locked is explicitly false; missing locked-state with no retention period is treated conservatively."),
 }
 
 

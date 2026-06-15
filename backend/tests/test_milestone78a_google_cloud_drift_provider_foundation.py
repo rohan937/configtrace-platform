@@ -987,20 +987,21 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_diff is True
         assert cap.drift.drift_review_workflow is True
 
-    def test_drift_risk_classification_false_pending_m78b(self):
-        """Flipped in M78B."""
+    def test_drift_risk_classification_flipped_in_m78b(self):
+        """Flipped to True in M78B (core security foundation lit up)."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("google_cloud")
-        assert cap.drift.drift_risk_classification is False
+        assert cap.drift.drift_risk_classification is True
 
-    def test_security_capabilities_all_false_pending_m78b_plus(self):
+    def test_security_capabilities_partial_after_m78b(self):
+        """M78B flips security_rules True; activity/correlation/demo still false."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("google_cloud")
-        assert cap.security.security_rules is False
+        assert cap.security.security_rules is True
         assert cap.security.activity_ingestion is False
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
@@ -1064,11 +1065,12 @@ def test_google_cloud_in_security_coverage_providers():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_expansion_framework_planned_next_stage_points_to_m78b():
+def test_expansion_framework_planned_next_stage_points_to_m78c():
+    """M78B rolled the next-stage pointer forward to M78C."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78B" in stage
+    assert "M78C" in stage
     assert "Google Cloud" in stage
 
 

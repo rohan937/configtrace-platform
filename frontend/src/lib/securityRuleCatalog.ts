@@ -1406,6 +1406,196 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     remediation: "Set networkPolicy to 'azure', 'calico', or 'cilium' in the AKS network profile and define Kubernetes NetworkPolicy resources.",
     falsePositiveGuard: "Medium confidence: absence of network policy is the default state; verify whether NetworkPolicy CRDs are in use before remediating.",
   },
+  // ── Google Cloud ─────────────────────────────────────────────────────────
+  {
+    key: "google_cloud_iam_public_member",
+    provider: "google_cloud",
+    severity: "high",
+    title: "Google Cloud IAM policy includes a public member",
+    category: "IAM policies",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Project-level IAM policy includes the allUsers or allAuthenticatedUsers sentinel as a principal on one or more role bindings.",
+    whatItChecks:
+      "allusers_binding_present or allauthenticatedusers_binding_present on a Google Cloud IAM policy summary record.",
+    whyItMatters:
+      "Public sentinels on a project IAM policy may broaden access to project resources and may require review.",
+    evidence:
+      "project_id, allusers_binding_present flag, allauthenticatedusers_binding_present flag, total binding_count. Member identities are never read or stored.",
+    remediation:
+      "Remove allUsers / allAuthenticatedUsers from bindings and replace with explicit Google identities (user/group/serviceAccount).",
+    falsePositiveGuard:
+      "Only an explicit sentinel binding fires; member identities and other counts are not used to infer 'public'.",
+  },
+  {
+    key: "google_cloud_iam_broad_privileged_role",
+    provider: "google_cloud",
+    severity: "high",
+    title: "Google Cloud IAM policy grants broad privileged roles",
+    category: "IAM policies",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Project-level IAM policy grants one or more broad privileged built-in roles (roles/owner, roles/editor, roles/iam.securityAdmin, roles/resourcemanager.projectIamAdmin, roles/iam.serviceAccountAdmin, roles/iam.serviceAccountKeyAdmin).",
+    whatItChecks:
+      "role_names on a Google Cloud IAM policy summary record intersected with a curated set of broad project-level role names.",
+    whyItMatters:
+      "Broad project-level roles concentrate privilege and may increase access-governance risk; may require review.",
+    evidence:
+      "project_id, matched broad role names, broad_role_count, binding_count, and per-principal-type member counts (no identities).",
+    remediation:
+      "Replace broad project-level roles with narrower predefined / custom roles scoped to least-privilege.",
+    falsePositiveGuard:
+      "Only the curated set of broad built-in role names triggers the rule; service-account admin variants fire at medium severity.",
+  },
+  {
+    key: "google_cloud_firewall_public_admin_ingress",
+    provider: "google_cloud",
+    severity: "critical",
+    severityNote: "high for SSH; critical for RDP / WinRM / SQL / MySQL / PostgreSQL / Redis / Elasticsearch / MongoDB.",
+    title: "Google Cloud firewall rule allows public inbound on an administrative port",
+    category: "Firewall rules",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "VPC firewall rule allows INGRESS from a public source range (0.0.0.0/0 or ::/0) on a known administrative or database/cache/search port.",
+    whatItChecks:
+      "direction=INGRESS, disabled=false, source_ranges_summary contains a public range, and allowed_summary contains an entry with an administrative port.",
+    whyItMatters:
+      "Public ingress on an administrative port may expose targeted resources to the internet. ConfigTrace does not confirm reachability or compromise.",
+    evidence:
+      "firewall_rule_name, network_name, project_id, direction, priority, source_ranges_summary, matched protocol/ports, target_tag_count, target_service_account_count.",
+    remediation:
+      "Restrict the source range to known IPs (e.g. VPN / IAP); consider IAP for SSH/RDP administrative access.",
+    falsePositiveGuard:
+      "Only canonical public ranges (0.0.0.0/0 / ::/0) and a curated admin/database/cache/search port list fire; disabled rules are skipped.",
+  },
+  {
+    key: "google_cloud_firewall_public_broad_ingress",
+    provider: "google_cloud",
+    severity: "critical",
+    title: "Google Cloud firewall rule allows broad public inbound access",
+    category: "Firewall rules",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "VPC firewall rule allows INGRESS from a public source range that covers all ports (or the 'all' protocol).",
+    whatItChecks:
+      "direction=INGRESS, disabled=false, public source range, and an allowed_summary entry whose protocol is 'all' or whose ports are empty/wildcard/full range.",
+    whyItMatters:
+      "Broad public ingress significantly widens the network attack surface for any resource matched by the firewall rule and may require review.",
+    evidence:
+      "firewall_rule_name, network_name, project_id, direction, priority, source_ranges_summary, matched protocol/ports, target_tag_count, target_service_account_count.",
+    remediation:
+      "Tighten the rule to a narrow source range and specific ports, or disable it if no longer needed.",
+    falsePositiveGuard:
+      "Only canonical public ranges and broad protocol/port patterns fire; disabled rules are skipped.",
+  },
+  {
+    key: "google_cloud_firewall_rule_no_targets",
+    provider: "google_cloud",
+    severity: "medium",
+    severityNote: "Bumps to high when the same rule is also a broad/admin public ingress.",
+    title: "Google Cloud firewall rule has no explicit target tags or service accounts",
+    category: "Firewall rules",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "VPC firewall rule allows public INGRESS but has no target_tags and no target_service_accounts, so it may apply broadly across the network.",
+    whatItChecks:
+      "direction=INGRESS, disabled=false, public source range, and target_tag_count=0 AND target_service_account_count=0.",
+    whyItMatters:
+      "Untargeted rules may apply to more VMs than intended, broadening exposure beyond the resources the rule was designed for.",
+    evidence:
+      "firewall_rule_name, network_name, project_id, source_ranges_summary, target_tag_count, target_service_account_count.",
+    remediation:
+      "Scope the firewall rule to target_tags or target_service_accounts so it only applies to the intended VMs.",
+    falsePositiveGuard:
+      "Both target counts must be explicitly zero AND the rule must be public+enabled+ingress.",
+  },
+  {
+    key: "google_cloud_storage_public_access_prevention_disabled",
+    provider: "google_cloud",
+    severity: "high",
+    severityNote: "Bumps to high when uniform bucket-level access is also disabled; medium otherwise.",
+    title: "Google Cloud Storage bucket does not enforce public access prevention",
+    category: "Cloud Storage buckets",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Bucket-level publicAccessPrevention is missing, inherited, unspecified, or any value other than 'enforced'.",
+    whatItChecks:
+      "public_access_prevention != 'enforced' on a Google Cloud Storage bucket record.",
+    whyItMatters:
+      "Without enforced public-access prevention, IAM or object ACLs may independently grant public access; may require review. ConfigTrace does not inspect object ACLs and does not claim objects are public.",
+    evidence:
+      "bucket_name, location, storage_class, public_access_prevention value, uniform_bucket_level_access_enabled flag.",
+    remediation:
+      "Set the bucket's publicAccessPrevention to 'enforced'; consider enabling uniform bucket-level access.",
+    falsePositiveGuard:
+      "Only 'enforced' is treated as safe; missing/inherited/unspecified are flagged.",
+  },
+  {
+    key: "google_cloud_storage_uniform_access_disabled",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "Google Cloud Storage bucket does not enforce uniform bucket-level access",
+    category: "Cloud Storage buckets",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Uniform bucket-level access is disabled, meaning per-object ACLs can independently grant access.",
+    whatItChecks:
+      "uniform_bucket_level_access_enabled=false on a Google Cloud Storage bucket record.",
+    whyItMatters:
+      "Object ACL surface complicates access governance and increases the risk of inconsistent permissions; may require review.",
+    evidence:
+      "bucket_name, location, storage_class, uniform_bucket_level_access_enabled flag, public_access_prevention value.",
+    remediation:
+      "Enable uniform bucket-level access; migrate any existing object ACLs to IAM bindings first.",
+    falsePositiveGuard:
+      "Only an explicit false value fires; missing/unknown is skipped.",
+  },
+  {
+    key: "google_cloud_storage_versioning_disabled",
+    provider: "google_cloud",
+    severity: "low",
+    title: "Google Cloud Storage bucket does not have object versioning enabled",
+    category: "Cloud Storage buckets",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Object versioning is disabled on the bucket, affecting recoverability of removed or overwritten objects.",
+    whatItChecks: "versioning_enabled=false on a Google Cloud Storage bucket record.",
+    whyItMatters:
+      "Without versioning, accidental deletes or overwrites may not be recoverable; may require review depending on bucket purpose.",
+    evidence: "bucket_name, location, storage_class, versioning_enabled flag, lifecycle_rule_count.",
+    remediation: "Enable versioning; configure lifecycle rules to prune older noncurrent versions.",
+    falsePositiveGuard: "Only an explicit false value fires; missing/unknown is skipped.",
+  },
+  {
+    key: "google_cloud_storage_retention_not_locked",
+    provider: "google_cloud",
+    severity: "medium",
+    severityNote: "Medium when a retention policy is set but unlocked; low when no policy exists.",
+    title: "Google Cloud Storage bucket retention policy is not locked",
+    category: "Cloud Storage buckets",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "Bucket has no retention policy, or the retention policy is configured but not locked.",
+    whatItChecks:
+      "retention_policy_locked=false OR retention_policy_seconds is absent on a Google Cloud Storage bucket record.",
+    whyItMatters:
+      "An unlocked or absent retention policy weakens immutability and long-term recoverability posture; may require review.",
+    evidence:
+      "bucket_name, location, storage_class, retention_policy_seconds, retention_policy_locked flag.",
+    remediation:
+      "Set a retentionPeriod and lock the retention policy (locking is irreversible — confirm the period first).",
+    falsePositiveGuard:
+      "Configured-but-unlocked fires at medium; entirely absent retention fires at low.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────

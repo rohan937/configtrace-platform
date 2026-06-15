@@ -441,12 +441,12 @@ _GOOGLE_CLOUD = ProviderCapability(
     drift=DriftCapabilities(
         drift_snapshots=True,
         drift_diff=True,
-        drift_risk_classification=False,
+        drift_risk_classification=True,
         drift_review_workflow=True,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -457,13 +457,16 @@ _GOOGLE_CLOUD = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Google Cloud drift foundation (M78A). Covers project metadata, "
-        "IAM policy summary (counts only — principal emails and member "
-        "identifiers are never stored), VPC networks, firewall rules, and "
-        "Cloud Storage buckets. Security rules, activity ingestion, signals, "
-        "correlations, and demo follow in M78B–M78G; Cloud SQL / Cloud Run / "
-        "GKE / Secret Manager / Service Account Key surfaces are deferred to "
-        "M78C."
+        "Google Cloud drift + core security foundation. Covers project "
+        "metadata, IAM policy summary (counts only — principal emails and "
+        "member identifiers are never stored), VPC networks, firewall rules, "
+        "and Cloud Storage buckets. Core security rules cover IAM public "
+        "members, broad privileged roles, public firewall ingress (admin / "
+        "broad / untargeted), and Cloud Storage posture (public-access "
+        "prevention, uniform access, versioning, retention). Activity "
+        "ingestion, signals, correlations, and demo follow in upcoming "
+        "milestones; Cloud SQL / Cloud Run / GKE / Secret Manager / Service "
+        "Account Key surfaces remain deferred."
     ),
 )
 

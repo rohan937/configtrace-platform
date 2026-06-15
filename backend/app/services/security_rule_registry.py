@@ -117,6 +117,16 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "azure_aks_local_accounts_enabled",
         "azure_aks_public_api_access",
         "azure_aks_network_policy_missing",
+        # Google Cloud — M78B
+        "google_cloud_iam_public_member",
+        "google_cloud_iam_broad_privileged_role",
+        "google_cloud_firewall_public_admin_ingress",
+        "google_cloud_firewall_public_broad_ingress",
+        "google_cloud_firewall_rule_no_targets",
+        "google_cloud_storage_public_access_prevention_disabled",
+        "google_cloud_storage_uniform_access_disabled",
+        "google_cloud_storage_versioning_disabled",
+        "google_cloud_storage_retention_not_locked",
     }
 )
 
