@@ -851,6 +851,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M78C: Google Cloud IAM / Network / Storage / Runtime Risk Expansion",
+            "planned_next_stage": "M78D: Google Cloud Audit Log Ingestion",
         },
     }

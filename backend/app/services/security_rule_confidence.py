@@ -151,6 +151,24 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "google_cloud_storage_uniform_access_disabled": (HIGH, "Only an explicit uniform_bucket_level_access_enabled=false fires; missing/unknown is skipped."),
     "google_cloud_storage_versioning_disabled": (HIGH, "Only an explicit versioning_enabled=false fires; missing/unknown is skipped."),
     "google_cloud_storage_retention_not_locked": (MEDIUM, "Fires when no retention policy is set OR retention_policy_locked is explicitly false; missing locked-state with no retention period is treated conservatively."),
+    # Google Cloud — M78C: Cloud SQL
+    "google_cloud_sql_public_network_access": (HIGH, "Only an explicit public_ip_enabled=true fires; severity is high when authorized_network_count > 0, medium otherwise."),
+    "google_cloud_sql_weak_tls": (HIGH, "Only an explicit require_ssl=false or ssl_mode in {ALLOW_UNENCRYPTED_AND_ENCRYPTED, ENCRYPTED_ONLY} fires; missing/unknown is skipped."),
+    "google_cloud_sql_backups_disabled": (HIGH, "Only an explicit backup_enabled=false fires; missing/unknown is skipped."),
+    "google_cloud_sql_deletion_protection_disabled": (HIGH, "Only an explicit deletion_protection_enabled=false fires; missing/unknown is skipped."),
+    # Google Cloud — M78C: Cloud Run
+    "google_cloud_run_public_invoker": (HIGH, "Only fires when the IAM policy for the Cloud Run service has allUsers or allAuthenticatedUsers on roles/run.invoker; inferred from invoker policy counts."),
+    "google_cloud_run_all_ingress": (HIGH, "Only an explicit ingress=INGRESS_TRAFFIC_ALL fires; internal/load-balancer ingress does not fire."),
+    # Google Cloud — M78C: GKE
+    "google_cloud_gke_public_control_plane": (HIGH, "Fires only when public_endpoint_enabled=true AND master_authorized_networks_count is 0 or absent; clusters with authorized networks are not flagged."),
+    "google_cloud_gke_legacy_abac_enabled": (HIGH, "Only an explicit legacy_abac_enabled=true fires; missing/unknown is skipped."),
+    "google_cloud_gke_network_policy_disabled": (MEDIUM, "Only an explicit network_policy_enabled=false fires; missing/unknown (absence of network policy is common) uses medium confidence."),
+    "google_cloud_gke_workload_identity_disabled": (MEDIUM, "Fires when workload_identity_enabled=false (no workloadPool configured); absence of workload identity is the default cluster state."),
+    # Google Cloud — M78C: Service account keys
+    "google_cloud_service_account_user_managed_keys": (HIGH, "Only fires when user_managed_key_count > 0 on the project-level summary record; SA emails and key IDs are never read."),
+    "google_cloud_service_account_old_keys": (HIGH, "Only fires when old_user_managed_key_count > 0 or oldest_key_age_days >= 90; computed from validAfterTime timestamps only."),
+    # Google Cloud — M78C: Secret Manager
+    "google_cloud_secret_manager_auto_replication_without_cmek": (MEDIUM, "Fires only when automatic_replication_count > 0 AND customer_managed_encryption_count == 0; secret names and values are never read."),
 }
 
 

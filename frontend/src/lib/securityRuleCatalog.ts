@@ -1596,6 +1596,269 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Configured-but-unlocked fires at medium; entirely absent retention fires at low.",
   },
+  // ── Google Cloud — M78C ───────────────────────────────────────────────────
+  {
+    key: "google_cloud_sql_public_network_access",
+    provider: "google_cloud",
+    severity: "high",
+    severityNote: "High when authorized_network_count > 0; medium otherwise.",
+    title: "Google Cloud SQL instance allows public network access",
+    category: "Cloud SQL instances",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Cloud SQL instance has a public IP address (ipv4Enabled=true). This may broaden database exposure and may require review.",
+    whatItChecks:
+      "public_ip_enabled=true on a Google Cloud SQL instance record; severity is high when authorized_network_count > 0.",
+    whyItMatters:
+      "A public IP on a Cloud SQL instance may allow connection attempts from the internet. ConfigTrace does not confirm reachability, unauthorized access, or data exposure.",
+    evidence:
+      "instance_name, project_id, region, database_version, state, public_ip_enabled, authorized_network_count.",
+    remediation:
+      "Switch to private IP with VPC peering or Cloud SQL Auth Proxy. If a public IP is required, restrict authorized networks to the minimum necessary CIDR ranges.",
+    falsePositiveGuard:
+      "Only an explicit public_ip_enabled=true fires; authorized network count determines severity.",
+  },
+  {
+    key: "google_cloud_sql_weak_tls",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "Google Cloud SQL instance does not require SSL/TLS",
+    category: "Cloud SQL instances",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Cloud SQL instance does not require SSL/TLS for all connections (require_ssl=false or ssl_mode indicates non-strict mode).",
+    whatItChecks:
+      "require_ssl=false OR ssl_mode in {ALLOW_UNENCRYPTED_AND_ENCRYPTED, ENCRYPTED_ONLY} on a Cloud SQL instance record.",
+    whyItMatters:
+      "Allowing unencrypted database connections may expose data in transit and may require review.",
+    evidence: "instance_name, project_id, region, require_ssl, ssl_mode.",
+    remediation:
+      "Set requireSsl=true or ssl_mode=TRUSTED_CLIENT_CERTIFICATE_REQUIRED on the instance IP configuration.",
+    falsePositiveGuard:
+      "Only explicit require_ssl=false or weak ssl_mode values fire; missing/unknown is skipped.",
+  },
+  {
+    key: "google_cloud_sql_backups_disabled",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "Google Cloud SQL instance does not have automated backups enabled",
+    category: "Cloud SQL instances",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Cloud SQL instance has automated backups disabled, which may affect recoverability.",
+    whatItChecks: "backup_enabled=false on a Cloud SQL instance record.",
+    whyItMatters:
+      "Without automated backups, recovering from accidental deletion or corruption may not be possible and may require review.",
+    evidence: "instance_name, project_id, region, database_version, backup_enabled.",
+    remediation:
+      "Enable automated backups in the instance settings; consider enabling point-in-time recovery (PITR).",
+    falsePositiveGuard: "Only an explicit backup_enabled=false fires; missing/unknown is skipped.",
+  },
+  {
+    key: "google_cloud_sql_deletion_protection_disabled",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "Google Cloud SQL instance does not have deletion protection enabled",
+    category: "Cloud SQL instances",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Cloud SQL instance does not have deletion protection enabled, which may allow accidental deletion.",
+    whatItChecks: "deletion_protection_enabled=false on a Cloud SQL instance record.",
+    whyItMatters:
+      "Without deletion protection, the instance can be deleted with a single API call and may require review.",
+    evidence: "instance_name, project_id, region, database_version, deletion_protection_enabled.",
+    remediation:
+      "Set deletionProtectionEnabled=true on the instance settings.",
+    falsePositiveGuard:
+      "Only an explicit deletion_protection_enabled=false fires; missing/unknown is skipped.",
+  },
+  {
+    key: "google_cloud_run_public_invoker",
+    provider: "google_cloud",
+    severity: "high",
+    title: "Google Cloud Run service allows public invocation",
+    category: "Cloud Run services",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Cloud Run service IAM policy grants roles/run.invoker to allUsers or allAuthenticatedUsers, allowing public invocation.",
+    whatItChecks:
+      "public_invoker_allowed=true (allUsers or allAuthenticatedUsers in roles/run.invoker binding) on a Cloud Run service record.",
+    whyItMatters:
+      "Public invocation may broaden service access and may require review. ConfigTrace does not confirm invocation events or unauthorized access.",
+    evidence:
+      "service_name, project_id, region, ingress, public_invoker_allowed, invoker_policy_summary counts. Member identities are never stored.",
+    remediation:
+      "Remove allUsers / allAuthenticatedUsers from the service's IAM policy; restrict invocation to specific identities.",
+    falsePositiveGuard:
+      "Only an explicit public sentinel on roles/run.invoker fires; counts not identities are used.",
+  },
+  {
+    key: "google_cloud_run_all_ingress",
+    provider: "google_cloud",
+    severity: "high",
+    severityNote: "High when public_invoker_allowed is also true; medium otherwise.",
+    title: "Google Cloud Run service allows all ingress traffic",
+    category: "Cloud Run services",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Cloud Run service ingress is set to INGRESS_TRAFFIC_ALL, allowing all traffic including from the public internet.",
+    whatItChecks: "ingress=INGRESS_TRAFFIC_ALL on a Cloud Run service record.",
+    whyItMatters:
+      "All-ingress allows public internet traffic to reach the service endpoint and may require review.",
+    evidence: "service_name, project_id, region, ingress, public_invoker_allowed.",
+    remediation:
+      "Set ingress to INGRESS_TRAFFIC_INTERNAL_ONLY or INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER if public internet access is not required.",
+    falsePositiveGuard:
+      "Only INGRESS_TRAFFIC_ALL fires; internal or load-balancer-only ingress does not fire.",
+  },
+  {
+    key: "google_cloud_gke_public_control_plane",
+    provider: "google_cloud",
+    severity: "high",
+    title: "GKE cluster control plane appears publicly reachable without authorized network restrictions",
+    category: "GKE clusters",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "GKE cluster has a public control plane endpoint with no master authorized network CIDR restrictions.",
+    whatItChecks:
+      "public_endpoint_enabled=true AND master_authorized_networks_count=0 on a GKE cluster record.",
+    whyItMatters:
+      "A publicly reachable control plane with no IP restrictions may require review. ConfigTrace does not confirm actual reachability, compromise, or unauthorized access.",
+    evidence:
+      "cluster_name, project_id, location, public_endpoint_enabled, master_authorized_networks_count.",
+    remediation:
+      "Enable masterAuthorizedNetworksConfig with the minimum necessary CIDR ranges, or enable the private endpoint (enablePrivateEndpoint=true).",
+    falsePositiveGuard:
+      "Fires only when public_endpoint_enabled=true AND master_authorized_networks_count is 0 or absent; clusters with authorized networks are not flagged.",
+  },
+  {
+    key: "google_cloud_gke_legacy_abac_enabled",
+    provider: "google_cloud",
+    severity: "high",
+    title: "GKE cluster has legacy ABAC enabled",
+    category: "GKE clusters",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "GKE cluster has legacy attribute-based access control (ABAC) enabled, which is a deprecated authorization mode.",
+    whatItChecks: "legacy_abac_enabled=true on a GKE cluster record.",
+    whyItMatters:
+      "Legacy ABAC may grant broader access than intended by RBAC policies and may require review.",
+    evidence: "cluster_name, project_id, location, legacy_abac_enabled.",
+    remediation:
+      "Disable legacy ABAC (legacyAbac.enabled=false) and migrate access control to Kubernetes RBAC.",
+    falsePositiveGuard: "Only an explicit legacy_abac_enabled=true fires; missing/unknown is skipped.",
+  },
+  {
+    key: "google_cloud_gke_network_policy_disabled",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "GKE cluster does not have network policy enforcement enabled",
+    category: "GKE clusters",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "GKE cluster does not have a network policy provider enabled, meaning all pod-to-pod traffic is allowed by default.",
+    whatItChecks: "network_policy_enabled=false on a GKE cluster record.",
+    whyItMatters:
+      "Without network policy, lateral movement between pods is unrestricted and may require review.",
+    evidence: "cluster_name, project_id, location, network_policy_enabled.",
+    remediation:
+      "Enable networkPolicy.enabled=true and configure Kubernetes NetworkPolicy resources to restrict pod-to-pod traffic.",
+    falsePositiveGuard:
+      "Only an explicit network_policy_enabled=false fires; absence of the field is common and treated conservatively at medium confidence.",
+  },
+  {
+    key: "google_cloud_gke_workload_identity_disabled",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "GKE cluster does not have Workload Identity enabled",
+    category: "GKE clusters",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "GKE cluster does not have Workload Identity configured, meaning workloads may use node-scoped service account credentials.",
+    whatItChecks:
+      "workload_identity_enabled=false (no workloadPool configured) on a GKE cluster record.",
+    whyItMatters:
+      "Without Workload Identity, all workloads on a node share the node's service account credentials, which may broaden credential access and may require review.",
+    evidence: "cluster_name, project_id, location, workload_identity_enabled.",
+    remediation:
+      "Enable Workload Identity by configuring workloadIdentityConfig.workloadPool and migrate workloads to per-pod IAM bindings.",
+    falsePositiveGuard:
+      "Fires when workloadPool is absent/empty; verified absence of workload identity is the default cluster state.",
+  },
+  {
+    key: "google_cloud_service_account_user_managed_keys",
+    provider: "google_cloud",
+    severity: "high",
+    severityNote: "High when user_managed_key_count >= 5; medium otherwise.",
+    title: "Google Cloud service accounts have user-managed keys",
+    category: "Service account keys",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Project has one or more user-managed service account keys, which require manual rotation and may increase credential-management risk.",
+    whatItChecks:
+      "user_managed_key_count > 0 on the project-level service account key summary record.",
+    whyItMatters:
+      "User-managed keys are long-lived credentials that must be rotated manually. ConfigTrace does not confirm that keys are in use, were leaked, or represent unauthorized access.",
+    evidence:
+      "project_id, service_account_count, user_managed_key_count. SA emails and key IDs are never stored.",
+    remediation:
+      "Migrate to Workload Identity for GCP workloads. For external workloads, use Workload Identity Federation or enforce key rotation policies.",
+    falsePositiveGuard:
+      "Only fires when user_managed_key_count > 0; SA emails and key material are never read or stored.",
+  },
+  {
+    key: "google_cloud_service_account_old_keys",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "Google Cloud service accounts have aged user-managed keys",
+    category: "Service account keys",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Project has user-managed service account keys older than 90 days, which may indicate stale credentials requiring rotation.",
+    whatItChecks:
+      "old_user_managed_key_count > 0 OR oldest_key_age_days >= 90 on the project-level service account key summary record.",
+    whyItMatters:
+      "Long-lived keys that are not rotated increase the window during which a compromised key could be used and may require review.",
+    evidence:
+      "project_id, user_managed_key_count, old_user_managed_key_count, oldest_key_age_days.",
+    remediation:
+      "Rotate or delete user-managed keys older than 90 days. Consider migrating to Workload Identity.",
+    falsePositiveGuard:
+      "Only fires when old_user_managed_key_count > 0 or oldest_key_age_days >= 90; computed from validAfterTime only — no key material is read.",
+  },
+  {
+    key: "google_cloud_secret_manager_auto_replication_without_cmek",
+    provider: "google_cloud",
+    severity: "low",
+    title: "Google Cloud Secret Manager uses automatic replication without customer-managed encryption",
+    category: "Secret Manager",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "Project has Secret Manager secrets using automatic replication without customer-managed encryption keys (CMEK).",
+    whatItChecks:
+      "automatic_replication_count > 0 AND customer_managed_encryption_count == 0 on the project-level Secret Manager summary record.",
+    whyItMatters:
+      "Secrets are encrypted at rest with Google-managed keys by default. This is a governance posture finding relevant when CMEK is required by policy.",
+    evidence:
+      "project_id, secret_count, automatic_replication_count, customer_managed_encryption_count. Secret names and values are never stored.",
+    remediation:
+      "Configure CMEK on Secret Manager secrets where required by policy. Create a Cloud KMS key and grant Secret Manager the necessary role.",
+    falsePositiveGuard:
+      "Only fires when automatic_replication_count > 0 AND customer_managed_encryption_count == 0; secret names and values are never read.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -1714,6 +1977,19 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "App Service / Functions",
       "SQL Servers",
       "AKS Clusters",
+    ],
+  },
+  {
+    provider: "google_cloud",
+    surfaces: [
+      "IAM policy bindings",
+      "VPC firewall rules",
+      "Cloud Storage buckets",
+      "Cloud SQL instances",
+      "Cloud Run services",
+      "GKE clusters",
+      "Service account keys",
+      "Secret Manager",
     ],
   },
 ];

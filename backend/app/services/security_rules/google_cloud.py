@@ -58,7 +58,12 @@ from typing import Any
 
 from app.connectors.google_cloud_schema import (
     GOOGLE_CLOUD_FIREWALL_RULE,
+    GOOGLE_CLOUD_GKE_CLUSTER,
     GOOGLE_CLOUD_IAM_POLICY_SUMMARY,
+    GOOGLE_CLOUD_RUN_SERVICE,
+    GOOGLE_CLOUD_SECRET_MANAGER_SUMMARY,
+    GOOGLE_CLOUD_SERVICE_ACCOUNT_KEY_SUMMARY,
+    GOOGLE_CLOUD_SQL_INSTANCE,
     GOOGLE_CLOUD_STORAGE_BUCKET,
 )
 from app.services.security_rules.base import (
@@ -83,6 +88,31 @@ _RULE_STORAGE_UNIFORM_ACCESS_DISABLED = "google_cloud_storage_uniform_access_dis
 _RULE_STORAGE_VERSIONING_DISABLED = "google_cloud_storage_versioning_disabled"
 _RULE_STORAGE_RETENTION_NOT_LOCKED = "google_cloud_storage_retention_not_locked"
 
+# M78C — Cloud SQL
+_RULE_SQL_PUBLIC_NETWORK_ACCESS = "google_cloud_sql_public_network_access"
+_RULE_SQL_WEAK_TLS = "google_cloud_sql_weak_tls"
+_RULE_SQL_BACKUPS_DISABLED = "google_cloud_sql_backups_disabled"
+_RULE_SQL_DELETION_PROTECTION_DISABLED = "google_cloud_sql_deletion_protection_disabled"
+
+# M78C — Cloud Run
+_RULE_RUN_PUBLIC_INVOKER = "google_cloud_run_public_invoker"
+_RULE_RUN_ALL_INGRESS = "google_cloud_run_all_ingress"
+
+# M78C — GKE
+_RULE_GKE_PUBLIC_CONTROL_PLANE = "google_cloud_gke_public_control_plane"
+_RULE_GKE_LEGACY_ABAC_ENABLED = "google_cloud_gke_legacy_abac_enabled"
+_RULE_GKE_NETWORK_POLICY_DISABLED = "google_cloud_gke_network_policy_disabled"
+_RULE_GKE_WORKLOAD_IDENTITY_DISABLED = "google_cloud_gke_workload_identity_disabled"
+
+# M78C — Service account keys
+_RULE_SA_USER_MANAGED_KEYS = "google_cloud_service_account_user_managed_keys"
+_RULE_SA_OLD_KEYS = "google_cloud_service_account_old_keys"
+
+# M78C — Secret Manager
+_RULE_SECRET_MANAGER_AUTO_REPLICATION_WITHOUT_CMEK = (
+    "google_cloud_secret_manager_auto_replication_without_cmek"
+)
+
 GOOGLE_CLOUD_RULE_KEYS: frozenset[str] = frozenset({
     # IAM
     _RULE_IAM_PUBLIC_MEMBER,
@@ -96,6 +126,24 @@ GOOGLE_CLOUD_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_STORAGE_UNIFORM_ACCESS_DISABLED,
     _RULE_STORAGE_VERSIONING_DISABLED,
     _RULE_STORAGE_RETENTION_NOT_LOCKED,
+    # M78C — Cloud SQL
+    _RULE_SQL_PUBLIC_NETWORK_ACCESS,
+    _RULE_SQL_WEAK_TLS,
+    _RULE_SQL_BACKUPS_DISABLED,
+    _RULE_SQL_DELETION_PROTECTION_DISABLED,
+    # M78C — Cloud Run
+    _RULE_RUN_PUBLIC_INVOKER,
+    _RULE_RUN_ALL_INGRESS,
+    # M78C — GKE
+    _RULE_GKE_PUBLIC_CONTROL_PLANE,
+    _RULE_GKE_LEGACY_ABAC_ENABLED,
+    _RULE_GKE_NETWORK_POLICY_DISABLED,
+    _RULE_GKE_WORKLOAD_IDENTITY_DISABLED,
+    # M78C — Service account keys
+    _RULE_SA_USER_MANAGED_KEYS,
+    _RULE_SA_OLD_KEYS,
+    # M78C — Secret Manager
+    _RULE_SECRET_MANAGER_AUTO_REPLICATION_WITHOUT_CMEK,
 })
 
 # ── Shared constants ─────────────────────────────────────────────────────────
@@ -247,6 +295,17 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
         return _eval_firewall_rule(record)
     if rtype == GOOGLE_CLOUD_STORAGE_BUCKET:
         return _eval_storage_bucket(record)
+    # M78C
+    if rtype == GOOGLE_CLOUD_SQL_INSTANCE:
+        return _eval_sql_instance(record)
+    if rtype == GOOGLE_CLOUD_RUN_SERVICE:
+        return _eval_run_service(record)
+    if rtype == GOOGLE_CLOUD_GKE_CLUSTER:
+        return _eval_gke_cluster(record)
+    if rtype == GOOGLE_CLOUD_SERVICE_ACCOUNT_KEY_SUMMARY:
+        return _eval_service_account_key_summary(record)
+    if rtype == GOOGLE_CLOUD_SECRET_MANAGER_SUMMARY:
+        return _eval_secret_manager_summary(record)
     return []
 
 
@@ -623,6 +682,7 @@ def _eval_firewall_rule(record: dict[str, Any]) -> list[FindingCandidate]:
 # ── Storage bucket ───────────────────────────────────────────────────────────
 
 
+
 # Public-access-prevention values that mean "prevention is enforced" — anything
 # else (missing / empty / "inherited" / "unspecified") means the bucket does
 # NOT enforce public-access prevention.
@@ -819,6 +879,654 @@ def _eval_storage_bucket(record: dict[str, Any]) -> list[FindingCandidate]:
                         "or governance needs.",
                         "Lock the retention policy (note: locking is "
                         "irreversible — confirm the period first).",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out
+
+
+# ── Cloud SQL instance (M78C) ─────────────────────────────────────────────────
+
+
+# SSL mode values that indicate non-strict encryption posture.
+_WEAK_SSL_MODES: frozenset[str] = frozenset({
+    "ALLOW_UNENCRYPTED_AND_ENCRYPTED",
+    "ENCRYPTED_ONLY",  # Encrypts but does not verify client certs — medium risk.
+})
+
+
+def _eval_sql_instance(record: dict[str, Any]) -> list[FindingCandidate]:
+    out: list[FindingCandidate] = []
+    record_id = get_str(record, "record_id") or None
+    instance_name = get_str(record, "instance_name")
+    project_id = get_str(record, "project_id")
+    region = get_str(record, "region")
+    database_version = get_str(record, "database_version")
+    state = get_str(record, "state")
+    public_ip_enabled = record.get("public_ip_enabled")
+    authorized_network_count = record.get("authorized_network_count")
+    require_ssl = record.get("require_ssl")
+    ssl_mode = get_str(record, "ssl_mode")
+    backup_enabled = record.get("backup_enabled")
+    deletion_protection_enabled = record.get("deletion_protection_enabled")
+
+    # A. Public network access
+    if public_ip_enabled is True:
+        if isinstance(authorized_network_count, int) and authorized_network_count > 0:
+            severity = "high"
+        else:
+            severity = "medium"
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_SQL_PUBLIC_NETWORK_ACCESS,
+                finding_key=make_finding_key(_RULE_SQL_PUBLIC_NETWORK_ACCESS, record_id),
+                severity=severity,
+                title="Google Cloud SQL instance allows public network access",
+                description=(
+                    f"Cloud SQL instance '{instance_name}' in project '{project_id}' "
+                    f"has a public IP address enabled. This may broaden database "
+                    f"exposure and requires review. ConfigTrace does not confirm "
+                    f"reachability, compromise, unauthorized access, or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_SQL_PUBLIC_NETWORK_ACCESS,
+                    "instance_name": instance_name,
+                    "project_id": project_id,
+                    "region": region,
+                    "database_version": database_version,
+                    "state": state,
+                    "public_ip_enabled": True,
+                    "authorized_network_count": authorized_network_count,
+                },
+                remediation={
+                    "summary": (
+                        "Disable the public IP address on the Cloud SQL instance "
+                        "and use private IP with authorized networks instead."
+                    ),
+                    "steps": [
+                        "Switch the instance to private IP connectivity using VPC "
+                        "peering or Cloud SQL Auth Proxy.",
+                        "If a public IP is required, restrict authorized networks "
+                        "to the minimum necessary IP ranges.",
+                        "Consider enabling the Cloud SQL Auth Proxy to avoid "
+                        "exposing the database port directly.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # B. Weak SSL/TLS posture
+    ssl_weak = (
+        require_ssl is False
+        or (isinstance(ssl_mode, str) and ssl_mode.upper() in _WEAK_SSL_MODES)
+    )
+    if ssl_weak:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_SQL_WEAK_TLS,
+                finding_key=make_finding_key(_RULE_SQL_WEAK_TLS, record_id),
+                severity="medium",
+                title="Google Cloud SQL instance does not require SSL/TLS",
+                description=(
+                    f"Cloud SQL instance '{instance_name}' in project '{project_id}' "
+                    f"does not require SSL/TLS for all connections "
+                    f"(require_ssl={require_ssl}, ssl_mode='{ssl_mode}'). "
+                    f"This may allow unencrypted database connections and requires "
+                    f"review. {_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_SQL_WEAK_TLS,
+                    "instance_name": instance_name,
+                    "project_id": project_id,
+                    "region": region,
+                    "require_ssl": require_ssl,
+                    "ssl_mode": ssl_mode,
+                },
+                remediation={
+                    "summary": (
+                        "Enable require_ssl on the instance and set ssl_mode "
+                        "to TRUSTED_CLIENT_CERTIFICATE_REQUIRED."
+                    ),
+                    "steps": [
+                        "Set requireSsl=true on the IP configuration, or set "
+                        "sslMode to TRUSTED_CLIENT_CERTIFICATE_REQUIRED.",
+                        "Ensure clients use SSL certificates when connecting.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # C. Backups disabled
+    if backup_enabled is False:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_SQL_BACKUPS_DISABLED,
+                finding_key=make_finding_key(_RULE_SQL_BACKUPS_DISABLED, record_id),
+                severity="medium",
+                title="Google Cloud SQL instance does not have automated backups enabled",
+                description=(
+                    f"Cloud SQL instance '{instance_name}' in project '{project_id}' "
+                    f"has automated backups disabled. This may affect recoverability "
+                    f"and requires review. {_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_SQL_BACKUPS_DISABLED,
+                    "instance_name": instance_name,
+                    "project_id": project_id,
+                    "region": region,
+                    "database_version": database_version,
+                    "backup_enabled": False,
+                },
+                remediation={
+                    "summary": "Enable automated backups on the Cloud SQL instance.",
+                    "steps": [
+                        "Enable automated backups in the instance settings.",
+                        "Consider enabling point-in-time recovery (PITR) as well "
+                        "for finer-grained restore capabilities.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # D. Deletion protection disabled
+    if deletion_protection_enabled is False:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_SQL_DELETION_PROTECTION_DISABLED,
+                finding_key=make_finding_key(
+                    _RULE_SQL_DELETION_PROTECTION_DISABLED, record_id
+                ),
+                severity="medium",
+                title="Google Cloud SQL instance does not have deletion protection enabled",
+                description=(
+                    f"Cloud SQL instance '{instance_name}' in project '{project_id}' "
+                    f"does not have deletion protection enabled. This may allow the "
+                    f"instance to be accidentally deleted and requires review. "
+                    f"{_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_SQL_DELETION_PROTECTION_DISABLED,
+                    "instance_name": instance_name,
+                    "project_id": project_id,
+                    "region": region,
+                    "database_version": database_version,
+                    "deletion_protection_enabled": False,
+                },
+                remediation={
+                    "summary": "Enable deletion protection on the Cloud SQL instance.",
+                    "steps": [
+                        "Set deletionProtectionEnabled=true on the instance settings.",
+                        "Review which principals have permission to update instance "
+                        "settings if needed.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out
+
+
+# ── Cloud Run service (M78C) ──────────────────────────────────────────────────
+
+
+# Cloud Run ingress values that mean "all traffic including public internet".
+_RUN_ALL_INGRESS_VALUES: frozenset[str] = frozenset({
+    "INGRESS_TRAFFIC_ALL",
+    "ALL",
+})
+
+
+def _eval_run_service(record: dict[str, Any]) -> list[FindingCandidate]:
+    out: list[FindingCandidate] = []
+    record_id = get_str(record, "record_id") or None
+    service_name = get_str(record, "service_name")
+    project_id = get_str(record, "project_id")
+    region = get_str(record, "region")
+    ingress = get_str(record, "ingress")
+    public_invoker_allowed = record.get("public_invoker_allowed")
+
+    # E. Public invoker
+    if public_invoker_allowed is True:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_RUN_PUBLIC_INVOKER,
+                finding_key=make_finding_key(_RULE_RUN_PUBLIC_INVOKER, record_id),
+                severity="high",
+                title="Google Cloud Run service allows public invocation",
+                description=(
+                    f"Cloud Run service '{service_name}' in region '{region}' "
+                    f"in project '{project_id}' allows public invocation (allUsers "
+                    f"or allAuthenticatedUsers has roles/run.invoker). This may "
+                    f"broaden service access and requires review. "
+                    f"ConfigTrace does not confirm invocation events or unauthorized "
+                    f"access. {_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_RUN_PUBLIC_INVOKER,
+                    "service_name": service_name,
+                    "project_id": project_id,
+                    "region": region,
+                    "ingress": ingress,
+                    "public_invoker_allowed": True,
+                    "invoker_policy_summary": record.get("invoker_policy_summary"),
+                },
+                remediation={
+                    "summary": (
+                        "Remove the allUsers / allAuthenticatedUsers binding from "
+                        "the Cloud Run service's IAM policy."
+                    ),
+                    "steps": [
+                        "Audit the Cloud Run service IAM policy for public "
+                        "sentinels on roles/run.invoker.",
+                        "Replace with explicit identity bindings scoped to the "
+                        "intended callers.",
+                        "Use VPC-internal ingress combined with authenticated "
+                        "service-to-service calls if public access is not needed.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # F. All-ingress traffic
+    ingress_is_all = (ingress.upper() in _RUN_ALL_INGRESS_VALUES) if ingress else False
+    if ingress_is_all:
+        severity = "high" if public_invoker_allowed is True else "medium"
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_RUN_ALL_INGRESS,
+                finding_key=make_finding_key(_RULE_RUN_ALL_INGRESS, record_id),
+                severity=severity,
+                title="Google Cloud Run service allows all ingress traffic",
+                description=(
+                    f"Cloud Run service '{service_name}' in region '{region}' "
+                    f"in project '{project_id}' has ingress set to "
+                    f"'{ingress}', which allows all traffic including from the public "
+                    f"internet. This may broaden service exposure and requires "
+                    f"review. {_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_RUN_ALL_INGRESS,
+                    "service_name": service_name,
+                    "project_id": project_id,
+                    "region": region,
+                    "ingress": ingress,
+                    "public_invoker_allowed": public_invoker_allowed,
+                },
+                remediation={
+                    "summary": (
+                        "Restrict ingress to internal or internal + load balancer "
+                        "if public internet access is not required."
+                    ),
+                    "steps": [
+                        "Set ingress to INGRESS_TRAFFIC_INTERNAL_ONLY or "
+                        "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER.",
+                        "If public access is needed, ensure IAM restricts "
+                        "invocation to authenticated identities.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out
+
+
+# ── GKE cluster (M78C) ────────────────────────────────────────────────────────
+
+
+def _eval_gke_cluster(record: dict[str, Any]) -> list[FindingCandidate]:
+    out: list[FindingCandidate] = []
+    record_id = get_str(record, "record_id") or None
+    cluster_name = get_str(record, "cluster_name")
+    project_id = get_str(record, "project_id")
+    location = get_str(record, "location")
+    public_endpoint_enabled = record.get("public_endpoint_enabled")
+    master_authorized_networks_count = record.get("master_authorized_networks_count")
+    legacy_abac_enabled = record.get("legacy_abac_enabled")
+    network_policy_enabled = record.get("network_policy_enabled")
+    workload_identity_enabled = record.get("workload_identity_enabled")
+
+    # G. Public control plane without authorized networks
+    public_without_restrictions = (
+        public_endpoint_enabled is True
+        and (
+            master_authorized_networks_count == 0
+            or master_authorized_networks_count is None
+        )
+    )
+    if public_without_restrictions:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_GKE_PUBLIC_CONTROL_PLANE,
+                finding_key=make_finding_key(_RULE_GKE_PUBLIC_CONTROL_PLANE, record_id),
+                severity="high",
+                title="GKE cluster control plane appears publicly reachable without authorized network restrictions",
+                description=(
+                    f"GKE cluster '{cluster_name}' in location '{location}' "
+                    f"in project '{project_id}' has a public control plane endpoint "
+                    f"with no master authorized network restrictions. This may "
+                    f"require review. ConfigTrace does not confirm actual "
+                    f"reachability, compromise, or unauthorized access. "
+                    f"{_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_GKE_PUBLIC_CONTROL_PLANE,
+                    "cluster_name": cluster_name,
+                    "project_id": project_id,
+                    "location": location,
+                    "public_endpoint_enabled": True,
+                    "master_authorized_networks_count": master_authorized_networks_count,
+                },
+                remediation={
+                    "summary": (
+                        "Enable master authorized networks and restrict control "
+                        "plane access to known IP ranges, or enable a private "
+                        "control plane endpoint."
+                    ),
+                    "steps": [
+                        "Enable masterAuthorizedNetworksConfig and add the "
+                        "minimum necessary CIDR ranges.",
+                        "Consider enabling the private endpoint "
+                        "(enablePrivateEndpoint=true) if public API access is "
+                        "not required.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # H. Legacy ABAC enabled
+    if legacy_abac_enabled is True:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_GKE_LEGACY_ABAC_ENABLED,
+                finding_key=make_finding_key(_RULE_GKE_LEGACY_ABAC_ENABLED, record_id),
+                severity="high",
+                title="GKE cluster has legacy attribute-based access control (ABAC) enabled",
+                description=(
+                    f"GKE cluster '{cluster_name}' in location '{location}' "
+                    f"in project '{project_id}' has legacy ABAC enabled. Legacy "
+                    f"ABAC is a deprecated authorization mode that may broaden "
+                    f"access beyond what is intended by RBAC policies and requires "
+                    f"review. {_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_GKE_LEGACY_ABAC_ENABLED,
+                    "cluster_name": cluster_name,
+                    "project_id": project_id,
+                    "location": location,
+                    "legacy_abac_enabled": True,
+                },
+                remediation={
+                    "summary": "Disable legacy ABAC and rely exclusively on Kubernetes RBAC.",
+                    "steps": [
+                        "Disable legacy ABAC (legacyAbac.enabled=false) on the cluster.",
+                        "Ensure all access-control requirements are expressed in "
+                        "RBAC policies before disabling.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # I. Network policy disabled
+    if network_policy_enabled is False:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_GKE_NETWORK_POLICY_DISABLED,
+                finding_key=make_finding_key(
+                    _RULE_GKE_NETWORK_POLICY_DISABLED, record_id
+                ),
+                severity="medium",
+                title="GKE cluster does not have network policy enforcement enabled",
+                description=(
+                    f"GKE cluster '{cluster_name}' in location '{location}' "
+                    f"in project '{project_id}' does not have network policy "
+                    f"enforcement enabled. Without a network policy, all pods can "
+                    f"communicate with each other by default, which may broaden "
+                    f"lateral-movement risk and requires review. "
+                    f"{_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_GKE_NETWORK_POLICY_DISABLED,
+                    "cluster_name": cluster_name,
+                    "project_id": project_id,
+                    "location": location,
+                    "network_policy_enabled": False,
+                },
+                remediation={
+                    "summary": "Enable a network policy provider on the GKE cluster.",
+                    "steps": [
+                        "Enable networkPolicy.enabled=true and choose a provider "
+                        "(e.g. CALICO).",
+                        "Define NetworkPolicy objects in each namespace to restrict "
+                        "pod-to-pod traffic to the minimum necessary.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # J. Workload identity disabled
+    if workload_identity_enabled is False:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_GKE_WORKLOAD_IDENTITY_DISABLED,
+                finding_key=make_finding_key(
+                    _RULE_GKE_WORKLOAD_IDENTITY_DISABLED, record_id
+                ),
+                severity="medium",
+                title="GKE cluster does not have Workload Identity enabled",
+                description=(
+                    f"GKE cluster '{cluster_name}' in location '{location}' "
+                    f"in project '{project_id}' does not have Workload Identity "
+                    f"enabled. Without Workload Identity, workloads must use "
+                    f"node-scoped service account credentials, which may broaden "
+                    f"credential access and requires review. "
+                    f"{_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_GKE_WORKLOAD_IDENTITY_DISABLED,
+                    "cluster_name": cluster_name,
+                    "project_id": project_id,
+                    "location": location,
+                    "workload_identity_enabled": False,
+                },
+                remediation={
+                    "summary": "Enable Workload Identity on the GKE cluster.",
+                    "steps": [
+                        "Enable Workload Identity by setting "
+                        "workloadIdentityConfig.workloadPool=<PROJECT_ID>.svc.id.goog.",
+                        "Migrate workloads to use Kubernetes service accounts "
+                        "annotated with IAM service accounts.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out
+
+
+# ── Service account key summary (M78C) ───────────────────────────────────────
+
+# Key age threshold that elevates a USER_MANAGED key to "old".
+_OLD_KEY_AGE_DAYS = 90
+
+
+def _eval_service_account_key_summary(
+    record: dict[str, Any],
+) -> list[FindingCandidate]:
+    out: list[FindingCandidate] = []
+    record_id = get_str(record, "record_id") or None
+    project_id = get_str(record, "project_id")
+    service_account_count = record.get("service_account_count")
+    user_managed_key_count = record.get("user_managed_key_count")
+    old_user_managed_key_count = record.get("old_user_managed_key_count")
+    oldest_key_age_days = record.get("oldest_key_age_days")
+
+    # K. User-managed keys present
+    if isinstance(user_managed_key_count, int) and user_managed_key_count > 0:
+        severity = "high" if user_managed_key_count >= 5 else "medium"
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_SA_USER_MANAGED_KEYS,
+                finding_key=make_finding_key(_RULE_SA_USER_MANAGED_KEYS, record_id),
+                severity=severity,
+                title="Google Cloud service accounts have user-managed keys",
+                description=(
+                    f"Project '{project_id}' has {user_managed_key_count} "
+                    f"user-managed service account key(s). This may increase "
+                    f"credential-management risk and requires review. "
+                    f"ConfigTrace does not confirm that keys are in use, were "
+                    f"leaked, or represent unauthorized access. "
+                    f"{_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_SA_USER_MANAGED_KEYS,
+                    "project_id": project_id,
+                    "service_account_count": service_account_count,
+                    "user_managed_key_count": user_managed_key_count,
+                },
+                remediation={
+                    "summary": (
+                        "Replace user-managed service account keys with Workload "
+                        "Identity or short-lived credentials."
+                    ),
+                    "steps": [
+                        "Audit which services use user-managed keys and migrate "
+                        "to Workload Identity where possible.",
+                        "For workloads outside GCP, use service account key "
+                        "rotation policies and minimize the number of keys.",
+                        "Delete any user-managed keys that are no longer in use.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # L. Old user-managed keys
+    has_old = (
+        (isinstance(old_user_managed_key_count, int) and old_user_managed_key_count > 0)
+        or (isinstance(oldest_key_age_days, int) and oldest_key_age_days >= _OLD_KEY_AGE_DAYS)
+    )
+    if has_old:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_SA_OLD_KEYS,
+                finding_key=make_finding_key(_RULE_SA_OLD_KEYS, record_id),
+                severity="medium",
+                title="Google Cloud service accounts have aged user-managed keys",
+                description=(
+                    f"Project '{project_id}' has {old_user_managed_key_count or 0} "
+                    f"user-managed service account key(s) older than "
+                    f"{_OLD_KEY_AGE_DAYS} days "
+                    f"(oldest: {oldest_key_age_days} days). Long-lived keys may "
+                    f"increase credential-rotation risk and requires review. "
+                    f"{_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_SA_OLD_KEYS,
+                    "project_id": project_id,
+                    "user_managed_key_count": user_managed_key_count,
+                    "old_user_managed_key_count": old_user_managed_key_count,
+                    "oldest_key_age_days": oldest_key_age_days,
+                },
+                remediation={
+                    "summary": "Rotate or delete service account keys older than 90 days.",
+                    "steps": [
+                        "Identify user-managed keys older than 90 days in IAM.",
+                        "Rotate the keys (create new, update application, delete old).",
+                        "Consider migrating to Workload Identity to eliminate "
+                        "long-lived key management entirely.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out
+
+
+# ── Secret Manager summary (M78C) ─────────────────────────────────────────────
+
+
+def _eval_secret_manager_summary(
+    record: dict[str, Any],
+) -> list[FindingCandidate]:
+    out: list[FindingCandidate] = []
+    record_id = get_str(record, "record_id") or None
+    project_id = get_str(record, "project_id")
+    secret_count = record.get("secret_count")
+    automatic_replication_count = record.get("automatic_replication_count")
+    customer_managed_encryption_count = record.get("customer_managed_encryption_count")
+
+    # M. Automatic replication without CMEK
+    if (
+        isinstance(automatic_replication_count, int)
+        and automatic_replication_count > 0
+        and (
+            not isinstance(customer_managed_encryption_count, int)
+            or customer_managed_encryption_count == 0
+        )
+    ):
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_SECRET_MANAGER_AUTO_REPLICATION_WITHOUT_CMEK,
+                finding_key=make_finding_key(
+                    _RULE_SECRET_MANAGER_AUTO_REPLICATION_WITHOUT_CMEK, record_id
+                ),
+                severity="low",
+                title=(
+                    "Google Cloud Secret Manager uses automatic replication "
+                    "without customer-managed encryption keys"
+                ),
+                description=(
+                    f"Project '{project_id}' has {automatic_replication_count} "
+                    f"Secret Manager secret(s) using automatic replication without "
+                    f"customer-managed encryption keys (CMEK). Secrets are encrypted "
+                    f"at rest using Google-managed keys. This is a governance "
+                    f"posture finding and requires review if CMEK is required "
+                    f"by policy. {_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_SECRET_MANAGER_AUTO_REPLICATION_WITHOUT_CMEK,
+                    "project_id": project_id,
+                    "secret_count": secret_count,
+                    "automatic_replication_count": automatic_replication_count,
+                    "customer_managed_encryption_count": customer_managed_encryption_count,
+                },
+                remediation={
+                    "summary": (
+                        "Configure customer-managed encryption keys (CMEK) on "
+                        "Secret Manager secrets where required by policy."
+                    ),
+                    "steps": [
+                        "Identify secrets that must comply with CMEK requirements.",
+                        "Create a Cloud KMS key and grant Secret Manager the "
+                        "needed roles/cloudkms.cryptoKeyEncrypterDecrypter role.",
+                        "Recreate the affected secrets with the CMEK configuration.",
                     ],
                 },
                 record_id=record_id,

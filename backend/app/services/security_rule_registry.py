@@ -127,6 +127,20 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "google_cloud_storage_uniform_access_disabled",
         "google_cloud_storage_versioning_disabled",
         "google_cloud_storage_retention_not_locked",
+        # Google Cloud — M78C
+        "google_cloud_sql_public_network_access",
+        "google_cloud_sql_weak_tls",
+        "google_cloud_sql_backups_disabled",
+        "google_cloud_sql_deletion_protection_disabled",
+        "google_cloud_run_public_invoker",
+        "google_cloud_run_all_ingress",
+        "google_cloud_gke_public_control_plane",
+        "google_cloud_gke_legacy_abac_enabled",
+        "google_cloud_gke_network_policy_disabled",
+        "google_cloud_gke_workload_identity_disabled",
+        "google_cloud_service_account_user_managed_keys",
+        "google_cloud_service_account_old_keys",
+        "google_cloud_secret_manager_auto_replication_without_cmek",
     }
 )
 

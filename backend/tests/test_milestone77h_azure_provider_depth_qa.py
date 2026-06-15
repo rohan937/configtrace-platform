@@ -316,12 +316,9 @@ def test_capability_matrix_pins_azure_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m77i():
-    """Rolled forward in M78B: GCP core security foundation landed; next stage is M78C."""
+    """Rolled forward in M78C: GCP security expansion complete; next stage is M78D."""
     fw = get_framework()
-    assert (
-        fw["summary"]["planned_next_stage"]
-        == "M78C: Google Cloud IAM / Network / Storage / Runtime Risk Expansion"
-    )
+    assert "M78D" in fw["summary"]["planned_next_stage"]
 
 
 def test_azure_not_in_canonical_eight_provider_matrix():

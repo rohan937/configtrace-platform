@@ -151,6 +151,24 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "google_cloud_storage_uniform_access_disabled": ("google_cloud", "medium", "Cloud Storage buckets"),
     "google_cloud_storage_versioning_disabled": ("google_cloud", "low", "Cloud Storage buckets"),
     "google_cloud_storage_retention_not_locked": ("google_cloud", "medium", "Cloud Storage buckets"),
+    # Google Cloud — M78C: Cloud SQL
+    "google_cloud_sql_public_network_access": ("google_cloud", "high", "Cloud SQL instances"),
+    "google_cloud_sql_weak_tls": ("google_cloud", "medium", "Cloud SQL instances"),
+    "google_cloud_sql_backups_disabled": ("google_cloud", "medium", "Cloud SQL instances"),
+    "google_cloud_sql_deletion_protection_disabled": ("google_cloud", "medium", "Cloud SQL instances"),
+    # Google Cloud — M78C: Cloud Run
+    "google_cloud_run_public_invoker": ("google_cloud", "high", "Cloud Run services"),
+    "google_cloud_run_all_ingress": ("google_cloud", "high", "Cloud Run services"),
+    # Google Cloud — M78C: GKE
+    "google_cloud_gke_public_control_plane": ("google_cloud", "high", "GKE clusters"),
+    "google_cloud_gke_legacy_abac_enabled": ("google_cloud", "high", "GKE clusters"),
+    "google_cloud_gke_network_policy_disabled": ("google_cloud", "medium", "GKE clusters"),
+    "google_cloud_gke_workload_identity_disabled": ("google_cloud", "medium", "GKE clusters"),
+    # Google Cloud — M78C: Service account keys
+    "google_cloud_service_account_user_managed_keys": ("google_cloud", "high", "Service account keys"),
+    "google_cloud_service_account_old_keys": ("google_cloud", "medium", "Service account keys"),
+    # Google Cloud — M78C: Secret Manager
+    "google_cloud_secret_manager_auto_replication_without_cmek": ("google_cloud", "low", "Secret Manager"),
 }
 
 

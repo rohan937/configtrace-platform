@@ -86,6 +86,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -99,8 +100,13 @@ from app.connectors.exceptions import (
 )
 from app.connectors.google_cloud_schema import (
     GOOGLE_CLOUD_FIREWALL_RULE,
+    GOOGLE_CLOUD_GKE_CLUSTER,
     GOOGLE_CLOUD_IAM_POLICY_SUMMARY,
     GOOGLE_CLOUD_PROJECT,
+    GOOGLE_CLOUD_RUN_SERVICE,
+    GOOGLE_CLOUD_SECRET_MANAGER_SUMMARY,
+    GOOGLE_CLOUD_SERVICE_ACCOUNT_KEY_SUMMARY,
+    GOOGLE_CLOUD_SQL_INSTANCE,
     GOOGLE_CLOUD_STORAGE_BUCKET,
     GOOGLE_CLOUD_VPC_NETWORK,
 )
@@ -123,6 +129,13 @@ _CRM_BASE = "https://cloudresourcemanager.googleapis.com"
 _COMPUTE_BASE = "https://compute.googleapis.com"
 _STORAGE_BASE = "https://storage.googleapis.com"
 
+# M78C: additional API endpoints
+_SQLADMIN_BASE = "https://sqladmin.googleapis.com"
+_CLOUDRUN_BASE = "https://run.googleapis.com"
+_CONTAINER_BASE = "https://container.googleapis.com"
+_IAM_BASE = "https://iam.googleapis.com"
+_SECRETMANAGER_BASE = "https://secretmanager.googleapis.com"
+
 _TIMEOUT = 30.0
 _MAX_PAGES = 10
 _MAX_STR_LEN = 200
@@ -131,6 +144,17 @@ _MAX_STR_LEN = 200
 _MAX_FIREWALL_RULES = 200
 _MAX_VPC_NETWORKS = 50
 _MAX_STORAGE_BUCKETS = 200
+
+# M78C per-surface caps.
+_MAX_SQL_INSTANCES = 100
+_MAX_RUN_SERVICES = 100
+_MAX_GKE_CLUSTERS = 50
+_MAX_SERVICE_ACCOUNTS = 200
+# For SA key listing, cap the number of SAs we expand to bound API calls.
+_MAX_SA_KEY_FETCH = 50
+_MAX_SECRETS = 500
+# Key age threshold for "old user-managed key" classification (days).
+_OLD_KEY_AGE_DAYS = 90
 # IAM policy summary caps: at most 20 role names surfaced and at most 100
 # bindings considered before stopping the principal-type bucketing.
 _MAX_IAM_ROLE_NAMES = 20
@@ -312,7 +336,7 @@ def _summarize_firewall_protocol_list(items: Any, cap: int) -> list[dict[str, An
 
 
 class GoogleCloudConnector(BaseConnector):
-    """Google Cloud REST connector for ConfigTrace drift tracking (M78A).
+    """Google Cloud REST connector for ConfigTrace drift tracking (M78A/M78C).
 
     Stateless: credentials are passed at call time; nothing is stored on the
     instance. An OAuth bearer token is fetched per-call and used only within
@@ -856,10 +880,308 @@ class GoogleCloudConnector(BaseConnector):
             "encryption_default_kms_key_present": bool(encryption.get("defaultKmsKeyName")),
         }
 
+    # ── M78C normalizers ─────────────────────────────────────────────────────
+
+    def _normalize_sql_instance(self, raw: dict) -> dict:
+        """Normalise a Cloud SQL Admin API ``instance`` resource (M78C).
+
+        Raw shape (SQL Admin v1beta4 DatabaseInstance):
+            { "name": "my-instance", "project": "my-proj",
+              "databaseVersion": "POSTGRES_15", "region": "us-central1",
+              "state": "RUNNABLE",
+              "settings": {
+                "ipConfiguration": {
+                  "ipv4Enabled": true,
+                  "authorizedNetworks": [...],
+                  "requireSsl": false,   # deprecated but still present
+                  "sslMode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
+                },
+                "backupConfiguration": {"enabled": true, "pointInTimeRecoveryEnabled": false},
+                "deletionProtectionEnabled": false,
+                "availabilityType": "ZONAL"
+              } }
+
+        SECURITY: database names, database users, passwords, connection strings,
+        query data, and row data are NEVER accessed or stored.
+        """
+        settings = raw.get("settings") if isinstance(raw.get("settings"), dict) else {}
+        ip_cfg = settings.get("ipConfiguration") if isinstance(settings.get("ipConfiguration"), dict) else {}
+        backup_cfg = settings.get("backupConfiguration") if isinstance(settings.get("backupConfiguration"), dict) else {}
+        authorized_networks = ip_cfg.get("authorizedNetworks")
+        auth_net_count = len(authorized_networks) if isinstance(authorized_networks, list) else 0
+        instance_name = _trunc(raw.get("name", ""))
+        project_id = _trunc(raw.get("project", ""))
+        return {
+            "record_type": GOOGLE_CLOUD_SQL_INSTANCE,
+            "record_id": f"gcp_sql_{project_id}_{instance_name}",
+            "provider_resource_id": f"projects/{project_id}/instances/{instance_name}",
+            "instance_name": instance_name,
+            "project_id": project_id,
+            "database_version": _trunc(raw.get("databaseVersion", "")),
+            "region": _trunc(raw.get("region", "")),
+            "state": _trunc(raw.get("state", "")),
+            "public_ip_enabled": bool(ip_cfg.get("ipv4Enabled")),
+            "authorized_network_count": auth_net_count,
+            # requireSsl is deprecated but still returned; sslMode is the newer field.
+            "require_ssl": ip_cfg.get("requireSsl"),
+            "ssl_mode": _trunc(ip_cfg.get("sslMode", "")),
+            "backup_enabled": bool(backup_cfg.get("enabled")),
+            "deletion_protection_enabled": bool(settings.get("deletionProtectionEnabled")),
+            "point_in_time_recovery_enabled": bool(backup_cfg.get("pointInTimeRecoveryEnabled")),
+            "availability_type": _trunc(settings.get("availabilityType", "")),
+        }
+
+    def _normalize_run_service(
+        self, raw: dict, invoker_policy: dict | None
+    ) -> dict:
+        """Normalise a Cloud Run Admin API v2 ``Service`` resource (M78C).
+
+        Raw shape (Cloud Run v2 Service):
+            { "name": "projects/my-proj/locations/us-central1/services/my-svc",
+              "ingress": "INGRESS_TRAFFIC_ALL",
+              "launchStage": "GA",
+              "template": {
+                "containers": [
+                  { "env": [
+                      {"name": "FOO", "value": "bar"},
+                      {"name": "SECRET_VAR",
+                       "valueSource": {"secretKeyRef": {"secret": "...", "version": "..."}}}
+                    ]
+                  }
+                ]
+              } }
+
+        SECURITY: env var names, env var values, secret names/values, container
+        args, container image URIs, and signed URLs are NEVER stored. Only safe
+        aggregate metadata (ingress mode, launch stage, env-var count,
+        secret-env-var count, public_invoker_allowed) is kept.
+        """
+        name = raw.get("name", "")
+        # Extract safe identifiers from the service resource name.
+        service_name = name.split("/")[-1] if isinstance(name, str) and "/" in name else _trunc(name)
+        project_id = _parse_segment_after(name, "projects")
+        region = _parse_segment_after(name, "locations")
+
+        # Derive public_invoker_allowed from the IAM policy (counts only).
+        public_invoker_allowed = False
+        invoker_binding_count = 0
+        if isinstance(invoker_policy, dict):
+            for b in (invoker_policy.get("bindings") or []):
+                if not isinstance(b, dict):
+                    continue
+                if b.get("role") == "roles/run.invoker":
+                    members = b.get("members") or []
+                    invoker_binding_count += len(members) if isinstance(members, list) else 0
+                    if isinstance(members, list) and (
+                        "allUsers" in members or "allAuthenticatedUsers" in members
+                    ):
+                        public_invoker_allowed = True
+
+        # Count env vars and secret-backed env vars — never store names/values.
+        template = raw.get("template") if isinstance(raw.get("template"), dict) else {}
+        containers = template.get("containers") if isinstance(template.get("containers"), list) else []
+        env_var_count = 0
+        secret_env_var_count = 0
+        for container in containers[:10]:  # cap to avoid pathological inputs
+            if not isinstance(container, dict):
+                continue
+            for env in (container.get("env") or []):
+                if not isinstance(env, dict):
+                    continue
+                env_var_count += 1
+                vs = env.get("valueSource")
+                if isinstance(vs, dict) and vs.get("secretKeyRef"):
+                    secret_env_var_count += 1
+
+        return {
+            "record_type": GOOGLE_CLOUD_RUN_SERVICE,
+            "record_id": f"gcp_run_{_trunc(project_id)}_{_trunc(region)}_{_trunc(service_name)}",
+            "provider_resource_id": _trunc(name),
+            "service_name": _trunc(service_name),
+            "project_id": _trunc(project_id),
+            "region": _trunc(region),
+            "ingress": _trunc(raw.get("ingress", "")),
+            "launch_stage": _trunc(raw.get("launchStage", "")),
+            "public_invoker_allowed": public_invoker_allowed,
+            "invoker_policy_summary": {"invoker_binding_count": invoker_binding_count},
+            "environment_variable_count": env_var_count,
+            "secret_environment_variable_count": secret_env_var_count,
+        }
+
+    def _normalize_gke_cluster(self, raw: dict) -> dict:
+        """Normalise a Kubernetes Engine API v1 ``Cluster`` resource (M78C).
+
+        Raw shape (Container v1 Cluster):
+            { "name": "my-cluster", "location": "us-central1",
+              "selfLink": "https://container.googleapis.com/v1/projects/{proj}/...",
+              "privateClusterConfig": {
+                "enablePrivateNodes": true,
+                "enablePrivateEndpoint": false,
+                "masterIpv4CidrBlock": "172.16.0.0/28"
+              },
+              "masterAuthorizedNetworksConfig": {
+                "enabled": true,
+                "cidrBlocks": [{"cidrBlock": "10.0.0.0/8", "displayName": "..."}]
+              },
+              "networkPolicy": {"enabled": true, "provider": "CALICO"},
+              "workloadIdentityConfig": {"workloadPool": "my-proj.svc.id.goog"},
+              "shieldedNodes": {"enabled": true},
+              "legacyAbac": {"enabled": false},
+              "releaseChannel": {"channel": "REGULAR"} }
+
+        SECURITY: kubeconfig, certs, node names, pod specs, workload data,
+        secrets, logs, and node-pool details are NEVER accessed or stored.
+        """
+        self_link = raw.get("selfLink", "")
+        project_id = _parse_segment_after(self_link, "projects") if self_link else ""
+        name = _trunc(raw.get("name", ""))
+        location = _trunc(raw.get("location", ""))
+
+        private_cfg = raw.get("privateClusterConfig") if isinstance(raw.get("privateClusterConfig"), dict) else {}
+        man_cfg = raw.get("masterAuthorizedNetworksConfig") if isinstance(raw.get("masterAuthorizedNetworksConfig"), dict) else {}
+        network_policy = raw.get("networkPolicy") if isinstance(raw.get("networkPolicy"), dict) else {}
+        workload_id = raw.get("workloadIdentityConfig") if isinstance(raw.get("workloadIdentityConfig"), dict) else {}
+        shielded = raw.get("shieldedNodes") if isinstance(raw.get("shieldedNodes"), dict) else {}
+        legacy_abac = raw.get("legacyAbac") if isinstance(raw.get("legacyAbac"), dict) else {}
+        release_ch = raw.get("releaseChannel") if isinstance(raw.get("releaseChannel"), dict) else {}
+
+        # masterAuthorizedNetworks count (only when the feature is enabled).
+        man_enabled = bool(man_cfg.get("enabled"))
+        cidr_blocks = man_cfg.get("cidrBlocks") if isinstance(man_cfg.get("cidrBlocks"), list) else []
+        man_count = len(cidr_blocks) if man_enabled else 0
+
+        # public_endpoint_enabled: True when enablePrivateEndpoint is absent/False.
+        enable_private_ep = bool(private_cfg.get("enablePrivateEndpoint"))
+        public_endpoint_enabled = not enable_private_ep
+
+        # workload_identity_enabled: True when workloadPool is set and non-empty.
+        workload_pool = workload_id.get("workloadPool", "")
+        workload_identity_enabled = bool(isinstance(workload_pool, str) and workload_pool.strip())
+
+        return {
+            "record_type": GOOGLE_CLOUD_GKE_CLUSTER,
+            "record_id": f"gcp_gke_{_trunc(project_id)}_{location}_{name}",
+            "provider_resource_id": _trunc(self_link),
+            "cluster_name": name,
+            "project_id": _trunc(project_id),
+            "location": location,
+            "private_cluster_enabled": bool(private_cfg.get("enablePrivateNodes")),
+            "master_authorized_networks_count": man_count,
+            "network_policy_enabled": bool(network_policy.get("enabled")),
+            "workload_identity_enabled": workload_identity_enabled,
+            "shielded_nodes_enabled": bool(shielded.get("enabled")),
+            "legacy_abac_enabled": bool(legacy_abac.get("enabled")),
+            "public_endpoint_enabled": public_endpoint_enabled,
+            "release_channel": _trunc(release_ch.get("channel", "")),
+        }
+
+    def _normalize_service_account_key_summary(
+        self,
+        project_id: str,
+        sa_count: int,
+        disabled_sa_count: int,
+        all_keys: list[dict],
+    ) -> dict:
+        """Produce a project-level aggregate of service account key metadata (M78C).
+
+        Args:
+            project_id:       GCP project id.
+            sa_count:         Total number of service accounts observed.
+            disabled_sa_count: Number of disabled service accounts.
+            all_keys:         Flat list of raw key dicts (keyType, validAfterTime,
+                              disabled) aggregated across all sampled SAs.
+
+        SECURITY: SA emails, key IDs, private key material, OAuth tokens, and
+        refresh tokens are NEVER stored. Only aggregate counts are surfaced.
+        """
+        user_managed_key_count = 0
+        old_user_managed_key_count = 0
+        oldest_key_age_days: int | None = None
+
+        now = datetime.now(timezone.utc)
+        for key in all_keys:
+            if not isinstance(key, dict):
+                continue
+            if key.get("keyType") != "USER_MANAGED":
+                continue
+            user_managed_key_count += 1
+            valid_after = key.get("validAfterTime", "")
+            if isinstance(valid_after, str) and valid_after:
+                try:
+                    dt = datetime.fromisoformat(valid_after.replace("Z", "+00:00"))
+                    age = max(0, (now - dt).days)
+                    if oldest_key_age_days is None or age > oldest_key_age_days:
+                        oldest_key_age_days = age
+                    if age >= _OLD_KEY_AGE_DAYS:
+                        old_user_managed_key_count += 1
+                except (ValueError, TypeError, AttributeError, OverflowError):
+                    pass
+
+        return {
+            "record_type": GOOGLE_CLOUD_SERVICE_ACCOUNT_KEY_SUMMARY,
+            "record_id": f"gcp_sa_key_summary_{project_id}",
+            "provider_resource_id": f"projects/{project_id}/serviceAccountKeySummary",
+            "project_id": project_id,
+            "service_account_count": sa_count,
+            "disabled_service_account_count": disabled_sa_count,
+            "user_managed_key_count": user_managed_key_count,
+            "old_user_managed_key_count": old_user_managed_key_count,
+            "oldest_key_age_days": oldest_key_age_days,
+        }
+
+    def _normalize_secret_manager_summary(
+        self, project_id: str, secrets: list
+    ) -> dict:
+        """Produce a project-level aggregate of Secret Manager metadata (M78C).
+
+        Args:
+            project_id: GCP project id.
+            secrets:    Raw list of Secret resource dicts from the SM API.
+
+        SECURITY: secret NAMES, secret VALUES, version payloads, and secret
+        label values are NEVER stored. Only aggregate counts and replication
+        policy distribution are surfaced.
+        """
+        secret_count = 0
+        automatic_replication_count = 0
+        user_managed_replication_count = 0
+        customer_managed_encryption_count = 0
+
+        for raw in secrets:
+            if not isinstance(raw, dict):
+                continue
+            secret_count += 1
+            replication = raw.get("replication") if isinstance(raw.get("replication"), dict) else {}
+            if "automatic" in replication:
+                automatic_replication_count += 1
+                auto = replication.get("automatic")
+                if isinstance(auto, dict) and auto.get("customerManagedEncryption"):
+                    customer_managed_encryption_count += 1
+            elif "userManaged" in replication:
+                user_managed_replication_count += 1
+                # Count once per secret even if multiple replicas use CMEK.
+                um = replication.get("userManaged")
+                if isinstance(um, dict):
+                    for replica in (um.get("replicas") or []):
+                        if isinstance(replica, dict) and replica.get("customerManagedEncryption"):
+                            customer_managed_encryption_count += 1
+                            break
+
+        return {
+            "record_type": GOOGLE_CLOUD_SECRET_MANAGER_SUMMARY,
+            "record_id": f"gcp_secret_mgr_summary_{project_id}",
+            "provider_resource_id": f"projects/{project_id}/secretManagerSummary",
+            "project_id": project_id,
+            "secret_count": secret_count,
+            "automatic_replication_count": automatic_replication_count,
+            "user_managed_replication_count": user_managed_replication_count,
+            "customer_managed_encryption_count": customer_managed_encryption_count,
+        }
+
     # ── Main fetch ────────────────────────────────────────────────────────────
 
     def fetch(self, credentials: dict) -> list[dict]:
-        """Fetch all M78A resources and return a flat list of safe records.
+        """Fetch all M78A/M78C resources and return a flat list of safe records.
 
         Fail-soft per surface: if a single resource type fails, a warning is
         logged and collection continues for the remaining types. The caller
@@ -1013,6 +1335,140 @@ class GoogleCloudConnector(BaseConnector):
         except Exception as exc:
             logger.warning(
                 "gcp: failed to fetch storage buckets: %s",
+                _trunc(str(exc)),
+            )
+
+        # ── 6. Cloud SQL instances (M78C) ─────────────────────────────────────
+        try:
+            url = f"{_SQLADMIN_BASE}/sql/v1beta4/projects/{project_id}/instances"
+            items = self._paginate(token, url, items_key="items")
+            for raw in items[:_MAX_SQL_INSTANCES]:
+                if isinstance(raw, dict):
+                    try:
+                        records.append(self._normalize_sql_instance(raw))
+                    except Exception as exc:
+                        logger.warning(
+                            "gcp: failed to normalise SQL instance %s: %s",
+                            _trunc(raw.get("name", "")), _trunc(str(exc)),
+                        )
+        except Exception as exc:
+            logger.warning(
+                "gcp: failed to fetch Cloud SQL instances: %s",
+                _trunc(str(exc)),
+            )
+
+        # ── 7. Cloud Run services (M78C) ──────────────────────────────────────
+        try:
+            url = (
+                f"{_CLOUDRUN_BASE}/v2/projects/{project_id}"
+                "/locations/-/services"
+            )
+            svc_items = self._paginate(token, url, items_key="services")
+            for raw in svc_items[:_MAX_RUN_SERVICES]:
+                if not isinstance(raw, dict):
+                    continue
+                # Fetch invoker IAM policy per service (fail-soft).
+                invoker_policy: dict | None = None
+                svc_name = raw.get("name", "")
+                if isinstance(svc_name, str) and svc_name:
+                    try:
+                        iam_url = f"{_CLOUDRUN_BASE}/v2/{svc_name}:getIamPolicy"
+                        invoker_policy = self._get(token, iam_url)
+                    except Exception:
+                        pass  # Not fatal — public_invoker_allowed defaults False
+                try:
+                    records.append(self._normalize_run_service(raw, invoker_policy))
+                except Exception as exc:
+                    logger.warning(
+                        "gcp: failed to normalise Cloud Run service: %s",
+                        _trunc(str(exc)),
+                    )
+        except Exception as exc:
+            logger.warning(
+                "gcp: failed to fetch Cloud Run services: %s",
+                _trunc(str(exc)),
+            )
+
+        # ── 8. GKE clusters (M78C) ────────────────────────────────────────────
+        try:
+            url = (
+                f"{_CONTAINER_BASE}/v1/projects/{project_id}"
+                "/locations/-/clusters"
+            )
+            gke_data = self._get(token, url)
+            clusters = gke_data.get("clusters", []) if isinstance(gke_data, dict) else []
+            for raw in (clusters if isinstance(clusters, list) else [])[:_MAX_GKE_CLUSTERS]:
+                if isinstance(raw, dict):
+                    try:
+                        records.append(self._normalize_gke_cluster(raw))
+                    except Exception as exc:
+                        logger.warning(
+                            "gcp: failed to normalise GKE cluster %s: %s",
+                            _trunc(raw.get("name", "")), _trunc(str(exc)),
+                        )
+        except Exception as exc:
+            logger.warning(
+                "gcp: failed to fetch GKE clusters: %s",
+                _trunc(str(exc)),
+            )
+
+        # ── 9. Service account key summary (M78C) ────────────────────────────
+        try:
+            sa_url = f"{_IAM_BASE}/v1/projects/{project_id}/serviceAccounts"
+            sa_items = self._paginate(token, sa_url, items_key="accounts")
+            sa_count = len(sa_items[:_MAX_SERVICE_ACCOUNTS])
+            disabled_sa_count = sum(
+                1 for sa in sa_items[:_MAX_SERVICE_ACCOUNTS]
+                if isinstance(sa, dict) and sa.get("disabled")
+            )
+            # Collect keys for a sample of SAs (capped to bound API calls).
+            # SECURITY: SA emails are used only as API path parameters; they are
+            # NEVER stored in the normalized record. Only aggregate counts are kept.
+            all_keys: list[dict] = []
+            for sa in sa_items[:_MAX_SA_KEY_FETCH]:
+                if not isinstance(sa, dict):
+                    continue
+                sa_name = sa.get("name", "")
+                if not isinstance(sa_name, str) or not sa_name:
+                    continue
+                try:
+                    key_resp = self._get(
+                        token,
+                        f"{_IAM_BASE}/v1/{sa_name}/keys",
+                    )
+                    keys = key_resp.get("keys", []) if isinstance(key_resp, dict) else []
+                    if isinstance(keys, list):
+                        all_keys.extend(keys)
+                except Exception:
+                    pass  # Per-SA key fetch failure is non-fatal
+            records.append(
+                self._normalize_service_account_key_summary(
+                    project_id, sa_count, disabled_sa_count, all_keys
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "gcp: failed to fetch service account key summary: %s",
+                _trunc(str(exc)),
+            )
+
+        # ── 10. Secret Manager summary (M78C) ─────────────────────────────────
+        # SECURITY: secret names are NEVER stored. Only aggregate counts.
+        # This surface requires the Secret Manager API to be enabled and the
+        # service account to have secretmanager.secrets.list permission. Fail-soft
+        # (a permission-denied or API-not-enabled 403/404 is logged and skipped).
+        try:
+            sm_url = f"{_SECRETMANAGER_BASE}/v1/projects/{project_id}/secrets"
+            sm_items = self._paginate(token, sm_url, items_key="secrets")
+            records.append(
+                self._normalize_secret_manager_summary(
+                    project_id, sm_items[:_MAX_SECRETS]
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "gcp: failed to fetch Secret Manager summary "
+                "(surface may require secretmanager.secrets.list permission): %s",
                 _trunc(str(exc)),
             )
 

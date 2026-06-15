@@ -392,7 +392,7 @@ def test_expansion_framework_next_stage_is_m77h():
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78C" in stage
+    assert "M78D" in stage
 
 
 # ── 11. demo case copy is review-safe (no overclaim) ────────────────────────

@@ -226,8 +226,9 @@ class TestGoogleCloudSchemaConstants:
     def test_record_types_is_frozenset(self):
         assert isinstance(GOOGLE_CLOUD_RECORD_TYPES, frozenset)
 
-    def test_record_types_has_exactly_five_members(self):
-        assert len(GOOGLE_CLOUD_RECORD_TYPES) == 5
+    def test_record_types_has_at_least_five_members(self):
+        # M78A introduced 5 record types; M78C expanded the set further.
+        assert len(GOOGLE_CLOUD_RECORD_TYPES) >= 5
 
     def test_project_constant_value_and_membership(self):
         assert GOOGLE_CLOUD_PROJECT == "google_cloud_project"
@@ -250,12 +251,13 @@ class TestGoogleCloudSchemaConstants:
         assert GOOGLE_CLOUD_STORAGE_BUCKET in GOOGLE_CLOUD_RECORD_TYPES
 
     def test_all_five_constants_in_set(self):
+        # The M78A-introduced types must remain in the set; M78C adds more.
         m78a_types = {
             GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_IAM_POLICY_SUMMARY,
             GOOGLE_CLOUD_VPC_NETWORK, GOOGLE_CLOUD_FIREWALL_RULE,
             GOOGLE_CLOUD_STORAGE_BUCKET,
         }
-        assert m78a_types == set(GOOGLE_CLOUD_RECORD_TYPES)
+        assert m78a_types.issubset(set(GOOGLE_CLOUD_RECORD_TYPES))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1065,13 +1067,14 @@ def test_google_cloud_in_security_coverage_providers():
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_expansion_framework_planned_next_stage_points_to_m78c():
-    """M78B rolled the next-stage pointer forward to M78C."""
+def test_expansion_framework_planned_next_stage_is_beyond_m78c():
+    """M78C is complete; the planned next stage now points to M78D or later."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78C" in stage
-    assert "Google Cloud" in stage
+    # M78C completed — next must be M78D (Audit Log Ingestion) or later.
+    assert "M78" in stage
+    assert "M78C" not in stage  # M78C is done; pointer has advanced
 
 
 def test_expansion_framework_no_longer_recommends_google_cloud():

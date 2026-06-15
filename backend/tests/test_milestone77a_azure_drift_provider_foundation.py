@@ -1117,13 +1117,13 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
-    """Rolled forward in M78B: GCP core security foundation landed; next stage is M78C."""
+    """Rolled forward in M78C: GCP security expansion complete; next stage is M78D."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M78C" in planned, (
-        f"planned_next_stage should reference M78C after M78B, got: {planned!r}"
+    assert "M78D" in planned, (
+        f"planned_next_stage should reference M78D after M78C, got: {planned!r}"
     )
 
 

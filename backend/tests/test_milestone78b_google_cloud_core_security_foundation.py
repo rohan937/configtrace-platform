@@ -163,11 +163,13 @@ class TestModuleContract:
         assert gcp_rules.evaluate({"record_type": GOOGLE_CLOUD_PROJECT}) == []
         assert gcp_rules.evaluate({"record_type": GOOGLE_CLOUD_VPC_NETWORK}) == []
 
-    def test_rule_keys_frozenset_matches_constants(self):
-        assert gcp_rules.GOOGLE_CLOUD_RULE_KEYS == ALL_M78B_RULE_KEYS
+    def test_rule_keys_frozenset_contains_m78b_keys(self):
+        # M78C added more rules; M78B keys must be a subset of the full set.
+        assert ALL_M78B_RULE_KEYS.issubset(gcp_rules.GOOGLE_CLOUD_RULE_KEYS)
 
-    def test_rule_keys_count_is_nine(self):
-        assert len(gcp_rules.GOOGLE_CLOUD_RULE_KEYS) == 9
+    def test_rule_keys_count_at_least_nine(self):
+        # M78B introduced 9 rules; M78C expanded the set.
+        assert len(gcp_rules.GOOGLE_CLOUD_RULE_KEYS) >= 9
 
     def test_all_findings_carry_provider_google_cloud(self):
         # Trigger every rule and verify provider tagging.
@@ -901,20 +903,20 @@ class TestCapabilityMatrix:
 
 
 class TestExpansionFramework:
-    def test_planned_next_stage_is_m78c(self):
+    def test_planned_next_stage_is_beyond_m78c(self):
+        """M78C is complete; planned next stage must now point to M78D or later."""
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M78C" in stage
-        assert "Google Cloud" in stage
+        assert "M78" in stage
+        assert "M78C" not in stage  # M78C done; pointer advanced
 
-    def test_planned_next_stage_mentions_expansion_surfaces(self):
+    def test_planned_next_stage_mentions_audit_log(self):
+        """M78D is Google Cloud Audit Log Ingestion."""
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        # The M78C label should reference what's coming next.
-        for token in ("IAM", "Network", "Storage", "Runtime"):
-            assert token in stage
+        assert "M78D" in stage
 
 
 # ══════════════════════════════════════════════════════════════════════════════

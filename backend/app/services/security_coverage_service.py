@@ -160,6 +160,24 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "google_cloud_storage_uniform_access_disabled": ("google_cloud_storage_bucket",),
     "google_cloud_storage_versioning_disabled": ("google_cloud_storage_bucket",),
     "google_cloud_storage_retention_not_locked": ("google_cloud_storage_bucket",),
+    # Google Cloud — M78C: Cloud SQL
+    "google_cloud_sql_public_network_access": ("google_cloud_sql_instance",),
+    "google_cloud_sql_weak_tls": ("google_cloud_sql_instance",),
+    "google_cloud_sql_backups_disabled": ("google_cloud_sql_instance",),
+    "google_cloud_sql_deletion_protection_disabled": ("google_cloud_sql_instance",),
+    # Google Cloud — M78C: Cloud Run
+    "google_cloud_run_public_invoker": ("google_cloud_run_service",),
+    "google_cloud_run_all_ingress": ("google_cloud_run_service",),
+    # Google Cloud — M78C: GKE
+    "google_cloud_gke_public_control_plane": ("google_cloud_gke_cluster",),
+    "google_cloud_gke_legacy_abac_enabled": ("google_cloud_gke_cluster",),
+    "google_cloud_gke_network_policy_disabled": ("google_cloud_gke_cluster",),
+    "google_cloud_gke_workload_identity_disabled": ("google_cloud_gke_cluster",),
+    # Google Cloud — M78C: Service account keys
+    "google_cloud_service_account_user_managed_keys": ("google_cloud_service_account_key_summary",),
+    "google_cloud_service_account_old_keys": ("google_cloud_service_account_key_summary",),
+    # Google Cloud — M78C: Secret Manager
+    "google_cloud_secret_manager_auto_replication_without_cmek": ("google_cloud_secret_manager_summary",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -187,6 +205,11 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "VPC networks",
         "VPC firewall rules",
         "Cloud Storage buckets",
+        "Cloud SQL instances",
+        "Cloud Run services",
+        "GKE clusters",
+        "Service account keys",
+        "Secret Manager",
     ],
 }
 
@@ -308,6 +331,27 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "shopify_webhook_subscription": {
         "message": "Webhook subscription metadata was not observed.",
         "hints": ["Verify the app/admin API can read webhook subscriptions."],
+    },
+    # Google Cloud — M78C
+    "google_cloud_sql_instance": {
+        "message": "Cloud SQL instance metadata was not observed.",
+        "hints": ["Verify the service account has roles/cloudsql.viewer or cloudsql.instances.list permission."],
+    },
+    "google_cloud_run_service": {
+        "message": "Cloud Run service metadata was not observed.",
+        "hints": ["Verify the service account has roles/run.viewer or run.services.list permission."],
+    },
+    "google_cloud_gke_cluster": {
+        "message": "GKE cluster metadata was not observed.",
+        "hints": ["Verify the service account has roles/container.viewer or container.clusters.list permission."],
+    },
+    "google_cloud_service_account_key_summary": {
+        "message": "Service account key summary metadata was not observed.",
+        "hints": ["Verify the service account has roles/iam.serviceAccountViewer or iam.serviceAccounts.list permission."],
+    },
+    "google_cloud_secret_manager_summary": {
+        "message": "Secret Manager summary metadata was not observed.",
+        "hints": ["Verify the service account has roles/secretmanager.viewer or secretmanager.secrets.list permission. This surface may be absent if the Secret Manager API is not enabled."],
     },
 }
 
