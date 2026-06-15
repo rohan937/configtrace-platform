@@ -1005,7 +1005,7 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("google_cloud")
         assert cap.security.security_rules is True
         assert cap.security.activity_ingestion is True   # M78D complete
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True  # M78E complete
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False

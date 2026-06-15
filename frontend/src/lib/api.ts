@@ -919,6 +919,18 @@ export async function generateAzureActivitySignals(
   return apiFetch(`/security/azure-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
 }
 
+/**
+ * Generate Google Cloud Audit Log Incident Signals (M78E). Admin/owner only.
+ * Promotes Google Cloud Admin Activity events (IAM, firewall rules, Storage,
+ * Cloud SQL, Cloud Run, GKE, service accounts, Secret Manager) into
+ * review-worthy signals. Does not confirm compromise or unauthorized access.
+ */
+export async function generateGoogleCloudActivitySignals(
+  token?: string | null,
+): Promise<import("@/types").GoogleCloudActivitySignalGenerateResponse> {
+  return apiFetch(`/security/google-cloud-activity/generate-signals`, { method: "POST", body: JSON.stringify({}), token });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

@@ -851,6 +851,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M78E: Google Cloud Activity Signals",
+            "planned_next_stage": "M78F: Google Cloud Risk × Activity Correlations",
         },
     }

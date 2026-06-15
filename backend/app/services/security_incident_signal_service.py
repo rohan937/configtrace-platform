@@ -238,6 +238,26 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "sub_status",                # operation sub-status (e.g. "Created") — not PII
         "category",                  # Activity Log event category (e.g. "Administrative")
         "provider_event_id",         # stable provider event ID (Azure eventDataId or fingerprint)
+        # Google Cloud Audit Log signal fields (M78E) — safe control-plane change
+        # summary ONLY. NEVER principal emails, service account emails, caller IPs,
+        # userAgent, protoPayload, request, response, authenticationInfo,
+        # authorizationInfo, raw payloads, secret names/values, database
+        # names/users/passwords, connection strings, query data, env var
+        # names/values, container args, kubeconfig, certs, node names, workload
+        # data, pod specs, logs, customer data, or PII.
+        "google_cloud_event_id",     # Cloud Logging insertId (opaque stable entry id)
+        "project_id",                # GCP project id (infra identifier, not a secret)
+        "resource_name",             # GCP resource path (no email segments)
+        "resource_type",             # Cloud Logging resource.type (e.g. "gce_firewall_rule")
+        "service_name",              # audit-log serviceName (e.g. "compute.googleapis.com")
+        "method_name",               # audit-log methodName (e.g. "compute.firewalls.insert")
+        "network_name",              # VPC network name (infra identifier)
+        "firewall_rule_name",        # GCE firewall rule name (infra identifier)
+        "bucket_name",               # Cloud Storage bucket name (infra identifier)
+        "sql_instance_name",         # Cloud SQL instance name (infra identifier)
+        "run_service_name",          # Cloud Run service name (infra identifier)
+        "gke_cluster_name",          # GKE cluster name (infra identifier)
+        "status_code",               # protoPayload.status.code (int — 0 = success)
     }
 )
 

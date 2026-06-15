@@ -201,6 +201,8 @@ from app.schemas.security_azure_activity import (
 from app.schemas.security_google_cloud_activity import (
     GoogleCloudActivitySyncRequest,
     GoogleCloudActivitySyncResponse,
+    GoogleCloudActivitySignalGenerateRequest,
+    GoogleCloudActivitySignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -246,6 +248,7 @@ from app.services import shopify_activity_signal_service
 from app.services import azure_activity_ingestion_service
 from app.services import azure_activity_signal_service
 from app.services import google_cloud_activity_ingestion_service
+from app.services import google_cloud_activity_signal_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
 from app.services import cloudflare_waf_signal_service
@@ -3110,6 +3113,43 @@ def sync_google_cloud_activity(
         max_events=max_events,
     )
     return GoogleCloudActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/google-cloud-activity/generate-signals",
+    response_model=GoogleCloudActivitySignalGenerateResponse,
+)
+def generate_google_cloud_activity_signals(
+    body: Optional[GoogleCloudActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GoogleCloudActivitySignalGenerateResponse:
+    """Generate Google Cloud Audit Log Incident Signals (M78E).
+
+    Admin/owner only. Promotes Google Cloud Admin Activity audit log events
+    (IAM policy changes, service account changes, firewall rule changes, VPC
+    network changes, Cloud Storage changes, Cloud SQL changes, Cloud Run
+    changes, GKE cluster changes, and Secret Manager changes) into
+    review-worthy signals. Idempotent — re-running creates no duplicates.
+
+    These are review signals; they do not confirm compromise, unauthorized
+    access, leaked secrets, or data exposure. Members can view the resulting
+    signals via ``GET /security/signals?provider=google_cloud``.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = google_cloud_activity_signal_service.generate_google_cloud_activity_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return GoogleCloudActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

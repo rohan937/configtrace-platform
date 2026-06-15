@@ -1116,10 +1116,11 @@ class TestCapabilityMatrix:
         assert cap is not None
         assert cap.security.activity_ingestion is True
 
-    def test_google_cloud_activity_signals_false(self):
+    def test_google_cloud_activity_signals_true(self):
+        """M78E complete — activity_signals is now True."""
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("google_cloud")
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
 
     def test_google_cloud_risk_correlations_false(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -1146,10 +1147,10 @@ class TestCapabilityMatrix:
 
 
 class TestProviderExpansionFramework:
-    """Verify the expansion framework next stage is beyond M78D (M78C is done)."""
+    """Verify the expansion framework next stage is beyond M78E (M78C is done)."""
 
-    def test_planned_next_stage_is_beyond_m78d(self):
-        """M78D is complete; planned next stage must be M78E or later."""
+    def test_planned_next_stage_is_beyond_m78e(self):
+        """M78E is complete; planned next stage must be M78F or later."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
@@ -1158,14 +1159,15 @@ class TestProviderExpansionFramework:
         )
         assert "M78C" not in planned, "M78C is done; pointer has advanced"
         assert "M78D" not in planned, "M78D is done; pointer has advanced"
+        assert "M78E" not in planned, "M78E is done; pointer has advanced"
 
-    def test_google_cloud_next_stage_mentions_signals(self):
-        """M78E is Google Cloud Activity Signals."""
+    def test_google_cloud_next_stage_mentions_correlations(self):
+        """M78F is Google Cloud Risk × Activity Correlations."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "M78E" in planned, (
-            f"planned_next_stage should point to M78E, got: {planned!r}"
+        assert "M78F" in planned, (
+            f"planned_next_stage should point to M78F, got: {planned!r}"
         )
 
 

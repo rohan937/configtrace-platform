@@ -1990,6 +1990,14 @@ export interface GoogleCloudActivitySyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+export interface GoogleCloudActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface AwsSignalGenerateResponse {
   provider: string;
   activity_events_scanned: number;

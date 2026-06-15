@@ -318,7 +318,7 @@ def test_capability_matrix_pins_azure_partial_demo_ready():
 def test_expansion_framework_points_to_m77i():
     """Rolled forward in M78D: GCP audit log ingestion complete; next stage is M78E."""
     fw = get_framework()
-    assert "M78E" in fw["summary"]["planned_next_stage"]
+    assert "M78F" in fw["summary"]["planned_next_stage"]
 
 
 def test_azure_not_in_canonical_eight_provider_matrix():
