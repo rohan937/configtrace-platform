@@ -169,6 +169,16 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "google_cloud_service_account_old_keys": ("google_cloud", "medium", "Service account keys"),
     # Google Cloud — M78C: Secret Manager
     "google_cloud_secret_manager_auto_replication_without_cmek": ("google_cloud", "low", "Secret Manager"),
+    # Twilio — M79B
+    "twilio_phone_number_sms_webhook_missing": ("twilio", "medium", "Webhook configuration"),
+    "twilio_phone_number_voice_webhook_missing": ("twilio", "medium", "Webhook configuration"),
+    "twilio_phone_number_status_callback_missing": ("twilio", "low", "Webhook configuration"),
+    "twilio_messaging_service_inbound_webhook_missing": ("twilio", "medium", "Webhook configuration"),
+    "twilio_messaging_service_fallback_missing": ("twilio", "low", "Webhook configuration"),
+    "twilio_messaging_service_status_callback_missing": ("twilio", "low", "Webhook configuration"),
+    "twilio_verify_short_code_length": ("twilio", "medium", "Verify services"),
+    "twilio_verify_lookup_disabled": ("twilio", "low", "Verify services"),
+    "twilio_account_suspended": ("twilio", "low", "Account"),
 }
 
 

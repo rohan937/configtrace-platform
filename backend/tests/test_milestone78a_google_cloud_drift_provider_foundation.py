@@ -1068,27 +1068,27 @@ def test_google_cloud_in_security_coverage_providers():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78c():
-    """M78I is complete; the planned next stage is now the Twilio arc (M79A)."""
+    """M79A is complete; the planned next stage is now M79B: Twilio Core Security Foundation."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    # Google Cloud arc is fully closed — next arc is Twilio at M79A.
-    assert "M79A" in stage
+    # Twilio arc is open — next stage is M79B Twilio Core Security Foundation.
+    assert "M79B" in stage
     assert "Twilio" in stage
     for done in ("M78C", "M78D", "M78E", "M78F", "M78G", "M78H", "M78I"):
         assert done not in stage, f"{done} is done; pointer has advanced past it"
 
 
 def test_expansion_framework_no_longer_recommends_google_cloud():
-    """Once Google Cloud launched in M78A, it is no longer 'recommended' —
-    it has moved into PROVIDER_CAPABILITIES_PARTIAL. Twilio is now the head
+    """Twilio launched in M79A and is no longer 'recommended' —
+    it has moved into PROVIDER_CAPABILITIES_PARTIAL. SendGrid is now the head
     of the recommended queue."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     recs = fw["recommended_next_providers"]
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
-    assert recs[0]["provider"] == "twilio"
+    assert recs[0]["provider"] == "sendgrid"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

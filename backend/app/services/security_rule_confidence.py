@@ -169,6 +169,16 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "google_cloud_service_account_old_keys": (HIGH, "Only fires when old_user_managed_key_count > 0 or oldest_key_age_days >= 90; computed from validAfterTime timestamps only."),
     # Google Cloud — M78C: Secret Manager
     "google_cloud_secret_manager_auto_replication_without_cmek": (MEDIUM, "Fires only when automatic_replication_count > 0 AND customer_managed_encryption_count == 0; secret names and values are never read."),
+    # Twilio — M79B
+    "twilio_phone_number_sms_webhook_missing": (HIGH, "Only fires when capability_sms=true AND sms_url_configured=false on a twilio_incoming_phone_number record; missing/unknown is skipped."),
+    "twilio_phone_number_voice_webhook_missing": (HIGH, "Only fires when capability_voice=true AND voice_url_configured=false on a twilio_incoming_phone_number record; missing/unknown is skipped."),
+    "twilio_phone_number_status_callback_missing": (MEDIUM, "Fires when capability_sms or capability_voice is set AND status_callback_configured=false; phone numbers with neither capability are not flagged."),
+    "twilio_messaging_service_inbound_webhook_missing": (HIGH, "Only fires when inbound_request_url_configured=false AND use_inbound_webhook_on_number is not true; services using number-level webhooks are excluded."),
+    "twilio_messaging_service_fallback_missing": (MEDIUM, "Fires when fallback_url_configured=false; absence of a fallback URL is the default state so medium confidence is used."),
+    "twilio_messaging_service_status_callback_missing": (MEDIUM, "Fires when status_callback_url_configured=false; absence of a status callback is the common default."),
+    "twilio_verify_short_code_length": (HIGH, "Only fires when code_length is an explicit integer < 6; missing/unknown values are skipped."),
+    "twilio_verify_lookup_disabled": (MEDIUM, "Only an explicit lookup_enabled=false fires; missing/unknown is skipped."),
+    "twilio_account_suspended": (MEDIUM, "Fires when account status is not 'active' or empty; missing/unknown is skipped."),
 }
 
 

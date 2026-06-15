@@ -506,6 +506,49 @@ _GOOGLE_CLOUD = ProviderCapability(
 )
 
 
+_TWILIO = ProviderCapability(
+    provider="twilio",
+    label="Twilio",
+    category="communications",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=True,
+        drift_review_workflow=True,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=True,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Twilio drift + core security foundation (M79A/M79B). Drift snapshots "
+        "cover Twilio account metadata, incoming phone numbers (last-4 only — "
+        "no full numbers stored), messaging services (webhook configuration as "
+        "booleans — no raw URLs stored), Verify services, and API key metadata. "
+        "No auth tokens, API secrets, message bodies, call logs, recordings, "
+        "customer phone numbers, webhook URLs, or customer data are ever stored. "
+        "M79B adds 9 security rules: twilio_phone_number_sms_webhook_missing, "
+        "twilio_phone_number_voice_webhook_missing, "
+        "twilio_phone_number_status_callback_missing, "
+        "twilio_messaging_service_inbound_webhook_missing, "
+        "twilio_messaging_service_fallback_missing, "
+        "twilio_messaging_service_status_callback_missing, "
+        "twilio_verify_short_code_length, twilio_verify_lookup_disabled, "
+        "twilio_account_suspended. Activity ingestion, signals, correlations, "
+        "and demo seed/clear are planned for future Twilio arc milestones "
+        "(M79C–M79I)."
+    ),
+)
+
+
 # Public ordered list — canonical 8-provider dual-stack matrix (M75A/M75C).
 # Azure is tracked separately in PROVIDER_CAPABILITIES_PARTIAL below because
 # it has not yet reached dual-stack maturity (security stack not started).
@@ -524,6 +567,7 @@ PROVIDER_CAPABILITIES: list[ProviderCapability] = [
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
+    _TWILIO,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

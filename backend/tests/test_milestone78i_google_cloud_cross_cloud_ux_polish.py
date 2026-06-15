@@ -171,24 +171,24 @@ def test_capability_matrix_google_cloud_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78i():
-    """After M78I, planned_next_stage points to the next provider arc (Twilio)."""
+    """After M79B, planned_next_stage points to M79C (Twilio Messaging/Webhook Risk Expansion)."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M78I" not in stage, (
         f"planned_next_stage still points to M78I after arc closed: {stage!r}"
     )
-    assert "M79A" in stage
+    assert "M79C" in stage
     assert "Twilio" in stage
 
 
 def test_expansion_framework_top_recommendation_is_twilio():
-    """Twilio remains the head of the recommended-next-providers queue."""
+    """SendGrid is now the head of the recommended-next-providers queue (Twilio launched in M79A)."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "twilio"
-    assert top["label"] == "Twilio"
+    assert top["provider"] == "sendgrid"
+    assert top["label"] == "SendGrid"
 
 
 def test_expansion_framework_google_cloud_not_in_recommended_queue():
@@ -199,19 +199,19 @@ def test_expansion_framework_google_cloud_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_and_milestone():
-    """Framework summary next_provider = Twilio; next_milestone mentions M79A."""
+    """Framework summary next_provider = SendGrid; next_milestone mentions M80A."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Twilio"
-    assert "M79A" in fw["summary"]["next_milestone"]
-    assert "Twilio" in fw["summary"]["next_milestone"]
+    assert fw["summary"]["next_provider"] == "SendGrid"
+    assert "M80A" in fw["summary"]["next_milestone"] or "SendGrid" in fw["summary"]["next_milestone"]
 
 
 def test_expansion_framework_twilio_first_milestone_is_m79a():
-    """Twilio first_milestone_name is updated to M79A (was stale M77A)."""
+    """Twilio launched in M79A and is no longer in the recommended queue."""
     recs = exp_svc.get_next_provider_recommendations()
-    twilio = next(r for r in recs if r["provider"] == "twilio")
-    assert "M79A" in twilio["first_milestone_name"]
-    assert "M77A" not in twilio["first_milestone_name"]
+    providers = [r["provider"] for r in recs]
+    assert "twilio" not in providers, (
+        "Twilio launched in M79A and should no longer be in the recommended queue"
+    )
 
 
 def test_expansion_framework_auth0_first_milestone_is_not_m78a():

@@ -285,6 +285,15 @@ def sync_integration(
 
                 connector = GoogleCloudConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "twilio":
+                # SECURITY: account_sid and auth_token are NEVER logged.
+                from app.connectors.twilio import TwilioConnector
+
+                connector = TwilioConnector(
+                    account_sid=credentials["account_sid"],
+                    auth_token=credentials["auth_token"],
+                )
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

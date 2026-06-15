@@ -1859,6 +1859,196 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when automatic_replication_count > 0 AND customer_managed_encryption_count == 0; secret names and values are never read.",
   },
+  // ── Twilio — M79B ──────────────────────────────────────────────────────────
+  {
+    key: "twilio_phone_number_sms_webhook_missing",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio phone number has SMS capability but no SMS webhook configured",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This phone number can receive SMS messages but no inbound webhook URL is configured. Inbound messages may be silently dropped.",
+    whatItChecks:
+      "capability_sms=true and sms_url_configured=false on a twilio_incoming_phone_number record.",
+    whyItMatters:
+      "Without an inbound SMS webhook, messages sent to this number may not be processed and could be silently dropped, which may require review.",
+    evidence:
+      "phone_number_sid, friendly_name, phone_number_last4 (last 4 digits only), iso_country, capability_sms. No full phone number or webhook URL is stored.",
+    remediation:
+      "Configure an SMS webhook URL for this phone number in the Twilio Console under Phone Numbers > Manage > Active numbers.",
+    falsePositiveGuard:
+      "Phone numbers used only for outbound SMS or intentionally without inbound handling may not need a webhook.",
+  },
+  {
+    key: "twilio_phone_number_voice_webhook_missing",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio phone number has voice capability but no voice webhook configured",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This phone number can receive voice calls but no inbound webhook URL is configured. Inbound calls may fail or use default handling.",
+    whatItChecks:
+      "capability_voice=true and voice_url_configured=false on a twilio_incoming_phone_number record.",
+    whyItMatters:
+      "Without an inbound voice webhook, calls to this number may fail silently or fall back to default Twilio handling, which may require review.",
+    evidence:
+      "phone_number_sid, friendly_name, phone_number_last4 (last 4 digits only), iso_country, capability_voice. No full phone number or webhook URL is stored.",
+    remediation:
+      "Configure a voice webhook URL for this phone number in the Twilio Console under Phone Numbers > Manage > Active numbers.",
+    falsePositiveGuard:
+      "Phone numbers used only for outbound calls or intentionally without inbound handling may not need a voice webhook.",
+  },
+  {
+    key: "twilio_phone_number_status_callback_missing",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio phone number has no status callback configured",
+    category: "Webhook configuration",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This phone number has no status callback URL configured. Message and call delivery status updates may not be observable.",
+    whatItChecks:
+      "capability_sms or capability_voice is true, and status_callback_configured=false on a twilio_incoming_phone_number record.",
+    whyItMatters:
+      "Without a status callback, delivery and call status events are not forwarded, which may reduce observability of message and call outcomes.",
+    evidence:
+      "phone_number_sid, friendly_name, phone_number_last4 (last 4 digits only), iso_country, capability_sms, capability_voice. No full phone number or URL is stored.",
+    remediation:
+      "Configure a status callback URL for this phone number in the Twilio Console if delivery observability is required.",
+    falsePositiveGuard:
+      "Some deployments intentionally omit status callbacks. Only fires when the phone number has SMS or voice capability.",
+  },
+  {
+    key: "twilio_messaging_service_inbound_webhook_missing",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio Messaging Service has no inbound webhook configured",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This Messaging Service has no inbound webhook URL and is not configured to use number-level webhooks. Inbound messages may not be handled.",
+    whatItChecks:
+      "inbound_request_url_configured=false and use_inbound_webhook_on_number is not true on a twilio_messaging_service record.",
+    whyItMatters:
+      "Without an inbound webhook or number-level fallback, inbound messages routed through this service may not be processed, which may require review.",
+    evidence:
+      "messaging_service_sid, friendly_name, inbound_request_url_configured, use_inbound_webhook_on_number. No URL strings are stored.",
+    remediation:
+      "Configure an inbound webhook URL or enable number-level webhooks in Twilio Console under Messaging > Services.",
+    falsePositiveGuard:
+      "Services used only for outbound messaging or with number-level webhooks enabled are not flagged.",
+  },
+  {
+    key: "twilio_messaging_service_fallback_missing",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio Messaging Service has no fallback URL configured",
+    category: "Webhook configuration",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Messaging Service has no fallback URL. If the primary webhook fails, messages will not have a secondary handler.",
+    whatItChecks:
+      "fallback_url_configured=false on a twilio_messaging_service record.",
+    whyItMatters:
+      "Without a fallback URL, a primary webhook failure may result in unhandled inbound messages. Review whether a fallback is required for reliability.",
+    evidence:
+      "messaging_service_sid, friendly_name, fallback_url_configured. No URL strings are stored.",
+    remediation:
+      "Configure a fallback URL in Twilio Console under Messaging > Services > Integration settings.",
+    falsePositiveGuard:
+      "Many deployments intentionally omit a fallback URL. This is a reliability posture item, not a security exposure.",
+  },
+  {
+    key: "twilio_messaging_service_status_callback_missing",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio Messaging Service has no status callback URL configured",
+    category: "Webhook configuration",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Messaging Service has no status callback URL. Message delivery status updates will not be reported.",
+    whatItChecks:
+      "status_callback_url_configured=false on a twilio_messaging_service record.",
+    whyItMatters:
+      "Without a status callback URL, delivery status events are not forwarded, which may reduce observability of message outcomes.",
+    evidence:
+      "messaging_service_sid, friendly_name, status_callback_url_configured. No URL strings are stored.",
+    remediation:
+      "Configure a status callback URL in Twilio Console under Messaging > Services > Integration settings.",
+    falsePositiveGuard:
+      "Many deployments intentionally omit a status callback. This is an observability posture item.",
+  },
+  {
+    key: "twilio_verify_short_code_length",
+    provider: "twilio",
+    severity: "medium",
+    title: "Twilio Verify Service uses a short verification code length",
+    category: "Verify services",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This Verify Service is configured with fewer than 6 digits for verification codes. Shorter codes may be more susceptible to brute-force enumeration.",
+    whatItChecks:
+      "code_length < 6 (an explicit integer) on a twilio_verify_service record.",
+    whyItMatters:
+      "Short verification codes reduce the search space for enumeration attempts and may not meet common security policy requirements.",
+    evidence:
+      "verify_service_sid, friendly_name, code_length. No customer verification payloads or codes are stored.",
+    remediation:
+      "Increase the code length to at least 6 digits in Twilio Console under Verify > Services.",
+    falsePositiveGuard:
+      "Only fires when code_length is an explicit integer less than 6; missing or unknown values are skipped.",
+  },
+  {
+    key: "twilio_verify_lookup_disabled",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio Verify Service has phone number lookup disabled",
+    category: "Verify services",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Verify Service does not have phone number lookup enabled. Lookup can help detect invalid or non-reachable numbers before sending verification codes.",
+    whatItChecks:
+      "lookup_enabled=false on a twilio_verify_service record.",
+    whyItMatters:
+      "Without phone number lookup, verification codes may be sent to invalid or non-reachable numbers, increasing wasted delivery attempts.",
+    evidence:
+      "verify_service_sid, friendly_name, lookup_enabled. No customer phone numbers or PII are stored.",
+    remediation:
+      "Review whether phone number lookup should be enabled in Twilio Console under Verify > Services.",
+    falsePositiveGuard:
+      "Only an explicit lookup_enabled=false fires; missing or unknown values are skipped. Some deployments intentionally disable lookup.",
+  },
+  {
+    key: "twilio_account_suspended",
+    provider: "twilio",
+    severity: "low",
+    title: "Twilio account is not in active status",
+    category: "Account",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This Twilio account has a non-active status. Review whether this status reflects an intended configuration or requires action.",
+    whatItChecks:
+      "account status is not 'active' or empty on a twilio_account record.",
+    whyItMatters:
+      "A non-active account status may affect communications services relying on this account. Review whether this requires attention.",
+    evidence:
+      "account_sid_prefix (first 8 characters only), friendly_name, status, account_type. No auth token or full account SID is stored.",
+    remediation:
+      "Log in to the Twilio Console, review the account status, and contact Twilio support if the status is not intentional.",
+    falsePositiveGuard:
+      "Only fires when account status is not 'active'; missing or empty status is not flagged.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -1990,6 +2180,15 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "GKE clusters",
       "Service account keys",
       "Secret Manager",
+    ],
+  },
+  {
+    provider: "twilio",
+    surfaces: [
+      "Incoming phone numbers",
+      "Messaging services",
+      "Verify services",
+      "Account metadata",
     ],
   },
 ];

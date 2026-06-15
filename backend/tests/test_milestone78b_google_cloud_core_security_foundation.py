@@ -905,19 +905,19 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_beyond_m78c(self):
-        """M78I is complete; planned next stage is now Twilio (M79A)."""
+        """M79A is complete; planned next stage is now M79B: Twilio Core Security Foundation."""
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M79A" in stage
+        assert "M79B" in stage
         assert "M78C" not in stage  # M78C done; pointer advanced past it
 
     def test_planned_next_stage_is_beyond_m78d(self):
-        """M78I is complete; planned next stage is now Twilio (M79A)."""
+        """M79A is complete; planned next stage is now M79B: Twilio Core Security Foundation."""
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M79A" in stage
+        assert "M79B" in stage
         assert "M78D" not in stage  # M78D done; pointer advanced past it
 
 

@@ -462,55 +462,10 @@ class RecommendedProvider:
     notes: str
 
 
+# NOTE: M79A launched Twilio drift foundation. Twilio moved into
+# PROVIDER_CAPABILITIES_PARTIAL in provider_capability_matrix_service.py.
+# SendGrid is now the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    # NOTE: M77I added "google_cloud" at the head of this queue as the next
-    # recommended provider. M78A launched the Google Cloud drift foundation,
-    # so it was promoted out of the recommended queue and into
-    # PROVIDER_CAPABILITIES_PARTIAL in provider_capability_matrix_service.py.
-    # Twilio is now the head of the recommended-next queue.
-    RecommendedProvider(
-        provider="twilio",
-        label="Twilio",
-        category="communications",
-        why_high_fit=(
-            "Twilio powers SMS, voice, and messaging for many SaaS products. "
-            "Webhook endpoint hygiene (HTTP vs HTTPS, HMAC validation), API key "
-            "scopes, and messaging-service configuration are clear configuration "
-            "risk surfaces that benefit from drift monitoring and review signals."
-        ),
-        drift_surfaces=(
-            "phone_numbers",
-            "messaging_services",
-            "webhook_urls_and_callback_urls",
-            "messaging_compliance_settings",
-            "api_key_scope_and_status",
-        ),
-        security_surfaces=(
-            "webhook_http_endpoint_risk",
-            "overly_broad_api_key_or_scope",
-            "messaging_callback_changes",
-            "auth_token_posture",
-            "verified_caller_id_posture",
-        ),
-        sensitive_data_to_avoid=(
-            "message_bodies",
-            "customer_phone_numbers",
-            "call_recordings",
-            "sms_content",
-            "raw_webhook_payloads",
-            "auth_tokens",
-            "account_sid_secret_pairs",
-            "personal_identifiable_information",
-        ),
-        first_milestone_name="M79A: Twilio Drift Provider Foundation",
-        notes=(
-            "Start with the Twilio REST API: /Accounts/{AccountSid}/IncomingPhoneNumbers.json, "
-            "/Accounts/{AccountSid}/MessagingServices.json, "
-            "/Accounts/{AccountSid}/Keys.json. "
-            "Never store message bodies, SIDs of real messages, or customer phone numbers. "
-            "Evidence should be configuration NAME / scheme / scope — never content."
-        ),
-    ),
     RecommendedProvider(
         provider="sendgrid",
         label="SendGrid",
@@ -542,7 +497,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "api_key_values",
             "customer_suppression_lists",
         ),
-        first_milestone_name="M79B: SendGrid Drift Provider Foundation",
+        first_milestone_name="M80A: SendGrid Drift Provider Foundation",
         notes=(
             "Use the SendGrid v3 REST API. Focus on domain authentication "
             "(/v3/whitelabel/domains), event webhooks (/v3/user/webhooks/event/settings), "
@@ -585,7 +540,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "client_secrets",
             "personal_identifiable_information",
         ),
-        first_milestone_name="M79C: Auth0 Drift Provider Foundation",
+        first_milestone_name="M80B: Auth0 Drift Provider Foundation",
         notes=(
             "Use the Auth0 Management API v2. Focus on /api/v2/clients "
             "(application config — callback URLs, allowed origins), "
@@ -625,7 +580,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "pii_in_logs_or_events",
             "auth_tokens",
         ),
-        first_milestone_name="M79A: Datadog Drift Provider Foundation",
+        first_milestone_name="M80C: Datadog Drift Provider Foundation",
         notes=(
             "Use the Datadog v1/v2 REST API. Focus on /api/v1/api_key "
             "(key name + status, never value), /api/v1/integration/webhooks, "
@@ -851,6 +806,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M79A: Twilio Drift Provider Foundation",
+            "planned_next_stage": "M79C: Twilio Messaging/Webhook Risk Expansion",
         },
     }

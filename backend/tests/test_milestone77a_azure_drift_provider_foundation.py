@@ -1117,24 +1117,24 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
-    """Rolled forward in M78I: Google Cloud arc closed; next arc is Twilio (M79A)."""
+    """Rolled forward in M79A: Twilio launched; next stage is M79B: Twilio Core Security Foundation."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M79A" in planned, (
-        f"planned_next_stage should be M79A after M78I, got: {planned!r}"
+    assert "M79B" in planned, (
+        f"planned_next_stage should be M79B after M79A, got: {planned!r}"
     )
 
 
 def test_expansion_framework_planned_next_stage_mentions_azure():
-    """Rolled forward in M78I: next arc is Twilio Drift Foundation (M79A)."""
+    """Rolled forward in M79A: next stage is M79B: Twilio Core Security Foundation."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
     assert "Twilio" in planned, (
-        f"planned_next_stage should reference Twilio after M78I, "
+        f"planned_next_stage should reference Twilio after M79A, "
         f"got: {planned!r}"
     )
 

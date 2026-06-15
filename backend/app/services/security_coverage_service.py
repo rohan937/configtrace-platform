@@ -42,6 +42,7 @@ PROVIDERS = [
     "shopify",
     "azure",
     "google_cloud",
+    "twilio",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -178,6 +179,16 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "google_cloud_service_account_old_keys": ("google_cloud_service_account_key_summary",),
     # Google Cloud — M78C: Secret Manager
     "google_cloud_secret_manager_auto_replication_without_cmek": ("google_cloud_secret_manager_summary",),
+    # Twilio — M79B
+    "twilio_phone_number_sms_webhook_missing": ("twilio_incoming_phone_number",),
+    "twilio_phone_number_voice_webhook_missing": ("twilio_incoming_phone_number",),
+    "twilio_phone_number_status_callback_missing": ("twilio_incoming_phone_number",),
+    "twilio_messaging_service_inbound_webhook_missing": ("twilio_messaging_service",),
+    "twilio_messaging_service_fallback_missing": ("twilio_messaging_service",),
+    "twilio_messaging_service_status_callback_missing": ("twilio_messaging_service",),
+    "twilio_verify_short_code_length": ("twilio_verify_service",),
+    "twilio_verify_lookup_disabled": ("twilio_verify_service",),
+    "twilio_account_suspended": ("twilio_account",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -210,6 +221,12 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "GKE clusters",
         "Service account keys",
         "Secret Manager",
+    ],
+    "twilio": [
+        "Account metadata",
+        "Incoming phone numbers",
+        "Messaging services",
+        "Verify services",
     ],
 }
 
@@ -331,6 +348,23 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "shopify_webhook_subscription": {
         "message": "Webhook subscription metadata was not observed.",
         "hints": ["Verify the app/admin API can read webhook subscriptions."],
+    },
+    # Twilio — M79B
+    "twilio_account": {
+        "message": "Twilio account metadata was not observed.",
+        "hints": ["Verify the Account SID and auth token credentials are valid."],
+    },
+    "twilio_incoming_phone_number": {
+        "message": "Twilio incoming phone number metadata was not observed.",
+        "hints": ["Verify the credentials can list incoming phone numbers via the Twilio REST API."],
+    },
+    "twilio_messaging_service": {
+        "message": "Twilio Messaging Service metadata was not observed.",
+        "hints": ["Verify the credentials can list Messaging Services via the Twilio Messaging API."],
+    },
+    "twilio_verify_service": {
+        "message": "Twilio Verify Service metadata was not observed.",
+        "hints": ["Verify the credentials can list Verify Services via the Twilio Verify API. This surface may be absent if no Verify Services are configured."],
     },
     # Google Cloud — M78C
     "google_cloud_sql_instance": {

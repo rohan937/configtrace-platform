@@ -141,6 +141,16 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "google_cloud_service_account_user_managed_keys",
         "google_cloud_service_account_old_keys",
         "google_cloud_secret_manager_auto_replication_without_cmek",
+        # Twilio — M79B
+        "twilio_phone_number_sms_webhook_missing",
+        "twilio_phone_number_voice_webhook_missing",
+        "twilio_phone_number_status_callback_missing",
+        "twilio_messaging_service_inbound_webhook_missing",
+        "twilio_messaging_service_fallback_missing",
+        "twilio_messaging_service_status_callback_missing",
+        "twilio_verify_short_code_length",
+        "twilio_verify_lookup_disabled",
+        "twilio_account_suspended",
     }
 )
 
