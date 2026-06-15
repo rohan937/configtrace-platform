@@ -1083,8 +1083,8 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
                 : "An admin can sync Shopify activity. Available when the Shopify Admin API token has Events read scope. Customer / order / checkout / cart / payment / fulfillment events are deliberately excluded."
             : provider === "azure"
               ? isAdmin
-                ? "Run Sync Azure activity above to ingest Azure Activity Log management events. Requires the service principal to have the Reader role on the subscription."
-                : "An admin can sync Azure Activity Log management events. Requires the service principal to have the Reader role on the subscription."
+                ? "Sync Azure activity first to collect review-safe Activity Log evidence — control-plane WRITE/DELETE events on NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS. Requires the service principal to have the Reader role on the subscription."
+                : "An admin can sync Azure activity to collect review-safe Activity Log evidence. Requires the service principal to have the Reader role on the subscription."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

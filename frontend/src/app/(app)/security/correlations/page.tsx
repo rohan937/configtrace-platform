@@ -529,7 +529,7 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                 : provider === "shopify"
                   ? "the same Shopify webhook or shop-domain"
                   : provider === "azure"
-                    ? "the same Azure resource (NSG / Storage / Key Vault / App Service / SQL Server / AKS cluster), or the same role + scope for role-assignment risks. Sync Azure activity and generate Azure signals first, then generate correlations."
+                    ? "the same Azure resource (NSG / Storage account / Key Vault / App Service / SQL Server / AKS cluster), or the same role + scope for role-assignment risks. Sync Azure activity, generate Azure signals, then generate Azure correlations to align configuration risks with Activity Log evidence on the same resource."
                     : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>

@@ -1035,10 +1035,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
                 ? " Use \”Generate Shopify activity signals\” above once activity has been ingested."
                 : " A workspace admin can sync Shopify activity and generate signals.")
           : provider === "azure"
-            ? "Sync Azure activity first, then generate Azure signals." +
+            ? "Sync Azure activity, then generate Azure signals." +
               (isAdmin
-                ? " Use \”Generate Azure signals\” above once Azure Activity Log events have been ingested via the Activity page."
-                : " A workspace admin can sync Azure Activity Log events and generate signals.")
+                ? " Use \”Generate Azure signals\” above once Azure Activity Log events have been ingested via the Activity page. Each signal corresponds to a review-worthy configuration change on a specific Azure resource (NSG, Storage, Key Vault, role assignment, App Service, SQL, or AKS)."
+                : " A workspace admin can sync Azure Activity Log events and generate Azure signals.")
           : "Run GitHub activity sync first, then generate signals." +
             (isAdmin
               ? " Use “Generate signals” above once activity has been ingested."

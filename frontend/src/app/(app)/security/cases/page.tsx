@@ -148,7 +148,7 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     label: "Azure",
     intro: "Try the Azure security demo:",
     description:
-      "seed an Azure demo to review NSG, Storage, Key Vault, and broad role assignment configuration evidence, Activity Log control-plane activity, generated signals, risk x activity correlations, and a case report (clearly marked demo, no real Azure sync).",
+      "seed a review-safe Azure security demo with drift findings (NSG, Storage, Key Vault, broad role assignment), Activity Log evidence, signals, correlations, and a case (clearly marked demo, no real Azure sync).",
     seedButton: "Load Azure security demo",
     clearButton: "Clear Azure demo",
     seedColor: "#0078d4",

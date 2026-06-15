@@ -793,10 +793,10 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_next_stage_is_m77e(self):
-        """Flipped in M77H: planned_next_stage now points to M77I."""
+        """Flipped in M77I: Azure arc closed → M78A Google Cloud."""
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M77I" in stage
+        assert "M78A" in stage
 
 
 # ──────────────────────────────────────────────────────────────────────────────

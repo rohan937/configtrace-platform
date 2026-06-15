@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete; Azure (M77G) is demo-ready with the full Azure security review flow — drift findings, Activity Log evidence, signals, correlations, and a demo case — and remains tracked as partial until cross-cloud UX polish in M77I.{" "}
+          demo cases. 8 providers are dual-stack complete; Azure is demo-ready through drift findings, Activity Log evidence, activity signals, risk × activity correlations, and case evidence, and remains tracked as a partial provider pending broader cross-provider polish.{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.

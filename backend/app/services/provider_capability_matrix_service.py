@@ -414,22 +414,22 @@ _AZURE = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Azure full security review flow (M77A–M77G), hardened by M77H "
-        "provider-depth QA guardrails. Drift snapshots: subscription / RG / "
-        "NSG / Storage / KV / role assignments / App Service / SQL Server / "
-        "AKS. Security rules: 20 rules covering NSG / storage / KV / role "
-        "assignment / App Service / SQL / AKS posture. Activity Log "
-        "ingestion: WRITE/DELETE management events across all monitored "
-        "surfaces. Activity signals: 14 signal types. Correlations: 7 "
-        "correlation types joining configuration risks to Activity Log "
-        "evidence on the SAME Azure resource. M77G demo-ready Azure security "
-        "review flow: drift findings, Activity Log evidence, signals, "
-        "correlations, and a demo case anchored on a hidden demo integration. "
-        "Case report / timeline / graph render with the 'Azure' provider "
-        "label. M77H pins taxonomy parity (record types ↔ rules ↔ signals ↔ "
-        "correlations), privacy/sanitization guardrails, false-positive "
-        "behavior, demo isolation, and router admin-only guards. Cross-cloud "
-        "UX polish lands in M77I."
+        "Azure is demo-ready through drift snapshots, security rules, "
+        "Activity Log ingestion, activity signals, risk × activity "
+        "correlations, and case evidence (timeline + graph + report). "
+        "Drift snapshots cover subscription / resource group / NSG / Storage "
+        "/ Key Vault / role assignments / App Service / SQL Server / AKS. "
+        "Security rules: 20 rules across Network, Storage, Key Vault, "
+        "Identity, App Service, SQL, and AKS. Activity Log ingestion covers "
+        "WRITE/DELETE management events on every monitored surface. Activity "
+        "signals: 14 signal types. Correlations: 7 correlation types joining "
+        "configuration risks to Activity Log evidence on the same Azure "
+        "resource (or role + scope for broad role assignments). Demo seeds a "
+        "review-safe Azure security flow on a hidden demo integration. Case "
+        "report / timeline / graph render with the 'Azure' provider label. "
+        "Azure remains in partial maturity pending broader cross-provider "
+        "polish and future non-Azure provider arcs; it is not part of the "
+        "canonical 8-provider dual-stack-complete set."
     ),
 )
 

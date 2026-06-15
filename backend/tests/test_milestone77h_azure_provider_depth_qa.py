@@ -308,13 +308,17 @@ def test_capability_matrix_pins_azure_partial_demo_ready():
     assert cap.security.evidence_timeline is True
     assert cap.security.evidence_graph is True
     assert cap.maturity == "partial"
-    # M77H notes mention the QA guardrails layer.
-    assert "M77H" in (cap.notes or "")
+    # M77I rewrote the matrix notes to the demo-ready summary (milestone-free
+    # user-facing copy). Check structural keywords instead of milestone codes.
+    notes = (cap.notes or "")
+    assert "demo-ready" in notes
+    assert "Activity Log" in notes
 
 
 def test_expansion_framework_points_to_m77i():
+    """Flipped in M77I: Azure arc closed → M78A Google Cloud."""
     fw = get_framework()
-    assert fw["summary"]["planned_next_stage"] == "M77I: Azure Cross-Cloud UX Polish"
+    assert fw["summary"]["planned_next_stage"] == "M78A: Google Cloud Drift Provider Foundation"
 
 
 def test_azure_not_in_canonical_eight_provider_matrix():
