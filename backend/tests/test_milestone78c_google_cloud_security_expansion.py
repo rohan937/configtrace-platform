@@ -1151,24 +1151,25 @@ class TestProviderExpansionFramework:
     """Verify the expansion framework next stage is beyond M78E (M78C is done)."""
 
     def test_planned_next_stage_is_beyond_m78g(self):
-        """M78G is complete; planned next stage must be M78H or later."""
+        """M78I is complete; planned next stage is now Twilio (M79A)."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "M78" in planned, (
-            f"planned_next_stage should still be in the M78 arc, got: {planned!r}"
+        assert "M79A" in planned, (
+            f"planned_next_stage should be in M79 arc (Google Cloud arc closed), got: {planned!r}"
         )
-        for done in ("M78C", "M78D", "M78E", "M78F", "M78G"):
-            assert done not in planned, f"{done} is done; pointer has advanced"
+        for done in ("M78C", "M78D", "M78E", "M78F", "M78G", "M78H", "M78I"):
+            assert done not in planned, f"{done} is done; pointer has advanced past it"
 
     def test_google_cloud_next_stage_is_m78h(self):
-        """M78G complete; planned next stage now points to M78H (Provider Depth QA)."""
+        """M78I complete; planned next stage is now M79A: Twilio Drift Provider Foundation."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "M78I" in planned, (
-            f"planned_next_stage should point to M78H, got: {planned!r}"
+        assert "M79A" in planned, (
+            f"planned_next_stage should be M79A (Google Cloud arc closed), got: {planned!r}"
         )
+        assert "Twilio" in planned
 
 
 # ── Coverage service provider surfaces ───────────────────────────────────────

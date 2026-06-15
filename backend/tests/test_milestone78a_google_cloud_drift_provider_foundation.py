@@ -1068,13 +1068,15 @@ def test_google_cloud_in_security_coverage_providers():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78c():
-    """M78C is complete; the planned next stage now points to M78D or later."""
+    """M78I is complete; the planned next stage is now the Twilio arc (M79A)."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    # M78C completed — next must be M78D (Audit Log Ingestion) or later.
-    assert "M78" in stage
-    assert "M78C" not in stage  # M78C is done; pointer has advanced
+    # Google Cloud arc is fully closed — next arc is Twilio at M79A.
+    assert "M79A" in stage
+    assert "Twilio" in stage
+    for done in ("M78C", "M78D", "M78E", "M78F", "M78G", "M78H", "M78I"):
+        assert done not in stage, f"{done} is done; pointer has advanced past it"
 
 
 def test_expansion_framework_no_longer_recommends_google_cloud():

@@ -662,11 +662,11 @@ class TestProviderCapabilityMatrix:
 
 class TestProviderExpansionFramework:
     def test_planned_next_stage_points_to_m77c(self):
-        """Flipped in M77I: Azure arc closed → M78A Google Cloud."""
+        """Rolled forward in M78I: Google Cloud arc closed → M79A Twilio."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert "M78I" in stage, (
-            f"planned_next_stage should reference M78C after M78B, got: {stage!r}"
+        assert "M79A" in stage, (
+            f"planned_next_stage should be M79A (all M78 milestones done), got: {stage!r}"
         )
 
 

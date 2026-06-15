@@ -498,8 +498,10 @@ _GOOGLE_CLOUD = ProviderCapability(
         "discipline across every Google Cloud production module, false-"
         "positive behavior for resource-name / aggregate matching, demo "
         "isolation across providers, and router admin/member guards. "
-        "Maturity remains partial — Google Cloud is not yet in the canonical "
-        "8-provider matrix; cross-cloud UX polish lands in M78I."
+        "M78I cross-cloud UX polish complete — activity / signals / "
+        "correlations / cases / demo-script pages are first-class alongside "
+        "AWS and Azure. Maturity remains partial — Google Cloud is not yet "
+        "in the canonical 8-provider dual-stack-complete set."
     ),
 )
 

@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete; Azure is demo-ready through drift findings, Activity Log evidence, activity signals, risk × activity correlations, and case evidence, and remains tracked as a partial provider pending broader cross-provider polish.{" "}
+          demo cases. 8 providers are dual-stack complete. Azure and Google Cloud are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers.{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -325,9 +325,9 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 
 // M76 — Recommended next providers (compact display data).
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
-  { label: "Twilio",    category: "communications", milestone: "M77A" },
-  { label: "SendGrid",  category: "communications", milestone: "M77B" },
-  { label: "Auth0",     category: "auth",           milestone: "M78A" },
+  { label: "Twilio",    category: "communications", milestone: "M79A" },
+  { label: "SendGrid",  category: "communications", milestone: "M79B" },
+  { label: "Auth0",     category: "auth",           milestone: "M79C" },
   { label: "Datadog",   category: "observability",  milestone: "M79A" },
   { label: "Clerk",     category: "auth",           milestone: "M80A" },
 ];
@@ -355,6 +355,7 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
   { provider: "stripe",     label: "Stripe",      category: "payments",           drift: true, security: true, signals: true, correlations: true, demo: true },
   { provider: "shopify",    label: "Shopify",     category: "ecommerce",          drift: true, security: true, signals: true, correlations: true, demo: true },
   { provider: "azure",      label: "Azure",       category: "cloud",              drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
+  { provider: "google_cloud", label: "Google Cloud", category: "cloud",            drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
 ];
 
 function Dot({ on }: { on: boolean }) {

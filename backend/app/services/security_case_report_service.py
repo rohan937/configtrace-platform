@@ -105,6 +105,14 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "app_service_name", "sql_server_name", "aks_cluster_name",
     "role_definition_name", "principal_type", "scope_type",
     "operation_name", "operation_action",
+    # Google Cloud-safe resource identifiers (M78I) — infra NAMES only, never
+    # principal emails, raw protoPayload, auth headers, or secret material.
+    "project_id", "resource_name",
+    "event_type", "operation_type",
+    "firewall_rule_name", "network_name",
+    "bucket_name", "sql_instance_name",
+    "run_service_name", "gke_cluster_name",
+    "signal_type", "correlation_type",
 })
 
 

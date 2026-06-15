@@ -256,13 +256,12 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # M77I flipped the queue head to Google Cloud; M78A launched it (moving it
-    # into PROVIDER_CAPABILITIES_PARTIAL) and Twilio promoted back to head.
+    # M78I closed the Google Cloud arc; Twilio is still the queue head, now at M79A.
     assert summary["next_provider"] == "Twilio"
-    assert "M77" in summary["next_milestone"] or "Twilio" in summary["next_milestone"]
+    assert "Twilio" in summary["next_milestone"]
     assert (
-        "M78B" in summary["planned_next_stage"]
-        or "Google Cloud" in summary["planned_next_stage"]
+        "M79A" in summary["planned_next_stage"]
+        or "Twilio" in summary["planned_next_stage"]
     )
 
 

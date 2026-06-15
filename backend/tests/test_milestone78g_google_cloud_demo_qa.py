@@ -481,13 +481,15 @@ def test_capability_matrix_marks_google_cloud_demo_ready():
 
 
 def test_expansion_framework_next_stage_is_m78h():
+    """Rolled forward in M78I: Google Cloud arc complete → M79A Twilio."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78I" in stage
-    assert "Google Cloud" in stage
-    # And no longer references the just-finished M78G.
+    assert "M79A" in stage
+    assert "Twilio" in stage
+    # Google Cloud arc is closed; no M78x in planned_next_stage.
     assert "M78G" not in stage
+    assert "M78I" not in stage
 
 
 # ── 11. demo case copy is review-safe (no overclaim) ────────────────────────

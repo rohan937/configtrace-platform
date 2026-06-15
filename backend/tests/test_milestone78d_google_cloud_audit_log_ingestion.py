@@ -1110,20 +1110,23 @@ class TestExpansionFramework:
     """Verify planned_next_stage points to M78G after M78F is complete."""
 
     def test_planned_next_stage_is_m78h(self):
-        """Rolled forward in M78G: demo landed → M78H."""
+        """Rolled forward in M78I: Google Cloud arc complete → M79A Twilio."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78I" in planned, (
-            f"planned_next_stage should point to M78H, got: {planned!r}"
+        assert "M79A" in planned, (
+            f"planned_next_stage should be M79A (Google Cloud arc closed), got: {planned!r}"
         )
+        assert "Twilio" in planned
 
     def test_planned_next_stage_mentions_polish_or_ux(self):
+        """After M78I, the next stage is the Twilio Drift Foundation, not polish."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "Polish" in planned or "UX" in planned or "polish" in planned.lower(), (
-            f"planned_next_stage should mention Polish/UX, got: {planned!r}"
+        # M78I (Polish) is done; next is a Drift Foundation stage — no longer polish/UX.
+        assert "M79A" in planned or "Twilio" in planned, (
+            f"planned_next_stage should point beyond M78I, got: {planned!r}"
         )
 
     def test_m78f_not_in_planned_next_stage(self):

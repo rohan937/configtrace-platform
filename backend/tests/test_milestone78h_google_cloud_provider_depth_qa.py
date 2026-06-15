@@ -407,11 +407,13 @@ def test_capability_matrix_pins_google_cloud_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m78i():
-    """M78H is the current milestone — planned_next_stage rolls to M78I."""
+    """M78I is now complete — planned_next_stage rolls to M79A (Twilio)."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M78I" in planned, planned
-    assert "M78H" not in planned, "M78H is done; pointer must advance"
+    assert "M79A" in planned, planned
+    assert "Twilio" in planned
+    assert "M78H" not in planned, "M78H is done; pointer must advance past it"
+    assert "M78I" not in planned, "M78I is done; pointer must advance past it"
 
 
 def test_google_cloud_not_in_canonical_eight_provider_matrix():

@@ -316,9 +316,10 @@ def test_capability_matrix_pins_azure_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m77i():
-    """Rolled forward in M78D: GCP audit log ingestion complete; next stage is M78E."""
+    """Rolled forward in M78I: Google Cloud arc closed → M79A Twilio."""
     fw = get_framework()
-    assert "M78I" in fw["summary"]["planned_next_stage"]
+    assert "M79A" in fw["summary"]["planned_next_stage"]
+    assert "Twilio" in fw["summary"]["planned_next_stage"]
 
 
 def test_azure_not_in_canonical_eight_provider_matrix():
@@ -1093,8 +1094,8 @@ def test_fe_cases_page_has_azure_demo_card():
     text = _read_fe("app/(app)/security/cases/page.tsx")
     assert "Load Azure security demo" in text
     assert "Clear Azure demo" in text
-    assert 'onSeedDemo("azure")' in text
-    assert 'onClearDemo("azure")' in text
+    # Cases page uses dynamic card.provider dispatch (not literal string calls).
+    assert 'provider: "azure"' in text
 
 
 def test_fe_demo_script_page_marks_azure_demo_ready():

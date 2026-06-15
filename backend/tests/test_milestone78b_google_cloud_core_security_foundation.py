@@ -893,8 +893,9 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("google_cloud")
         # The notes should reference the security foundation lighting up.
         assert "security" in cap.notes.lower()
-        # And should NOT pretend GCP is now full-stack.
-        assert "complete" not in cap.notes.lower()
+        # After M78I, notes say "UX polish complete" — that's fine.
+        # The maturity field itself must remain "partial" (not full-stack complete).
+        assert cap.maturity == "partial"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -904,20 +905,20 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_beyond_m78c(self):
-        """M78C is complete; planned next stage must now point to M78D or later."""
+        """M78I is complete; planned next stage is now Twilio (M79A)."""
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M78" in stage
-        assert "M78C" not in stage  # M78C done; pointer advanced
+        assert "M79A" in stage
+        assert "M78C" not in stage  # M78C done; pointer advanced past it
 
     def test_planned_next_stage_is_beyond_m78d(self):
-        """M78D is complete; planned next stage must be M78E or later."""
+        """M78I is complete; planned next stage is now Twilio (M79A)."""
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M78" in stage
-        assert "M78D" not in stage  # M78D done; pointer advanced
+        assert "M79A" in stage
+        assert "M78D" not in stage  # M78D done; pointer advanced past it
 
 
 # ══════════════════════════════════════════════════════════════════════════════

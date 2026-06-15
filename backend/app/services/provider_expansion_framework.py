@@ -502,7 +502,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "account_sid_secret_pairs",
             "personal_identifiable_information",
         ),
-        first_milestone_name="M77A: Twilio Drift Provider Foundation",
+        first_milestone_name="M79A: Twilio Drift Provider Foundation",
         notes=(
             "Start with the Twilio REST API: /Accounts/{AccountSid}/IncomingPhoneNumbers.json, "
             "/Accounts/{AccountSid}/MessagingServices.json, "
@@ -542,7 +542,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "api_key_values",
             "customer_suppression_lists",
         ),
-        first_milestone_name="M77B: SendGrid Drift Provider Foundation",
+        first_milestone_name="M79B: SendGrid Drift Provider Foundation",
         notes=(
             "Use the SendGrid v3 REST API. Focus on domain authentication "
             "(/v3/whitelabel/domains), event webhooks (/v3/user/webhooks/event/settings), "
@@ -585,7 +585,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "client_secrets",
             "personal_identifiable_information",
         ),
-        first_milestone_name="M78A: Auth0 Drift Provider Foundation",
+        first_milestone_name="M79C: Auth0 Drift Provider Foundation",
         notes=(
             "Use the Auth0 Management API v2. Focus on /api/v2/clients "
             "(application config — callback URLs, allowed origins), "
@@ -851,6 +851,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M78I: Google Cloud Cross-Cloud UX Polish",
+            "planned_next_stage": "M79A: Twilio Drift Provider Foundation",
         },
     }

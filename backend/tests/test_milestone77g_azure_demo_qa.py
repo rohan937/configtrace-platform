@@ -388,11 +388,12 @@ def test_capability_matrix_marks_azure_demo_ready():
 
 
 def test_expansion_framework_next_stage_is_m77h():
-    """Rolled forward in M78B: GCP core security foundation landed → M78C."""
+    """Rolled forward in M78I: Google Cloud arc closed → M79A Twilio."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M78I" in stage
+    assert "M79A" in stage
+    assert "Twilio" in stage
 
 
 # ── 11. demo case copy is review-safe (no overclaim) ────────────────────────

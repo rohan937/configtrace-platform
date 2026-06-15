@@ -1022,15 +1022,17 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m78h(self):
-        """Rolled forward in M78G: demo landed → M78H."""
+        """Rolled forward in M78I: Google Cloud arc complete → M79A Twilio."""
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78I" in planned
+        assert "M79A" in planned
+        assert "Twilio" in planned
 
     def test_planned_next_stage_mentions_polish_or_ux(self):
+        """After M78I, next stage is Twilio Drift Foundation, not polish."""
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "Polish" in planned or "UX" in planned or "polish" in planned.lower()
+        assert "M79A" in planned or "Twilio" in planned
 
     def test_m78f_not_in_planned_next_stage(self):
         fw = get_framework()
