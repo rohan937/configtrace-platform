@@ -1125,7 +1125,7 @@ class TestCapabilityMatrix:
     def test_google_cloud_risk_correlations_false(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("google_cloud")
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True  # M78F complete
 
     def test_google_cloud_demo_seed_clear_false(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -1160,14 +1160,15 @@ class TestProviderExpansionFramework:
         assert "M78C" not in planned, "M78C is done; pointer has advanced"
         assert "M78D" not in planned, "M78D is done; pointer has advanced"
         assert "M78E" not in planned, "M78E is done; pointer has advanced"
+        assert "M78F" not in planned, "M78F is done; pointer has advanced"
 
-    def test_google_cloud_next_stage_mentions_correlations(self):
-        """M78F is Google Cloud Risk × Activity Correlations."""
+    def test_google_cloud_next_stage_is_m78g(self):
+        """M78F complete; planned next stage now points to M78G (Demo)."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"]["planned_next_stage"]
-        assert "M78F" in planned, (
-            f"planned_next_stage should point to M78F, got: {planned!r}"
+        assert "M78G" in planned, (
+            f"planned_next_stage should point to M78G, got: {planned!r}"
         )
 
 

@@ -859,14 +859,14 @@ class TestCapabilityMatrix:
         assert cap.security.security_rules is True
 
     def test_other_security_capabilities_still_false(self):
-        """M78D landed activity ingestion; signals/correlation/demo still deferred."""
+        """M78D/E/F landed ingestion/signals/correlations; demo/case still deferred."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("google_cloud")
         assert cap.security.activity_ingestion is True  # M78D complete
         assert cap.security.activity_signals is True  # M78E complete
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True  # M78F complete
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
         assert cap.security.evidence_timeline is False

@@ -53,6 +53,7 @@ PROVIDER_FIREBASE = "firebase"
 PROVIDER_STRIPE = "stripe"
 PROVIDER_SHOPIFY = "shopify"
 PROVIDER_AZURE = "azure"
+PROVIDER_GOOGLE_CLOUD = "google_cloud"
 
 # Default review window around a finding's active period.
 WINDOW = timedelta(hours=24)
@@ -273,6 +274,23 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "matched_on",                 # which join key matched (e.g. "nsg_name+resource_group")
         "match_confidence",           # human label for join confidence ("high"/"medium")
         "time_window_hours",          # review-window size in hours
+        # Google Cloud risk × activity correlation context (M78F) — safe Google
+        # Cloud project / resource NAMES and identifiers only. NEVER service
+        # account emails, principal emails/IDs, caller IPs, userAgent, raw
+        # protoPayload, request, response, authenticationInfo, authorizationInfo,
+        # raw payloads, full IAM bindings, database names/users/passwords,
+        # connection strings, query data, env var names/values, secret
+        # names/values, secret payloads, kubeconfig, certs, node names, workload
+        # data, pod specs, logs, customer data, raw IP addresses, or PII.
+        "google_cloud_event_id",      # Cloud Logging insertId (opaque stable entry id)
+        "firewall_rule_name",         # GCE firewall rule name (infra identifier)
+        "network_name",               # VPC network name (infra identifier)
+        "sql_instance_name",          # Cloud SQL instance name (infra identifier)
+        "run_service_name",           # Cloud Run service name (infra identifier)
+        "gke_cluster_name",           # GKE cluster name (infra identifier)
+        "status_code",                # protoPayload.status.code (int; 0 = success)
+        "resource_name",              # GCP resource path (no email segments)
+        "finding_family",             # logical family label (iam / firewall / storage / sql / run / gke / service_account_key / secret_manager)
     }
 )
 
@@ -5862,6 +5880,692 @@ def generate_azure_correlations(
 
     return {
         "provider": PROVIDER_AZURE,
+        "findings_scanned": len(findings),
+        "events_scanned": len(events),
+        "correlations_created": created,
+        "correlations_skipped": skipped,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# GOOGLE CLOUD — M78F config-risk × Google Cloud Audit Log correlations
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Joins ACTIVE Google Cloud security findings (provider="google_cloud") to
+# Google Cloud Audit Log events (source="google_cloud_audit_log") on the SAME
+# Google Cloud resource within the finding's review window.
+#
+# Matching strategy (conservative, defense-in-depth):
+#
+#   1. Resource-name match — for firewall / storage / SQL / Cloud Run / GKE
+#      findings, the finding's evidence dict carries the resource name
+#      (e.g. firewall_rule_name, bucket_name, instance_name, service_name,
+#      cluster_name) AND the event's metadata carries the same field (mapped
+#      where the names differ between sides). We require an EXACT name match.
+#      When BOTH sides carry a project_id we additionally require that to match
+#      (defense-in-depth).
+#
+#   2. Aggregate (project + family) match — for IAM / service-account-key /
+#      Secret Manager findings, the finding is project-aggregate and carries no
+#      specific resource name. We require finding.evidence["project_id"] ==
+#      event.metadata["project_id"] AND the activity event_type to belong to
+#      the right family (e.g. IAM events for IAM findings, secret events for
+#      Secret Manager findings).
+#
+# Provider-only and project-only-for-resource-bearing-findings matches are
+# NEVER produced. Principal emails, SA emails, key IDs, secret names, full IAM
+# bindings, and raw payloads are NEVER used for matching or stored.
+
+
+_GCP_REVIEW_NOTE = (
+    "This is related activity evidence that may require review. ConfigTrace "
+    "does not confirm reachability, compromise, unauthorized access, or "
+    "data exposure."
+)
+
+
+# Finding base rule → correlation rule.
+#
+# Each rule has either:
+#   * a name-based join (name_field on the finding side ↔ event_name_field on
+#     the event side), or
+#   * an aggregate join (name_field=None) where project_id + finding_family is
+#     the join key.
+GOOGLE_CLOUD_CORRELATION_RULES: dict[str, dict[str, Any]] = {
+    # ── IAM (aggregate — project + family) ───────────────────────────────────
+    "google_cloud_iam_public_member": {
+        "correlation_type": "google_cloud_iam_risk_activity_correlation",
+        "activity_types": {"google_cloud.iam_policy.updated"},
+        "name_field": None,
+        "event_name_field": None,
+        "finding_family": "iam",
+        "kind": "IAM policy",
+        "title": "Google Cloud IAM risk aligned with IAM policy activity",
+        "subject": "Google Cloud IAM public-member risk",
+        "evidence_phrase": "IAM policy configuration activity",
+    },
+    "google_cloud_iam_broad_privileged_role": {
+        "correlation_type": "google_cloud_iam_risk_activity_correlation",
+        "activity_types": {"google_cloud.iam_policy.updated"},
+        "name_field": None,
+        "event_name_field": None,
+        "finding_family": "iam",
+        "kind": "IAM policy",
+        "title": "Google Cloud IAM broad-role risk aligned with IAM policy activity",
+        "subject": "Google Cloud IAM broad-privileged-role risk",
+        "evidence_phrase": "IAM policy configuration activity",
+    },
+    # ── Firewall (resource — firewall_rule_name) ─────────────────────────────
+    "google_cloud_firewall_public_admin_ingress": {
+        "correlation_type": "google_cloud_firewall_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.firewall_rule.created",
+            "google_cloud.firewall_rule.updated",
+            "google_cloud.firewall_rule.deleted",
+        },
+        "name_field": "firewall_rule_name",
+        "event_name_field": "firewall_rule_name",
+        "finding_family": "firewall",
+        "kind": "firewall rule",
+        "title": "Google Cloud firewall exposure risk aligned with firewall activity",
+        "subject": "Google Cloud firewall public-admin-ingress risk",
+        "evidence_phrase": "firewall configuration activity",
+    },
+    "google_cloud_firewall_public_broad_ingress": {
+        "correlation_type": "google_cloud_firewall_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.firewall_rule.created",
+            "google_cloud.firewall_rule.updated",
+            "google_cloud.firewall_rule.deleted",
+        },
+        "name_field": "firewall_rule_name",
+        "event_name_field": "firewall_rule_name",
+        "finding_family": "firewall",
+        "kind": "firewall rule",
+        "title": "Google Cloud firewall broad-ingress risk aligned with firewall activity",
+        "subject": "Google Cloud firewall public-broad-ingress risk",
+        "evidence_phrase": "firewall configuration activity",
+    },
+    "google_cloud_firewall_rule_no_targets": {
+        "correlation_type": "google_cloud_firewall_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.firewall_rule.created",
+            "google_cloud.firewall_rule.updated",
+            "google_cloud.firewall_rule.deleted",
+        },
+        "name_field": "firewall_rule_name",
+        "event_name_field": "firewall_rule_name",
+        "finding_family": "firewall",
+        "kind": "firewall rule",
+        "title": "Google Cloud firewall untargeted-rule risk aligned with firewall activity",
+        "subject": "Google Cloud firewall rule-without-targets risk",
+        "evidence_phrase": "firewall configuration activity",
+    },
+    # ── Cloud Storage (resource — bucket_name) ───────────────────────────────
+    "google_cloud_storage_public_access_prevention_disabled": {
+        "correlation_type": "google_cloud_storage_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.storage_bucket.created",
+            "google_cloud.storage_bucket.updated",
+            "google_cloud.storage_bucket.deleted",
+            "google_cloud.storage_iam.updated",
+        },
+        "name_field": "bucket_name",
+        "event_name_field": "bucket_name",
+        "finding_family": "storage",
+        "kind": "Cloud Storage bucket",
+        "title": "Google Cloud Storage public-access-prevention risk aligned with bucket activity",
+        "subject": "Google Cloud Storage public-access-prevention-disabled risk",
+        "evidence_phrase": "Cloud Storage configuration activity",
+    },
+    "google_cloud_storage_uniform_access_disabled": {
+        "correlation_type": "google_cloud_storage_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.storage_bucket.created",
+            "google_cloud.storage_bucket.updated",
+            "google_cloud.storage_bucket.deleted",
+            "google_cloud.storage_iam.updated",
+        },
+        "name_field": "bucket_name",
+        "event_name_field": "bucket_name",
+        "finding_family": "storage",
+        "kind": "Cloud Storage bucket",
+        "title": "Google Cloud Storage uniform-access risk aligned with bucket activity",
+        "subject": "Google Cloud Storage uniform-bucket-level-access-disabled risk",
+        "evidence_phrase": "Cloud Storage configuration activity",
+    },
+    "google_cloud_storage_versioning_disabled": {
+        "correlation_type": "google_cloud_storage_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.storage_bucket.created",
+            "google_cloud.storage_bucket.updated",
+            "google_cloud.storage_bucket.deleted",
+            "google_cloud.storage_iam.updated",
+        },
+        "name_field": "bucket_name",
+        "event_name_field": "bucket_name",
+        "finding_family": "storage",
+        "kind": "Cloud Storage bucket",
+        "title": "Google Cloud Storage versioning risk aligned with bucket activity",
+        "subject": "Google Cloud Storage versioning-disabled risk",
+        "evidence_phrase": "Cloud Storage configuration activity",
+    },
+    "google_cloud_storage_retention_not_locked": {
+        "correlation_type": "google_cloud_storage_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.storage_bucket.created",
+            "google_cloud.storage_bucket.updated",
+            "google_cloud.storage_bucket.deleted",
+            "google_cloud.storage_iam.updated",
+        },
+        "name_field": "bucket_name",
+        "event_name_field": "bucket_name",
+        "finding_family": "storage",
+        "kind": "Cloud Storage bucket",
+        "title": "Google Cloud Storage retention-lock risk aligned with bucket activity",
+        "subject": "Google Cloud Storage retention-not-locked risk",
+        "evidence_phrase": "Cloud Storage configuration activity",
+    },
+    # ── Cloud SQL (resource — instance_name ↔ sql_instance_name) ─────────────
+    "google_cloud_sql_public_network_access": {
+        "correlation_type": "google_cloud_sql_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.sql_instance.created",
+            "google_cloud.sql_instance.updated",
+            "google_cloud.sql_instance.deleted",
+        },
+        "name_field": "instance_name",
+        "event_name_field": "sql_instance_name",
+        "finding_family": "sql",
+        "kind": "Cloud SQL instance",
+        "title": "Google Cloud SQL public-network risk aligned with SQL activity",
+        "subject": "Google Cloud SQL public-network-access risk",
+        "evidence_phrase": "Cloud SQL configuration activity",
+    },
+    "google_cloud_sql_weak_tls": {
+        "correlation_type": "google_cloud_sql_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.sql_instance.created",
+            "google_cloud.sql_instance.updated",
+            "google_cloud.sql_instance.deleted",
+        },
+        "name_field": "instance_name",
+        "event_name_field": "sql_instance_name",
+        "finding_family": "sql",
+        "kind": "Cloud SQL instance",
+        "title": "Google Cloud SQL weak-TLS risk aligned with SQL activity",
+        "subject": "Google Cloud SQL weak-TLS risk",
+        "evidence_phrase": "Cloud SQL configuration activity",
+    },
+    "google_cloud_sql_backups_disabled": {
+        "correlation_type": "google_cloud_sql_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.sql_instance.created",
+            "google_cloud.sql_instance.updated",
+            "google_cloud.sql_instance.deleted",
+        },
+        "name_field": "instance_name",
+        "event_name_field": "sql_instance_name",
+        "finding_family": "sql",
+        "kind": "Cloud SQL instance",
+        "title": "Google Cloud SQL backups risk aligned with SQL activity",
+        "subject": "Google Cloud SQL backups-disabled risk",
+        "evidence_phrase": "Cloud SQL configuration activity",
+    },
+    "google_cloud_sql_deletion_protection_disabled": {
+        "correlation_type": "google_cloud_sql_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.sql_instance.created",
+            "google_cloud.sql_instance.updated",
+            "google_cloud.sql_instance.deleted",
+        },
+        "name_field": "instance_name",
+        "event_name_field": "sql_instance_name",
+        "finding_family": "sql",
+        "kind": "Cloud SQL instance",
+        "title": "Google Cloud SQL deletion-protection risk aligned with SQL activity",
+        "subject": "Google Cloud SQL deletion-protection-disabled risk",
+        "evidence_phrase": "Cloud SQL configuration activity",
+    },
+    # ── Cloud Run (resource — service_name ↔ run_service_name) ───────────────
+    "google_cloud_run_public_invoker": {
+        "correlation_type": "google_cloud_run_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.run_service.created",
+            "google_cloud.run_service.updated",
+            "google_cloud.run_service.deleted",
+        },
+        "name_field": "service_name",
+        "event_name_field": "run_service_name",
+        "finding_family": "run",
+        "kind": "Cloud Run service",
+        "title": "Google Cloud Run public-invoker risk aligned with Cloud Run activity",
+        "subject": "Google Cloud Run public-invoker risk",
+        "evidence_phrase": "Cloud Run configuration activity",
+    },
+    "google_cloud_run_all_ingress": {
+        "correlation_type": "google_cloud_run_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.run_service.created",
+            "google_cloud.run_service.updated",
+            "google_cloud.run_service.deleted",
+        },
+        "name_field": "service_name",
+        "event_name_field": "run_service_name",
+        "finding_family": "run",
+        "kind": "Cloud Run service",
+        "title": "Google Cloud Run all-ingress risk aligned with Cloud Run activity",
+        "subject": "Google Cloud Run all-ingress risk",
+        "evidence_phrase": "Cloud Run configuration activity",
+    },
+    # ── GKE (resource — cluster_name ↔ gke_cluster_name) ─────────────────────
+    "google_cloud_gke_public_control_plane": {
+        "correlation_type": "google_cloud_gke_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.gke_cluster.created",
+            "google_cloud.gke_cluster.updated",
+            "google_cloud.gke_cluster.deleted",
+            "google_cloud.gke_network_policy.updated",
+            "google_cloud.gke_master_auth.updated",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "gke_cluster_name",
+        "finding_family": "gke",
+        "kind": "GKE cluster",
+        "title": "Google Cloud GKE public-control-plane risk aligned with GKE activity",
+        "subject": "Google Cloud GKE public-control-plane risk",
+        "evidence_phrase": "GKE configuration activity",
+    },
+    "google_cloud_gke_legacy_abac_enabled": {
+        "correlation_type": "google_cloud_gke_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.gke_cluster.created",
+            "google_cloud.gke_cluster.updated",
+            "google_cloud.gke_cluster.deleted",
+            "google_cloud.gke_network_policy.updated",
+            "google_cloud.gke_master_auth.updated",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "gke_cluster_name",
+        "finding_family": "gke",
+        "kind": "GKE cluster",
+        "title": "Google Cloud GKE legacy-ABAC risk aligned with GKE activity",
+        "subject": "Google Cloud GKE legacy-ABAC-enabled risk",
+        "evidence_phrase": "GKE configuration activity",
+    },
+    "google_cloud_gke_network_policy_disabled": {
+        "correlation_type": "google_cloud_gke_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.gke_cluster.created",
+            "google_cloud.gke_cluster.updated",
+            "google_cloud.gke_cluster.deleted",
+            "google_cloud.gke_network_policy.updated",
+            "google_cloud.gke_master_auth.updated",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "gke_cluster_name",
+        "finding_family": "gke",
+        "kind": "GKE cluster",
+        "title": "Google Cloud GKE network-policy risk aligned with GKE activity",
+        "subject": "Google Cloud GKE network-policy-disabled risk",
+        "evidence_phrase": "GKE configuration activity",
+    },
+    "google_cloud_gke_workload_identity_disabled": {
+        "correlation_type": "google_cloud_gke_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.gke_cluster.created",
+            "google_cloud.gke_cluster.updated",
+            "google_cloud.gke_cluster.deleted",
+            "google_cloud.gke_network_policy.updated",
+            "google_cloud.gke_master_auth.updated",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "gke_cluster_name",
+        "finding_family": "gke",
+        "kind": "GKE cluster",
+        "title": "Google Cloud GKE workload-identity risk aligned with GKE activity",
+        "subject": "Google Cloud GKE workload-identity-disabled risk",
+        "evidence_phrase": "GKE configuration activity",
+    },
+    # ── Service-account keys (aggregate — project + family) ──────────────────
+    "google_cloud_service_account_user_managed_keys": {
+        "correlation_type": "google_cloud_service_account_key_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.service_account_key.created",
+            "google_cloud.service_account_key.deleted",
+            "google_cloud.service_account.created",
+            "google_cloud.service_account.updated",
+            "google_cloud.service_account.deleted",
+        },
+        "name_field": None,
+        "event_name_field": None,
+        "finding_family": "service_account_key",
+        "kind": "service account key posture",
+        "title": "Google Cloud service-account-key risk aligned with service-account activity",
+        "subject": "Google Cloud service-account user-managed-keys risk",
+        "evidence_phrase": "service account configuration activity",
+    },
+    "google_cloud_service_account_old_keys": {
+        "correlation_type": "google_cloud_service_account_key_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.service_account_key.created",
+            "google_cloud.service_account_key.deleted",
+            "google_cloud.service_account.created",
+            "google_cloud.service_account.updated",
+            "google_cloud.service_account.deleted",
+        },
+        "name_field": None,
+        "event_name_field": None,
+        "finding_family": "service_account_key",
+        "kind": "service account key posture",
+        "title": "Google Cloud service-account-old-key risk aligned with service-account activity",
+        "subject": "Google Cloud service-account old-keys risk",
+        "evidence_phrase": "service account configuration activity",
+    },
+    # ── Secret Manager (aggregate — project + family) ────────────────────────
+    "google_cloud_secret_manager_auto_replication_without_cmek": {
+        "correlation_type": "google_cloud_secret_manager_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.secret.created",
+            "google_cloud.secret.updated",
+            "google_cloud.secret.deleted",
+        },
+        "name_field": None,
+        "event_name_field": None,
+        "finding_family": "secret_manager",
+        "kind": "Secret Manager posture",
+        "title": "Google Cloud Secret Manager risk aligned with secret activity",
+        "subject": "Google Cloud Secret Manager auto-replication-without-CMEK risk",
+        "evidence_phrase": "Secret Manager configuration activity",
+    },
+}
+
+
+def _gcp_event_md(ev: SecurityActivityEvent, key: str) -> Optional[str]:
+    md = ev.event_metadata if isinstance(ev.event_metadata, dict) else {}
+    v = md.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _gcp_finding_evidence(finding: SecurityFinding, key: str) -> Optional[str]:
+    ev = finding.evidence if isinstance(finding.evidence, dict) else None
+    if ev is None:
+        return None
+    v = ev.get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
+def _gcp_finding_resource_name(
+    finding: SecurityFinding, rule: dict[str, Any]
+) -> Optional[str]:
+    """Read the finding-side resource name (e.g. firewall_rule_name)."""
+    name_field = rule.get("name_field")
+    if not name_field:
+        return None
+    return _gcp_finding_evidence(finding, name_field)
+
+
+def _gcp_match_resource(
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    rule: dict[str, Any],
+) -> Optional[str]:
+    """Resource-name + project_id match for resource-bearing findings.
+
+    Match criteria:
+      1. Resource NAME match — finding.evidence[name_field] equals
+         event.metadata[event_name_field], both non-empty.
+      2. project_id AGREEMENT (defense-in-depth) — if both sides carry
+         project_id, they must match. If one side omits it, accept.
+
+    Returns a 'matched_on' label or None.
+    """
+    name_field = rule.get("name_field")
+    event_name_field = rule.get("event_name_field")
+    if not name_field or not event_name_field:
+        return None
+
+    finding_name = _gcp_finding_resource_name(finding, rule)
+    event_name = _gcp_event_md(event, event_name_field)
+    if not finding_name or not event_name:
+        return None
+    if finding_name != event_name:
+        return None
+
+    finding_project = _gcp_finding_evidence(finding, "project_id")
+    event_project = _gcp_event_md(event, "project_id")
+    if finding_project and event_project and finding_project != event_project:
+        return None
+
+    if finding_project and event_project:
+        return f"{event_name_field}+project_id"
+    return event_name_field
+
+
+def _gcp_match_aggregate(
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    rule: dict[str, Any],
+) -> Optional[str]:
+    """Project + family aggregate match (IAM / service-account-key / Secret Manager).
+
+    Used for findings that do not carry a specific resource name. Requires:
+      1. project_id present on BOTH sides AND equal.
+      2. event.event_type is in rule["activity_types"] (already checked by
+         caller, but kept as defense-in-depth via a non-empty rule family).
+
+    Returns a 'matched_on' label or None. Never produces project-only matches
+    for findings that COULD carry a resource name (caller dispatches by rule
+    kind, not by ``name_field`` being None at runtime).
+    """
+    finding_project = _gcp_finding_evidence(finding, "project_id")
+    event_project = _gcp_event_md(event, "project_id")
+    if not finding_project or not event_project:
+        return None
+    if finding_project != event_project:
+        return None
+    family = rule.get("finding_family")
+    if not family:
+        return None
+    return f"project_id+{family}"
+
+
+def _gcp_resource_label(
+    finding: SecurityFinding,
+    rule: dict[str, Any],
+    matched_name: Optional[str],
+) -> str:
+    kind = rule.get("kind", "resource")
+    if matched_name:
+        return f'{kind} "{matched_name}"'
+    project = _gcp_finding_evidence(finding, "project_id") or ""
+    if project:
+        return f'{kind} in project "{project}"'
+    return kind
+
+
+def build_google_cloud_correlation(
+    *,
+    finding: SecurityFinding,
+    event: SecurityActivityEvent,
+    rule: dict[str, Any],
+    matched_on: str,
+    resource_label: str,
+) -> dict[str, Any]:
+    """Build a Google Cloud correlation dict (not persisted)."""
+    sev = (finding.severity or "medium").lower()
+    if sev not in {"critical", "high", "medium", "low"}:
+        sev = "medium"
+    # Floor low → medium for review priority on correlations.
+    if sev == "low":
+        sev = "medium"
+
+    f_start = _aware(finding.first_detected_at)
+    f_end = _aware(finding.last_seen_at)
+    occurred = _aware(event.occurred_at)
+
+    window_start = (f_start - WINDOW) if f_start else None
+    window_end = (f_end + WINDOW) if f_end else None
+    seens = [d for d in (f_start, occurred) if d]
+    first_seen = min(seens) if seens else None
+    lasts = [d for d in (f_end, occurred) if d]
+    last_seen = max(lasts) if lasts else None
+
+    title = f"{rule['title']} ({resource_label})"
+    summary = (
+        f"{rule['subject']} (\"{finding.title}\") and {rule['evidence_phrase']} "
+        f"(\"{event.event_type}\") were observed for the same Google Cloud "
+        f"{resource_label} within the review window. {_GCP_REVIEW_NOTE}"
+    )
+
+    # "+" in matched_on means project_id (or family) also matched → high confidence.
+    match_confidence = "high" if "+" in matched_on else "medium"
+
+    metadata = sanitize_correlation_metadata({
+        "source": event.source,
+        "finding_rule": _base_rule(finding.finding_key),
+        "finding_severity": finding.severity,
+        "event_type": event.event_type,
+        "project_id": _gcp_event_md(event, "project_id"),
+        "google_cloud_event_id": _gcp_event_md(event, "google_cloud_event_id"),
+        "service_name": _gcp_event_md(event, "service_name"),
+        "method_name": _gcp_event_md(event, "method_name"),
+        "operation_name": _gcp_event_md(event, "operation_name"),
+        "operation_family": _gcp_event_md(event, "operation_family"),
+        "operation_action": _gcp_event_md(event, "operation_action"),
+        "resource_name": _gcp_event_md(event, "resource_name"),
+        "resource_type": _gcp_event_md(event, "resource_type"),
+        # Resource-specific identifiers (event side).
+        "network_name": _gcp_event_md(event, "network_name"),
+        "firewall_rule_name": _gcp_event_md(event, "firewall_rule_name"),
+        "bucket_name": _gcp_event_md(event, "bucket_name"),
+        "sql_instance_name": _gcp_event_md(event, "sql_instance_name"),
+        "run_service_name": _gcp_event_md(event, "run_service_name"),
+        "gke_cluster_name": _gcp_event_md(event, "gke_cluster_name"),
+        "category": _gcp_event_md(event, "category"),
+        "finding_family": rule.get("finding_family"),
+        "matched_on": matched_on,
+        "match_confidence": match_confidence,
+        "time_window_hours": int(WINDOW.total_seconds() // 3600),
+    })
+
+    return {
+        "provider": PROVIDER_GOOGLE_CLOUD,
+        "correlation_key": rule["correlation_type"],
+        "correlation_type": rule["correlation_type"],
+        "severity": sev,
+        "confidence": match_confidence,
+        "status": "open",
+        "title": title,
+        "summary": summary,
+        "linked_finding_id": finding.id,
+        "linked_activity_event_id": event.id,
+        "linked_change_id": finding.linked_change_id,
+        "window_start": window_start,
+        "window_end": window_end,
+        "first_seen_at": first_seen,
+        "last_seen_at": last_seen,
+        "metadata": metadata,
+        "_integration_id": finding.integration_id,
+    }
+
+
+def generate_google_cloud_correlations(
+    *,
+    workspace_id: uuid.UUID,
+    db: Session,
+    scan_limit: int = 1000,
+) -> dict[str, Any]:
+    """Correlate Google Cloud config-risk findings with Google Cloud Audit Log
+    events (M78F).
+
+    Conservative, resource-name-scoped matching for resource-bearing findings
+    (firewall / storage / SQL / Cloud Run / GKE). Aggregate project+family
+    matching for IAM / service-account-key / Secret Manager findings (which do
+    not carry a specific resource name). Provider-only and project-only-for-
+    resource-bearing matches are NEVER produced. Idempotent.
+    """
+    findings = (
+        db.query(SecurityFinding)
+        .filter(
+            SecurityFinding.workspace_id == workspace_id,
+            SecurityFinding.provider == PROVIDER_GOOGLE_CLOUD,
+            SecurityFinding.status == "active",
+        )
+        .limit(scan_limit)
+        .all()
+    )
+    findings = [
+        f for f in findings
+        if _base_rule(f.finding_key) in GOOGLE_CLOUD_CORRELATION_RULES
+    ]
+
+    events = (
+        db.query(SecurityActivityEvent)
+        .filter(
+            SecurityActivityEvent.workspace_id == workspace_id,
+            SecurityActivityEvent.provider == PROVIDER_GOOGLE_CLOUD,
+            SecurityActivityEvent.source == "google_cloud_audit_log",
+            SecurityActivityEvent.occurred_at.isnot(None),
+        )
+        .limit(scan_limit)
+        .all()
+    )
+
+    created = 0
+    skipped = 0
+    for finding in findings:
+        rule = GOOGLE_CLOUD_CORRELATION_RULES[_base_rule(finding.finding_key)]
+        f_start = _aware(finding.first_detected_at)
+        f_end = _aware(finding.last_seen_at)
+        if f_start is None or f_end is None:
+            continue
+        window_start = f_start - WINDOW
+        window_end = f_end + WINDOW
+
+        is_aggregate = rule.get("name_field") is None
+        finding_name = _gcp_finding_resource_name(finding, rule)
+
+        for ev in events:
+            if ev.event_type not in rule["activity_types"]:
+                continue
+            occurred = _aware(ev.occurred_at)
+            if occurred is None or not (window_start <= occurred <= window_end):
+                continue
+
+            if is_aggregate:
+                matched_on = _gcp_match_aggregate(finding, ev, rule)
+                resource_label = _gcp_resource_label(finding, rule, None)
+            else:
+                matched_on = _gcp_match_resource(finding, ev, rule)
+                resource_label = _gcp_resource_label(finding, rule, finding_name)
+            if not matched_on:
+                continue
+
+            try:
+                correlation = build_google_cloud_correlation(
+                    finding=finding,
+                    event=ev,
+                    rule=rule,
+                    matched_on=matched_on,
+                    resource_label=resource_label,
+                )
+                outcome, _row = upsert_correlation(
+                    workspace_id=workspace_id, correlation=correlation, db=db
+                )
+                if outcome == "created":
+                    created += 1
+                else:
+                    skipped += 1
+            except Exception:  # noqa: BLE001
+                import logging
+                logging.getLogger(__name__).warning(
+                    "gcp_correlations: failed one correlation; continuing"
+                )
+                continue
+
+    return {
+        "provider": PROVIDER_GOOGLE_CLOUD,
         "findings_scanned": len(findings),
         "events_scanned": len(events),
         "correlations_created": created,

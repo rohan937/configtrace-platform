@@ -449,7 +449,7 @@ _GOOGLE_CLOUD = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -458,7 +458,8 @@ _GOOGLE_CLOUD = ProviderCapability(
     maturity="partial",
     notes=(
         "Google Cloud drift + core and expanded security foundation + Audit Log "
-        "ingestion + Activity Signals (M78A–M78E). Drift snapshots cover project "
+        "ingestion + Activity Signals + Risk × Activity Correlations "
+        "(M78A–M78F). Drift snapshots cover project "
         "metadata, IAM policy summary (counts only — principal emails and member "
         "identifiers are never stored), VPC networks, firewall rules, Cloud Storage "
         "buckets, Cloud SQL instances, Cloud Run services, GKE clusters, service "
@@ -475,7 +476,13 @@ _GOOGLE_CLOUD = ProviderCapability(
         "never stored. Activity signals: 11 signal types covering IAM policy, "
         "service accounts, service account keys, firewall rules, VPC networks, "
         "Cloud Storage, Cloud SQL, Cloud Run, GKE clusters, and Secret Manager. "
-        "Correlations and demo follow in M78F onward."
+        "Risk × Activity correlations (M78F): 8 correlation types joining active "
+        "Google Cloud configuration risks to Google Cloud Audit Log evidence on "
+        "the same resource — exact resource-name matches for firewall rules, "
+        "Cloud Storage buckets, Cloud SQL instances, Cloud Run services, and GKE "
+        "clusters; project+family aggregate matches for IAM, service-account-key, "
+        "and Secret Manager risks. Provider-only and project-only matches for "
+        "resource-bearing findings are never produced. Demo follows in M78G."
     ),
 )
 

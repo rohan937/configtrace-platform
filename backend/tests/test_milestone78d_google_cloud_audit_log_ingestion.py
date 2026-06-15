@@ -1082,7 +1082,7 @@ class TestCapabilityMatrix:
     def test_risk_correlations_still_false(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("google_cloud")
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True  # M78F complete
 
     def test_demo_seed_clear_still_false(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -1106,31 +1106,31 @@ class TestCapabilityMatrix:
 
 
 class TestExpansionFramework:
-    """Verify planned_next_stage points to M78F after M78E is complete."""
+    """Verify planned_next_stage points to M78G after M78F is complete."""
 
-    def test_planned_next_stage_is_m78f(self):
+    def test_planned_next_stage_is_m78g(self):
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78F" in planned, (
-            f"planned_next_stage should point to M78F, got: {planned!r}"
+        assert "M78G" in planned, (
+            f"planned_next_stage should point to M78G, got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_correlations(self):
+    def test_planned_next_stage_mentions_demo(self):
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "Correlation" in planned or "correlation" in planned.lower(), (
-            f"planned_next_stage should mention Correlations, got: {planned!r}"
+        assert "Demo" in planned or "demo" in planned.lower(), (
+            f"planned_next_stage should mention Demo, got: {planned!r}"
         )
 
-    def test_m78e_not_in_planned_next_stage(self):
-        """M78E is done — pointer must not still say M78E."""
+    def test_m78f_not_in_planned_next_stage(self):
+        """M78F is done — pointer must not still say M78F."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M78E" not in planned, (
-            f"M78E is done; planned_next_stage should not still say M78E: {planned!r}"
+        assert "M78F" not in planned, (
+            f"M78F is done; planned_next_stage should not still say M78F: {planned!r}"
         )
 
 

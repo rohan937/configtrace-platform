@@ -997,8 +997,8 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("google_cloud")
         assert cap.drift.drift_risk_classification is True
 
-    def test_security_capabilities_partial_after_m78d(self):
-        """M78D flips activity_ingestion True; signals/correlation/demo still false."""
+    def test_security_capabilities_partial_after_m78f(self):
+        """M78D/E/F flip ingestion/signals/correlations; demo/case still false."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
@@ -1006,7 +1006,7 @@ class TestCapabilityMatrix:
         assert cap.security.security_rules is True
         assert cap.security.activity_ingestion is True   # M78D complete
         assert cap.security.activity_signals is True  # M78E complete
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True  # M78F complete
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
 

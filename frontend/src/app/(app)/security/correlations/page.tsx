@@ -32,7 +32,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -140,6 +140,20 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "azure_app_service_risk_activity_correlation",
     "azure_sql_risk_activity_correlation",
     "azure_aks_risk_activity_correlation",
+  ],
+  google_cloud: [
+    // M78F — Google Cloud Configuration Risk × Google Cloud Audit Log evidence.
+    // Resource-name-scoped matching for firewall rules / Cloud Storage buckets /
+    // Cloud SQL instances / Cloud Run services / GKE clusters; project+family
+    // aggregate matching for IAM / service-account-key / Secret Manager risks.
+    "google_cloud_iam_risk_activity_correlation",
+    "google_cloud_firewall_risk_activity_correlation",
+    "google_cloud_storage_risk_activity_correlation",
+    "google_cloud_sql_risk_activity_correlation",
+    "google_cloud_run_risk_activity_correlation",
+    "google_cloud_gke_risk_activity_correlation",
+    "google_cloud_service_account_key_risk_activity_correlation",
+    "google_cloud_secret_manager_risk_activity_correlation",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
@@ -351,7 +365,9 @@ function GenerateBar({
                   ? "Correlate Shopify configuration risks with Shopify configuration activity evidence (webhook subscription and shop-domain changes) for the same Shopify webhook or domain within the review window."
                   : provider === "azure"
                     ? "Correlate Azure configuration risks with recent Azure Activity Log signals across NSGs, Storage, Key Vault, role assignments, App Service, SQL, and AKS — matching on the same resource (and resource group when both sides agree) within the review window."
-                    : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                    : provider === "google_cloud"
+                      ? "Correlate Google Cloud configuration risks with recent Audit Log signals across IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, service accounts, and Secret Manager. Resource-name matches for firewall / Storage / SQL / Cloud Run / GKE; project + family aggregate matches for IAM / service-account-key / Secret Manager. Provider-only matches are never produced."
+                      : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -530,7 +546,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                   ? "the same Shopify webhook or shop-domain"
                   : provider === "azure"
                     ? "the same Azure resource (NSG / Storage account / Key Vault / App Service / SQL Server / AKS cluster), or the same role + scope for role-assignment risks. Sync Azure activity, generate Azure signals, then generate Azure correlations to align configuration risks with Activity Log evidence on the same resource."
-                    : "the same GitHub repository";
+                    : provider === "google_cloud"
+                      ? "the same Google Cloud resource (firewall rule / Cloud Storage bucket / Cloud SQL instance / Cloud Run service / GKE cluster), or the same project + family for IAM, service-account-key, and Secret Manager risks. Sync Google Cloud activity, generate Google Cloud signals, then generate Google Cloud correlations."
+                      : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>
