@@ -43,6 +43,7 @@ PROVIDERS = [
     "azure",
     "google_cloud",
     "twilio",
+    "sendgrid",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -198,6 +199,22 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "twilio_phone_number_voice_observability_gap": ("twilio_incoming_phone_number",),
     "twilio_verify_psd2_disabled": ("twilio_verify_service",),
     "twilio_verify_sms_to_landlines_allowed": ("twilio_verify_service",),
+    # SendGrid — M80B
+    "sendgrid_api_key_broad_scopes": ("sendgrid_api_key",),
+    "sendgrid_sender_identity_unverified": ("sendgrid_sender_identity",),
+    "sendgrid_sender_identity_locked": ("sendgrid_sender_identity",),
+    "sendgrid_domain_authentication_invalid": ("sendgrid_domain_authentication",),
+    "sendgrid_domain_automatic_security_disabled": ("sendgrid_domain_authentication",),
+    "sendgrid_domain_authentication_legacy": ("sendgrid_domain_authentication",),
+    "sendgrid_spam_check_disabled": ("sendgrid_mail_settings",),
+    "sendgrid_sandbox_mode_enabled": ("sendgrid_mail_settings",),
+    "sendgrid_bcc_enabled": ("sendgrid_mail_settings",),
+    "sendgrid_click_tracking_enabled": ("sendgrid_tracking_settings",),
+    "sendgrid_open_tracking_enabled": ("sendgrid_tracking_settings",),
+    "sendgrid_subscription_tracking_disabled": ("sendgrid_tracking_settings",),
+    "sendgrid_event_webhook_disabled": ("sendgrid_webhook_settings",),
+    "sendgrid_event_webhook_url_missing": ("sendgrid_webhook_settings",),
+    "sendgrid_suppression_settings_empty": ("sendgrid_suppression_settings",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -236,6 +253,15 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Incoming phone numbers",
         "Messaging services",
         "Verify services",
+    ],
+    "sendgrid": [
+        "API key metadata",
+        "Verified sender identities",
+        "Domain authentication",
+        "Mail settings",
+        "Tracking settings",
+        "Event webhook configuration",
+        "Suppression settings",
     ],
 }
 
@@ -378,6 +404,35 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "twilio_api_key_summary": {
         "message": "Twilio API key metadata was not observed.",
         "hints": ["Verify the credentials can list API keys via the Twilio REST API. This surface may be absent if no API keys have been created."],
+    },
+    # SendGrid — M80B
+    "sendgrid_api_key": {
+        "message": "SendGrid API key metadata was not observed.",
+        "hints": ["Verify the SendGrid API key has permission to list API keys (GET /v3/api_keys). Some restricted keys may not have this scope."],
+    },
+    "sendgrid_sender_identity": {
+        "message": "SendGrid verified sender identity metadata was not observed.",
+        "hints": ["Verify the API key can read verified senders (GET /v3/verified_senders). This surface may be absent if no sender identities have been configured."],
+    },
+    "sendgrid_domain_authentication": {
+        "message": "SendGrid domain authentication metadata was not observed.",
+        "hints": ["Verify the API key can read domain authentication (GET /v3/whitelabel/domains). This surface may be absent if no domains have been authenticated."],
+    },
+    "sendgrid_mail_settings": {
+        "message": "SendGrid mail settings metadata was not observed.",
+        "hints": ["Verify the API key can read mail settings (GET /v3/mail_settings)."],
+    },
+    "sendgrid_tracking_settings": {
+        "message": "SendGrid tracking settings metadata was not observed.",
+        "hints": ["Verify the API key can read tracking settings (GET /v3/tracking_settings)."],
+    },
+    "sendgrid_webhook_settings": {
+        "message": "SendGrid event webhook settings metadata was not observed.",
+        "hints": ["Verify the API key can read event webhook settings (GET /v3/user/webhooks/event/settings)."],
+    },
+    "sendgrid_suppression_settings": {
+        "message": "SendGrid suppression settings metadata was not observed.",
+        "hints": ["Verify the API key can read ASM suppression groups (GET /v3/asm/groups). This surface may be absent if no suppression groups are configured."],
     },
     # Google Cloud — M78C
     "google_cloud_sql_instance": {

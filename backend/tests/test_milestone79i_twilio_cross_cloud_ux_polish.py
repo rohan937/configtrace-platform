@@ -176,14 +176,14 @@ def test_capability_matrix_twilio_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_m80a():
-    """After M80A, planned_next_stage points to M80B SendGrid Core Security Foundation."""
+    """After M80B, planned_next_stage points to M80C SendGrid Mail/Webhook Risk Expansion."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M79I" not in stage, (
         f"planned_next_stage still points to M79I after arc closed: {stage!r}"
     )
-    assert "M80B" in stage, (
-        f"planned_next_stage should point to M80B after M80A: {stage!r}"
+    assert "M80C" in stage, (
+        f"planned_next_stage should point to M80C after M80B: {stage!r}"
     )
     assert "SendGrid" in stage
 

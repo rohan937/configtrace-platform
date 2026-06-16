@@ -601,12 +601,12 @@ _SENDGRID = ProviderCapability(
     drift=DriftCapabilities(
         drift_snapshots=True,
         drift_diff=True,
-        drift_risk_classification=False,
-        drift_review_workflow=False,
+        drift_risk_classification=True,
+        drift_review_workflow=True,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -627,9 +627,14 @@ _SENDGRID = ProviderCapability(
         "count (recipient emails never stored). No API key values, bearer tokens, "
         "authorization headers, email bodies, template content, recipient emails, "
         "suppression lists, event payloads, or customer data are ever stored. "
-        "Security rules, activity ingestion, signals, correlations, and demo "
-        "seed/clear land in future milestones (M80B onward). SendGrid remains "
-        "partial (not in the canonical dual-stack-complete set of 8 providers)."
+        "M80B adds 15 core security rules across 7 drift surfaces: API key "
+        "broad-scope detection, sender identity verification and lock status, "
+        "domain authentication validity and automatic-security posture, mail "
+        "settings (spam check, sandbox mode, BCC), tracking settings (click, "
+        "open, subscription tracking), event webhook configuration (disabled, "
+        "missing URL), and suppression group count. Activity ingestion, signals, "
+        "correlations, and demo seed/clear land in future milestones. SendGrid "
+        "remains partial (not in the canonical dual-stack-complete set of 8 providers)."
     ),
 )
 

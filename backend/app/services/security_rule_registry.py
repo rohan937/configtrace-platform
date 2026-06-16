@@ -160,6 +160,22 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "twilio_phone_number_voice_observability_gap",
         "twilio_verify_psd2_disabled",
         "twilio_verify_sms_to_landlines_allowed",
+        # SendGrid — M80B
+        "sendgrid_api_key_broad_scopes",
+        "sendgrid_sender_identity_unverified",
+        "sendgrid_sender_identity_locked",
+        "sendgrid_domain_authentication_invalid",
+        "sendgrid_domain_automatic_security_disabled",
+        "sendgrid_domain_authentication_legacy",
+        "sendgrid_spam_check_disabled",
+        "sendgrid_sandbox_mode_enabled",
+        "sendgrid_bcc_enabled",
+        "sendgrid_click_tracking_enabled",
+        "sendgrid_open_tracking_enabled",
+        "sendgrid_subscription_tracking_disabled",
+        "sendgrid_event_webhook_disabled",
+        "sendgrid_event_webhook_url_missing",
+        "sendgrid_suppression_settings_empty",
     }
 )
 

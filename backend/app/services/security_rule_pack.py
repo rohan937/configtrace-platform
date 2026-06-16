@@ -188,6 +188,22 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "twilio_phone_number_voice_observability_gap": ("twilio", "medium", "Webhook configuration"),
     "twilio_verify_psd2_disabled": ("twilio", "low", "Verify services"),
     "twilio_verify_sms_to_landlines_allowed": ("twilio", "low", "Verify services"),
+    # SendGrid — M80B
+    "sendgrid_api_key_broad_scopes": ("sendgrid", "high", "API key scopes"),
+    "sendgrid_sender_identity_unverified": ("sendgrid", "medium", "Sender identities"),
+    "sendgrid_sender_identity_locked": ("sendgrid", "low", "Sender identities"),
+    "sendgrid_domain_authentication_invalid": ("sendgrid", "medium", "Domain authentication"),
+    "sendgrid_domain_automatic_security_disabled": ("sendgrid", "medium", "Domain authentication"),
+    "sendgrid_domain_authentication_legacy": ("sendgrid", "low", "Domain authentication"),
+    "sendgrid_spam_check_disabled": ("sendgrid", "medium", "Mail settings"),
+    "sendgrid_sandbox_mode_enabled": ("sendgrid", "medium", "Mail settings"),
+    "sendgrid_bcc_enabled": ("sendgrid", "medium", "Mail settings"),
+    "sendgrid_click_tracking_enabled": ("sendgrid", "low", "Tracking settings"),
+    "sendgrid_open_tracking_enabled": ("sendgrid", "low", "Tracking settings"),
+    "sendgrid_subscription_tracking_disabled": ("sendgrid", "medium", "Tracking settings"),
+    "sendgrid_event_webhook_disabled": ("sendgrid", "medium", "Webhook configuration"),
+    "sendgrid_event_webhook_url_missing": ("sendgrid", "medium", "Webhook configuration"),
+    "sendgrid_suppression_settings_empty": ("sendgrid", "low", "Suppression settings"),
 }
 
 

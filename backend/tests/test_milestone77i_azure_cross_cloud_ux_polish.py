@@ -115,7 +115,7 @@ def test_expansion_framework_next_stage_is_beyond_m79d():
     """Rolled forward in M80A: SendGrid Drift Foundation complete; next stage is M80B."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80B" in stage
+    assert "M80C" in stage
     assert "SendGrid" in stage
 
 

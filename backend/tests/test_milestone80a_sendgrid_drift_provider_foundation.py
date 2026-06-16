@@ -1129,11 +1129,14 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_diff is True
 
     def test_sendgrid_security_flags_false_in_m80a(self):
+        """After M80B, security_rules flips True. Activity surfaces remain False."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("sendgrid")
-        assert cap.security.security_rules is False
+        # security_rules flipped True in M80B.
+        assert cap.security.security_rules is True
+        # Activity/signals/correlations/demo remain False until later milestones.
         assert cap.security.activity_ingestion is False
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
@@ -1182,10 +1185,10 @@ class TestExpansionFramework:
         return get_framework()
 
     def test_planned_next_stage_is_m80b(self):
-        """M80A complete — planned_next_stage rolls to M80B."""
+        """M80B complete — planned_next_stage rolls to M80C."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80B" in stage, (
-            f"planned_next_stage should contain M80B after M80A; got: {stage!r}"
+        assert "M80C" in stage, (
+            f"planned_next_stage should contain M80C after M80B; got: {stage!r}"
         )
         assert "SendGrid" in stage
 

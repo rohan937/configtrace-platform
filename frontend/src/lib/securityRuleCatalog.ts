@@ -2218,6 +2218,322 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only an explicit skip_sms_to_landlines=false fires; missing or unknown values are skipped. Some deployments may intentionally allow all number types.",
   },
+  // ── SendGrid — M80B ──────────────────────────────────────────────────────────
+  {
+    key: "sendgrid_api_key_broad_scopes",
+    provider: "sendgrid",
+    severity: "high",
+    title: "SendGrid API key is configured with broad access scopes",
+    category: "API key scopes",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A SendGrid API key has broad or full-access permissions configured. Broad-scope keys may increase the impact of a credential review and may require scope reduction.",
+    whatItChecks:
+      "has_full_access=true on a sendgrid_api_key record.",
+    whyItMatters:
+      "Broad API key scopes increase the configuration surface if the key needs rotation or review. Least-privilege key configuration reduces impact.",
+    evidence:
+      "api_key_id, name (truncated), scopes_count, has_full_access. No API key value or secret is stored.",
+    remediation:
+      "Review the API key in SendGrid Console under Settings > API Keys. Create a replacement key with only the required scopes (e.g., mail.send only) and rotate integrations.",
+    falsePositiveGuard:
+      "Only fires when has_full_access=true; keys without broad scopes are not flagged. The API key value is never accessed or stored.",
+  },
+  {
+    key: "sendgrid_sender_identity_unverified",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid sender identity has not been verified",
+    category: "Sender identities",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A SendGrid sender identity is not verified. Unverified sender identities may cause deliverability issues and may not be eligible for sending on all plans.",
+    whatItChecks:
+      "verified=false on a sendgrid_sender_identity record.",
+    whyItMatters:
+      "Unverified sender identities may be unable to send email reliably and may affect email deliverability. Completing verification may be required by SendGrid.",
+    evidence:
+      "sender_id, nickname, from_email_domain (domain only — full email never stored), verified. No personal email address or PII is stored.",
+    remediation:
+      "Complete sender identity verification in SendGrid Console under Settings > Sender Authentication.",
+    falsePositiveGuard:
+      "Only fires when verified=false; verified identities are not flagged. Full email addresses are never stored.",
+  },
+  {
+    key: "sendgrid_sender_identity_locked",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid sender identity is locked",
+    category: "Sender identities",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A SendGrid sender identity is locked and cannot be edited. Locked identities may indicate an identity actively used by a SendGrid plan feature or one that requires review.",
+    whatItChecks:
+      "locked=true on a sendgrid_sender_identity record.",
+    whyItMatters:
+      "A locked sender identity cannot be modified. Review whether the lock is intentional or indicates a configuration posture issue.",
+    evidence:
+      "sender_id, nickname, verified, locked. No personal email address or PII is stored.",
+    remediation:
+      "Review the locked sender identity in SendGrid Console under Settings > Sender Authentication. Contact SendGrid support if the lock status is unexpected.",
+    falsePositiveGuard:
+      "Only fires when locked=true; unlocked identities are not flagged. Some identities are intentionally locked by plan features.",
+  },
+  {
+    key: "sendgrid_domain_authentication_invalid",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid domain authentication is not passing DNS validation",
+    category: "Domain authentication",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A SendGrid domain authentication record shows that at least one DNS check is not passing (valid=false). Invalid domain authentication may affect email deliverability and sender reputation.",
+    whatItChecks:
+      "valid=false on a sendgrid_domain_authentication record.",
+    whyItMatters:
+      "Domain authentication failures may cause emails to be treated as unauthenticated by receiving mail servers, affecting deliverability and spam classification.",
+    evidence:
+      "domain_id, domain name, valid, dns_record_count. No raw DNS record values or DKIM keys are stored.",
+    remediation:
+      "Review the failing DNS records in SendGrid Console under Settings > Sender Authentication > Domain Authentication. Update DNS records at your domain registrar as required.",
+    falsePositiveGuard:
+      "Only fires when valid=false; domains with valid=true are not flagged. DNS propagation delays may temporarily cause valid=false.",
+  },
+  {
+    key: "sendgrid_domain_automatic_security_disabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid domain authentication has automatic security (DKIM rotation) disabled",
+    category: "Domain authentication",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A SendGrid domain authentication does not have automatic security enabled. Without automatic DKIM key rotation, DKIM keys are static and not rotated automatically, which may require periodic manual rotation.",
+    whatItChecks:
+      "automatic_security=false on a sendgrid_domain_authentication record.",
+    whyItMatters:
+      "Static DKIM keys that are never rotated may represent a long-lived configuration posture risk. Automatic security enables SendGrid to manage key rotation.",
+    evidence:
+      "domain_id, domain name, automatic_security, valid.",
+    remediation:
+      "Enable automatic security on the domain authentication in SendGrid Console. Update DNS records with the new CNAME values provided by SendGrid after enabling.",
+    falsePositiveGuard:
+      "Only fires when automatic_security=false; domains with automatic_security=true are not flagged. Some legacy integrations may intentionally use manual DKIM.",
+  },
+  {
+    key: "sendgrid_domain_authentication_legacy",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid domain is using legacy domain authentication format",
+    category: "Domain authentication",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A SendGrid domain uses a legacy domain authentication format. SendGrid recommends migrating to the current format which supports automatic DKIM key rotation and modern deliverability features.",
+    whatItChecks:
+      "legacy=true on a sendgrid_domain_authentication record.",
+    whyItMatters:
+      "Legacy domain authentication may not support modern DKIM rotation. Migration to the current format is recommended by SendGrid.",
+    evidence:
+      "domain_id, domain name, legacy, valid.",
+    remediation:
+      "Migrate to the current SendGrid domain authentication format via SendGrid Console under Settings > Sender Authentication.",
+    falsePositiveGuard:
+      "Only fires when legacy=true; current-format domains are not flagged. Migration may require DNS changes.",
+  },
+  {
+    key: "sendgrid_spam_check_disabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid spam check is disabled",
+    category: "Mail settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid spam check mail setting is disabled. Without spam checking, outgoing emails are not evaluated for spam-triggering content before delivery, which may affect deliverability.",
+    whatItChecks:
+      "spam_check_enabled=false on a sendgrid_mail_settings record.",
+    whyItMatters:
+      "Spam check helps identify content that may trigger spam filters at receiving mail servers, improving deliverability.",
+    evidence:
+      "spam_check_enabled. No email content or subjects are stored.",
+    remediation:
+      "Enable the spam check setting in SendGrid Console under Settings > Mail Settings.",
+    falsePositiveGuard:
+      "Only fires when spam_check_enabled=false; enabled spam check is not flagged.",
+  },
+  {
+    key: "sendgrid_sandbox_mode_enabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid sandbox mode is enabled — emails are not delivered",
+    category: "Mail settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid sandbox mode setting is enabled. In sandbox mode, emails go through the full API processing pipeline but are not delivered to recipients. If left on in production, live email delivery is silently suppressed.",
+    whatItChecks:
+      "sandbox_mode_enabled=true on a sendgrid_mail_settings record.",
+    whyItMatters:
+      "Sandbox mode suppresses all email delivery. Unintentional activation in production silently prevents recipients from receiving emails.",
+    evidence:
+      "sandbox_mode_enabled. No email content is stored.",
+    remediation:
+      "Disable sandbox mode in SendGrid Console under Settings > Mail Settings if emails should be delivered.",
+    falsePositiveGuard:
+      "Only fires when sandbox_mode_enabled=true; disabled sandbox mode is not flagged. Testing environments may intentionally use sandbox mode.",
+  },
+  {
+    key: "sendgrid_bcc_enabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid BCC mail setting is enabled",
+    category: "Mail settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid BCC mail setting is enabled. When active, a copy of every outgoing email is sent to a configured BCC address. This behavior may affect data governance and privacy compliance and may require review.",
+    whatItChecks:
+      "bcc_enabled=true on a sendgrid_mail_settings record.",
+    whyItMatters:
+      "BCC routing of all outbound email may have data governance and compliance implications and may require documentation.",
+    evidence:
+      "bcc_enabled. No BCC email address or email content is stored.",
+    remediation:
+      "Review whether the BCC setting is intentional in SendGrid Console under Settings > Mail Settings. Disable if not required or document the business justification.",
+    falsePositiveGuard:
+      "Only fires when bcc_enabled=true; disabled BCC is not flagged. The BCC email address is never stored or exposed.",
+  },
+  {
+    key: "sendgrid_click_tracking_enabled",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid click tracking is enabled",
+    category: "Tracking settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "SendGrid click tracking is enabled. Click tracking rewrites links in outgoing emails to route through SendGrid tracking URLs. This may have privacy and compliance implications depending on applicable regulations and may require review.",
+    whatItChecks:
+      "click_tracking_enabled=true on a sendgrid_tracking_settings record.",
+    whyItMatters:
+      "Click tracking may require disclosure in your privacy policy and may be subject to privacy regulations such as GDPR or CASL.",
+    evidence:
+      "click_tracking_enabled. No link URLs, recipient data, or click event data is stored.",
+    remediation:
+      "Review whether click tracking is required and disclosed in SendGrid Console under Settings > Tracking. Disable if not required or permitted.",
+    falsePositiveGuard:
+      "Only fires when click_tracking_enabled=true; disabled tracking is not flagged. Many deployments intentionally use click tracking.",
+  },
+  {
+    key: "sendgrid_open_tracking_enabled",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid open tracking is enabled",
+    category: "Tracking settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "SendGrid open tracking is enabled. Open tracking embeds a small invisible image in outgoing emails to detect when recipients open them. This may have privacy and compliance implications depending on applicable regulations and may require review.",
+    whatItChecks:
+      "open_tracking_enabled=true on a sendgrid_tracking_settings record.",
+    whyItMatters:
+      "Open tracking may require disclosure in your privacy policy and may be subject to privacy regulations such as GDPR or CASL.",
+    evidence:
+      "open_tracking_enabled. No recipient data or open event data is stored.",
+    remediation:
+      "Review whether open tracking is required and disclosed in SendGrid Console under Settings > Tracking. Disable if not required or permitted.",
+    falsePositiveGuard:
+      "Only fires when open_tracking_enabled=true; disabled tracking is not flagged. Many deployments intentionally use open tracking.",
+  },
+  {
+    key: "sendgrid_subscription_tracking_disabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid subscription (unsubscribe) tracking is disabled",
+    category: "Tracking settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "SendGrid subscription tracking is disabled. Subscription tracking inserts unsubscribe links into outgoing emails, which may be required for commercial email compliance under CAN-SPAM, GDPR, CASL, or other regulations.",
+    whatItChecks:
+      "subscription_tracking_enabled=false on a sendgrid_tracking_settings record.",
+    whyItMatters:
+      "Without subscription tracking, commercial email recipients may not have a clear unsubscribe path, which may not meet regulatory requirements for email compliance.",
+    evidence:
+      "subscription_tracking_enabled. No unsubscribe URLs or recipient data is stored.",
+    remediation:
+      "Enable subscription tracking in SendGrid Console under Settings > Tracking if you send commercial or marketing email.",
+    falsePositiveGuard:
+      "Only fires when subscription_tracking_enabled=false; enabled subscription tracking is not flagged. Transactional-only senders may intentionally disable subscription tracking.",
+  },
+  {
+    key: "sendgrid_event_webhook_disabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid event webhook is disabled",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid event webhook is disabled. Without an active event webhook, email delivery events (bounces, spam reports, clicks, opens) are not forwarded to your application, creating an observability gap.",
+    whatItChecks:
+      "event_webhook_enabled=false on a sendgrid_webhook_settings record.",
+    whyItMatters:
+      "Without event webhook delivery, your application cannot observe email delivery failures, spam reports, or engagement events, which may affect deliverability management.",
+    evidence:
+      "event_webhook_enabled. No webhook URL or event payload is stored.",
+    remediation:
+      "Enable the event webhook in SendGrid Console under Settings > Mail Settings > Event Webhook and configure an HTTPS endpoint.",
+    falsePositiveGuard:
+      "Only fires when event_webhook_enabled=false; enabled webhooks are not flagged. Some accounts may intentionally not use the event webhook.",
+  },
+  {
+    key: "sendgrid_event_webhook_url_missing",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid event webhook is enabled but has no URL configured",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid event webhook is enabled but no delivery URL is configured. Without a URL, webhook events cannot be delivered to any endpoint, making the webhook configuration incomplete.",
+    whatItChecks:
+      "event_webhook_enabled=true AND event_webhook_has_url=false on a sendgrid_webhook_settings record.",
+    whyItMatters:
+      "An enabled webhook with no URL cannot deliver events. This may indicate an incomplete configuration that was enabled but never fully set up.",
+    evidence:
+      "event_webhook_enabled, event_webhook_has_url (boolean), event_count. No webhook URL string is stored.",
+    remediation:
+      "Configure a delivery URL for the event webhook in SendGrid Console under Settings > Mail Settings > Event Webhook.",
+    falsePositiveGuard:
+      "Both event_webhook_enabled=true AND event_webhook_has_url=false must be present. The webhook URL is stored as a boolean only — never as a string.",
+  },
+  {
+    key: "sendgrid_suppression_settings_empty",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid has no suppression groups configured",
+    category: "Suppression settings",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "No SendGrid Advanced Suppression Manager (ASM) suppression groups are configured. Suppression groups allow recipients to selectively unsubscribe from specific email categories rather than all emails.",
+    whatItChecks:
+      "suppression_group_count=0 (explicit integer) on a sendgrid_suppression_settings record.",
+    whyItMatters:
+      "Without suppression groups, recipients cannot selectively opt out of email categories. This may affect compliance with email unsubscribe requirements.",
+    evidence:
+      "suppression_group_count. No suppressed email addresses or recipient data is stored.",
+    remediation:
+      "Create suppression groups for your email categories in SendGrid Console under Marketing > Suppressions > Unsubscribe Groups.",
+    falsePositiveGuard:
+      "Only fires when suppression_group_count is an explicit integer equal to 0. Missing or unknown suppression_group_count is skipped. Some transactional-only senders may intentionally not use suppression groups.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -2359,6 +2675,18 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "Verify services",
       "Account metadata",
       "API keys",
+    ],
+  },
+  {
+    provider: "sendgrid",
+    surfaces: [
+      "API key metadata",
+      "Verified sender identities",
+      "Domain authentication",
+      "Mail settings",
+      "Tracking settings",
+      "Event webhook configuration",
+      "Suppression settings",
     ],
   },
 ];

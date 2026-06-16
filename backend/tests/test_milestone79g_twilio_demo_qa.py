@@ -971,7 +971,7 @@ def test_l4_planned_next_stage_contains_m79h():
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80B" in stage
+    assert "M80C" in stage
 
 
 def test_l5_planned_next_stage_does_not_contain_m79g():
