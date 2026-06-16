@@ -1082,15 +1082,15 @@ def test_expansion_framework_planned_next_stage_contains_m79e():
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80A" in stage
+    assert "M80B" in stage
 
 
 def test_expansion_framework_planned_next_stage_contains_twilio():
-    """M79I complete — next stage is M80A SendGrid Drift Provider Foundation."""
+    """M80A complete — next stage is M80B SendGrid Core Security Foundation."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80A" in stage or "SendGrid" in stage
+    assert "M80B" in stage or "SendGrid" in stage
 
 
 def test_expansion_framework_planned_next_stage_does_not_contain_m79a():
@@ -1102,17 +1102,17 @@ def test_expansion_framework_planned_next_stage_does_not_contain_m79a():
 
 
 def test_expansion_framework_next_provider_is_sendgrid():
-    """After Twilio launched, SendGrid is the head of the recommended queue."""
+    """After SendGrid launched (M80A), Auth0 is the head of the recommended queue."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
-    assert fw["summary"]["next_provider"] == "SendGrid"
+    assert fw["summary"]["next_provider"] == "Auth0"
 
 
 def test_expansion_framework_next_milestone_references_sendgrid_or_m80a():
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     milestone = fw["summary"]["next_milestone"] or ""
-    assert "SendGrid" in milestone or "M80A" in milestone
+    assert "Auth0" in milestone or "M80B" in milestone
 
 
 def test_expansion_framework_first_recommended_provider_is_sendgrid():
@@ -1120,8 +1120,8 @@ def test_expansion_framework_first_recommended_provider_is_sendgrid():
     fw = svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    assert recs[0]["provider"] == "sendgrid"
-    assert recs[0]["label"] == "SendGrid"
+    assert recs[0]["provider"] == "auth0"
+    assert recs[0]["label"] == "Auth0"
 
 
 def test_expansion_framework_google_cloud_not_in_recommended_queue():

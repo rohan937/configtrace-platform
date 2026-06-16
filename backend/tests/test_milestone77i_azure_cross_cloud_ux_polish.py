@@ -112,22 +112,22 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
 
 
 def test_expansion_framework_next_stage_is_beyond_m79d():
-    """Rolled forward in M79I: Twilio Cross-Cloud UX Polish complete; next stage is M80A."""
+    """Rolled forward in M80A: SendGrid Drift Foundation complete; next stage is M80B."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80A" in stage
+    assert "M80B" in stage
     assert "SendGrid" in stage
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():
-    """Flipped in M79A: Twilio moved out of the recommended queue and into
-    PROVIDER_CAPABILITIES_PARTIAL (launched). SendGrid is now the head."""
+    """Flipped in M80A: SendGrid moved out of the recommended queue (launched).
+    Auth0 is now the head."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "sendgrid"
-    assert top["label"] == "SendGrid"
+    assert top["provider"] == "auth0"
+    assert top["label"] == "Auth0"
     # GCP must no longer be in the recommended list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
@@ -151,10 +151,10 @@ def test_expansion_framework_google_cloud_recommendation_is_complete():
 
 
 def test_expansion_framework_summary_next_provider_is_google_cloud():
-    """Flipped in M79A: SendGrid is now the head of the recommended queue."""
+    """Flipped in M80A: Auth0 is now the head of the recommended queue."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "SendGrid"
-    assert "SendGrid" in fw["summary"]["next_milestone"]
+    assert fw["summary"]["next_provider"] == "Auth0"
+    assert "Auth0" in fw["summary"]["next_milestone"] or "M80B" in fw["summary"]["next_milestone"]
 
 
 # ════════════════════════════════════════════════════════════════════════════

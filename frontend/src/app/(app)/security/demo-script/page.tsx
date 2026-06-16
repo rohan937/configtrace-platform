@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, and Twilio are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers.{" "}
+          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, and Twilio are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. SendGrid (M80A) adds drift-only snapshots covering account metadata, API key metadata, sender identities, domain authentication, mail and tracking settings, webhook configuration, and suppression group count.{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -324,13 +324,12 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 ];
 
 // M76 — Recommended next providers (compact display data).
-// NOTE: Twilio launched in M79A and moved into PROVIDER_CAPABILITY_TABLE below.
-// SendGrid is now the head of the recommended queue.
+// NOTE: Twilio launched in M79A; SendGrid drift foundation launched in M80A.
+// Auth0 is now the next provider in the queue.
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
-  { label: "SendGrid",  category: "communications", milestone: "M80A" },
   { label: "Auth0",     category: "auth",           milestone: "M80B" },
   { label: "Datadog",   category: "observability",  milestone: "M80C" },
-  { label: "Clerk",     category: "auth",           milestone: "M80A" },
+  { label: "Clerk",     category: "auth",           milestone: "M80D" },
 ];
 
 // M75C — Static capability table data. Source of truth lives in the backend
@@ -358,6 +357,7 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
   { provider: "azure",      label: "Azure",       category: "cloud",              drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
   { provider: "google_cloud", label: "Google Cloud", category: "cloud",            drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
   { provider: "twilio",    label: "Twilio",      category: "communications",     drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
+  { provider: "sendgrid",  label: "SendGrid",    category: "communications",     drift: true, security: false, signals: false, correlations: false, demo: false },
 ];
 
 function Dot({ on }: { on: boolean }) {

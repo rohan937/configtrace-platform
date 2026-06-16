@@ -594,11 +594,52 @@ PROVIDER_CAPABILITIES: list[ProviderCapability] = [
     _SHOPIFY,
 ]
 
+_SENDGRID = ProviderCapability(
+    provider="sendgrid",
+    label="SendGrid",
+    category="communications",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "SendGrid email infrastructure drift foundation (M80A). Drift snapshots "
+        "cover 8 safe surfaces: account type and reputation, API key metadata "
+        "(never the key value), verified sender identities (email domain only — "
+        "full addresses are never stored), domain authentication status and DNS "
+        "record count (raw DNS values never stored), mail settings booleans, "
+        "tracking settings booleans, event webhook configuration booleans (URL "
+        "stored as a presence boolean — never as a string), and suppression group "
+        "count (recipient emails never stored). No API key values, bearer tokens, "
+        "authorization headers, email bodies, template content, recipient emails, "
+        "suppression lists, event payloads, or customer data are ever stored. "
+        "Security rules, activity ingestion, signals, correlations, and demo "
+        "seed/clear land in future milestones (M80B onward). SendGrid remains "
+        "partial (not in the canonical dual-stack-complete set of 8 providers)."
+    ),
+)
+
+
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
     _TWILIO,
+    _SENDGRID,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

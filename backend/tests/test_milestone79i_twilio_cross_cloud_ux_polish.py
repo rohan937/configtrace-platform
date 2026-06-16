@@ -176,26 +176,26 @@ def test_capability_matrix_twilio_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_m80a():
-    """After M79I, planned_next_stage points to M80A SendGrid Drift Provider Foundation."""
+    """After M80A, planned_next_stage points to M80B SendGrid Core Security Foundation."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M79I" not in stage, (
         f"planned_next_stage still points to M79I after arc closed: {stage!r}"
     )
-    assert "M80A" in stage, (
-        f"planned_next_stage should point to M80A after M79I: {stage!r}"
+    assert "M80B" in stage, (
+        f"planned_next_stage should point to M80B after M80A: {stage!r}"
     )
     assert "SendGrid" in stage
 
 
 def test_expansion_framework_top_recommendation_is_sendgrid():
-    """SendGrid is the head of the recommended-next-providers queue."""
+    """Auth0 is the head of the recommended queue (SendGrid launched in M80A)."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "sendgrid"
-    assert top["label"] == "SendGrid"
+    assert top["provider"] == "auth0"
+    assert top["label"] == "Auth0"
 
 
 def test_expansion_framework_twilio_not_in_recommended_queue():
@@ -219,10 +219,10 @@ def test_expansion_framework_sendgrid_first_milestone_is_m80a():
 
 
 def test_expansion_framework_summary_next_provider_sendgrid():
-    """Framework summary next_provider = SendGrid; next_milestone mentions M80A."""
+    """Framework summary next_provider = Auth0 (SendGrid launched M80A); next_milestone mentions M80B."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "SendGrid"
-    assert "M80A" in (fw["summary"]["next_milestone"] or "")
+    assert fw["summary"]["next_provider"] == "Auth0"
+    assert "M80B" in (fw["summary"]["next_milestone"] or "") or "Auth0" in (fw["summary"]["next_milestone"] or "")
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -483,7 +483,7 @@ def test_fe_demo_script_page_twilio_row_is_demo_ready():
 
 
 def test_fe_demo_script_page_next_providers_has_sendgrid():
-    """NEXT_PROVIDERS_BRIEF has SendGrid at M80A now that Twilio launched."""
+    """SendGrid launched in M80A — it is now in PROVIDER_CAPABILITY_TABLE, not NEXT_PROVIDERS_BRIEF."""
     text = _read_fe("app/(app)/security/demo-script/page.tsx")
     m = re.search(
         r"const NEXT_PROVIDERS_BRIEF.*?= \[(.*?)\];",
@@ -492,11 +492,16 @@ def test_fe_demo_script_page_next_providers_has_sendgrid():
     )
     assert m is not None, "NEXT_PROVIDERS_BRIEF not found"
     block = m.group(1)
-    assert "SendGrid" in block, "NEXT_PROVIDERS_BRIEF must include SendGrid"
-    assert "M80A" in block, "NEXT_PROVIDERS_BRIEF SendGrid entry must use M80A"
-    # M79A was Twilio — it should not still be listed as a future provider.
+    # SendGrid launched — must not still be in the future-provider queue.
+    assert "SendGrid" not in block, (
+        "SendGrid launched in M80A and must not be in NEXT_PROVIDERS_BRIEF"
+    )
     assert '"M79A"' not in block, (
         "NEXT_PROVIDERS_BRIEF still contains stale M79A milestone (Twilio arc)"
+    )
+    # SendGrid must now appear in PROVIDER_CAPABILITY_TABLE.
+    assert 'provider: "sendgrid"' in text, (
+        "SendGrid must be in PROVIDER_CAPABILITY_TABLE after M80A"
     )
 
 

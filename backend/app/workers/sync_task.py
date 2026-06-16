@@ -294,6 +294,12 @@ def sync_integration(
                     auth_token=credentials["auth_token"],
                 )
                 records = connector.fetch(credentials)
+            elif integration.provider == "sendgrid":
+                # SECURITY: api_key is NEVER logged.
+                from app.connectors.sendgrid import SendGridConnector
+
+                connector = SendGridConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

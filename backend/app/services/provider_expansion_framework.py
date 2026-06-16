@@ -462,49 +462,11 @@ class RecommendedProvider:
     notes: str
 
 
-# NOTE: M79A launched Twilio drift foundation. Twilio moved into
+# NOTE: M79A launched Twilio drift foundation; Twilio moved into
 # PROVIDER_CAPABILITIES_PARTIAL in provider_capability_matrix_service.py.
-# SendGrid is now the head of the recommended queue.
+# M80A launched SendGrid drift foundation; SendGrid also moved into
+# PROVIDER_CAPABILITIES_PARTIAL. Auth0 is now the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="sendgrid",
-        label="SendGrid",
-        category="communications",
-        why_high_fit=(
-            "SendGrid email infrastructure has clear configuration risks: "
-            "IP warmup settings, domain authentication status, suppression-list "
-            "webhook endpoints, and API key scopes. These are good drift surfaces "
-            "with no customer-email-body exposure risk if scoped correctly."
-        ),
-        drift_surfaces=(
-            "ip_pools_and_warmup_settings",
-            "domain_authentication_status",
-            "event_webhook_endpoints",
-            "api_key_scopes",
-            "bounce_and_block_settings",
-        ),
-        security_surfaces=(
-            "event_webhook_http_endpoint",
-            "overly_broad_api_key_permissions",
-            "domain_authentication_missing",
-            "suppression_bypass_settings",
-        ),
-        sensitive_data_to_avoid=(
-            "email_bodies",
-            "recipient_email_addresses",
-            "open_and_click_tracking_data",
-            "raw_event_payloads",
-            "api_key_values",
-            "customer_suppression_lists",
-        ),
-        first_milestone_name="M80A: SendGrid Drift Provider Foundation",
-        notes=(
-            "Use the SendGrid v3 REST API. Focus on domain authentication "
-            "(/v3/whitelabel/domains), event webhooks (/v3/user/webhooks/event/settings), "
-            "and API keys (/v3/api_keys — key names and scopes only, never values). "
-            "Never store email addresses, message bodies, or tracking pixels."
-        ),
-    ),
     RecommendedProvider(
         provider="auth0",
         label="Auth0",
@@ -806,6 +768,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M80A: SendGrid Drift Provider Foundation",
+            "planned_next_stage": "M80B: SendGrid Core Security Foundation",
         },
     }

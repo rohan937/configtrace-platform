@@ -748,8 +748,8 @@ class TestExpansionFramework:
     def test_g1_planned_next_stage_contains_m79f(self):
         """G1: planned_next_stage contains 'M80A' (M79I complete; rolled forward)."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80A" in stage, (
-            f"planned_next_stage should contain 'M80A', got: {stage!r}"
+        assert "M80B" in stage, (
+            f"planned_next_stage should contain 'M80B' (M80A complete), got: {stage!r}"
         )
 
     def test_g2_planned_next_stage_contains_twilio_or_correlation(self):

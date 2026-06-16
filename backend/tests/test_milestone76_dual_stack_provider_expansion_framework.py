@@ -60,11 +60,9 @@ EXPECTED_STAGE_KEYS_IN_ORDER = [
 ]
 
 EXPECTED_NEXT_PROVIDER_ORDER = [
-    # M77I added Google Cloud at the top of the queue; M78A launched it (it
-    # moved into PROVIDER_CAPABILITIES_PARTIAL and Twilio promoted back to
-    # the head of the recommended-next queue). M79A launched Twilio (it moved
-    # into PROVIDER_CAPABILITIES_PARTIAL), so SendGrid is now the head.
-    "sendgrid",
+    # M77I added Google Cloud at the top of the queue; M78A launched it.
+    # M79A launched Twilio. M80A launched SendGrid (it moved into
+    # PROVIDER_CAPABILITIES_PARTIAL). Auth0 is now the head.
     "auth0",
     "datadog",
     "clerk",
@@ -256,11 +254,11 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # M79A launched Twilio; SendGrid is now the queue head, at M80A.
-    assert summary["next_provider"] == "SendGrid"
-    assert "SendGrid" in summary["next_milestone"]
+    # M80A launched SendGrid; Auth0 is now the queue head, at M80B.
+    assert summary["next_provider"] == "Auth0"
+    assert "Auth0" in summary["next_milestone"] or "M80B" in summary["next_milestone"]
     assert (
-        "M80A" in summary["planned_next_stage"]
+        "M80B" in summary["planned_next_stage"]
         or "SendGrid" in summary["planned_next_stage"]
     )
 
@@ -272,11 +270,11 @@ def test_framework_is_static_no_db_needed():
 
 
 def test_get_next_provider_recommendations_first_is_twilio():
-    """Flipped in M79A: Twilio launched and moved into PROVIDER_CAPABILITIES_PARTIAL;
-    SendGrid reclaims the head of the recommended-next queue."""
+    """Flipped in M80A: SendGrid launched and moved into PROVIDER_CAPABILITIES_PARTIAL;
+    Auth0 reclaims the head of the recommended-next queue."""
     recs = svc.get_next_provider_recommendations()
-    assert recs[0]["provider"] == "sendgrid"
-    assert recs[0]["label"] == "SendGrid"
+    assert recs[0]["provider"] == "auth0"
+    assert recs[0]["label"] == "Auth0"
     assert len(recs[0]["sensitive_data_to_avoid"]) >= 3
     # google_cloud must no longer be in this list.
     providers = [r["provider"] for r in recs]
@@ -304,8 +302,8 @@ def test_endpoint_returns_framework(client):
     body = r.json()
     assert "template" in body and "recommended_next_providers" in body
     assert body["summary"]["stage_count"] == 6
-    # M79A: Twilio launched (now in PARTIAL); SendGrid reclaims the queue head.
-    assert body["summary"]["next_provider"] == "SendGrid"
+    # M80A: SendGrid launched (now in PARTIAL); Auth0 reclaims the queue head.
+    assert body["summary"]["next_provider"] == "Auth0"
 
 
 def test_endpoint_stages_in_order(client):
@@ -319,9 +317,9 @@ def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
     r = client.get("/security/provider-expansion-framework")
     assert r.status_code == 200
     labels = [p["label"] for p in r.json()["recommended_next_providers"]]
-    # Twilio launched in M79A and is no longer in the recommended queue.
+    # Twilio launched in M79A; SendGrid launched in M80A — both no longer in queue.
     assert "Twilio" not in labels
-    assert "SendGrid" in labels
+    assert "SendGrid" not in labels
     assert "Auth0" in labels
 
 

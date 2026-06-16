@@ -354,8 +354,8 @@ def test_expansion_framework_points_to_m79i():
     """M79I complete — planned_next_stage must advance to M80A (SendGrid)."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M80A" in planned, (
-        f"planned_next_stage must point to M80A (SendGrid) after M79I; got: {planned!r}"
+    assert "M80B" in planned, (
+        f"planned_next_stage must point to M80B (SendGrid Core Security) after M80A; got: {planned!r}"
     )
     assert "SendGrid" in planned
     assert "M79H" not in planned, (
@@ -1494,11 +1494,11 @@ def test_correlation_five_families_cover_all_match_keys():
 
 
 def test_expansion_framework_sendgrid_correctly_follows_m79i():
-    """After M79I, SendGrid (M80A) is correctly the planned_next_stage."""
+    """After M80A, SendGrid Core Security (M80B) is the planned_next_stage."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M80A" in planned or "SendGrid" in planned, (
-        f"planned_next_stage should point to M80A/SendGrid after M79I; got: {planned!r}"
+    assert "M80B" in planned or "SendGrid" in planned, (
+        f"planned_next_stage should point to M80B/SendGrid after M80A; got: {planned!r}"
     )
     assert "Auth0" not in planned, (
         f"Auth0 was promoted ahead of SendGrid: {planned!r}"
