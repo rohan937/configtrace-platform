@@ -277,8 +277,8 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Load a provider demo",
     talkTrack:
-      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, or Google Cloud (the latest provider-expansion example, covering IAM, firewall, Cloud Storage, Cloud SQL, Cloud Run, GKE, service-account-key, and Secret Manager posture for a synthetic Google Cloud project, with Audit Log control-plane evidence). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
-    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, or Google Cloud incident demo.",
+      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, or Twilio (covering phone number, messaging service, Verify, and API key posture for a synthetic Twilio account, with Monitor-style control-plane activity evidence). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
+    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, or Twilio incident demo.",
     emphasize: "One click seeds a full, clearly-marked evidence chain — no real provider sync.",
     avoid: "Don't present demo data as a live finding from the customer's environment.",
   },
@@ -365,7 +365,7 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Clear the demo",
     talkTrack:
-      "When you're done, clear the demo from the same banner that seeded it — for GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, or Google Cloud. Clearing removes only the clearly-marked demo case and its seeded evidence; any real connected-provider evidence is untouched.",
+      "When you're done, clear the demo from the same banner that seeded it — for GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, or Twilio. Clearing removes only the clearly-marked demo case and its seeded evidence; any real connected-provider evidence is untouched.",
     whatToClick: "Use the demo banner's Clear action for the provider you seeded.",
     emphasize: "Demo data is isolated and reversible; clearing preserves real evidence.",
     avoid: "Don't imply clearing affects real provider data — it only removes the seeded demo.",

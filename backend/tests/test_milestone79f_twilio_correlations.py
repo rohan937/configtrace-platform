@@ -610,12 +610,12 @@ class TestCapabilityMatrix:
         assert self._cap().security.risk_activity_correlations is True
 
     def test_f2_demo_seed_clear_is_false(self):
-        """F2: get_provider_capability('twilio').security.demo_seed_clear is False."""
-        assert self._cap().security.demo_seed_clear is False
+        """F2: get_provider_capability('twilio').security.demo_seed_clear is True (M79G complete)."""
+        assert self._cap().security.demo_seed_clear is True
 
     def test_f3_case_report_is_false(self):
-        """F3: get_provider_capability('twilio').security.case_report is False."""
-        assert self._cap().security.case_report is False
+        """F3: get_provider_capability('twilio').security.case_report is True (M79G complete)."""
+        assert self._cap().security.case_report is True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -631,10 +631,10 @@ class TestExpansionFramework:
         return svc.get_framework()
 
     def test_g1_planned_next_stage_contains_m79g(self):
-        """G1: planned_next_stage contains 'M79G'."""
+        """G1: planned_next_stage contains 'M79H' (M79G complete)."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M79G" in stage, (
-            f"planned_next_stage should contain 'M79G', got: {stage!r}"
+        assert "M79H" in stage, (
+            f"planned_next_stage should contain 'M79H', got: {stage!r}"
         )
 
     def test_g2_planned_next_stage_contains_twilio_or_demo(self):

@@ -522,21 +522,21 @@ _TWILIO = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
         "Twilio drift + core security foundation (M79A/M79B) + messaging/webhook "
         "risk expansion (M79C) + Monitor activity ingestion (M79D) + activity signals "
-        "(M79E) + risk×activity correlations (M79F). Drift snapshots cover Twilio "
-        "account metadata, incoming phone numbers (last-4 only — no full numbers "
-        "stored), messaging services (webhook configuration as booleans — no raw URLs "
-        "stored), Verify services, and API key metadata. No auth tokens, API secrets, "
-        "message bodies, call logs, recordings, customer phone numbers, webhook URLs, "
-        "or customer data are ever stored. M79B adds 9 security rules covering "
+        "(M79E) + risk×activity correlations (M79F) + demo + QA (M79G). Drift snapshots "
+        "cover Twilio account metadata, incoming phone numbers (last-4 only — no full "
+        "numbers stored), messaging services (webhook configuration as booleans — no "
+        "raw URLs stored), Verify services, and API key metadata. No auth tokens, API "
+        "secrets, message bodies, call logs, recordings, customer phone numbers, webhook "
+        "URLs, or customer data are ever stored. M79B adds 9 security rules covering "
         "webhook/verify/account posture. M79C adds 8 additional rules: API key "
         "staleness (twilio_api_key_stale), messaging service observability gap "
         "(twilio_messaging_service_observability_gap), number-level inbound webhook "
@@ -559,8 +559,15 @@ _TWILIO = ProviderCapability(
         "twilio_verify_service_risk_activity_correlation, "
         "twilio_api_key_risk_activity_correlation, "
         "twilio_account_risk_activity_correlation) via POST "
-        "/security/twilio-correlations/generate. Demo seed/clear are planned for future "
-        "Twilio arc milestones (M79G+)."
+        "/security/twilio-correlations/generate. M79G adds demo seed/clear — a "
+        "review-safe synthetic evidence chain (4 findings, 5 activity events, up to 4 "
+        "activity signals, up to 4 correlations, and one case) covering phone number "
+        "webhook, messaging service observability, Verify service code length, and API "
+        "key staleness posture. No auth tokens, API secrets, full account SIDs, full "
+        "phone numbers, message bodies, call logs, recordings, or customer data are "
+        "ever included in demo evidence. Case report, evidence timeline, and evidence "
+        "graph are fully supported via the generic builders (twilio label registered in "
+        "all provider-label tables)."
     ),
 )
 

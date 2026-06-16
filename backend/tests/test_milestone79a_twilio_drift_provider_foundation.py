@@ -1042,12 +1042,12 @@ class TestCapabilityMatrix:
         assert cap.security.security_rules is True
 
     def test_demo_seed_clear_false_in_m79a(self):
-        """Demo seed/clear is deferred to a future Twilio arc milestone."""
+        """Demo seed/clear was implemented in M79G."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("twilio")
-        assert cap.security.demo_seed_clear is False
+        assert cap.security.demo_seed_clear is True
 
     def test_twilio_not_in_canonical_provider_capabilities(self):
         from app.services.provider_capability_matrix_service import (
@@ -1078,11 +1078,11 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_planned_next_stage_contains_m79e():
-    """Rolled forward in M79F: Risk×Activity Correlations complete; next stage is M79G."""
+    """Rolled forward in M79G: Demo QA complete; next stage is M79H."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M79G" in stage
+    assert "M79H" in stage
 
 
 def test_expansion_framework_planned_next_stage_contains_twilio():

@@ -70,7 +70,7 @@ def _ids_by_type(links: list[SecurityCaseLink]) -> dict[str, list[uuid.UUID]]:
 # response bodies). It correlates evidence for review — it does NOT confirm
 # compromise, attacker presence, unauthorized access, or breach.
 
-_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud"}
+_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud", "twilio": "Twilio"}
 
 # Item-type tie-breaker order (stable, deterministic) when timestamps are equal.
 _TYPE_RANK = {"finding": 0, "activity_event": 1, "incident_signal": 2, "correlation": 3}
@@ -113,6 +113,14 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "bucket_name", "sql_instance_name",
     "run_service_name", "gke_cluster_name",
     "signal_type", "correlation_type",
+    # Twilio-safe resource identifiers (M79G) — SIDs and last-4 only, never
+    # auth tokens, API key secrets, full account SIDs, full phone numbers,
+    # message bodies, call logs, recordings, webhook URL strings, or PII.
+    "phone_number_last4", "messaging_service_sid", "verify_service_sid",
+    "api_key_sid", "twilio_resource_sid_prefix",
+    "iso_country", "capability_sms", "code_length",
+    "sms_url_configured", "fallback_url_configured",
+    "status_callback_url_configured",
 })
 
 
@@ -634,6 +642,7 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel",
         "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe",
         "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud",
+        "twilio": "Twilio",
     }.get(provider_key, provider_key)
     evidence_label = f"{provider_label} incident evidence".strip()
     executive_summary = (

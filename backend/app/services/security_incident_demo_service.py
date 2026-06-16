@@ -55,6 +55,8 @@ from app.services import stripe_activity_signal_service as st_sig
 from app.services import shopify_activity_signal_service as sh_sig
 from app.services import azure_activity_signal_service as az_sig
 from app.services import google_cloud_activity_signal_service as gcp_sig
+from app.services import twilio_activity_signal_service as twilio_sig
+from app.services import twilio_risk_activity_correlation_service as twilio_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -3588,6 +3590,29 @@ def _gcp_resource_name(*, kind: str, name: str) -> str:
     return f"projects/{GOOGLE_CLOUD_DEMO_PROJECT_ID}/{kind}/{name}"
 
 
+# ── Twilio incident demo (M79G) — a SEPARATE hidden demo integration + case
+# source so "Clear Twilio demo" removes only Twilio demo objects and never
+# touches any other provider demo. Same safety rules:
+#   - clearly marked demo, no real Twilio sync, no notifications
+#   - never touches a real Twilio integration
+#   - idempotent
+#
+# Forbidden in demo evidence: auth tokens, API key secrets, full account SIDs
+# (strings matching AC[0-9a-fA-F]{32} or SK[0-9a-fA-F]{32}), full E.164 phone
+# numbers, message bodies, call transcripts, raw webhook URLs, raw API response
+# dicts, recording data, or any customer PII.
+TWILIO_DEMO_INTEGRATION_NAME = "ConfigTrace Twilio incident demo (sample data)"
+TWILIO_DEMO_CASE_SOURCE = "demo_twilio_incident"
+TWILIO_DEMO_DATASET = "twilio_incident_demo_v1"
+
+# Safe synthetic identifiers — plain-English placeholders, NOT Twilio SID
+# format patterns (no AC/SK hex sequences, no real E.164 phone numbers).
+TWILIO_DEMO_PHONE_RESOURCE = "TWILIO_DEMO_PHONE_RESOURCE"
+TWILIO_DEMO_MESSAGING_SERVICE = "TWILIO_DEMO_MESSAGING_SERVICE"
+TWILIO_DEMO_VERIFY_SERVICE = "TWILIO_DEMO_VERIFY_SERVICE"
+TWILIO_DEMO_API_KEY_ID = "TWILIO_DEMO_API_KEY_ID"
+
+
 def get_google_cloud_demo_integration(
     workspace_id: uuid.UUID, db: Session
 ) -> Optional[Integration]:
@@ -4305,6 +4330,498 @@ def clear_google_cloud(
         ).delete(synchronize_session=False)
 
     integ = get_google_cloud_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Twilio incident demo (M79G)
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+def get_twilio_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == TWILIO_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_twilio_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == TWILIO_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_twilio_status(
+    workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    case = _existing_twilio_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_twilio(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Twilio demo incident chain (idempotent). No real Twilio sync.
+
+    All objects are anchored on a hidden demo integration so ``clear_twilio``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace).
+
+    PRIVACY: no auth tokens, API key secrets, full account SIDs matching
+    AC/SK hex patterns, full E.164 phone numbers, message bodies, call logs,
+    recordings, raw webhook URLs, or customer data are ever included. Only
+    the last-4 digits of a phone number are used (phone_number_last4).
+    """
+    existing = _existing_twilio_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" → never shown / never synced).
+    integ = get_twilio_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": TWILIO_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=TWILIO_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real Twilio rule keys (M79B/M79C).
+    phone_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="twilio",
+        finding_key=f"twilio_phone_number_sms_webhook_missing:{TWILIO_DEMO_PHONE_RESOURCE}",
+        severity="high",
+        title="Demo: Twilio incoming phone number has no SMS webhook configured",
+        resource_id=None,
+        description=(
+            "Sample Twilio phone number configuration risk for the incident-"
+            f"workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "twilio_phone_number_sms_webhook_missing", "demo": True,
+            "phone_number_sid": TWILIO_DEMO_PHONE_RESOURCE,
+            "phone_number_last4": "0429",
+            "iso_country": "US",
+            "capability_sms": True,
+            "sms_url_configured": False,
+        },
+        remediation={
+            "summary": (
+                "Configure an SMS webhook URL for this incoming phone number "
+                "to ensure SMS delivery events are observable."
+            ),
+        },
+    )
+
+    messaging_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="twilio",
+        finding_key=(
+            f"twilio_messaging_service_observability_gap:{TWILIO_DEMO_MESSAGING_SERVICE}"
+        ),
+        severity="high",
+        title="Demo: Twilio messaging service has no fallback or status callback URL",
+        resource_id=None,
+        description=(
+            "Sample Twilio messaging service observability-gap risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "twilio_messaging_service_observability_gap", "demo": True,
+            "messaging_service_sid": TWILIO_DEMO_MESSAGING_SERVICE,
+            "fallback_url_configured": False,
+            "status_callback_url_configured": False,
+        },
+        remediation={
+            "summary": (
+                "Configure a fallback URL and status callback URL for the "
+                "messaging service to enable full delivery observability."
+            ),
+        },
+    )
+
+    verify_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="twilio",
+        finding_key=(
+            f"twilio_verify_short_code_length:{TWILIO_DEMO_VERIFY_SERVICE}"
+        ),
+        severity="medium",
+        title="Demo: Twilio Verify service uses a short verification code (4 digits)",
+        resource_id=None,
+        description=(
+            "Sample Twilio Verify service posture risk for the incident-"
+            f"workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "twilio_verify_short_code_length", "demo": True,
+            "verify_service_sid": TWILIO_DEMO_VERIFY_SERVICE,
+            "code_length": 4,
+        },
+        remediation={
+            "summary": (
+                "Increase the verification code length to 6 or more digits "
+                "to reduce brute-force risk."
+            ),
+        },
+    )
+
+    api_key_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="twilio",
+        finding_key=f"twilio_api_key_stale:{TWILIO_DEMO_API_KEY_ID}",
+        severity="high",
+        title="Demo: Twilio API key has not been rotated in over 180 days",
+        resource_id=None,
+        description=(
+            "Sample Twilio API key staleness risk for the incident-workflow "
+            f"demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "twilio_api_key_stale", "demo": True,
+            "api_key_sid": TWILIO_DEMO_API_KEY_ID,
+            "date_created": "2023-01-01T00:00:00Z",
+            "date_updated": "2023-06-01T00:00:00Z",
+        },
+        remediation={
+            "summary": (
+                "Rotate this API key and update any services that depend on it. "
+                "Establish a regular key-rotation schedule."
+            ),
+        },
+    )
+
+    findings = [phone_finding, messaging_finding, verify_finding, api_key_finding]
+
+    # 3. Activity events (provider="twilio", source="twilio_activity_event").
+    TWILIO_ACTIVITY_SOURCE = "twilio_activity_event"
+
+    def _mk_twilio_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="twilio", source=TWILIO_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=provider_event_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    phone_event = _mk_twilio_event(
+        event_type="twilio.phone_number.updated",
+        resource_type="incoming-phone-number",
+        provider_event_id="TWILIO_DEMO_EVT_PHONE_001",
+        extra={
+            "twilio_resource_sid_prefix": "TWILIO_D",
+            "phone_number_last4": "0429",
+        },
+    )
+    msg_event = _mk_twilio_event(
+        event_type="twilio.messaging_service.updated",
+        resource_type="messaging-service",
+        provider_event_id="TWILIO_DEMO_EVT_MSG_001",
+        extra={
+            "twilio_resource_sid_prefix": "TWILIO_D",
+            "messaging_service_sid": TWILIO_DEMO_MESSAGING_SERVICE,
+        },
+    )
+    pool_event = _mk_twilio_event(
+        event_type="twilio.messaging_service.sender_pool.updated",
+        resource_type="messaging-service",
+        provider_event_id="TWILIO_DEMO_EVT_POOL_001",
+        extra={
+            "twilio_resource_sid_prefix": "TWILIO_D",
+            "messaging_service_sid": TWILIO_DEMO_MESSAGING_SERVICE,
+        },
+    )
+    verify_event = _mk_twilio_event(
+        event_type="twilio.verify_service.updated",
+        resource_type="verify-service",
+        provider_event_id="TWILIO_DEMO_EVT_VERIFY_001",
+        extra={
+            "twilio_resource_sid_prefix": "TWILIO_D",
+            "verify_service_sid": TWILIO_DEMO_VERIFY_SERVICE,
+        },
+    )
+    api_key_event = _mk_twilio_event(
+        event_type="twilio.api_key.updated",
+        resource_type="api-key",
+        provider_event_id="TWILIO_DEMO_EVT_APIKEY_001",
+        extra={
+            "twilio_resource_sid_prefix": "TWILIO_D",
+            "api_key_sid": TWILIO_DEMO_API_KEY_ID,
+        },
+    )
+
+    events = [phone_event, msg_event, pool_event, verify_event, api_key_event]
+
+    # 4. Activity signals via the real M79E signal builder.
+    signals: list[SecurityIncidentSignal] = []
+    for ev in events:
+        sig_dict = twilio_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            signals.append(sig)
+
+    # 5. Correlations via the real M79F builder.
+    #    Each correlation joins a finding to a signal (not directly to an event).
+    twilio_correlations: list[SecuritySignalCorrelation] = []
+
+    def _add_twilio_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+    ) -> SecuritySignalCorrelation:
+        rule = twilio_corr_svc.TWILIO_CORRELATION_RULES[correlation_type]
+        cdict = twilio_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        twilio_correlations.append(corr)
+        return corr
+
+    # Map signal types to signal objects.
+    signals_by_type: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in signals
+    }
+
+    phone_signal = signals_by_type.get("twilio_phone_number_config_changed")
+    msg_signal = signals_by_type.get("twilio_messaging_service_config_changed")
+    verify_signal = signals_by_type.get("twilio_verify_service_config_changed")
+    api_key_signal = signals_by_type.get("twilio_api_key_config_changed")
+
+    if phone_signal is not None:
+        _add_twilio_correlation(
+            finding=phone_finding,
+            signal=phone_signal,
+            correlation_type="twilio_phone_number_risk_activity_correlation",
+            match_reason="phone_number_family",
+        )
+    if msg_signal is not None:
+        _add_twilio_correlation(
+            finding=messaging_finding,
+            signal=msg_signal,
+            correlation_type="twilio_messaging_service_risk_activity_correlation",
+            match_reason="messaging_service_sid_match",
+        )
+    if verify_signal is not None:
+        _add_twilio_correlation(
+            finding=verify_finding,
+            signal=verify_signal,
+            correlation_type="twilio_verify_service_risk_activity_correlation",
+            match_reason="verify_service_sid_match",
+        )
+    if api_key_signal is not None:
+        _add_twilio_correlation(
+            finding=api_key_finding,
+            signal=api_key_signal,
+            correlation_type="twilio_api_key_risk_activity_correlation",
+            match_reason="api_key_sid_match",
+        )
+
+    # 6. Case — links 4 findings, 5 events, up to 4 signals, up to 4 correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title=(
+            "[Demo] Twilio configuration review: webhook, Verify, and API key posture"
+        ),
+        summary=(
+            "Review-safe Twilio demo case linking configuration risks to "
+            "control-plane activity evidence. Groups Twilio configuration "
+            "findings (phone number SMS webhook missing, messaging service "
+            "observability gap, Verify service short code length, and stale "
+            "API key) with Twilio Monitor-style control-plane activity events "
+            "for the same resources, plus the matching activity signals and "
+            "risk x activity correlations. Marked demo — no real Twilio sync, "
+            "no message bodies, no call logs, no recordings, no customer data. "
+            "Evidence for review. Does not confirm compromise or unauthorized "
+            "access."
+        ),
+        severity="high",
+        provider="twilio",
+        metadata={
+            "source": TWILIO_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+
+    for finding in findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=finding.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for ev in events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    seen_signal_ids: set = set()
+    for sig in signals:
+        seen_signal_ids.add(sig.id)
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for corr in twilio_correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids
+        ):
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    logger.info(
+        "twilio_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_twilio(
+    *, workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Remove exactly the Twilio demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == TWILIO_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = get_twilio_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

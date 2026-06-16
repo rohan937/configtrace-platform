@@ -48,7 +48,7 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
-  | "google_cloud";
+  | "google_cloud" | "twilio";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -164,6 +164,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Google Cloud demo",
     seedColor: "#4285f4",
   },
+  {
+    provider: "twilio",
+    label: "Twilio",
+    intro: "Try the Twilio security demo:",
+    description:
+      "seed a review-safe Twilio security demo with configuration drift findings, control-plane activity evidence, activity signals, risk × activity correlations, and a case (clearly marked demo, no real Twilio sync, no message bodies, no call logs, no recordings, no raw webhook URLs, no full phone numbers).",
+    seedButton: "Load Twilio security demo",
+    clearButton: "Clear Twilio demo",
+    seedColor: "#f22f46",
+  },
 ];
 
 export default function CasesPage() {
@@ -222,7 +232,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -241,7 +251,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -266,7 +276,9 @@ export default function CasesPage() {
                         ? "Azure demo data cleared."
                         : provider === "google_cloud"
                           ? "Google Cloud demo data cleared."
-                          : "Demo data cleared.",
+                          : provider === "twilio"
+                            ? "Twilio demo data cleared."
+                            : "Demo data cleared.",
       );
       await load();
     } catch {

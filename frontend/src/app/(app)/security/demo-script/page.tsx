@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete. Azure and Google Cloud are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. Twilio launched in M79A with drift-only partial state — drift snapshots are active, security rules and activity ingestion are planned for M79B+.{" "}
+          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, and Twilio are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers.{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -357,7 +357,7 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
   { provider: "shopify",    label: "Shopify",     category: "ecommerce",          drift: true, security: true, signals: true, correlations: true, demo: true },
   { provider: "azure",      label: "Azure",       category: "cloud",              drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
   { provider: "google_cloud", label: "Google Cloud", category: "cloud",            drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
-  { provider: "twilio",    label: "Twilio",      category: "communications",     drift: true, security: false, signals: false, correlations: false, demo: false },
+  { provider: "twilio",    label: "Twilio",      category: "communications",     drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
 ];
 
 function Dot({ on }: { on: boolean }) {

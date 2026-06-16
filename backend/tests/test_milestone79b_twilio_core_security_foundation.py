@@ -609,7 +609,7 @@ class TestCapabilityMatrix:
         assert self.cap.security.activity_ingestion is True
 
     def test_demo_seed_clear_is_false(self):
-        assert self.cap.security.demo_seed_clear is False
+        assert self.cap.security.demo_seed_clear is True
 
     def test_maturity_is_partial(self):
         assert self.cap.maturity == "partial"
@@ -639,8 +639,8 @@ class TestExpansionFramework:
         self.stage = self.fw["summary"]["planned_next_stage"]
 
     def test_planned_next_stage_contains_m79e(self):
-        assert "M79G" in self.stage, (
-            f"expected 'M79G' in planned_next_stage (M79F complete), got: {self.stage!r}"
+        assert "M79H" in self.stage, (
+            f"expected 'M79H' in planned_next_stage (M79G complete), got: {self.stage!r}"
         )
 
     def test_planned_next_stage_contains_twilio(self):

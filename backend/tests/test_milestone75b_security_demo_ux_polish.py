@@ -134,11 +134,11 @@ def test_cases_page_uses_provider_demo_cards_array():
         assert key in text, f"PROVIDER_DEMO_CARDS missing {key} field"
     # No "Try the …:" intro string is hand-rolled outside the array map.
     # The array carries one entry per provider with a demo: 8 canonical
-    # providers plus Azure (M77G) plus Google Cloud (M78G) = 10. Sanity-
-    # check by counting the ``intro: "Try the `` literal (filters out
-    # comments / prose).
-    assert text.count('intro: "Try the ') == 10, (
-        "expected exactly 10 PROVIDER_DEMO_CARDS intros"
+    # providers plus Azure (M77G) plus Google Cloud (M78G) plus Twilio
+    # (M79G) = 11. Sanity-check by counting the ``intro: "Try the ``
+    # literal (filters out comments / prose).
+    assert text.count('intro: "Try the ') == 11, (
+        "expected exactly 11 PROVIDER_DEMO_CARDS intros"
     )
 
 
@@ -292,5 +292,5 @@ def test_backend_provider_label_map_remains_canonical():
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare",
         "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase",
         "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure",
-        "google_cloud": "Google Cloud",
+        "google_cloud": "Google Cloud", "twilio": "Twilio",
     }
