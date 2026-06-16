@@ -355,6 +355,8 @@ _ACTIVITY_PROVIDERS = [
     "google_cloud",
     # M79D added Twilio Monitor activity ingestion.
     "twilio",
+    # M80D added SendGrid config-state activity ingestion.
+    "sendgrid",
 ]
 _SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 _CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)

@@ -1119,7 +1119,7 @@ export async function getSecurityCaseGraph(
 
 export async function getIncidentDemoStatus(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" = "github",
 ): Promise<import("@/types").IncidentDemoStatus> {
   return apiFetch(`/security/incident-demo/status?provider=${provider}`, { token });
 }

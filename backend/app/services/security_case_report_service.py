@@ -121,6 +121,14 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "iso_country", "capability_sms", "code_length",
     "sms_url_configured", "fallback_url_configured",
     "status_callback_url_configured",
+    # SendGrid-safe resource identifiers (M80H) — opaque IDs and safe counts
+    # only. NEVER API key values, bearer tokens, email addresses (sender or
+    # recipient), template content, webhook URL strings, raw DNS values,
+    # suppression list contents, mail event payloads, or customer data.
+    "api_key_id",             # API key opaque ID (never the key value)
+    "sender_id",              # sender identity opaque ID (never email address)
+    "domain_id",              # domain authentication opaque ID (never DNS values)
+    "suppression_group_count",  # count of ASM groups (never recipient emails)
 })
 
 

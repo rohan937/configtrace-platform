@@ -768,6 +768,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M80H: SendGrid Provider Depth QA",
+            "planned_next_stage": "M80I: SendGrid Cross-Cloud UX Polish",
         },
     }

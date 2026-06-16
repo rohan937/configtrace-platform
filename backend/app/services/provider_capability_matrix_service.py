@@ -660,8 +660,16 @@ _SENDGRID = ProviderCapability(
         "signals, correlations, and a linked case. Demo uses only safe "
         "synthetic identifiers — no real API key values, email bodies, "
         "recipient emails, template content, webhook URLs, or customer data. "
+        "M80H adds provider-depth QA: durable guardrails covering taxonomy "
+        "parity (8 record types, 26 rules, 17 activity event types, 10 signal "
+        "types, 7 correlation types), privacy denylist enforcement, claim "
+        "discipline, false-positive behavior, demo isolation, router admin "
+        "guards, and frontend consistency. Case-report preview allowlist "
+        "expanded with SendGrid-safe opaque identifiers (api_key_id, "
+        "sender_id, domain_id, suppression_group_count). "
         "SendGrid remains partial (not in the canonical dual-stack-complete set "
-        "of 8 providers)."
+        "of 8 providers). evidence_timeline and evidence_graph are intentionally "
+        "deferred to a later arc."
     ),
 )
 

@@ -166,6 +166,19 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "twilio_api_key_risk_activity_correlation",
     "twilio_account_risk_activity_correlation",
   ],
+  sendgrid: [
+    // M80F — SendGrid Configuration Risk × SendGrid Activity evidence.
+    // Resource-identity-scoped matching for API keys / sender identities /
+    // domain authentication; account-level match for mail settings, tracking
+    // settings, webhook/inbound parse, and suppression settings.
+    "sendgrid_api_key_risk_activity_correlation",
+    "sendgrid_sender_identity_risk_activity_correlation",
+    "sendgrid_domain_authentication_risk_activity_correlation",
+    "sendgrid_mail_settings_risk_activity_correlation",
+    "sendgrid_tracking_settings_risk_activity_correlation",
+    "sendgrid_webhook_risk_activity_correlation",
+    "sendgrid_suppression_settings_risk_activity_correlation",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 
