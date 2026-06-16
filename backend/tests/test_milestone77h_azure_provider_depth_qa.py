@@ -316,9 +316,9 @@ def test_capability_matrix_pins_azure_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m77i():
-    """Rolled forward in M79A: Twilio launched → M79B Twilio Core Security Foundation."""
+    """Rolled forward in M79H: Provider Depth QA complete → M79I Twilio Cross-Cloud UX Polish."""
     fw = get_framework()
-    assert "M79B" in fw["summary"]["planned_next_stage"]
+    assert "M79I" in fw["summary"]["planned_next_stage"]
     assert "Twilio" in fw["summary"]["planned_next_stage"]
 
 

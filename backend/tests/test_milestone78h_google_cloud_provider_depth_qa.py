@@ -407,10 +407,10 @@ def test_capability_matrix_pins_google_cloud_partial_demo_ready():
 
 
 def test_expansion_framework_points_beyond_m79d():
-    """M79G is now complete — planned_next_stage rolls to M79H (Twilio Provider Depth QA)."""
+    """M79H is now complete — planned_next_stage rolls to M79I (Twilio Cross-Cloud UX Polish)."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M79H" in planned, planned
+    assert "M79I" in planned, planned
     assert "Twilio" in planned
     assert "M78H" not in planned, "M78H is done; pointer must advance past it"
     assert "M78I" not in planned, "M78I is done; pointer must advance past it"

@@ -353,6 +353,8 @@ _ACTIVITY_PROVIDERS = [
     "azure",
     # M78D added Google Cloud Audit Log ingestion.
     "google_cloud",
+    # M79D added Twilio Monitor activity ingestion.
+    "twilio",
 ]
 _SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 _CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)

@@ -631,10 +631,10 @@ class TestExpansionFramework:
         return svc.get_framework()
 
     def test_g1_planned_next_stage_contains_m79g(self):
-        """G1: planned_next_stage contains 'M79H' (M79G complete)."""
+        """G1: planned_next_stage contains 'M79I' (M79H complete)."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M79H" in stage, (
-            f"planned_next_stage should contain 'M79H', got: {stage!r}"
+        assert "M79I" in stage, (
+            f"planned_next_stage should contain 'M79I', got: {stage!r}"
         )
 
     def test_g2_planned_next_stage_contains_twilio_or_demo(self):

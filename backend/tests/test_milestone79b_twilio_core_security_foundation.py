@@ -639,8 +639,8 @@ class TestExpansionFramework:
         self.stage = self.fw["summary"]["planned_next_stage"]
 
     def test_planned_next_stage_contains_m79e(self):
-        assert "M79H" in self.stage, (
-            f"expected 'M79H' in planned_next_stage (M79G complete), got: {self.stage!r}"
+        assert "M79I" in self.stage, (
+            f"expected 'M79I' in planned_next_stage (M79H complete), got: {self.stage!r}"
         )
 
     def test_planned_next_stage_contains_twilio(self):

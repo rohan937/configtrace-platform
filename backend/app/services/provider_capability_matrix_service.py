@@ -567,7 +567,10 @@ _TWILIO = ProviderCapability(
         "phone numbers, message bodies, call logs, recordings, or customer data are "
         "ever included in demo evidence. Case report, evidence timeline, and evidence "
         "graph are fully supported via the generic builders (twilio label registered in "
-        "all provider-label tables)."
+        "all provider-label tables). M79H (provider-depth QA) added durable guardrails "
+        "pinning taxonomy parity, privacy/sanitization discipline, false-positive "
+        "behavior, demo isolation, and router/frontend consistency across the full "
+        "M79A–M79G arc."
     ),
 )
 
