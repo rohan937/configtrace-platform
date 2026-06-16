@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, and Twilio are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. SendGrid (M80A) adds drift-only snapshots covering account metadata, API key metadata, sender identities, domain authentication, mail and tracking settings, webhook configuration, and suppression group count.{" "}
+          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, Twilio, and SendGrid are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. SendGrid (M80A–M80G) covers configuration drift across account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression surfaces, plus configuration activity events synthesized from those safe surfaces (no mail-delivery events ever ingested).{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -357,7 +357,7 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
   { provider: "azure",      label: "Azure",       category: "cloud",              drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
   { provider: "google_cloud", label: "Google Cloud", category: "cloud",            drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
   { provider: "twilio",    label: "Twilio",      category: "communications",     drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
-  { provider: "sendgrid",  label: "SendGrid",    category: "communications",     drift: true, security: false, signals: false, correlations: false, demo: false },
+  { provider: "sendgrid",  label: "SendGrid",    category: "communications",     drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
 ];
 
 function Dot({ on }: { on: boolean }) {

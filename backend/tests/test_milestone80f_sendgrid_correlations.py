@@ -709,8 +709,8 @@ class TestCapabilityMatrix:
 
     def test_g4_demo_and_case_false(self):
         cap = self._cap()
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
+        assert cap.security.demo_seed_clear is True  # M80G rolled forward
+        assert cap.security.case_report is True  # M80G rolled forward
 
     def test_g5_maturity_partial(self):
         assert self._cap().maturity == "partial"
@@ -733,7 +733,7 @@ class TestExpansionFramework:
 
     def test_h1_planned_next_stage_contains_m80g(self):
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80G" in stage, f"expected M80G, got {stage!r}"
+        assert "M80H" in stage, f"expected M80H, got {stage!r}"
 
     def test_h2_planned_next_stage_not_m80f(self):
         stage = self._fw()["summary"]["planned_next_stage"]

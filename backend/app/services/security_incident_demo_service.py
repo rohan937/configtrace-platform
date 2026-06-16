@@ -57,6 +57,8 @@ from app.services import azure_activity_signal_service as az_sig
 from app.services import google_cloud_activity_signal_service as gcp_sig
 from app.services import twilio_activity_signal_service as twilio_sig
 from app.services import twilio_risk_activity_correlation_service as twilio_corr_svc
+from app.services import sendgrid_activity_signal_service as sg_sig
+from app.services import sendgrid_risk_activity_correlation_service as sg_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -4822,6 +4824,673 @@ def clear_twilio(
         ).delete(synchronize_session=False)
 
     integ = get_twilio_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── SendGrid incident demo (M80G) — a SEPARATE hidden demo integration + case
+# source so "Clear SendGrid demo" removes only SendGrid demo objects and never
+# touches any other provider demo. Same safety rules:
+#   - clearly marked demo, no real SendGrid sync, no notifications
+#   - never touches a real SendGrid integration
+#   - idempotent
+#
+# Forbidden in demo evidence: API key values, bearer tokens, authorization
+# headers, email bodies, subject lines, recipient emails, sender personal
+# emails (full), suppression recipient emails, template HTML/plaintext,
+# dynamic template content, raw webhook URLs, raw inbound parse hostnames,
+# marketing contact data, mail event payloads (bounce/click/open/delivered/
+# dropped/spamreport/unsubscribe), message IDs, DNS token values, DKIM keys,
+# customer data, or PII.
+#
+# Strings must NEVER match SG.[A-Za-z0-9_-]{10,}.[A-Za-z0-9_-]{10,}.
+SENDGRID_DEMO_INTEGRATION_NAME = "ConfigTrace SendGrid incident demo (sample data)"
+SENDGRID_DEMO_CASE_SOURCE = "demo_sendgrid_incident"
+SENDGRID_DEMO_DATASET = "sendgrid_incident_demo_v1"
+
+# Safe synthetic identifiers — plain-English placeholders only.
+# NEVER real SendGrid SID/key format patterns.
+SENDGRID_DEMO_API_KEY_ID = "SENDGRID_DEMO_API_KEY_ID"
+SENDGRID_DEMO_SENDER_ID = "SENDGRID_DEMO_SENDER_ID"
+SENDGRID_DEMO_DOMAIN_ID = "SENDGRID_DEMO_DOMAIN_ID"
+
+
+def get_sendgrid_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == SENDGRID_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_sendgrid_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == SENDGRID_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_sendgrid_status(
+    workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    case = _existing_sendgrid_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_sendgrid(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the SendGrid demo incident chain (idempotent). No real SendGrid sync.
+
+    All objects are anchored on a hidden demo integration so ``clear_sendgrid``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace).
+
+    PRIVACY: no API key values, bearer tokens, authorization headers, email
+    bodies, subject lines, recipient emails, sender personal emails, suppression
+    recipient emails, template content, raw webhook URLs, raw inbound parse
+    hostnames, mail event payloads, message IDs, DNS token values, customer
+    data, or PII are ever included. Only safe booleans, counts, opaque IDs,
+    and domain names are used.
+
+    SECURITY: no strings matching SG.[A-Za-z0-9_-]{10,}.[A-Za-z0-9_-]{10,}
+    are used. Placeholders are plain-English strings.
+    """
+    existing = _existing_sendgrid_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" → never shown / never synced).
+    integ = get_sendgrid_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": SENDGRID_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=SENDGRID_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real SendGrid rule keys (M80B/M80C).
+    #    Evidence uses only safe booleans, counts, and opaque IDs.
+    api_key_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="sendgrid",
+        finding_key=(
+            f"sendgrid_api_key_broad_scopes:{SENDGRID_DEMO_API_KEY_ID}"
+        ),
+        severity="high",
+        title="Demo: SendGrid API key is configured with broad access scopes",
+        resource_id=None,
+        description=(
+            "Sample SendGrid API key broad-scope risk for the incident-workflow "
+            f"demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "sendgrid_api_key_broad_scopes", "demo": True,
+            "api_key_id": SENDGRID_DEMO_API_KEY_ID,
+            "name": "Demo broad-scope key",
+            "scopes_count": 12,
+            "has_full_access": True,
+        },
+        remediation={
+            "summary": (
+                "Review API key scopes and restrict to least-privilege — "
+                "create a new key scoped only to its required operations."
+            ),
+        },
+    )
+
+    sender_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="sendgrid",
+        finding_key=(
+            f"sendgrid_sender_identity_unverified:{SENDGRID_DEMO_SENDER_ID}"
+        ),
+        severity="medium",
+        title="Demo: SendGrid sender identity has not been verified",
+        resource_id=None,
+        description=(
+            "Sample SendGrid sender identity verification risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "sendgrid_sender_identity_unverified", "demo": True,
+            "sender_id": SENDGRID_DEMO_SENDER_ID,
+            "nickname": "Demo Sender",
+            "from_email_domain": "demo-domain.example",
+            "verified": False,
+        },
+        remediation={
+            "summary": (
+                "Complete sender identity verification in SendGrid Console "
+                "under Settings > Sender Authentication."
+            ),
+        },
+    )
+
+    domain_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="sendgrid",
+        finding_key=(
+            f"sendgrid_domain_authentication_invalid:{SENDGRID_DEMO_DOMAIN_ID}"
+        ),
+        severity="medium",
+        title="Demo: SendGrid domain authentication is not passing DNS validation",
+        resource_id=None,
+        description=(
+            "Sample SendGrid domain authentication posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "sendgrid_domain_authentication_invalid", "demo": True,
+            "domain_id": SENDGRID_DEMO_DOMAIN_ID,
+            "domain": "mail.demo-domain.example",
+            "valid": False,
+            "dns_record_count": 0,
+        },
+        remediation={
+            "summary": (
+                "Fix the failing DNS records for this domain authentication "
+                "in SendGrid Console under Settings > Sender Authentication."
+            ),
+        },
+    )
+
+    mail_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="sendgrid",
+        finding_key="sendgrid_spam_check_disabled:sendgrid_mail_settings_main",
+        severity="medium",
+        title="Demo: SendGrid spam check is disabled",
+        resource_id=None,
+        description=(
+            "Sample SendGrid mail settings risk for the incident-workflow "
+            f"demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "sendgrid_spam_check_disabled", "demo": True,
+            "spam_check_enabled": False,
+        },
+        remediation={
+            "summary": (
+                "Enable the spam check mail setting in SendGrid Console "
+                "under Settings > Mail Settings."
+            ),
+        },
+    )
+
+    tracking_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="sendgrid",
+        finding_key=(
+            "sendgrid_subscription_tracking_disabled:sendgrid_tracking_settings_main"
+        ),
+        severity="medium",
+        title="Demo: SendGrid subscription (unsubscribe) tracking is disabled",
+        resource_id=None,
+        description=(
+            "Sample SendGrid tracking settings risk for the incident-workflow "
+            f"demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "sendgrid_subscription_tracking_disabled", "demo": True,
+            "subscription_tracking_enabled": False,
+        },
+        remediation={
+            "summary": (
+                "Enable subscription tracking in SendGrid Console under "
+                "Settings > Tracking to ensure compliance with unsubscribe requirements."
+            ),
+        },
+    )
+
+    webhook_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="sendgrid",
+        finding_key=(
+            "sendgrid_inbound_parse_spam_check_disabled:sendgrid_webhook_settings_main"
+        ),
+        severity="medium",
+        title="Demo: SendGrid inbound parse spam check is disabled",
+        resource_id=None,
+        description=(
+            "Sample SendGrid inbound parse posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "sendgrid_inbound_parse_spam_check_disabled", "demo": True,
+            "inbound_parse_enabled": True,
+            "inbound_parse_spam_check_enabled": False,
+        },
+        remediation={
+            "summary": (
+                "Enable spam check for the inbound parse configuration in "
+                "SendGrid Console under Settings > Inbound Parse."
+            ),
+        },
+    )
+
+    suppression_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="sendgrid",
+        finding_key=(
+            "sendgrid_suppression_settings_empty:sendgrid_suppression_settings_main"
+        ),
+        severity="low",
+        title="Demo: SendGrid has no suppression groups configured",
+        resource_id=None,
+        description=(
+            "Sample SendGrid suppression settings risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "sendgrid_suppression_settings_empty", "demo": True,
+            "suppression_group_count": 0,
+        },
+        remediation={
+            "summary": (
+                "Create suppression groups for email categories in SendGrid "
+                "Console under Marketing > Suppressions > Unsubscribe Groups."
+            ),
+        },
+    )
+
+    findings = [
+        api_key_finding, sender_finding, domain_finding,
+        mail_finding, tracking_finding, webhook_finding, suppression_finding,
+    ]
+
+    # 3. Activity events (provider="sendgrid", source="sendgrid_activity_event").
+    SENDGRID_ACTIVITY_SOURCE = "sendgrid_activity_event"
+
+    def _mk_sg_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+            "event_source": SENDGRID_ACTIVITY_SOURCE,
+            "status": "observed",
+            "category": resource_type,
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="sendgrid", source=SENDGRID_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=provider_event_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    api_key_event = _mk_sg_event(
+        event_type="sendgrid.api_key.updated",
+        resource_type="api_key",
+        provider_event_id="SENDGRID_DEMO_EVT_APIKEY_001",
+        extra={
+            "api_key_id": SENDGRID_DEMO_API_KEY_ID,
+            "resource_id": SENDGRID_DEMO_API_KEY_ID,
+            "resource_name": "Demo broad-scope key",
+        },
+    )
+    sender_event = _mk_sg_event(
+        event_type="sendgrid.sender_identity.updated",
+        resource_type="sender_identity",
+        provider_event_id="SENDGRID_DEMO_EVT_SENDER_001",
+        extra={
+            "sender_id": SENDGRID_DEMO_SENDER_ID,
+            "resource_id": SENDGRID_DEMO_SENDER_ID,
+            "sender_verified": False,
+            "sender_locked": False,
+        },
+    )
+    domain_event = _mk_sg_event(
+        event_type="sendgrid.domain_authentication.updated",
+        resource_type="domain_authentication",
+        provider_event_id="SENDGRID_DEMO_EVT_DOMAIN_001",
+        extra={
+            "domain_id": SENDGRID_DEMO_DOMAIN_ID,
+            "resource_id": SENDGRID_DEMO_DOMAIN_ID,
+            "domain_valid": False,
+            "automatic_security": False,
+            "dns_record_count": 0,
+        },
+    )
+    mail_event = _mk_sg_event(
+        event_type="sendgrid.mail_settings.updated",
+        resource_type="mail_settings",
+        provider_event_id="SENDGRID_DEMO_EVT_MAIL_001",
+        extra={
+            "mail_setting_name": "mail_settings_config",
+        },
+    )
+    tracking_event = _mk_sg_event(
+        event_type="sendgrid.tracking_settings.updated",
+        resource_type="tracking_settings",
+        provider_event_id="SENDGRID_DEMO_EVT_TRACKING_001",
+        extra={
+            "tracking_setting_name": "tracking_settings_config",
+        },
+    )
+    webhook_event = _mk_sg_event(
+        event_type="sendgrid.event_webhook.updated",
+        resource_type="event_webhook",
+        provider_event_id="SENDGRID_DEMO_EVT_WEBHOOK_001",
+        extra={
+            "event_webhook_enabled": True,
+            "event_webhook_has_url": False,
+            "inbound_parse_enabled": True,
+            "inbound_parse_spam_check_enabled": False,
+        },
+    )
+    inbound_parse_event = _mk_sg_event(
+        event_type="sendgrid.inbound_parse.updated",
+        resource_type="event_webhook",
+        provider_event_id="SENDGRID_DEMO_EVT_INBOUND_001",
+        extra={
+            "inbound_parse_enabled": True,
+            "inbound_parse_send_raw_enabled": False,
+            "inbound_parse_spam_check_enabled": False,
+        },
+    )
+    suppression_event = _mk_sg_event(
+        event_type="sendgrid.suppression_settings.updated",
+        resource_type="suppression_settings",
+        provider_event_id="SENDGRID_DEMO_EVT_SUPPRESSION_001",
+        extra={
+            "suppression_group_count": 0,
+        },
+    )
+
+    events = [
+        api_key_event, sender_event, domain_event, mail_event,
+        tracking_event, webhook_event, inbound_parse_event, suppression_event,
+    ]
+
+    # 4. Activity signals via the real M80E signal builder.
+    signals: list[SecurityIncidentSignal] = []
+    for ev in events:
+        sig_dict = sg_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            signals.append(sig)
+
+    # 5. Correlations via the real M80F builder.
+    sg_correlations: list[SecuritySignalCorrelation] = []
+    signals_by_type: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in signals
+    }
+
+    def _add_sg_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+    ) -> SecuritySignalCorrelation:
+        rule = sg_corr_svc.SENDGRID_CORRELATION_RULES[correlation_type]
+        cdict = sg_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        sg_correlations.append(corr)
+        return corr
+
+    api_key_signal = signals_by_type.get("sendgrid_api_key_config_changed")
+    sender_signal = signals_by_type.get("sendgrid_sender_identity_config_changed")
+    domain_signal = signals_by_type.get("sendgrid_domain_authentication_config_changed")
+    mail_signal = signals_by_type.get("sendgrid_mail_settings_config_changed")
+    tracking_signal = signals_by_type.get("sendgrid_tracking_settings_config_changed")
+    webhook_signal = signals_by_type.get("sendgrid_event_webhook_config_changed")
+    inbound_signal = signals_by_type.get("sendgrid_inbound_parse_config_changed")
+    suppression_signal = signals_by_type.get("sendgrid_suppression_settings_config_changed")
+
+    if api_key_signal is not None:
+        _add_sg_correlation(
+            finding=api_key_finding,
+            signal=api_key_signal,
+            correlation_type="sendgrid_api_key_risk_activity_correlation",
+            match_reason="api_key_id_match",
+        )
+    if sender_signal is not None:
+        _add_sg_correlation(
+            finding=sender_finding,
+            signal=sender_signal,
+            correlation_type="sendgrid_sender_identity_risk_activity_correlation",
+            match_reason="sender_id_match",
+        )
+    if domain_signal is not None:
+        _add_sg_correlation(
+            finding=domain_finding,
+            signal=domain_signal,
+            correlation_type="sendgrid_domain_authentication_risk_activity_correlation",
+            match_reason="domain_id_match",
+        )
+    if mail_signal is not None:
+        _add_sg_correlation(
+            finding=mail_finding,
+            signal=mail_signal,
+            correlation_type="sendgrid_mail_settings_risk_activity_correlation",
+            match_reason="mail_settings_family",
+        )
+    if tracking_signal is not None:
+        _add_sg_correlation(
+            finding=tracking_finding,
+            signal=tracking_signal,
+            correlation_type="sendgrid_tracking_settings_risk_activity_correlation",
+            match_reason="tracking_settings_family",
+        )
+    # Use whichever webhook signal was created first
+    wh_signal = webhook_signal or inbound_signal
+    if wh_signal is not None:
+        _add_sg_correlation(
+            finding=webhook_finding,
+            signal=wh_signal,
+            correlation_type="sendgrid_webhook_risk_activity_correlation",
+            match_reason="webhook_family",
+        )
+    if suppression_signal is not None:
+        _add_sg_correlation(
+            finding=suppression_finding,
+            signal=suppression_signal,
+            correlation_type="sendgrid_suppression_settings_risk_activity_correlation",
+            match_reason="suppression_settings_family",
+        )
+
+    # 6. Case linking 7 findings, 8 events, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title=(
+            "[Demo] SendGrid configuration review: API key, sender identity, "
+            "domain authentication, and mail/webhook posture"
+        ),
+        summary=(
+            "Review-safe SendGrid demo case linking configuration risks to "
+            "control-plane activity evidence. Groups SendGrid configuration "
+            "findings (API key broad-scope, sender identity unverified, "
+            "domain authentication invalid, spam check disabled, subscription "
+            "tracking disabled, inbound parse spam check disabled, suppression "
+            "settings empty) with SendGrid configuration-state activity events "
+            "for the same surfaces, plus the matching activity signals and "
+            "risk x activity correlations. Marked demo — no real SendGrid sync, "
+            "no email bodies, no subject lines, no recipient emails, no sender "
+            "personal emails, no template content, no raw webhook URLs, no API "
+            "key values, no customer data. Evidence for review. Does not "
+            "confirm compromise or unauthorized access."
+        ),
+        severity="high",
+        provider="sendgrid",
+        metadata={
+            "source": SENDGRID_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+
+    for finding in findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=finding.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for ev in events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    seen_signal_ids: set = set()
+    for sig in signals:
+        seen_signal_ids.add(sig.id)
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for corr in sg_correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids
+        ):
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    logger.info(
+        "sendgrid_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_sendgrid(
+    *, workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Remove exactly the SendGrid demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == SENDGRID_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = get_sendgrid_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

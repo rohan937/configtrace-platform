@@ -771,8 +771,8 @@ class TestCapabilityMatrix:
         assert cap.security.activity_ingestion is True
         assert cap.security.activity_signals is True
         assert cap.security.risk_activity_correlations is True  # M80F rolled forward
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
+        assert cap.security.demo_seed_clear is True  # M80G rolled forward
+        assert cap.security.case_report is True  # M80G rolled forward
 
     def test_notes_mention_m80c(self):
         cap = self._get_sendgrid_cap()
@@ -795,7 +795,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M80G" in stage, f"Expected M80G in planned_next_stage, got: {stage!r}"
+        assert "M80H" in stage, f"Expected M80G in planned_next_stage, got: {stage!r}"
         assert "SendGrid" in stage or "Demo" in stage, (
             f"Expected SendGrid/Demo in planned_next_stage, got: {stage!r}"
         )

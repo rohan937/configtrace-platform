@@ -610,8 +610,8 @@ _SENDGRID = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
+        demo_seed_clear=True,
+        case_report=True,
         evidence_timeline=False,
         evidence_graph=False,
     ),
@@ -655,7 +655,11 @@ _SENDGRID = ProviderCapability(
         "(API key, sender identity, domain authentication, mail settings, "
         "tracking settings, webhook/inbound parse, suppression settings) "
         "join active security findings with activity signals. "
-        "Demo seed/clear lands in future milestones. "
+        "M80G adds demo + QA: a review-safe SendGrid demo incident chain "
+        "(seed/clear/status) with configuration findings, activity events, "
+        "signals, correlations, and a linked case. Demo uses only safe "
+        "synthetic identifiers — no real API key values, email bodies, "
+        "recipient emails, template content, webhook URLs, or customer data. "
         "SendGrid remains partial (not in the canonical dual-stack-complete set "
         "of 8 providers)."
     ),

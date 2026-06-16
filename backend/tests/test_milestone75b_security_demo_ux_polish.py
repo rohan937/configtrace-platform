@@ -135,10 +135,10 @@ def test_cases_page_uses_provider_demo_cards_array():
     # No "Try the …:" intro string is hand-rolled outside the array map.
     # The array carries one entry per provider with a demo: 8 canonical
     # providers plus Azure (M77G) plus Google Cloud (M78G) plus Twilio
-    # (M79G) = 11. Sanity-check by counting the ``intro: "Try the ``
-    # literal (filters out comments / prose).
-    assert text.count('intro: "Try the ') == 11, (
-        "expected exactly 11 PROVIDER_DEMO_CARDS intros"
+    # (M79G) plus SendGrid (M80G) = 12. Sanity-check by counting the
+    # ``intro: "Try the `` literal (filters out comments / prose).
+    assert text.count('intro: "Try the ') == 12, (
+        "expected exactly 12 PROVIDER_DEMO_CARDS intros"
     )
 
 

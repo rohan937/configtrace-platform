@@ -48,7 +48,7 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
-  | "google_cloud" | "twilio";
+  | "google_cloud" | "twilio" | "sendgrid";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -174,6 +174,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Twilio demo",
     seedColor: "#f22f46",
   },
+  {
+    provider: "sendgrid",
+    label: "SendGrid",
+    intro: "Try the SendGrid security demo:",
+    description:
+      "Seed a review-safe SendGrid security demo with configuration drift findings, control-plane activity evidence, activity signals, risk × activity correlations, and a case. No real SendGrid sync, email bodies, subject lines, recipient emails, mail event payloads, raw webhook URLs, or API keys are stored.",
+    seedButton: "Load SendGrid security demo",
+    clearButton: "Clear SendGrid demo",
+    seedColor: "#1a82e2",
+  },
 ];
 
 export default function CasesPage() {
@@ -232,7 +242,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -251,7 +261,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -278,7 +288,9 @@ export default function CasesPage() {
                           ? "Google Cloud demo data cleared."
                           : provider === "twilio"
                             ? "Twilio demo data cleared."
-                            : "Demo data cleared.",
+                            : provider === "sendgrid"
+                              ? "SendGrid demo data cleared."
+                              : "Demo data cleared.",
       );
       await load();
     } catch {
