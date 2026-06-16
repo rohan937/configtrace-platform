@@ -632,9 +632,18 @@ _SENDGRID = ProviderCapability(
         "domain authentication validity and automatic-security posture, mail "
         "settings (spam check, sandbox mode, BCC), tracking settings (click, "
         "open, subscription tracking), event webhook configuration (disabled, "
-        "missing URL), and suppression group count. Activity ingestion, signals, "
-        "correlations, and demo seed/clear land in future milestones. SendGrid "
-        "remains partial (not in the canonical dual-stack-complete set of 8 providers)."
+        "missing URL), and suppression group count. "
+        "M80C adds 11 mail/webhook risk expansion rules: sender reply-to domain "
+        "mismatch, domain DNS records missing, default domain auth invalid, "
+        "footer disabled, bounce purge disabled, legacy template engine enabled, "
+        "Google Analytics tracking enabled, event webhook broad event stream, "
+        "inbound parse enabled/raw-email/spam-check-disabled. Schema safely "
+        "expanded to include template_enabled boolean (mail settings) and "
+        "inbound parse booleans (webhook settings) — no hostnames, URLs, "
+        "email content, or customer data ever stored. Activity ingestion, "
+        "signals, correlations, and demo seed/clear land in future milestones. "
+        "SendGrid remains partial (not in the canonical dual-stack-complete set "
+        "of 8 providers)."
     ),
 )
 

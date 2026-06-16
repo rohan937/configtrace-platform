@@ -768,6 +768,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M80C: SendGrid Mail/Webhook Risk Expansion",
+            "planned_next_stage": "M80D: SendGrid Activity/Event Ingestion",
         },
     }

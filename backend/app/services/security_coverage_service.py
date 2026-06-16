@@ -215,6 +215,18 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "sendgrid_event_webhook_disabled": ("sendgrid_webhook_settings",),
     "sendgrid_event_webhook_url_missing": ("sendgrid_webhook_settings",),
     "sendgrid_suppression_settings_empty": ("sendgrid_suppression_settings",),
+    # SendGrid — M80C
+    "sendgrid_sender_identity_reply_domain_mismatch": ("sendgrid_sender_identity",),
+    "sendgrid_domain_dns_records_missing": ("sendgrid_domain_authentication",),
+    "sendgrid_default_domain_authentication_invalid": ("sendgrid_domain_authentication",),
+    "sendgrid_footer_disabled": ("sendgrid_mail_settings",),
+    "sendgrid_bounce_purge_disabled": ("sendgrid_mail_settings",),
+    "sendgrid_template_engine_enabled": ("sendgrid_mail_settings",),
+    "sendgrid_google_analytics_tracking_enabled": ("sendgrid_tracking_settings",),
+    "sendgrid_event_webhook_broad_event_stream": ("sendgrid_webhook_settings",),
+    "sendgrid_inbound_parse_enabled": ("sendgrid_webhook_settings",),
+    "sendgrid_inbound_parse_raw_email_enabled": ("sendgrid_webhook_settings",),
+    "sendgrid_inbound_parse_spam_check_disabled": ("sendgrid_webhook_settings",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).

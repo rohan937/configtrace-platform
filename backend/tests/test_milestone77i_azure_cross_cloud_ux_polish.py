@@ -112,10 +112,10 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
 
 
 def test_expansion_framework_next_stage_is_beyond_m79d():
-    """Rolled forward in M80A: SendGrid Drift Foundation complete; next stage is M80B."""
+    """Rolled forward in M80C: SendGrid Mail/Webhook complete; next stage is M80D."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80C" in stage
+    assert "M80D" in stage
     assert "SendGrid" in stage
 
 

@@ -204,6 +204,18 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "sendgrid_event_webhook_disabled": ("sendgrid", "medium", "Webhook configuration"),
     "sendgrid_event_webhook_url_missing": ("sendgrid", "medium", "Webhook configuration"),
     "sendgrid_suppression_settings_empty": ("sendgrid", "low", "Suppression settings"),
+    # SendGrid — M80C
+    "sendgrid_sender_identity_reply_domain_mismatch": ("sendgrid", "low", "Sender identities"),
+    "sendgrid_domain_dns_records_missing": ("sendgrid", "medium", "Domain authentication"),
+    "sendgrid_default_domain_authentication_invalid": ("sendgrid", "high", "Domain authentication"),
+    "sendgrid_footer_disabled": ("sendgrid", "low", "Mail settings"),
+    "sendgrid_bounce_purge_disabled": ("sendgrid", "low", "Mail settings"),
+    "sendgrid_template_engine_enabled": ("sendgrid", "low", "Mail settings"),
+    "sendgrid_google_analytics_tracking_enabled": ("sendgrid", "low", "Tracking settings"),
+    "sendgrid_event_webhook_broad_event_stream": ("sendgrid", "low", "Webhook configuration"),
+    "sendgrid_inbound_parse_enabled": ("sendgrid", "medium", "Webhook configuration"),
+    "sendgrid_inbound_parse_raw_email_enabled": ("sendgrid", "medium", "Webhook configuration"),
+    "sendgrid_inbound_parse_spam_check_disabled": ("sendgrid", "medium", "Webhook configuration"),
 }
 
 

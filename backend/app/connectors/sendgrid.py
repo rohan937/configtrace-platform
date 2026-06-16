@@ -499,6 +499,8 @@ class SendGridConnector(BaseConnector):
             "forward_spam_enabled": settings.get("forward_spam", False),
             "sandbox_mode_enabled": settings.get("sandbox_mode", False),
             "spam_check_enabled": settings.get("spam_check", False),
+            # M80C: template engine feature flag (boolean only — no template content).
+            "template_enabled": settings.get("template", False),
         }
 
     @staticmethod
@@ -535,12 +537,18 @@ class SendGridConnector(BaseConnector):
         }
 
     @staticmethod
-    def _normalize_webhook_settings(raw: dict) -> dict:
-        """Normalise event webhook settings into safe boolean flags.
+    def _normalize_webhook_settings(raw: dict, parse_configs: Optional[list] = None) -> dict:
+        """Normalise event webhook + inbound parse settings into safe boolean flags.
 
         SECURITY: the webhook URL string is NEVER stored — only a boolean
         indicating whether a URL is configured. Webhook signing secrets and
         OAuth credentials are NEVER stored. Raw event payloads are NEVER stored.
+        Inbound parse hostnames, URLs, email bodies, and payload content are
+        NEVER stored — only safe booleans are extracted.
+
+        Args:
+            raw: event webhook settings dict from /v3/user/webhooks/event/settings.
+            parse_configs: list of dicts from /v3/user/webhooks/parse/settings result.
         """
         if not isinstance(raw, dict):
             raw = {}
@@ -561,6 +569,24 @@ class SendGridConnector(BaseConnector):
         )
         event_count = sum(1 for k in _EVENT_KEYS if _bool(raw.get(k)))
 
+        # M80C: inbound parse — boolean extraction only.
+        # SECURITY: hostname and url strings are NEVER stored.
+        if parse_configs is None:
+            parse_configs = []
+        if not isinstance(parse_configs, list):
+            parse_configs = []
+        valid_configs = [c for c in parse_configs if isinstance(c, dict)]
+        inbound_parse_enabled = len(valid_configs) > 0
+        if valid_configs:
+            first = valid_configs[0]
+            inbound_parse_spam_check_enabled = _bool(first.get("spam_check", True))
+            inbound_parse_send_raw_enabled = any(
+                _bool(c.get("send_raw", False)) for c in valid_configs
+            )
+        else:
+            inbound_parse_spam_check_enabled = True  # safe default when not in use
+            inbound_parse_send_raw_enabled = False
+
         return {
             "record_type": SENDGRID_WEBHOOK_SETTINGS,
             "record_id": "sendgrid_webhook_settings_main",
@@ -569,6 +595,9 @@ class SendGridConnector(BaseConnector):
             "event_webhook_has_url": event_webhook_has_url,
             "event_webhook_signed": signed,
             "event_count": event_count,
+            "inbound_parse_enabled": inbound_parse_enabled,
+            "inbound_parse_spam_check_enabled": inbound_parse_spam_check_enabled,
+            "inbound_parse_send_raw_enabled": inbound_parse_send_raw_enabled,
         }
 
     @staticmethod
@@ -702,8 +731,30 @@ class SendGridConnector(BaseConnector):
                 logger.info("sendgrid: event webhook settings not accessible (HTTP %s)", exc.status_code)
                 return None
             raise
+
+        # M80C: also fetch inbound parse settings — boolean fields only.
+        # SECURITY: hostname and URL strings from parse configs NEVER stored.
+        parse_configs: list = []
+        try:
+            parse_data = SendGridConnector._get(
+                client, "/v3/user/webhooks/parse/settings"
+            )
+            if isinstance(parse_data, dict):
+                result = parse_data.get("result") or []
+                parse_configs = result if isinstance(result, list) else []
+            elif isinstance(parse_data, list):
+                parse_configs = parse_data
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                logger.info(
+                    "sendgrid: inbound parse settings not accessible (HTTP %s)", exc.status_code
+                )
+            else:
+                raise
+
         return SendGridConnector._normalize_webhook_settings(
-            data if isinstance(data, dict) else {}
+            data if isinstance(data, dict) else {},
+            parse_configs,
         )
 
     @staticmethod

@@ -156,11 +156,12 @@ def _mail_settings_record(**overrides) -> dict[str, Any]:
         "record_id": "sendgrid_mail_settings_main",
         "bcc_enabled": False,
         "bounce_purge_enabled": True,
-        "footer_enabled": False,
+        "footer_enabled": True,    # M80C: True = healthy (footer_disabled rule won't fire)
         "forward_bounce_enabled": True,
         "forward_spam_enabled": False,
         "sandbox_mode_enabled": False,
         "spam_check_enabled": True,
+        "template_enabled": False,  # M80C: False = healthy (template_engine_enabled won't fire)
     }
     base.update(overrides)
     return base
@@ -214,9 +215,10 @@ class TestRuleKeyExistence:
         )
 
     def test_sendgrid_rule_keys_count_is_15(self):
+        """M80C added 11 rules — total is now 26 (15 M80B + 11 M80C)."""
         from app.services.security_rules.sendgrid import SENDGRID_RULE_KEYS
-        assert len(SENDGRID_RULE_KEYS) == 15, (
-            f"Expected 15 M80B rule keys, got {len(SENDGRID_RULE_KEYS)}: {sorted(SENDGRID_RULE_KEYS)}"
+        assert len(SENDGRID_RULE_KEYS) == 26, (
+            f"Expected 26 rule keys (15 M80B + 11 M80C), got {len(SENDGRID_RULE_KEYS)}: {sorted(SENDGRID_RULE_KEYS)}"
         )
 
     def test_all_rule_keys_have_sendgrid_prefix(self):
@@ -649,11 +651,12 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m80c(self):
+        """M80C complete — planned_next_stage rolls to M80D."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M80C" in stage, (
-            f"planned_next_stage should point to M80C after M80B; got: {stage!r}"
+        assert "M80D" in stage, (
+            f"planned_next_stage should point to M80D after M80C; got: {stage!r}"
         )
         assert "SendGrid" in stage
 

@@ -2534,6 +2534,238 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when suppression_group_count is an explicit integer equal to 0. Missing or unknown suppression_group_count is skipped. Some transactional-only senders may intentionally not use suppression groups.",
   },
+  // ── M80C additions ────────────────────────────────────────────────────────
+  {
+    key: "sendgrid_sender_identity_reply_domain_mismatch",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid sender identity reply-to domain differs from from-email domain",
+    category: "Sender identities",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This SendGrid sender identity has a reply-to domain that differs from the from-email domain. Mismatched domains may indicate a misconfiguration or may affect recipient trust and deliverability.",
+    whatItChecks:
+      "from_email_domain and reply_to_domain both non-empty and not equal on a sendgrid_sender_identity record.",
+    whyItMatters:
+      "Mismatched sender and reply-to domains may confuse recipients or spam filters and may require review for deliverability and trust.",
+    evidence:
+      "from_email_domain and reply_to_domain (domain portions only — full email addresses are never stored).",
+    remediation:
+      "Review the sender identity in SendGrid Console under Settings > Sender Authentication and confirm whether the reply-to domain mismatch is intentional.",
+    falsePositiveGuard:
+      "Only fires when both from_email_domain and reply_to_domain are non-empty and differ. Missing or empty domains are skipped. Some senders intentionally use different reply-to domains.",
+  },
+  {
+    key: "sendgrid_domain_dns_records_missing",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid domain authentication has no DNS records configured",
+    category: "Domain authentication",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This SendGrid domain authentication has zero DNS records configured. Without DNS records, domain authentication cannot be validated and email deliverability may be affected.",
+    whatItChecks:
+      "dns_record_count=0 (explicit integer) on a sendgrid_domain_authentication record.",
+    whyItMatters:
+      "Domain authentication without DNS records cannot pass validation, which may affect deliverability and sender reputation. This configuration evidence may require review.",
+    evidence:
+      "dns_record_count (count only — raw DNS record values are never stored).",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Sender Authentication > Domain Authentication, select the domain, and add the required DNS records at your DNS provider.",
+    falsePositiveGuard:
+      "Only fires when dns_record_count is an explicit integer equal to 0. Missing or unknown counts are skipped. Raw DNS record values are never stored.",
+  },
+  {
+    key: "sendgrid_default_domain_authentication_invalid",
+    provider: "sendgrid",
+    severity: "high",
+    title: "SendGrid default domain authentication is not passing DNS validation",
+    category: "Domain authentication",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The default SendGrid domain authentication is marked as invalid. As the default sender domain, DNS validation failures here may affect all outgoing email deliverability and sender reputation.",
+    whatItChecks:
+      "default=true AND valid=false on a sendgrid_domain_authentication record.",
+    whyItMatters:
+      "The default domain is used for all outgoing email unless overridden. An invalid default domain authentication may affect deliverability broadly and may require review.",
+    evidence:
+      "default, valid, dns_record_count, domain_id, and domain fields from the sendgrid_domain_authentication record.",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Sender Authentication > Domain Authentication, select the default domain, and fix the failing DNS records.",
+    falsePositiveGuard:
+      "Only fires when default=true AND valid=false are both explicitly present. Missing or unknown values are skipped.",
+  },
+  {
+    key: "sendgrid_footer_disabled",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid email footer is disabled",
+    category: "Mail settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid email footer setting is disabled. An email footer can include required compliance text and unsubscribe information. Review whether a footer is required for your email program.",
+    whatItChecks:
+      "footer_enabled=false on a sendgrid_mail_settings record.",
+    whyItMatters:
+      "A footer may be required for CAN-SPAM compliance (physical mailing address) or other regulations. Disabling it may require review for compliance.",
+    evidence:
+      "footer_enabled boolean (footer text content is never stored).",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Mail Settings and enable the Footer setting with required compliance text.",
+    falsePositiveGuard:
+      "Only fires when footer_enabled=false on a sendgrid_mail_settings record. Some senders intentionally manage compliance text within email templates instead.",
+  },
+  {
+    key: "sendgrid_bounce_purge_disabled",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid bounce purge is disabled",
+    category: "Mail settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid bounce purge mail setting is disabled. Bounce purge automatically removes addresses from the bounce list after a configured number of days, helping maintain list hygiene.",
+    whatItChecks:
+      "bounce_purge_enabled=false on a sendgrid_mail_settings record.",
+    whyItMatters:
+      "Without bounce purge, stale bounce entries may accumulate, affecting deliverability metrics and list hygiene over time.",
+    evidence:
+      "bounce_purge_enabled boolean from the sendgrid_mail_settings record.",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Mail Settings and enable Bounce Purge with appropriate soft/hard bounce thresholds.",
+    falsePositiveGuard:
+      "Only fires when bounce_purge_enabled=false. Some senders manage bounce lists manually and may intentionally disable automatic purge.",
+  },
+  {
+    key: "sendgrid_template_engine_enabled",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid legacy template engine is enabled",
+    category: "Mail settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid legacy template engine mail setting is enabled. The legacy template engine applies a default template to all outgoing messages. This dynamic content surface may require review to confirm the template is current and intentional.",
+    whatItChecks:
+      "template_enabled=true on a sendgrid_mail_settings record.",
+    whyItMatters:
+      "An enabled legacy template is applied to all outgoing messages. Stale or unintended templates may affect email appearance or deliverability and may require review.",
+    evidence:
+      "template_enabled boolean (template content is never stored or inspected).",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Mail Settings, review the Template setting, and disable it if not required. Consider migrating to Dynamic Templates.",
+    falsePositiveGuard:
+      "Only fires when template_enabled=true. Template content is never stored. Senders who intentionally use the legacy template engine can acknowledge this finding.",
+  },
+  {
+    key: "sendgrid_google_analytics_tracking_enabled",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid Google Analytics email tracking is enabled",
+    category: "Tracking settings",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "SendGrid Google Analytics tracking is enabled. When active, SendGrid appends UTM tracking parameters to links in outgoing emails, enabling analytics tracking across email interactions.",
+    whatItChecks:
+      "ganalytics_enabled=true on a sendgrid_tracking_settings record.",
+    whyItMatters:
+      "Google Analytics email tracking may have privacy and compliance implications depending on applicable regulations. Review whether tracking use is disclosed in your privacy policy.",
+    evidence:
+      "ganalytics_enabled boolean (GA campaign parameter values and analytics data are never stored).",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Tracking, review the Google Analytics setting, and disable it if not required or not compliant with applicable privacy policies.",
+    falsePositiveGuard:
+      "Only fires when ganalytics_enabled=true. GA parameter values are never stored. Many senders intentionally use this for analytics and have appropriate disclosures.",
+  },
+  {
+    key: "sendgrid_event_webhook_broad_event_stream",
+    provider: "sendgrid",
+    severity: "low",
+    title: "SendGrid event webhook is configured with a broad event stream",
+    category: "Webhook configuration",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The SendGrid event webhook is enabled and configured to deliver more than 8 event types. A broad event stream may expose delivery event metadata to the webhook endpoint across a wide surface.",
+    whatItChecks:
+      "event_webhook_enabled=true AND event_count > 8 on a sendgrid_webhook_settings record.",
+    whyItMatters:
+      "A broad event stream delivers more delivery event metadata to the webhook endpoint. Review whether all configured event types are required by your application.",
+    evidence:
+      "event_webhook_enabled and event_count (event payloads and recipient data are never stored).",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Mail Settings > Event Webhook and review the enabled event types, disabling any that are not required.",
+    falsePositiveGuard:
+      "Only fires when event_webhook_enabled=true AND event_count > 8. Event payloads are never stored. Many senders intentionally subscribe to a broad set of event types for observability.",
+  },
+  {
+    key: "sendgrid_inbound_parse_enabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid inbound email parse is enabled",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "SendGrid inbound email parse is enabled. Inbound parse receives emails sent to a configured hostname and delivers the full email content to a webhook endpoint. This inbound email processing surface may require review.",
+    whatItChecks:
+      "inbound_parse_enabled=true on a sendgrid_webhook_settings record.",
+    whyItMatters:
+      "Inbound parse creates an email-to-webhook processing surface that delivers email content including sender, subject, and body to an endpoint. The configuration should be confirmed as intentional and the endpoint secured.",
+    evidence:
+      "inbound_parse_enabled boolean (hostname, URL, email content, and recipient data are never stored).",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Inbound Parse, review all configured entries, and remove any that are no longer needed.",
+    falsePositiveGuard:
+      "Only fires when inbound_parse_enabled=true. Hostname and URL strings are never stored. Many senders intentionally use inbound parse for email-to-ticket or similar integrations.",
+  },
+  {
+    key: "sendgrid_inbound_parse_raw_email_enabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid inbound parse is configured to send raw email content",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "SendGrid inbound parse is enabled and configured to deliver raw email content (full MIME message including headers, body, and attachments) to the webhook endpoint. This increases the data sensitivity of the inbound parse surface.",
+    whatItChecks:
+      "inbound_parse_enabled=true AND inbound_parse_send_raw_enabled=true on a sendgrid_webhook_settings record.",
+    whyItMatters:
+      "Raw email delivery increases the sensitivity of data flowing to the webhook endpoint. Review whether raw delivery is required or whether parsed fields are sufficient.",
+    evidence:
+      "inbound_parse_enabled and inbound_parse_send_raw_enabled booleans (raw email content and recipient data are never stored).",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Inbound Parse, and for each entry review whether 'Send Raw' is required. Disable raw email delivery if parsed fields are sufficient.",
+    falsePositiveGuard:
+      "Only fires when both inbound_parse_enabled=true AND inbound_parse_send_raw_enabled=true. Raw email content is never stored.",
+  },
+  {
+    key: "sendgrid_inbound_parse_spam_check_disabled",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid inbound parse spam check is disabled",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "SendGrid inbound parse is enabled but the spam check filter is disabled. Without spam check, all inbound emails including unsolicited or malicious messages are forwarded to the webhook endpoint without filtering.",
+    whatItChecks:
+      "inbound_parse_enabled=true AND inbound_parse_spam_check_enabled=false on a sendgrid_webhook_settings record.",
+    whyItMatters:
+      "Without spam check, the webhook endpoint receives unfiltered inbound email including potential spam and malicious content. Enabling spam check helps reduce this exposure.",
+    evidence:
+      "inbound_parse_enabled and inbound_parse_spam_check_enabled booleans.",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Inbound Parse and enable the Spam Check option for each inbound parse entry.",
+    falsePositiveGuard:
+      "Only fires when inbound_parse_enabled=true AND inbound_parse_spam_check_enabled=false are both explicitly present. Some senders intentionally handle spam filtering at the application level.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────

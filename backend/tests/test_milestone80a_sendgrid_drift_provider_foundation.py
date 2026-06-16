@@ -1185,10 +1185,10 @@ class TestExpansionFramework:
         return get_framework()
 
     def test_planned_next_stage_is_m80b(self):
-        """M80B complete — planned_next_stage rolls to M80C."""
+        """M80C complete — planned_next_stage rolls to M80D."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80C" in stage, (
-            f"planned_next_stage should contain M80C after M80B; got: {stage!r}"
+        assert "M80D" in stage, (
+            f"planned_next_stage should contain M80D after M80C; got: {stage!r}"
         )
         assert "SendGrid" in stage
 

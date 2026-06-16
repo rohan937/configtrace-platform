@@ -204,6 +204,18 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "sendgrid_event_webhook_disabled": (HIGH, "Only fires when event_webhook_enabled=false on a sendgrid_webhook_settings record; missing/unknown is skipped."),
     "sendgrid_event_webhook_url_missing": (HIGH, "Only fires when event_webhook_enabled=true AND event_webhook_has_url=false on a sendgrid_webhook_settings record; both conditions must be explicitly present."),
     "sendgrid_suppression_settings_empty": (MEDIUM, "Only fires when suppression_group_count is an explicit integer equal to 0; missing/unknown suppression_group_count is skipped."),
+    # SendGrid — M80C
+    "sendgrid_sender_identity_reply_domain_mismatch": (HIGH, "Only fires when both from_email_domain and reply_to_domain are non-empty strings on a sendgrid_sender_identity record and they differ; missing/empty domains are never flagged. Domain strings only — full email addresses NEVER stored."),
+    "sendgrid_domain_dns_records_missing": (HIGH, "Only fires when dns_record_count is an explicit integer equal to 0 on a sendgrid_domain_authentication record; missing/unknown counts are skipped. Raw DNS values NEVER stored."),
+    "sendgrid_default_domain_authentication_invalid": (HIGH, "Only fires when default=true AND valid=false on a sendgrid_domain_authentication record; both conditions must be explicitly present."),
+    "sendgrid_footer_disabled": (HIGH, "Only fires when footer_enabled=false on a sendgrid_mail_settings record; footer text content is NEVER stored."),
+    "sendgrid_bounce_purge_disabled": (HIGH, "Only fires when bounce_purge_enabled=false on a sendgrid_mail_settings record; missing/unknown is skipped."),
+    "sendgrid_template_engine_enabled": (HIGH, "Only fires when template_enabled=true on a sendgrid_mail_settings record; template content is NEVER stored."),
+    "sendgrid_google_analytics_tracking_enabled": (HIGH, "Only fires when ganalytics_enabled=true on a sendgrid_tracking_settings record; GA parameter values and campaign data NEVER stored."),
+    "sendgrid_event_webhook_broad_event_stream": (MEDIUM, "Only fires when event_webhook_enabled=true AND event_count > 8 on a sendgrid_webhook_settings record; event payloads and recipient data NEVER stored."),
+    "sendgrid_inbound_parse_enabled": (HIGH, "Only fires when inbound_parse_enabled=true on a sendgrid_webhook_settings record; hostname, URL, email bodies, and recipient data NEVER stored."),
+    "sendgrid_inbound_parse_raw_email_enabled": (HIGH, "Only fires when inbound_parse_enabled=true AND inbound_parse_send_raw_enabled=true; raw email content and recipient data NEVER stored."),
+    "sendgrid_inbound_parse_spam_check_disabled": (HIGH, "Only fires when inbound_parse_enabled=true AND inbound_parse_spam_check_enabled=false; both conditions must be explicitly present."),
 }
 
 

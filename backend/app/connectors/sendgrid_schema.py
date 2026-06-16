@@ -177,11 +177,11 @@ class SendGridDomainAuthRecord(TypedDict):
 
 
 class SendGridMailSettingsRecord(TypedDict):
-    """Safe normalised record for SendGrid mail settings (M80A).
+    """Safe normalised record for SendGrid mail settings (M80A/M80C).
 
     SECURITY: BCC email addresses, footer text, address-whitelist entries,
-    and all email-content or recipient fields are NEVER stored — only
-    boolean flags per mail feature.
+    template content, and all email-content or recipient fields are NEVER
+    stored — only boolean flags per mail feature.
     """
 
     record_type: str           # always "sendgrid_mail_settings"
@@ -194,6 +194,8 @@ class SendGridMailSettingsRecord(TypedDict):
     forward_spam_enabled: bool
     sandbox_mode_enabled: bool
     spam_check_enabled: bool
+    # M80C addition — template engine feature flag (boolean only, no content stored).
+    template_enabled: bool
 
 
 class SendGridTrackingSettingsRecord(TypedDict):
@@ -214,11 +216,13 @@ class SendGridTrackingSettingsRecord(TypedDict):
 
 
 class SendGridWebhookSettingsRecord(TypedDict):
-    """Safe normalised record for SendGrid event webhook settings (M80A).
+    """Safe normalised record for SendGrid event webhook settings (M80A/M80C).
 
     SECURITY: the webhook URL string is NEVER stored — only a boolean
     indicating whether a URL is configured. Webhook signing secrets,
     OAuth client IDs/secrets, and raw event payloads are NEVER stored.
+    Inbound parse hostnames, URLs, email bodies, and all payload content
+    are NEVER stored — only safe booleans.
     """
 
     record_type: str             # always "sendgrid_webhook_settings"
@@ -228,6 +232,10 @@ class SendGridWebhookSettingsRecord(TypedDict):
     event_webhook_has_url: bool  # bool(url) — URL string NEVER stored
     event_webhook_signed: bool   # whether webhook signing is enabled
     event_count: int             # number of enabled webhook event types
+    # M80C additions — inbound parse booleans only; hostname/URL NEVER stored.
+    inbound_parse_enabled: bool          # whether any inbound parse configs exist
+    inbound_parse_spam_check_enabled: bool  # spam_check flag from first config
+    inbound_parse_send_raw_enabled: bool    # send_raw flag from any config
 
 
 class SendGridSuppressionSettingsRecord(TypedDict):

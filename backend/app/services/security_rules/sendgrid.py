@@ -1,4 +1,4 @@
-"""SendGrid configuration-risk security rules — M80B.
+"""SendGrid configuration-risk security rules — M80B / M80C.
 
 Every rule fires only on explicit, reliable normalized fields produced by the
 SendGrid connector (app/connectors/sendgrid.py + sendgrid_schema.py, M80A).
@@ -24,12 +24,44 @@ Record types consumed (M80A)
 - ``sendgrid_webhook_settings``  → event webhook presence and configuration
 - ``sendgrid_suppression_settings`` → suppression group count
 
-Rules deferred (insufficient M80A fields)
------------------------------------------
-  sendgrid_api_key_stale         — requires date fields (created_at/date_updated)
-                                   not present in M80A sendgrid_api_key schema.
-  sendgrid_inbound_parse_enabled — requires inbound_parse_enabled field not
-                                   present in M80A sendgrid_webhook_settings schema.
+M80C expansion rules (mail/webhook risk expansion)
+---------------------------------------------------
+Eleven additional rules added in M80C:
+
+Sender identity:
+  sendgrid_sender_identity_reply_domain_mismatch — from_email_domain ≠ reply_to_domain
+
+Domain authentication:
+  sendgrid_domain_dns_records_missing            — dns_record_count == 0
+  sendgrid_default_domain_authentication_invalid — default=True AND valid=False
+
+Mail settings:
+  sendgrid_footer_disabled                       — footer_enabled=False
+  sendgrid_bounce_purge_disabled                 — bounce_purge_enabled=False
+  sendgrid_template_engine_enabled               — template_enabled=True (M80C schema addition)
+
+Tracking settings:
+  sendgrid_google_analytics_tracking_enabled     — ganalytics_enabled=True
+
+Webhook settings:
+  sendgrid_event_webhook_broad_event_stream      — event_webhook_enabled=True AND event_count > 8
+  sendgrid_inbound_parse_enabled                 — inbound_parse_enabled=True (M80C schema addition)
+  sendgrid_inbound_parse_raw_email_enabled       — inbound_parse_enabled=True AND inbound_parse_send_raw_enabled=True
+  sendgrid_inbound_parse_spam_check_disabled     — inbound_parse_enabled=True AND inbound_parse_spam_check_enabled=False
+
+Rules deferred
+--------------
+  sendgrid_api_key_stale         — SendGrid v3 API does not expose date fields
+                                   (created_at / updated_at) for API keys in
+                                   either the list or individual key endpoints.
+  sendgrid_api_key_full_access_scope — redundant with existing M80B rule
+                                   sendgrid_api_key_broad_scopes (same
+                                   has_full_access field).
+  sendgrid_subscription_tracking_url_missing — requires a separate call to
+                                   /v3/tracking_settings/subscription which
+                                   returns URL content; deferred until the
+                                   tracking endpoint is safely audited for
+                                   boolean extraction without URL storage.
 """
 
 from __future__ import annotations
@@ -82,7 +114,34 @@ _RULE_EVENT_WEBHOOK_URL_MISSING = "sendgrid_event_webhook_url_missing"
 # Suppression settings
 _RULE_SUPPRESSION_SETTINGS_EMPTY = "sendgrid_suppression_settings_empty"
 
+# ── Rule keys — M80C ──────────────────────────────────────────────────────────
+
+# Sender identity
+_RULE_SENDER_REPLY_DOMAIN_MISMATCH = "sendgrid_sender_identity_reply_domain_mismatch"
+
+# Domain authentication
+_RULE_DOMAIN_DNS_RECORDS_MISSING = "sendgrid_domain_dns_records_missing"
+_RULE_DEFAULT_DOMAIN_AUTH_INVALID = "sendgrid_default_domain_authentication_invalid"
+
+# Mail settings
+_RULE_FOOTER_DISABLED = "sendgrid_footer_disabled"
+_RULE_BOUNCE_PURGE_DISABLED = "sendgrid_bounce_purge_disabled"
+_RULE_TEMPLATE_ENGINE_ENABLED = "sendgrid_template_engine_enabled"
+
+# Tracking settings
+_RULE_GOOGLE_ANALYTICS_ENABLED = "sendgrid_google_analytics_tracking_enabled"
+
+# Webhook settings
+_RULE_EVENT_WEBHOOK_BROAD_STREAM = "sendgrid_event_webhook_broad_event_stream"
+_RULE_INBOUND_PARSE_ENABLED = "sendgrid_inbound_parse_enabled"
+_RULE_INBOUND_PARSE_RAW_EMAIL = "sendgrid_inbound_parse_raw_email_enabled"
+_RULE_INBOUND_PARSE_SPAM_CHECK = "sendgrid_inbound_parse_spam_check_disabled"
+
+# Threshold for broad event stream rule.
+_BROAD_EVENT_STREAM_THRESHOLD = 8
+
 SENDGRID_RULE_KEYS: frozenset[str] = frozenset({
+    # M80B
     _RULE_API_KEY_BROAD_SCOPES,
     _RULE_SENDER_IDENTITY_UNVERIFIED,
     _RULE_SENDER_IDENTITY_LOCKED,
@@ -98,6 +157,18 @@ SENDGRID_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_EVENT_WEBHOOK_DISABLED,
     _RULE_EVENT_WEBHOOK_URL_MISSING,
     _RULE_SUPPRESSION_SETTINGS_EMPTY,
+    # M80C
+    _RULE_SENDER_REPLY_DOMAIN_MISMATCH,
+    _RULE_DOMAIN_DNS_RECORDS_MISSING,
+    _RULE_DEFAULT_DOMAIN_AUTH_INVALID,
+    _RULE_FOOTER_DISABLED,
+    _RULE_BOUNCE_PURGE_DISABLED,
+    _RULE_TEMPLATE_ENGINE_ENABLED,
+    _RULE_GOOGLE_ANALYTICS_ENABLED,
+    _RULE_EVENT_WEBHOOK_BROAD_STREAM,
+    _RULE_INBOUND_PARSE_ENABLED,
+    _RULE_INBOUND_PARSE_RAW_EMAIL,
+    _RULE_INBOUND_PARSE_SPAM_CHECK,
 })
 
 
@@ -124,6 +195,11 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
     if rtype == SENDGRID_SUPPRESSION_SETTINGS:
         return _eval_suppression_settings(record)
     return []
+
+
+# ── M80C dispatcher additions ─────────────────────────────────────────────────
+# The existing _eval_* functions above have been extended below to include
+# M80C checks via helper functions appended at the end of each section.
 
 
 # ── API key ───────────────────────────────────────────────────────────────────
@@ -195,6 +271,7 @@ def _eval_sender_identity(record: dict[str, Any]) -> list[FindingCandidate]:
     for check_fn in (
         _check_sender_identity_unverified,
         _check_sender_identity_locked,
+        _check_sender_reply_domain_mismatch,  # M80C
     ):
         f = check_fn(record)
         if f:
@@ -294,6 +371,8 @@ def _eval_domain_auth(record: dict[str, Any]) -> list[FindingCandidate]:
         _check_domain_auth_invalid,
         _check_domain_auto_security_disabled,
         _check_domain_auth_legacy,
+        _check_domain_dns_records_missing,          # M80C
+        _check_default_domain_auth_invalid,         # M80C
     ):
         f = check_fn(record)
         if f:
@@ -434,6 +513,9 @@ def _eval_mail_settings(record: dict[str, Any]) -> list[FindingCandidate]:
         _check_spam_check_disabled,
         _check_sandbox_mode_enabled,
         _check_bcc_enabled,
+        _check_footer_disabled,           # M80C
+        _check_bounce_purge_disabled,     # M80C
+        _check_template_engine_enabled,   # M80C
     ):
         f = check_fn(record)
         if f:
@@ -568,6 +650,7 @@ def _eval_tracking_settings(record: dict[str, Any]) -> list[FindingCandidate]:
         _check_click_tracking_enabled,
         _check_open_tracking_enabled,
         _check_subscription_tracking_disabled,
+        _check_google_analytics_tracking_enabled,  # M80C
     ):
         f = check_fn(record)
         if f:
@@ -700,6 +783,10 @@ def _eval_webhook_settings(record: dict[str, Any]) -> list[FindingCandidate]:
     for check_fn in (
         _check_event_webhook_disabled,
         _check_event_webhook_url_missing,
+        _check_event_webhook_broad_event_stream,   # M80C
+        _check_inbound_parse_enabled,              # M80C
+        _check_inbound_parse_raw_email_enabled,    # M80C
+        _check_inbound_parse_spam_check_disabled,  # M80C
     ):
         f = check_fn(record)
         if f:
@@ -846,6 +933,524 @@ def _check_suppression_settings_empty(
                 "Create groups matching your email categories (e.g., marketing, transactional, product updates).",
                 "Update your email templates to reference appropriate unsubscribe groups.",
                 "Ensure unsubscribe links are present in all commercial email.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+# ── M80C: Sender identity ─────────────────────────────────────────────────────
+
+
+def _check_sender_reply_domain_mismatch(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when from_email_domain and reply_to_domain differ.
+
+    SECURITY: full email addresses are NEVER stored — only domain parts
+    (after @) are used and exposed in evidence.
+    """
+    if record.get("record_type") != SENDGRID_SENDER_IDENTITY:
+        return None
+    from_domain = get_str(record, "from_email_domain")
+    reply_domain = get_str(record, "reply_to_domain")
+    if not from_domain or not reply_domain:
+        return None
+    if from_domain == reply_domain:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_SENDER_REPLY_DOMAIN_MISMATCH,
+        finding_key=make_finding_key(_RULE_SENDER_REPLY_DOMAIN_MISMATCH, record_id),
+        severity="low",
+        title="SendGrid sender identity reply-to domain differs from from-email domain",
+        description=(
+            "This SendGrid sender identity is configured with a reply-to domain "
+            "that differs from the from-email domain. Mismatched sender and "
+            "reply-to domains may indicate a misconfiguration or may affect "
+            "deliverability and recipient trust. This is configuration evidence "
+            "for review; it does not confirm unauthorized access or data exposure."
+        ),
+        evidence={
+            "rule": _RULE_SENDER_REPLY_DOMAIN_MISMATCH,
+            "sender_id": get_str(record, "sender_id"),
+            "nickname": get_str(record, "nickname"),
+            "from_email_domain": from_domain,
+            "reply_to_domain": reply_domain,
+            # SECURITY: full email addresses are NEVER stored — domain only.
+        },
+        remediation={
+            "summary": "Review whether the reply-to domain mismatch is intentional.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Sender Authentication.",
+                "Locate the sender identity and review the from-email and reply-to fields.",
+                "Confirm whether the reply-to domain is intentionally different.",
+                "Update the sender identity to align from-email and reply-to domains if needed.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+# ── M80C: Domain authentication ───────────────────────────────────────────────
+
+
+def _check_domain_dns_records_missing(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when a domain authentication has no DNS records configured.
+
+    SECURITY: raw DNS record values are NEVER stored — only the count.
+    """
+    if record.get("record_type") != SENDGRID_DOMAIN_AUTHENTICATION:
+        return None
+    count = record.get("dns_record_count")
+    if not isinstance(count, int):
+        return None
+    if count != 0:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_DOMAIN_DNS_RECORDS_MISSING,
+        finding_key=make_finding_key(_RULE_DOMAIN_DNS_RECORDS_MISSING, record_id),
+        severity="medium",
+        title="SendGrid domain authentication has no DNS records configured",
+        description=(
+            "This SendGrid domain authentication has zero DNS records configured. "
+            "Without DNS records, domain authentication cannot be validated and "
+            "email deliverability may be affected. This is configuration evidence "
+            "for review and does not confirm email delivery failure or data exposure."
+        ),
+        evidence={
+            "rule": _RULE_DOMAIN_DNS_RECORDS_MISSING,
+            "domain_id": get_str(record, "domain_id"),
+            "domain": get_str(record, "domain"),
+            "dns_record_count": 0,
+            "valid": record.get("valid"),
+        },
+        remediation={
+            "summary": "Add the required DNS records for this domain authentication.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Sender Authentication > Domain Authentication.",
+                "Select the domain and review the required DNS records.",
+                "Add the CNAME or TXT records at your DNS provider.",
+                "Wait for DNS propagation and verify the domain in SendGrid.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+def _check_default_domain_auth_invalid(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when the default domain authentication is invalid.
+
+    This is a stricter variant of sendgrid_domain_authentication_invalid
+    targeting only the default sender domain.
+    """
+    if record.get("record_type") != SENDGRID_DOMAIN_AUTHENTICATION:
+        return None
+    if record.get("default") is not True:
+        return None
+    if record.get("valid") is not False:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_DEFAULT_DOMAIN_AUTH_INVALID,
+        finding_key=make_finding_key(_RULE_DEFAULT_DOMAIN_AUTH_INVALID, record_id),
+        severity="high",
+        title="SendGrid default domain authentication is not passing DNS validation",
+        description=(
+            "The default SendGrid domain authentication is marked as invalid. "
+            "As the default sender domain, DNS validation failures here may "
+            "affect all outgoing email deliverability and sender reputation. "
+            "This is configuration evidence for review and does not confirm "
+            "email delivery failure or unauthorized access."
+        ),
+        evidence={
+            "rule": _RULE_DEFAULT_DOMAIN_AUTH_INVALID,
+            "domain_id": get_str(record, "domain_id"),
+            "domain": get_str(record, "domain"),
+            "default": True,
+            "valid": False,
+            "dns_record_count": record.get("dns_record_count"),
+        },
+        remediation={
+            "summary": "Fix the failing DNS records for the default domain authentication.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Sender Authentication > Domain Authentication.",
+                "Select the default domain and check which DNS records are not validated.",
+                "Update your DNS provider to add or correct the required CNAME/TXT records.",
+                "Wait for DNS propagation and re-verify the domain in SendGrid.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+# ── M80C: Mail settings ───────────────────────────────────────────────────────
+
+
+def _check_footer_disabled(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when the email footer setting is disabled."""
+    if record.get("record_type") != SENDGRID_MAIL_SETTINGS:
+        return None
+    if record.get("footer_enabled") is not False:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_FOOTER_DISABLED,
+        finding_key=make_finding_key(_RULE_FOOTER_DISABLED, record_id),
+        severity="low",
+        title="SendGrid email footer is disabled",
+        description=(
+            "The SendGrid email footer setting is disabled. An email footer "
+            "can include required compliance text (such as a physical mailing "
+            "address for CAN-SPAM compliance) and unsubscribe information. "
+            "Review whether a footer is required for your email program. "
+            "This is configuration evidence for review."
+        ),
+        evidence={
+            "rule": _RULE_FOOTER_DISABLED,
+            "footer_enabled": False,
+            # SECURITY: footer text content is NEVER stored.
+        },
+        remediation={
+            "summary": "Review whether the email footer should be enabled.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Mail Settings.",
+                "Review the Footer setting and enable it if required by your compliance program.",
+                "Configure the footer with required compliance text.",
+                "Verify footer appears correctly in test emails.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+def _check_bounce_purge_disabled(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when the bounce purge setting is disabled."""
+    if record.get("record_type") != SENDGRID_MAIL_SETTINGS:
+        return None
+    if record.get("bounce_purge_enabled") is not False:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_BOUNCE_PURGE_DISABLED,
+        finding_key=make_finding_key(_RULE_BOUNCE_PURGE_DISABLED, record_id),
+        severity="low",
+        title="SendGrid bounce purge is disabled",
+        description=(
+            "The SendGrid bounce purge mail setting is disabled. Bounce purge "
+            "automatically removes addresses from the bounce list after a "
+            "configured number of days, helping maintain list hygiene. "
+            "Without it, stale bounce entries may accumulate over time. "
+            "This is configuration evidence for review."
+        ),
+        evidence={
+            "rule": _RULE_BOUNCE_PURGE_DISABLED,
+            "bounce_purge_enabled": False,
+        },
+        remediation={
+            "summary": "Review whether bounce purge should be enabled.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Mail Settings.",
+                "Enable the Bounce Purge setting and configure the soft/hard bounce thresholds.",
+                "Review your current bounce list to understand its size and age.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+def _check_template_engine_enabled(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when the legacy template engine mail setting is enabled.
+
+    SECURITY: template content is NEVER stored — only the enabled boolean.
+    """
+    if record.get("record_type") != SENDGRID_MAIL_SETTINGS:
+        return None
+    if record.get("template_enabled") is not True:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_TEMPLATE_ENGINE_ENABLED,
+        finding_key=make_finding_key(_RULE_TEMPLATE_ENGINE_ENABLED, record_id),
+        severity="low",
+        title="SendGrid legacy template engine is enabled",
+        description=(
+            "The SendGrid legacy template engine mail setting is enabled. "
+            "The legacy template engine applies a default template to all "
+            "outgoing messages. This dynamic content surface may require "
+            "review to confirm the template is current and intentional. "
+            "This is configuration evidence for review; template content "
+            "is not stored or inspected."
+        ),
+        evidence={
+            "rule": _RULE_TEMPLATE_ENGINE_ENABLED,
+            "template_enabled": True,
+            # SECURITY: template HTML/plaintext/content is NEVER stored.
+        },
+        remediation={
+            "summary": "Review whether the legacy template engine setting is intentionally enabled.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Mail Settings.",
+                "Review the Template setting and confirm the template content is current.",
+                "Disable the legacy template engine if it is not required.",
+                "Consider migrating to SendGrid Dynamic Templates for more control.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+# ── M80C: Tracking settings ───────────────────────────────────────────────────
+
+
+def _check_google_analytics_tracking_enabled(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when Google Analytics email tracking is enabled.
+
+    SECURITY: Google Analytics campaign parameters and tracking data are
+    NEVER stored — only the enabled boolean.
+    """
+    if record.get("record_type") != SENDGRID_TRACKING_SETTINGS:
+        return None
+    if record.get("ganalytics_enabled") is not True:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_GOOGLE_ANALYTICS_ENABLED,
+        finding_key=make_finding_key(_RULE_GOOGLE_ANALYTICS_ENABLED, record_id),
+        severity="low",
+        title="SendGrid Google Analytics email tracking is enabled",
+        description=(
+            "SendGrid Google Analytics tracking is enabled. When active, "
+            "SendGrid appends UTM tracking parameters to links in outgoing "
+            "emails, enabling analytics tracking across email opens and "
+            "clicks. This may have privacy and compliance implications "
+            "depending on applicable regulations and privacy policies, and "
+            "may require review. This is configuration evidence for review."
+        ),
+        evidence={
+            "rule": _RULE_GOOGLE_ANALYTICS_ENABLED,
+            "ganalytics_enabled": True,
+            # SECURITY: GA campaign parameters and field values are NEVER stored.
+        },
+        remediation={
+            "summary": "Review whether Google Analytics email tracking is required and compliant.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Tracking.",
+                "Review whether Google Analytics tracking is required for your use case.",
+                "Verify that tracking use is disclosed in your privacy policy if applicable.",
+                "Disable Google Analytics tracking if not required or permitted under applicable policies.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+# ── M80C: Webhook settings ────────────────────────────────────────────────────
+
+
+def _check_event_webhook_broad_event_stream(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when the event webhook is enabled with a broad set of event types.
+
+    SECURITY: event payloads, event content, and recipient data are NEVER
+    stored — only the enabled boolean and event count are used.
+    """
+    if record.get("record_type") != SENDGRID_WEBHOOK_SETTINGS:
+        return None
+    if record.get("event_webhook_enabled") is not True:
+        return None
+    event_count = record.get("event_count")
+    if not isinstance(event_count, int):
+        return None
+    if event_count <= _BROAD_EVENT_STREAM_THRESHOLD:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_EVENT_WEBHOOK_BROAD_STREAM,
+        finding_key=make_finding_key(_RULE_EVENT_WEBHOOK_BROAD_STREAM, record_id),
+        severity="low",
+        title="SendGrid event webhook is configured with a broad event stream",
+        description=(
+            f"The SendGrid event webhook is enabled and configured to deliver "
+            f"{event_count} event types, which exceeds the review threshold of "
+            f"{_BROAD_EVENT_STREAM_THRESHOLD}. A broad event stream may expose "
+            f"delivery event metadata (bounces, clicks, opens, spam reports) to "
+            f"the webhook endpoint across a wide surface. Review whether all "
+            f"configured event types are required by your application. This is "
+            f"configuration evidence for review; event payloads are never stored."
+        ),
+        evidence={
+            "rule": _RULE_EVENT_WEBHOOK_BROAD_STREAM,
+            "event_webhook_enabled": True,
+            "event_count": event_count,
+            "threshold": _BROAD_EVENT_STREAM_THRESHOLD,
+            # SECURITY: event payloads, recipients, and event content NEVER stored.
+        },
+        remediation={
+            "summary": "Review whether all configured event types are required.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Mail Settings > Event Webhook.",
+                "Review the enabled event types and disable any that are not required.",
+                "Scope the event stream to only the event types your application processes.",
+                "Ensure the webhook endpoint handles all enabled event types securely.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+def _check_inbound_parse_enabled(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when inbound email parse is enabled.
+
+    SECURITY: inbound parse hostnames, URLs, email bodies, sender/recipient
+    addresses, and payload content are NEVER stored — only the boolean flag.
+    """
+    if record.get("record_type") != SENDGRID_WEBHOOK_SETTINGS:
+        return None
+    if record.get("inbound_parse_enabled") is not True:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_INBOUND_PARSE_ENABLED,
+        finding_key=make_finding_key(_RULE_INBOUND_PARSE_ENABLED, record_id),
+        severity="medium",
+        title="SendGrid inbound email parse is enabled",
+        description=(
+            "SendGrid inbound email parse is enabled. Inbound parse receives "
+            "emails sent to a configured hostname and delivers the email content "
+            "(including sender, subject, and body) to a webhook endpoint. "
+            "This inbound email processing surface may require review to confirm "
+            "the configuration is intentional and the receiving endpoint is secure. "
+            "This is configuration evidence for review; no hostname, URL, email "
+            "content, or recipient data is stored."
+        ),
+        evidence={
+            "rule": _RULE_INBOUND_PARSE_ENABLED,
+            "inbound_parse_enabled": True,
+            # SECURITY: hostname, URL, email bodies, recipients NEVER stored.
+        },
+        remediation={
+            "summary": "Review whether inbound email parse is intentionally enabled.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Inbound Parse.",
+                "Review all configured inbound parse entries.",
+                "Confirm each entry is intentional and the receiving endpoint is secure.",
+                "Remove any inbound parse entries that are no longer needed.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+def _check_inbound_parse_raw_email_enabled(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when inbound parse is enabled with raw email delivery.
+
+    SECURITY: raw email content, sender/recipient addresses, email bodies,
+    and hostnames are NEVER stored — only boolean flags.
+    """
+    if record.get("record_type") != SENDGRID_WEBHOOK_SETTINGS:
+        return None
+    if record.get("inbound_parse_enabled") is not True:
+        return None
+    if record.get("inbound_parse_send_raw_enabled") is not True:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_INBOUND_PARSE_RAW_EMAIL,
+        finding_key=make_finding_key(_RULE_INBOUND_PARSE_RAW_EMAIL, record_id),
+        severity="medium",
+        title="SendGrid inbound parse is configured to send raw email content",
+        description=(
+            "SendGrid inbound parse is enabled and configured to deliver raw "
+            "email content (full MIME message including headers, body, and "
+            "attachments) to the webhook endpoint. Raw email handling increases "
+            "the data sensitivity of the inbound parse surface and may require "
+            "additional review of the receiving endpoint's security posture. "
+            "This is configuration evidence for review; no email content is stored."
+        ),
+        evidence={
+            "rule": _RULE_INBOUND_PARSE_RAW_EMAIL,
+            "inbound_parse_enabled": True,
+            "inbound_parse_send_raw_enabled": True,
+            # SECURITY: raw email content, bodies, recipients NEVER stored.
+        },
+        remediation={
+            "summary": "Review whether raw email delivery is required for inbound parse.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Inbound Parse.",
+                "For each inbound parse entry, review whether 'Send Raw' is required.",
+                "Disable raw email delivery if the receiving endpoint only needs parsed fields.",
+                "Ensure the webhook endpoint handling raw email content has appropriate security controls.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+def _check_inbound_parse_spam_check_disabled(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when inbound parse is enabled but spam check is disabled."""
+    if record.get("record_type") != SENDGRID_WEBHOOK_SETTINGS:
+        return None
+    if record.get("inbound_parse_enabled") is not True:
+        return None
+    if record.get("inbound_parse_spam_check_enabled") is not False:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_INBOUND_PARSE_SPAM_CHECK,
+        finding_key=make_finding_key(_RULE_INBOUND_PARSE_SPAM_CHECK, record_id),
+        severity="medium",
+        title="SendGrid inbound parse spam check is disabled",
+        description=(
+            "SendGrid inbound parse is enabled but the spam check filter is "
+            "disabled. Without spam check, all inbound emails (including "
+            "unsolicited or malicious messages) are forwarded to the webhook "
+            "endpoint without filtering. This may expose the receiving endpoint "
+            "to spam and potentially harmful email content. This is configuration "
+            "evidence for review."
+        ),
+        evidence={
+            "rule": _RULE_INBOUND_PARSE_SPAM_CHECK,
+            "inbound_parse_enabled": True,
+            "inbound_parse_spam_check_enabled": False,
+        },
+        remediation={
+            "summary": "Enable spam check for the inbound parse configuration.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Inbound Parse.",
+                "For each inbound parse entry, enable the Spam Check option.",
+                "Confirm that the receiving endpoint handles the spam score header if needed.",
             ],
         },
         record_id=record_id,

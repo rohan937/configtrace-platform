@@ -351,11 +351,11 @@ def test_capability_matrix_pins_twilio_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m79i():
-    """M79I complete — planned_next_stage must advance to M80A (SendGrid)."""
+    """M80C complete — planned_next_stage must advance to M80D."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M80C" in planned, (
-        f"planned_next_stage must point to M80C (SendGrid Mail/Webhook) after M80B; got: {planned!r}"
+    assert "M80D" in planned, (
+        f"planned_next_stage must point to M80D (SendGrid Activity) after M80C; got: {planned!r}"
     )
     assert "SendGrid" in planned
     assert "M79H" not in planned, (

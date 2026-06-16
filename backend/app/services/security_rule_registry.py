@@ -176,6 +176,18 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "sendgrid_event_webhook_disabled",
         "sendgrid_event_webhook_url_missing",
         "sendgrid_suppression_settings_empty",
+        # SendGrid — M80C
+        "sendgrid_sender_identity_reply_domain_mismatch",
+        "sendgrid_domain_dns_records_missing",
+        "sendgrid_default_domain_authentication_invalid",
+        "sendgrid_footer_disabled",
+        "sendgrid_bounce_purge_disabled",
+        "sendgrid_template_engine_enabled",
+        "sendgrid_google_analytics_tracking_enabled",
+        "sendgrid_event_webhook_broad_event_stream",
+        "sendgrid_inbound_parse_enabled",
+        "sendgrid_inbound_parse_raw_email_enabled",
+        "sendgrid_inbound_parse_spam_check_disabled",
     }
 )
 
