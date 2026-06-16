@@ -618,7 +618,8 @@ class TestCapabilityMatrix:
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("sendgrid")
         assert cap is not None
-        assert cap.security.activity_ingestion is False
+        # M80D rolled activity_ingestion forward to True.
+        assert cap.security.activity_ingestion is True
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
@@ -655,8 +656,8 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M80D" in stage, (
-            f"planned_next_stage should point to M80D after M80C; got: {stage!r}"
+        assert "M80E" in stage, (
+            f"planned_next_stage should point to M80E after M80D; got: {stage!r}"
         )
         assert "SendGrid" in stage
 

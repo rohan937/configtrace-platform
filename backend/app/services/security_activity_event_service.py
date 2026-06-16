@@ -320,6 +320,42 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "capability_sms",            # bool — SMS capability enabled on the resource
         "capability_voice",          # bool — voice capability enabled on the resource
         "capability_mms",            # bool — MMS capability enabled on the resource
+        # SendGrid configuration activity fields (M80D) — control-plane config-state
+        # events ONLY. NEVER API key values, bearer tokens, authorization headers,
+        # email bodies, subject lines, recipient emails, sender personal emails,
+        # suppression recipient emails, template content, raw webhook URLs,
+        # raw unsubscribe URLs, raw inbound parse hostnames, message IDs, event payloads,
+        # click/open/bounce/delivered/deferred/dropped/spamreport/unsubscribe data,
+        # customer data, or PII.
+        "sendgrid_event_id",         # stable synthetic event identifier (date-scoped)
+        "resource_id",               # resource identifier (api_key_id, sender_id, domain_id)
+        "resource_name",             # resource name (truncated; never a secret value)
+        "resource_type",             # config surface type (e.g. "api_key", "sender_identity")
+        "event_action",              # canonical event action string (e.g. "sendgrid.api_key.updated")
+        "operation_name",            # short safe operation label
+        "operation_family",          # operation namespace
+        "operation_action",          # operation verb
+        "category",                  # config surface category
+        "status",                    # status label (e.g. "observed")
+        "status_code",               # integer status code (when present)
+        "api_key_id",                # API key ID (opaque identifier; NEVER the key value)
+        "sender_id",                 # sender identity ID (opaque identifier)
+        "domain_id",                 # domain authentication ID (opaque identifier)
+        "webhook_configured",        # bool — whether a webhook URL is configured
+        "event_webhook_enabled",     # bool — whether event webhook delivery is active
+        "event_webhook_has_url",     # bool — webhook URL presence (never the URL)
+        "event_webhook_event_count", # int — number of enabled webhook event types
+        "inbound_parse_enabled",     # bool — whether inbound parse is enabled
+        "inbound_parse_spam_check_enabled",  # bool — spam check on inbound parse
+        "inbound_parse_send_raw_enabled",    # bool — send_raw on inbound parse
+        "mail_setting_name",         # mail setting key name (never setting value)
+        "tracking_setting_name",     # tracking setting key name (never setting value)
+        "domain_valid",              # bool — whether domain auth passes DNS validation
+        "automatic_security",        # bool — whether automatic DKIM rotation is enabled
+        "dns_record_count",          # int — count of DNS records (never raw DNS values)
+        "sender_verified",           # bool — whether sender identity is verified
+        "sender_locked",             # bool — whether sender identity is locked
+        "suppression_group_count",   # int — count of ASM suppression groups
     }
 )
 

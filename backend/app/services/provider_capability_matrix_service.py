@@ -607,7 +607,7 @@ _SENDGRID = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -640,8 +640,16 @@ _SENDGRID = ProviderCapability(
         "inbound parse enabled/raw-email/spam-check-disabled. Schema safely "
         "expanded to include template_enabled boolean (mail settings) and "
         "inbound parse booleans (webhook settings) — no hostnames, URLs, "
-        "email content, or customer data ever stored. Activity ingestion, "
-        "signals, correlations, and demo seed/clear land in future milestones. "
+        "email content, or customer data ever stored. "
+        "M80D adds configuration activity ingestion: SendGrid has no native "
+        "audit/event API, so review-safe config-state events are synthesized "
+        "from the existing safe surfaces (account, API key, sender identity, "
+        "domain authentication, mail/tracking settings, event webhook, inbound "
+        "parse, suppression) and stored as activity events. Mail-delivery events "
+        "(bounce/click/open/delivered/dropped/spamreport/unsubscribe) are NEVER "
+        "ingested; API key values, email bodies, subjects, recipient emails, "
+        "template content, raw webhook URLs, and customer data are NEVER stored. "
+        "Signals, correlations, and demo seed/clear land in future milestones. "
         "SendGrid remains partial (not in the canonical dual-stack-complete set "
         "of 8 providers)."
     ),

@@ -37,6 +37,7 @@ import {
   syncAzureActivity,
   syncGoogleCloudActivity,
   syncTwilioActivity,
+  syncSendGridActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -46,7 +47,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -295,9 +296,30 @@ const TWILIO_EVENT_TYPES = [
   "twilio.config.event",
 ];
 
+// M80D — SendGrid configuration-state events (synthesized; no native audit API).
+const SENDGRID_EVENT_TYPES = [
+  "sendgrid.account.updated",
+  "sendgrid.api_key.created",
+  "sendgrid.api_key.updated",
+  "sendgrid.api_key.deleted",
+  "sendgrid.sender_identity.created",
+  "sendgrid.sender_identity.updated",
+  "sendgrid.sender_identity.verified",
+  "sendgrid.sender_identity.deleted",
+  "sendgrid.domain_authentication.created",
+  "sendgrid.domain_authentication.updated",
+  "sendgrid.domain_authentication.deleted",
+  "sendgrid.mail_settings.updated",
+  "sendgrid.tracking_settings.updated",
+  "sendgrid.event_webhook.updated",
+  "sendgrid.inbound_parse.updated",
+  "sendgrid.suppression_settings.updated",
+  "sendgrid.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -432,6 +454,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "sendgrid") {
+        const r = await syncSendGridActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "SendGrid configuration access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -464,7 +494,9 @@ export default function ActivityEventsPage() {
                           ? "Could not sync Google Cloud activity. Please try again."
                           : provider === "twilio"
                             ? "Could not sync Twilio activity. Please try again."
-                            : "Could not sync GitHub activity. Please try again.",
+                            : provider === "sendgrid"
+                              ? "Could not sync SendGrid activity. Please try again."
+                              : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -619,6 +651,7 @@ export default function ActivityEventsPage() {
     : provider === "azure" ? AZURE_EVENT_TYPES
     : provider === "google_cloud" ? GOOGLE_CLOUD_EVENT_TYPES
     : provider === "twilio" ? TWILIO_EVENT_TYPES
+    : provider === "sendgrid" ? SENDGRID_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -661,7 +694,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -778,6 +811,7 @@ function SyncBar({
   const isAzure = provider === "azure";
   const isGoogleCloud = provider === "google_cloud";
   const isTwilio = provider === "twilio";
+  const isSendGrid = provider === "sendgrid";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -789,6 +823,7 @@ function SyncBar({
     : isAzure ? "Sync Azure activity"
     : isGoogleCloud ? "Sync Google Cloud activity"
     : isTwilio ? "Sync Twilio activity"
+    : isSendGrid ? "Sync SendGrid activity"
     : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
@@ -810,7 +845,9 @@ function SyncBar({
                     ? "Sync review-safe Google Cloud Audit Log evidence for configuration changes across IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, and Secret Manager. Requires the service account to have the roles/logging.viewer role on the project. Only Admin Activity audit log entries for control-plane CREATE/UPDATE/DELETE operations are ingested — data-plane access, secret access events, storage object reads, VM logs, and application logs are excluded."
                     : isTwilio
                       ? "Sync review-safe Twilio configuration activity — phone number, messaging service, Verify service, and API key create/update/delete events. Message bodies, call logs, recordings, and customer data are never stored."
-                      : "Ingests recent GitHub audit-log activity into normalized events.";
+                      : isSendGrid
+                        ? "Sync review-safe SendGrid configuration-state activity — account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression configuration. SendGrid has no native audit API, so these are config-state observations. Email bodies, subject lines, recipient emails, template content, mail event payloads, raw webhook URLs, and API key values are never stored."
+                        : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -920,7 +957,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -944,7 +981,7 @@ function SyncBar({
             Sync GitHub secret scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && (
           <button
             onClick={onSyncGithubCodeScanning}
             disabled={!isAdmin || syncing}
@@ -968,7 +1005,7 @@ function SyncBar({
             Sync GitHub code scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && (
           <button
             onClick={onSyncGithubDependabot}
             disabled={!isAdmin || syncing}
@@ -1178,6 +1215,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync Twilio activity first to collect review-safe Monitor event evidence — account, phone number, messaging service, Verify service, and API key configuration changes. Message bodies, call logs, recordings, and customer phone numbers are never stored."
                 : "An admin can sync Twilio activity to collect review-safe Monitor event evidence."
+            : provider === "sendgrid"
+              ? isAdmin
+                ? "Sync SendGrid activity first to collect review-safe configuration-state evidence — account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression configuration. SendGrid has no native audit API, so these are config-state observations. Email bodies, subject lines, recipient emails, template content, raw webhook URLs, and API key values are never stored."
+                : "An admin can sync SendGrid activity to collect review-safe configuration-state evidence."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

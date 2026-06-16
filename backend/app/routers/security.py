@@ -212,6 +212,10 @@ from app.schemas.security_twilio_activity import (
     TwilioCorrelationGenerateRequest,
     TwilioCorrelationGenerateResponse,
 )
+from app.schemas.security_sendgrid_activity import (
+    SendGridActivitySyncRequest,
+    SendGridActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -258,6 +262,7 @@ from app.services import azure_activity_signal_service
 from app.services import google_cloud_activity_ingestion_service
 from app.services import google_cloud_activity_signal_service
 from app.services import twilio_activity_ingestion_service
+from app.services import sendgrid_activity_ingestion_service
 from app.services import twilio_activity_signal_service
 from app.services import firebase_activity_signal_service
 from app.services import supabase_activity_signal_service
@@ -3188,6 +3193,47 @@ def sync_twilio_activity_events(
         db=db,
     )
     return TwilioActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/sendgrid-activity/sync",
+    response_model=SendGridActivitySyncResponse,
+)
+def sync_sendgrid_activity_events(
+    body: Optional[SendGridActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SendGridActivitySyncResponse:
+    """Sync review-safe SendGrid configuration activity events (M80D).
+
+    Admin/owner only. Synthesizes configuration-state events from safe
+    SendGrid configuration surfaces. Only account, API key, sender identity,
+    domain authentication, mail settings, tracking settings, event webhook,
+    inbound parse, and suppression configuration metadata are ingested.
+
+    Email bodies, subject lines, recipient emails, sender personal emails,
+    suppression recipient emails, template content, mail event payloads,
+    click/open/bounce/unsubscribe events, raw webhook URLs, API key values,
+    bearer tokens, authorization headers, and customer data are NEVER stored.
+
+    Evidence is configuration-state metadata only. Does not confirm breach,
+    compromise, unauthorized access, or data exposure.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(workspace_id, current_user.id, db)
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = sendgrid_activity_ingestion_service.sync_sendgrid_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return SendGridActivitySyncResponse(**summary)
 
 
 @router.post(

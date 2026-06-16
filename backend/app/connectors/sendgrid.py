@@ -143,6 +143,33 @@ def _email_domain(email: Any) -> str:
     return email[at + 1:].lower().strip()[:253]
 
 
+# ── Config event type allowlist (M80D) ──────────────────────────────────────────
+#
+# Only safe configuration/control-plane types. Mail-delivery events
+# (bounce/click/open/delivered/dropped/deferred/spamreport/unsubscribe/
+# group_unsubscribe/processed/etc.) are NEVER in this set and are NEVER called
+# or returned.
+_SENDGRID_CONFIG_EVENT_TYPES: frozenset[str] = frozenset({
+    "sendgrid.account.updated",
+    "sendgrid.api_key.created",
+    "sendgrid.api_key.updated",
+    "sendgrid.api_key.deleted",
+    "sendgrid.sender_identity.created",
+    "sendgrid.sender_identity.updated",
+    "sendgrid.sender_identity.verified",
+    "sendgrid.sender_identity.deleted",
+    "sendgrid.domain_authentication.created",
+    "sendgrid.domain_authentication.updated",
+    "sendgrid.domain_authentication.deleted",
+    "sendgrid.mail_settings.updated",
+    "sendgrid.tracking_settings.updated",
+    "sendgrid.event_webhook.updated",
+    "sendgrid.inbound_parse.updated",
+    "sendgrid.suppression_settings.updated",
+    "sendgrid.config.event",
+})
+
+
 # ── Connector ──────────────────────────────────────────────────────────────────
 
 
@@ -767,6 +794,329 @@ class SendGridConnector(BaseConnector):
                 return None
             raise
         return SendGridConnector._normalize_suppression_settings(data)
+
+    # ── Activity events (M80D) ──────────────────────────────────────────────────
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Synthesize review-safe SendGrid configuration-state activity events.
+
+        SendGrid has NO native audit/event API for configuration changes. These
+        events are config-state observations synthesized from the same safe
+        configuration surfaces the drift connector reads (account, API keys,
+        sender identities, domain authentication, mail settings, tracking
+        settings, event webhook, inbound parse, and suppression settings).
+
+        Each event represents configuration state observed at poll time. Events
+        are date-scoped (day-level) for idempotency: re-polling the same
+        configuration on the same UTC day yields the same provider_event_id and
+        is a safe no-op.
+
+        CLAIM DISCIPLINE: events are configuration-state evidence for review.
+        This does NOT confirm a breach, unauthorized access, or data exposure.
+
+        PRIVACY — what is NEVER returned:
+        - API key values, bearer tokens, or authorization headers.
+        - Email bodies, subject lines, template content, recipient emails,
+          sender personal emails, or suppression recipient emails.
+        - Raw webhook URL strings, raw inbound-parse hostnames, or message IDs.
+        - Mail event payloads (bounce/click/open/delivered/deferred/dropped/
+          spamreport/unsubscribe/processed) — these are NEVER fetched.
+        - Raw DNS record values or any customer data / PII.
+
+        Returns only safe booleans, counts, opaque IDs, and domain names.
+
+        Raises:
+            AuthenticationError: API key is missing or invalid (HTTP 401).
+            RateLimitError: Rate limit hit (HTTP 429).
+            NetworkError: Transport-level failure.
+        """
+        from datetime import datetime, timezone
+
+        api_key = credentials.get("api_key", "")
+        if not isinstance(api_key, str) or not api_key:
+            raise AuthenticationError(
+                "sendgrid: 'api_key' credential is required"
+            )
+
+        max_events = min(max(1, max_events), 1000)
+        lookback_hours = min(max(1, lookback_hours), 168)
+
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        events: list[dict] = []
+
+        with self._make_client(api_key) as client:
+            self._collect_account_event(client, events, day)
+            self._collect_api_key_events(client, events, day)
+            self._collect_sender_identity_events(client, events, day)
+            self._collect_domain_auth_events(client, events, day)
+            self._collect_mail_settings_event(client, events, day)
+            self._collect_tracking_settings_event(client, events, day)
+            self._collect_webhook_settings_event(client, events, day)
+            self._collect_suppression_settings_event(client, events, day)
+
+        return events[:max_events]
+
+    # ── Activity surface collectors (M80D) ──────────────────────────────────────
+    #
+    # Each collector reuses the existing safe drift fetchers/normalizers and
+    # emits at most a small, capped number of config-state events. Each fails
+    # soft on 403/404 (missing permission for that surface) so one inaccessible
+    # surface never aborts the whole poll. Authentication / rate-limit / network
+    # errors propagate so the ingestion service can report them honestly.
+
+    @staticmethod
+    def _activity_event(event_type: str, provider_event_id: str, metadata: dict) -> dict:
+        """Build one synthesized config-state activity event envelope."""
+        meta = dict(metadata)
+        meta.setdefault("event_source", "sendgrid_activity_event")
+        meta.setdefault("event_action", event_type)
+        return {
+            "event_type": event_type,
+            "provider": "sendgrid",
+            "source": "sendgrid_activity_event",
+            "event_source": "sendgrid_activity_event",
+            "provider_event_id": provider_event_id,
+            "metadata": meta,
+        }
+
+    def _collect_account_event(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            rec = self._fetch_account(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        if not isinstance(rec, dict):
+            return
+        meta = {
+            "resource_type": "account",
+            "event_action": "sendgrid.account.updated",
+            "operation_name": "SendGrid account configuration observed",
+            "category": "account",
+            "status": "observed",
+        }
+        events.append(
+            self._activity_event(
+                "sendgrid.account.updated",
+                f"sg:account:main:{day}",
+                meta,
+            )
+        )
+
+    def _collect_api_key_events(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            recs = self._fetch_api_keys(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        for rec in recs[:10]:
+            if not isinstance(rec, dict):
+                continue
+            api_key_id = rec.get("api_key_id") or ""
+            if not api_key_id:
+                continue
+            meta = {
+                "resource_type": "api_key",
+                "api_key_id": api_key_id,
+                "resource_id": api_key_id,
+                "resource_name": _trunc(rec.get("name") or ""),
+                "event_action": "sendgrid.api_key.updated",
+                "category": "api_key",
+                "status": "observed",
+            }
+            events.append(
+                self._activity_event(
+                    "sendgrid.api_key.updated",
+                    f"sg:api_key:{api_key_id}:{day}",
+                    meta,
+                )
+            )
+
+    def _collect_sender_identity_events(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            recs = self._fetch_sender_identities(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        for rec in recs[:10]:
+            if not isinstance(rec, dict):
+                continue
+            sender_id = rec.get("sender_id") or ""
+            if not sender_id:
+                continue
+            meta = {
+                "resource_type": "sender_identity",
+                "sender_id": sender_id,
+                "resource_id": sender_id,
+                "sender_verified": bool(rec.get("verified")),
+                "sender_locked": bool(rec.get("locked")),
+                "event_action": "sendgrid.sender_identity.updated",
+                "category": "sender_identity",
+                "status": "observed",
+            }
+            events.append(
+                self._activity_event(
+                    "sendgrid.sender_identity.updated",
+                    f"sg:sender_identity:{sender_id}:{day}",
+                    meta,
+                )
+            )
+
+    def _collect_domain_auth_events(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            recs = self._fetch_domain_authentications(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        for rec in recs[:10]:
+            if not isinstance(rec, dict):
+                continue
+            domain_id = rec.get("domain_id") or ""
+            if not domain_id:
+                continue
+            meta = {
+                "resource_type": "domain_authentication",
+                "domain_id": domain_id,
+                "resource_id": domain_id,
+                "resource_name": _trunc(rec.get("domain") or "", length=253),
+                "domain_valid": bool(rec.get("valid")),
+                "automatic_security": bool(rec.get("automatic_security")),
+                "dns_record_count": int(rec.get("dns_record_count") or 0),
+                "event_action": "sendgrid.domain_authentication.updated",
+                "category": "domain_authentication",
+                "status": "observed",
+            }
+            events.append(
+                self._activity_event(
+                    "sendgrid.domain_authentication.updated",
+                    f"sg:domain_authentication:{domain_id}:{day}",
+                    meta,
+                )
+            )
+
+    def _collect_mail_settings_event(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            rec = self._fetch_mail_settings(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        if not isinstance(rec, dict):
+            return
+        meta = {
+            "resource_type": "mail_settings",
+            "mail_setting_name": "mail_settings_config",
+            "event_action": "sendgrid.mail_settings.updated",
+            "category": "mail_settings",
+            "status": "observed",
+        }
+        for k in (
+            "bcc_enabled", "bounce_purge_enabled", "footer_enabled",
+            "forward_bounce_enabled", "forward_spam_enabled",
+            "sandbox_mode_enabled", "spam_check_enabled", "template_enabled",
+        ):
+            if k in rec:
+                # These keys are not on the activity allowlist; carry only the
+                # generic mail_setting_name. Booleans are summarized via status.
+                pass
+        events.append(
+            self._activity_event(
+                "sendgrid.mail_settings.updated",
+                f"sg:mail_settings:main:{day}",
+                meta,
+            )
+        )
+
+    def _collect_tracking_settings_event(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            rec = self._fetch_tracking_settings(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        if not isinstance(rec, dict):
+            return
+        meta = {
+            "resource_type": "tracking_settings",
+            "tracking_setting_name": "tracking_settings_config",
+            "event_action": "sendgrid.tracking_settings.updated",
+            "category": "tracking_settings",
+            "status": "observed",
+        }
+        events.append(
+            self._activity_event(
+                "sendgrid.tracking_settings.updated",
+                f"sg:tracking_settings:main:{day}",
+                meta,
+            )
+        )
+
+    def _collect_webhook_settings_event(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            rec = self._fetch_webhook_settings(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        if not isinstance(rec, dict):
+            return
+        meta = {
+            "resource_type": "event_webhook",
+            "event_webhook_enabled": bool(rec.get("event_webhook_enabled")),
+            "event_webhook_has_url": bool(rec.get("event_webhook_has_url")),
+            "webhook_configured": bool(rec.get("event_webhook_has_url")),
+            "event_webhook_event_count": int(rec.get("event_count") or 0),
+            "inbound_parse_enabled": bool(rec.get("inbound_parse_enabled")),
+            "inbound_parse_spam_check_enabled": bool(
+                rec.get("inbound_parse_spam_check_enabled")
+            ),
+            "inbound_parse_send_raw_enabled": bool(
+                rec.get("inbound_parse_send_raw_enabled")
+            ),
+            "event_action": "sendgrid.event_webhook.updated",
+            "category": "event_webhook",
+            "status": "observed",
+        }
+        events.append(
+            self._activity_event(
+                "sendgrid.event_webhook.updated",
+                f"sg:event_webhook:main:{day}",
+                meta,
+            )
+        )
+
+    def _collect_suppression_settings_event(self, client: httpx.Client, events: list, day: str) -> None:
+        try:
+            rec = self._fetch_suppression_settings(client)
+        except ConnectorError as exc:
+            if exc.status_code in (403, 404):
+                return
+            raise
+        if not isinstance(rec, dict):
+            return
+        meta = {
+            "resource_type": "suppression_settings",
+            "suppression_group_count": int(rec.get("suppression_group_count") or 0),
+            "event_action": "sendgrid.suppression_settings.updated",
+            "category": "suppression_settings",
+            "status": "observed",
+        }
+        events.append(
+            self._activity_event(
+                "sendgrid.suppression_settings.updated",
+                f"sg:suppression_settings:main:{day}",
+                meta,
+            )
+        )
 
     # ── Main fetch ─────────────────────────────────────────────────────────────
 

@@ -843,6 +843,29 @@ export async function syncTwilioActivity(
 }
 
 /**
+ * syncSendGridActivity — POST /security/sendgrid-activity/sync
+ * Ingests review-safe SendGrid configuration-state events.
+ * Email bodies, subject lines, recipient emails, mail event payloads,
+ * raw webhook URLs, API key values, and customer data are never stored.
+ */
+export async function syncSendGridActivity(
+  token?: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").SendGridActivitySyncResponse> {
+  return apiFetch<import("@/types").SendGridActivitySyncResponse>(
+    "/security/sendgrid-activity/sync",
+    {
+      method: "POST",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(opts ?? {}),
+    },
+  );
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.
