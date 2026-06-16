@@ -1136,10 +1136,10 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("sendgrid")
         # security_rules flipped True in M80B.
         assert cap.security.security_rules is True
-        # M80D rolled activity_ingestion forward to True; the rest remain False
-        # until later milestones.
+        # M80D rolled activity_ingestion forward to True.
+        # M80E rolled activity_signals forward to True.
         assert cap.security.activity_ingestion is True
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
 
@@ -1188,7 +1188,7 @@ class TestExpansionFramework:
     def test_planned_next_stage_is_m80b(self):
         """M80C complete — planned_next_stage rolls to M80D."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80E" in stage, (
+        assert "M80F" in stage, (
             f"planned_next_stage should contain M80E after M80D; got: {stage!r}"
         )
         assert "SendGrid" in stage

@@ -1,4 +1,4 @@
-"""Schemas for SendGrid configuration activity ingestion (M80D).
+"""Schemas for SendGrid configuration activity ingestion and signals (M80D/M80E).
 
 SendGrid does NOT have a native audit/event API for configuration changes.
 Therefore these "activity events" are config-state observations synthesized
@@ -42,3 +42,21 @@ class SendGridActivitySyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class SendGridActivitySignalGenerateRequest(BaseModel):
+    """POST /security/sendgrid-activity/generate-signals request body (all optional)."""
+
+    lookback_hours: int = Field(default=24, ge=1, le=168)
+    max_signals: int = Field(default=100, ge=1, le=1000)
+
+
+class SendGridActivitySignalGenerateResponse(BaseModel):
+    """SendGrid configuration activity signal generation summary."""
+
+    provider: str = "sendgrid"
+    source: str = "sendgrid_activity_event"
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

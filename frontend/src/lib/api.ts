@@ -995,6 +995,21 @@ export async function generateTwilioActivitySignals(
 }
 
 /**
+ * generateSendGridActivitySignals — POST /security/sendgrid-activity/generate-signals
+ * Generates review-priority Incident Signals from safe SendGrid configuration activity.
+ * Stores resource identifiers, configuration status, webhook-presence metadata, and
+ * activity summaries only — never email bodies, subject lines, recipient emails, mail
+ * event payloads, raw webhook URLs, API key values, or customer data.
+ * Does not confirm compromise or unauthorized access.
+ */
+export async function generateSendGridActivitySignals(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").SendGridActivitySignalGenerateResponse> {
+  return apiFetch(`/security/sendgrid-activity/generate-signals`, { method: "POST", body: JSON.stringify(opts ?? {}), token });
+}
+
+/**
  * Generate Twilio Risk × Activity correlations (M79F). Admin/owner only.
  * Joins active Twilio configuration-risk findings with Twilio activity signals
  * using safe resource identifiers (phone_number_last4, messaging_service_sid,

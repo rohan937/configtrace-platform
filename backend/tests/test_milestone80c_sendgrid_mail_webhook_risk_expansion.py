@@ -767,8 +767,9 @@ class TestCapabilityMatrix:
     def test_activity_signals_correlations_demo_false(self):
         cap = self._get_sendgrid_cap()
         # M80D rolled activity_ingestion forward to True.
+        # M80E rolled activity_signals forward to True.
         assert cap.security.activity_ingestion is True
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
@@ -794,7 +795,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M80E" in stage, f"Expected M80D in planned_next_stage, got: {stage!r}"
+        assert "M80F" in stage, f"Expected M80D in planned_next_stage, got: {stage!r}"
         assert "Activity" in stage or "Ingestion" in stage, (
             f"Expected activity/ingestion in planned_next_stage, got: {stage!r}"
         )

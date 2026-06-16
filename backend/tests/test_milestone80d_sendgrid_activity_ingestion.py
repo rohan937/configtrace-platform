@@ -20,7 +20,7 @@ Verifies:
   * admin endpoint; member cannot sync (403)
   * ALLOWED_METADATA_KEYS contains expected SendGrid keys and NOT forbidden keys
   * capability matrix: activity_ingestion=True
-  * expansion framework planned_next_stage contains "M80E"
+  * expansion framework planned_next_stage contains "M80F"
   * forbidden wording not in module source
   * no secret-shaped strings
 
@@ -856,7 +856,7 @@ class TestExpansionFramework:
 
     def test_g1_planned_next_stage_contains_m80e(self):
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80E" in stage, f"expected M80E, got {stage!r}"
+        assert "M80F" in stage, f"expected M80F, got {stage!r}"
 
     def test_g2_planned_next_stage_not_m80d(self):
         stage = self._fw()["summary"]["planned_next_stage"]

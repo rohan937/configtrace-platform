@@ -270,6 +270,29 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "verify_service_sid",          # Verify service SID (identifier, not a secret)
         "api_key_sid",                 # API key SID (identifier only — NEVER the secret)
         "phone_number_last4",          # last 4 digits of phone number — NEVER full number
+        # SendGrid configuration activity signal fields (M80E) — safe control-plane
+        # config-state change summary ONLY. NEVER API key values, bearer tokens,
+        # authorization headers, email bodies, subject lines, recipient emails,
+        # sender personal emails, suppression recipient emails, template HTML/
+        # plaintext, raw webhook URLs, raw inbound parse hostnames, mail event
+        # payloads (bounce/click/open/delivered/dropped/spamreport/unsubscribe/
+        # processed), message IDs, raw SendGrid API responses, request/response
+        # bodies, customer data, or PII of any kind.
+        "api_key_id",                # API key opaque ID (NEVER the key value or secret)
+        "sender_id",                 # sender identity opaque ID (NEVER email address)
+        "mail_setting_name",         # mail setting key name (NEVER setting content)
+        "tracking_setting_name",     # tracking setting key name (NEVER tracking data)
+        "event_webhook_enabled",     # bool — whether event webhook delivery is active
+        "event_webhook_has_url",     # bool — webhook URL presence (NEVER the URL)
+        "inbound_parse_enabled",     # bool — whether inbound parse is enabled
+        "inbound_parse_spam_check_enabled",  # bool — spam check on inbound parse
+        "inbound_parse_send_raw_enabled",    # bool — send_raw on inbound parse
+        "domain_valid",              # bool — whether domain auth passes DNS validation
+        "automatic_security",        # bool — whether automatic DKIM rotation is enabled
+        "dns_record_count",          # int — count of DNS records (NEVER raw DNS values)
+        "sender_verified",           # bool — whether sender identity is verified
+        "sender_locked",             # bool — whether sender identity is locked
+        "suppression_group_count",   # int — count of ASM suppression groups
     }
 )
 

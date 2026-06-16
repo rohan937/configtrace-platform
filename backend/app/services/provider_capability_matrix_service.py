@@ -608,7 +608,7 @@ _SENDGRID = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -649,7 +649,9 @@ _SENDGRID = ProviderCapability(
         "(bounce/click/open/delivered/dropped/spamreport/unsubscribe) are NEVER "
         "ingested; API key values, email bodies, subjects, recipient emails, "
         "template content, raw webhook URLs, and customer data are NEVER stored. "
-        "Signals, correlations, and demo seed/clear land in future milestones. "
+        "M80E adds activity signals: config-state events are promoted into "
+        "review-priority Incident Signals grouped by resource identity. "
+        "Correlations and demo seed/clear land in future milestones. "
         "SendGrid remains partial (not in the canonical dual-stack-complete set "
         "of 8 providers)."
     ),
