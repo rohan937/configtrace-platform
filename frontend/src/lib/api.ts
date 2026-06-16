@@ -1017,6 +1017,17 @@ export async function generateSendGridActivitySignals(
  * Message bodies, call logs, recordings, full phone numbers, auth tokens, and
  * API secrets are never stored. Does not confirm compromise or unauthorized access.
  */
+export async function generateSendGridCorrelations(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").SendGridCorrelationGenerateResponse> {
+  return apiFetch(`/security/sendgrid-correlations/generate`, {
+    method: "POST",
+    body: JSON.stringify(opts ?? {}),
+    token,
+  });
+}
+
 export async function generateTwilioCorrelations(
   token?: string | null,
   opts?: { lookback_hours?: number; max_correlations?: number },

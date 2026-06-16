@@ -20,7 +20,7 @@ import type {
   SecurityCorrelationGenerateResponse,
   TwilioCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -33,7 +33,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -226,6 +226,9 @@ export default function CorrelationsPage() {
       if (provider === "twilio") {
         const res = await generateTwilioCorrelations(token);
         setGenResult(res);
+      } else if (provider === "sendgrid") {
+        const res = await generateSendGridCorrelations(token);
+        setGenResult(res);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);
         setGenResult(res);
@@ -385,7 +388,9 @@ function GenerateBar({
                       ? "Correlate Google Cloud configuration risks with recent Audit Log signals across IAM, firewall rules, Storage, Cloud SQL, Cloud Run, GKE, service accounts, and Secret Manager. Resource-name matches for firewall / Storage / SQL / Cloud Run / GKE; project + family aggregate matches for IAM / service-account-key / Secret Manager. Provider-only matches are never produced."
                       : provider === "twilio"
                         ? "Correlate Twilio configuration risks with Twilio activity signals across phone numbers, messaging services, Verify services, API keys, and account configuration. Matches on safe resource identifiers (phone_number_last4, messaging_service_sid, verify_service_sid, api_key_sid) or provider+family aggregate. Message bodies, call logs, recordings, full phone numbers, auth tokens, and API secrets are never used."
-                        : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                        : provider === "sendgrid"
+                          ? "Correlate SendGrid configuration risks with SendGrid activity signals across API keys, sender identities, domain authentication, mail settings, tracking settings, event webhook, inbound parse, and suppression settings. Matches on safe resource identifiers (api_key_id, sender_id, domain_id) or provider+family aggregate for account-level surfaces. Email bodies, subject lines, recipient emails, mail event payloads, raw webhook URLs, API key values, and customer data are never used."
+                          : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -571,7 +576,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                       ? "the same Google Cloud resource (firewall rule / Cloud Storage bucket / Cloud SQL instance / Cloud Run service / GKE cluster), or the same project + family for IAM, service-account-key, and Secret Manager risks. Sync Google Cloud activity, generate Google Cloud signals, then generate Google Cloud correlations."
                       : provider === "twilio"
                         ? "the same Twilio resource (phone number / messaging service / Verify service / API key), or the same account + family for account and config-level risks. Sync Twilio activity, generate Twilio signals, then generate Twilio correlations."
-                        : "the same GitHub repository";
+                        : provider === "sendgrid"
+                          ? "the same SendGrid resource (API key / sender identity / domain), or the same account + family for mail settings, tracking settings, webhook, and suppression risks. Sync SendGrid activity, generate SendGrid signals, then generate SendGrid correlations."
+                          : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

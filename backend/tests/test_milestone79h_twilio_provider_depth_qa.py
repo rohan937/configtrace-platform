@@ -354,7 +354,7 @@ def test_expansion_framework_points_to_m79i():
     """M80C complete — planned_next_stage must advance to M80D."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M80F" in planned, (
+    assert "M80G" in planned, (
         f"planned_next_stage must point to M80D (SendGrid Activity) after M80C; got: {planned!r}"
     )
     assert "SendGrid" in planned

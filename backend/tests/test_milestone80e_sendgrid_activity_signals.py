@@ -643,7 +643,7 @@ class TestCapabilityMatrix:
 
     def test_f4_correlations_demo_false(self):
         cap = self._cap()
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True  # M80F rolled forward
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
 
@@ -668,7 +668,7 @@ class TestExpansionFramework:
 
     def test_g1_planned_next_stage_contains_m80f(self):
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80F" in stage, f"expected M80F, got {stage!r}"
+        assert "M80G" in stage, f"expected M80G, got {stage!r}"
 
     def test_g2_planned_next_stage_not_m80e(self):
         stage = self._fw()["summary"]["planned_next_stage"]

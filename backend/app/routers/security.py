@@ -217,6 +217,8 @@ from app.schemas.security_sendgrid_activity import (
     SendGridActivitySyncResponse,
     SendGridActivitySignalGenerateRequest,
     SendGridActivitySignalGenerateResponse,
+    SendGridCorrelationGenerateRequest,
+    SendGridCorrelationGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -3321,6 +3323,56 @@ def generate_twilio_activity_signals_endpoint(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return TwilioActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/sendgrid-correlations/generate",
+    response_model=SendGridCorrelationGenerateResponse,
+)
+def generate_sendgrid_risk_activity_correlations(
+    body: Optional[SendGridCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SendGridCorrelationGenerateResponse:
+    """Generate SendGrid Risk × Activity correlations (M80F).
+
+    Admin/owner only. Joins active SendGrid configuration-risk findings with
+    SendGrid activity signals using safe resource identifiers (api_key_id,
+    sender_id, domain_id) or provider+family aggregate matching for account-level
+    surfaces (mail settings, tracking settings, webhook, suppression settings).
+
+    Covers seven correlation families: api_key, sender_identity,
+    domain_authentication, mail_settings, tracking_settings, webhook,
+    and suppression_settings.
+
+    API key values, email bodies, subject lines, recipient emails, template
+    content, raw webhook URLs, raw inbound parse hostnames, mail event payloads
+    (bounce/click/open/delivered/dropped/spamreport/unsubscribe/processed),
+    message IDs, and customer data are never used or stored. Does not confirm
+    compromise, unauthorized access, or data exposure. Idempotent — re-running
+    creates no duplicates.
+
+    Members can view the resulting correlations via
+    GET /security/correlations?provider=sendgrid.
+    """
+    from app.services.sendgrid_risk_activity_correlation_service import (
+        generate_sendgrid_correlations,
+    )
+
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs_sg: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs_sg["lookback_hours"] = body.lookback_hours
+        if body.max_correlations is not None:
+            kwargs_sg["max_correlations"] = body.max_correlations
+    result = generate_sendgrid_correlations(
+        workspace_id=workspace_id, db=db, **kwargs_sg
+    )
+    return SendGridCorrelationGenerateResponse(**result)
 
 
 @router.post(

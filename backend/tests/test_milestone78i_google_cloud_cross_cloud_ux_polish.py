@@ -177,7 +177,7 @@ def test_expansion_framework_planned_next_stage_is_beyond_m78i():
     assert "M78I" not in stage, (
         f"planned_next_stage still points to M78I after arc closed: {stage!r}"
     )
-    assert "M80F" in stage
+    assert "M80G" in stage
     assert "SendGrid" in stage
 
 

@@ -310,6 +310,30 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "event_types",                 # comma-separated safe event-type list
         "finding_severity",            # severity label from the source finding
         "pattern",                     # pattern label (safe string)
+        # SendGrid risk × activity correlation context (M80F) — safe
+        # configuration surface identifiers and posture labels only. NEVER
+        # API key values, bearer tokens, authorization headers, email bodies,
+        # subject lines, recipient emails, sender personal emails, suppression
+        # recipient emails, template HTML/plaintext, raw webhook URLs, raw
+        # inbound parse hostnames, mail event payloads (bounce/click/open/
+        # delivered/dropped/spamreport/unsubscribe/processed), message IDs,
+        # raw SendGrid API responses, request/response bodies, customer data,
+        # or PII of any kind.
+        "api_key_id",                  # API key opaque ID (NEVER the key value or secret)
+        "sender_id",                   # sender identity opaque ID (NEVER email address)
+        "mail_setting_name",           # mail setting key name (NEVER setting content)
+        "tracking_setting_name",       # tracking setting key name (NEVER tracking data)
+        "event_webhook_enabled",       # bool — whether event webhook is active
+        "event_webhook_has_url",       # bool — webhook URL presence (NEVER the URL)
+        "inbound_parse_enabled",       # bool — whether inbound parse is enabled
+        "domain_valid",                # bool — domain auth DNS validation status
+        "automatic_security",          # bool — automatic DKIM rotation status
+        "sender_verified",             # bool — sender identity verification status
+        "sender_locked",               # bool — sender identity lock status
+        "suppression_group_count",     # int — count of ASM suppression groups
+        # Cross-provider safe correlation-context keys (M80F)
+        "rule_key",                    # base rule key label (e.g. sendgrid_api_key_broad_scopes)
+        "signal_type",                 # signal type label (e.g. sendgrid_api_key_config_changed)
     }
 )
 
