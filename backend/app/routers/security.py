@@ -1723,6 +1723,8 @@ def incident_demo_status(
         status = security_incident_demo_service.get_azure_status(workspace_id, db)
     elif prov == "google_cloud":
         status = security_incident_demo_service.get_google_cloud_status(workspace_id, db)
+    elif prov == "twilio":
+        status = security_incident_demo_service.get_twilio_status(workspace_id, db)
     else:
         status = security_incident_demo_service.get_status(workspace_id, db)
     return IncidentDemoStatusResponse(**status)
@@ -1782,6 +1784,10 @@ def incident_demo_seed(
         summary = security_incident_demo_service.seed_google_cloud(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
         )
+    elif prov == "twilio":
+        summary = security_incident_demo_service.seed_twilio(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
     else:
         summary = security_incident_demo_service.seed(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
@@ -1823,6 +1829,8 @@ def incident_demo_clear(
         result = security_incident_demo_service.clear_azure(workspace_id=workspace_id, db=db)
     elif prov == "google_cloud":
         result = security_incident_demo_service.clear_google_cloud(workspace_id=workspace_id, db=db)
+    elif prov == "twilio":
+        result = security_incident_demo_service.clear_twilio(workspace_id=workspace_id, db=db)
     else:
         result = security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
     return IncidentDemoClearResponse(**result)
