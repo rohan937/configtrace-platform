@@ -99,7 +99,7 @@ export const DEMO_SCRIPT_3MIN: DemoStep[] = [
     href: "/security",
     cta: "Open Security Overview",
     talkTrack:
-      "ConfigTrace is for the settings that Git does not track. Code changes have review history, but production-critical settings across GitHub, AWS, Cloudflare, Stripe, Shopify, Firebase, Azure, Google Cloud, and other tools often change without the same discipline.",
+      "ConfigTrace is for the settings that Git does not track. Code changes have review history, but production-critical settings across GitHub, AWS, Cloudflare, Stripe, Shopify, Firebase, Azure, Google Cloud, Twilio, and other tools often change without the same discipline.",
     whatToClick: "Start on the Security Overview so the whole posture is visible at once.",
     emphasize: "The gap is configuration, not code — and it spans many providers.",
     avoid: "Don't imply we detect breaches or replace existing security tools.",
@@ -343,7 +343,7 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Open a case",
     talkTrack:
-      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, or Google Cloud — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
+      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, or Twilio — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
     whatToClick: "Open a case and scroll to the chronological timeline and the evidence relationship map.",
     emphasize: "Timeline + relationship map turn linked evidence into a reviewable investigation, across providers.",
     avoid: "Don't describe the map as an attack path or call any relationship a confirmed compromise.",

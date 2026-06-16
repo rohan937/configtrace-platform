@@ -260,8 +260,8 @@ def test_get_framework_structure():
     assert summary["next_provider"] == "SendGrid"
     assert "SendGrid" in summary["next_milestone"]
     assert (
-        "M79B" in summary["planned_next_stage"]
-        or "Twilio" in summary["planned_next_stage"]
+        "M80A" in summary["planned_next_stage"]
+        or "SendGrid" in summary["planned_next_stage"]
     )
 
 

@@ -171,14 +171,14 @@ def test_capability_matrix_google_cloud_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78i():
-    """After M79H, planned_next_stage points to M79I (Twilio Cross-Cloud UX Polish)."""
+    """After M79I, planned_next_stage points to M80A (SendGrid Drift Provider Foundation)."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M78I" not in stage, (
         f"planned_next_stage still points to M78I after arc closed: {stage!r}"
     )
-    assert "M79I" in stage
-    assert "Twilio" in stage
+    assert "M80A" in stage
+    assert "SendGrid" in stage
 
 
 def test_expansion_framework_top_recommendation_is_twilio():

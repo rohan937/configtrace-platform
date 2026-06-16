@@ -351,18 +351,18 @@ def test_capability_matrix_pins_twilio_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m79i():
-    """M79H complete — planned_next_stage must advance to M79I."""
+    """M79I complete — planned_next_stage must advance to M80A (SendGrid)."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M79I" in planned, (
-        f"planned_next_stage must point to M79I (Twilio Cross-Cloud UX Polish); got: {planned!r}"
+    assert "M80A" in planned, (
+        f"planned_next_stage must point to M80A (SendGrid) after M79I; got: {planned!r}"
     )
-    assert "Twilio" in planned
+    assert "SendGrid" in planned
     assert "M79H" not in planned, (
         f"M79H is done; pointer must advance past it (got: {planned!r})"
     )
-    assert "M79G" not in planned, (
-        f"M79G is done; stale reference (got: {planned!r})"
+    assert "M79I" not in planned, (
+        f"M79I is done; stale reference (got: {planned!r})"
     )
 
 
@@ -1493,15 +1493,15 @@ def test_correlation_five_families_cover_all_match_keys():
     assert match_keys == expected
 
 
-def test_expansion_framework_sendgrid_not_promoted_ahead_of_m79i():
-    """SendGrid/Auth0 future providers must not be promoted ahead of M79I."""
+def test_expansion_framework_sendgrid_correctly_follows_m79i():
+    """After M79I, SendGrid (M80A) is correctly the planned_next_stage."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "SendGrid" not in planned, (
-        f"SendGrid was promoted to planned_next_stage ahead of M79I: {planned!r}"
+    assert "M80A" in planned or "SendGrid" in planned, (
+        f"planned_next_stage should point to M80A/SendGrid after M79I; got: {planned!r}"
     )
     assert "Auth0" not in planned, (
-        f"Auth0 was promoted to planned_next_stage ahead of M79I: {planned!r}"
+        f"Auth0 was promoted ahead of SendGrid: {planned!r}"
     )
 
 

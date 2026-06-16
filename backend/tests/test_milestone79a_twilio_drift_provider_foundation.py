@@ -1078,19 +1078,19 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_planned_next_stage_contains_m79e():
-    """Rolled forward in M79H: Provider Depth QA complete; next stage is M79I."""
+    """Rolled forward in M79I: Cross-Cloud UX Polish complete; next stage is M80A."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M79I" in stage
+    assert "M80A" in stage
 
 
 def test_expansion_framework_planned_next_stage_contains_twilio():
-    """M79B is the next Twilio arc milestone — Twilio Core Security Foundation."""
+    """M79I complete — next stage is M80A SendGrid Drift Provider Foundation."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "Twilio" in stage
+    assert "M80A" in stage or "SendGrid" in stage
 
 
 def test_expansion_framework_planned_next_stage_does_not_contain_m79a():

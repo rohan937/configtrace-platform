@@ -316,10 +316,10 @@ def test_capability_matrix_pins_azure_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m77i():
-    """Rolled forward in M79H: Provider Depth QA complete → M79I Twilio Cross-Cloud UX Polish."""
+    """Rolled forward in M79I: Twilio Cross-Cloud UX Polish complete → M80A SendGrid."""
     fw = get_framework()
-    assert "M79I" in fw["summary"]["planned_next_stage"]
-    assert "Twilio" in fw["summary"]["planned_next_stage"]
+    assert "M80A" in fw["summary"]["planned_next_stage"]
+    assert "SendGrid" in fw["summary"]["planned_next_stage"]
 
 
 def test_azure_not_in_canonical_eight_provider_matrix():

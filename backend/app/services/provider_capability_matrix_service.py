@@ -570,7 +570,12 @@ _TWILIO = ProviderCapability(
         "all provider-label tables). M79H (provider-depth QA) added durable guardrails "
         "pinning taxonomy parity, privacy/sanitization discipline, false-positive "
         "behavior, demo isolation, and router/frontend consistency across the full "
-        "M79A–M79G arc."
+        "M79A–M79G arc. M79I (cross-cloud UX polish) complete: all 17 Twilio rule "
+        "keys documented in the frontend rule catalog with full description/remediation/"
+        "falsePositiveGuard copy, demo talk track updated to feature Twilio alongside "
+        "Azure and Google Cloud, and Twilio is now first-class in the security UX "
+        "alongside all other dual-stack providers. Twilio remains partial (not in the "
+        "canonical dual-stack-complete set of 8 providers)."
     ),
 )
 

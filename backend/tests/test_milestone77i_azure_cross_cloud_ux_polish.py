@@ -112,11 +112,11 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
 
 
 def test_expansion_framework_next_stage_is_beyond_m79d():
-    """Rolled forward in M79H: Twilio Provider Depth QA complete; next stage is M79I."""
+    """Rolled forward in M79I: Twilio Cross-Cloud UX Polish complete; next stage is M80A."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M79I" in stage
-    assert "Twilio" in stage
+    assert "M80A" in stage
+    assert "SendGrid" in stage
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():
