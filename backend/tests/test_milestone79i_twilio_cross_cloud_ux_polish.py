@@ -182,10 +182,9 @@ def test_expansion_framework_planned_next_stage_is_m80a():
     assert "M79I" not in stage, (
         f"planned_next_stage still points to M79I after arc closed: {stage!r}"
     )
-    assert "M80I" in stage, (
-        f"planned_next_stage should point to M80I after M80H: {stage!r}"
+    assert "M81A" in stage or "Auth0" in stage, (
+        f"planned_next_stage should point to M81A/Auth0 after M80I: {stage!r}"
     )
-    assert "SendGrid" in stage
 
 
 def test_expansion_framework_top_recommendation_is_sendgrid():

@@ -795,9 +795,8 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M80I" in stage, f"Expected M80I in planned_next_stage, got: {stage!r}"
-        assert "SendGrid" in stage or "Demo" in stage, (
-            f"Expected SendGrid/Demo in planned_next_stage, got: {stage!r}"
+        assert "M81A" in stage or "Auth0" in stage, (
+            f"Expected M81A/Auth0 in planned_next_stage, got: {stage!r}"
         )
 
 

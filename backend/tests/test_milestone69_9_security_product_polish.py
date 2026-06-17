@@ -198,4 +198,6 @@ def test_provider_labels_canonical():
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel",
         "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe",
         "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud",
-        "twilio": "Twilio"}
+        "twilio": "Twilio",
+        # M80I added SendGrid to the canonical case-report label map.
+        "sendgrid": "SendGrid"}

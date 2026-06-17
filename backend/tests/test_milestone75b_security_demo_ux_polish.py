@@ -293,4 +293,6 @@ def test_backend_provider_label_map_remains_canonical():
         "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase",
         "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure",
         "google_cloud": "Google Cloud", "twilio": "Twilio",
+        # M80I added SendGrid to the canonical case-report label map.
+        "sendgrid": "SendGrid",
     }

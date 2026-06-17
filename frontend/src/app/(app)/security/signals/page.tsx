@@ -1126,6 +1126,11 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               (isAdmin
                 ? " Use \"Generate Twilio signals\" above once Twilio Monitor events have been ingested via the Activity page. Signals correspond to review-worthy configuration changes on phone numbers, messaging services, Verify services, and API keys."
                 : " A workspace admin can sync Twilio activity and generate Twilio signals.")
+          : provider === "sendgrid"
+            ? "Sync SendGrid activity first, then generate SendGrid activity signals." +
+              (isAdmin
+                ? " Use \"Generate SendGrid signals\" above once SendGrid configuration-state events have been ingested via the Activity page. Signals summarize review-worthy configuration activity patterns across API keys, sender identities, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression settings. Email bodies, subject lines, recipient emails, mail event payloads, raw webhook URLs, and API key values are never stored."
+                : " A workspace admin can sync SendGrid activity and generate SendGrid activity signals.")
           : "Run GitHub activity sync first, then generate signals." +
             (isAdmin
               ? " Use “Generate signals” above once activity has been ingested."

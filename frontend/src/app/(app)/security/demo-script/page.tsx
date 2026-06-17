@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, Twilio, and SendGrid are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. SendGrid (M80A–M80G) covers configuration drift across account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression surfaces, plus configuration activity events synthesized from those safe surfaces (no mail-delivery events ever ingested).{" "}
+          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, Twilio, and SendGrid are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. SendGrid (M80A–M80I) covers configuration drift across account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression surfaces, plus configuration activity events synthesized from those safe surfaces (no mail-delivery events ever ingested).{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -324,12 +324,12 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 ];
 
 // M76 — Recommended next providers (compact display data).
-// NOTE: Twilio launched in M79A; SendGrid drift foundation launched in M80A.
-// Auth0 is now the next provider in the queue.
+// NOTE: Twilio arc complete M79A–M79I; SendGrid arc complete M80A–M80I.
+// Auth0 is next in the queue (M81A).
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
-  { label: "Auth0",     category: "auth",           milestone: "M80B" },
-  { label: "Datadog",   category: "observability",  milestone: "M80C" },
-  { label: "Clerk",     category: "auth",           milestone: "M80D" },
+  { label: "Auth0",     category: "auth",           milestone: "M81A" },
+  { label: "Datadog",   category: "observability",  milestone: "M81B" },
+  { label: "Clerk",     category: "auth",           milestone: "M81C" },
 ];
 
 // M75C — Static capability table data. Source of truth lives in the backend

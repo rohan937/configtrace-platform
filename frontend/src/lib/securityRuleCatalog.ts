@@ -2918,6 +2918,7 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "Mail settings",
       "Tracking settings",
       "Event webhook configuration",
+      "Inbound parse configuration",
       "Suppression settings",
     ],
   },

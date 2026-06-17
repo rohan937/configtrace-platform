@@ -254,12 +254,12 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # M80A launched SendGrid; Auth0 is now the queue head, at M80B.
+    # SendGrid arc complete (M80A–M80I); Auth0 is now the queue head at M81A.
     assert summary["next_provider"] == "Auth0"
-    assert "Auth0" in summary["next_milestone"] or "M80B" in summary["next_milestone"]
+    assert "Auth0" in (summary["next_milestone"] or "") or "M81" in (summary["next_milestone"] or "")
     assert (
-        "M80B" in summary["planned_next_stage"]
-        or "SendGrid" in summary["planned_next_stage"]
+        "Auth0" in summary["planned_next_stage"]
+        or "M81A" in summary["planned_next_stage"]
     )
 
 

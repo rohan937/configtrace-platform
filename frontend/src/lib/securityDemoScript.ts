@@ -99,7 +99,7 @@ export const DEMO_SCRIPT_3MIN: DemoStep[] = [
     href: "/security",
     cta: "Open Security Overview",
     talkTrack:
-      "ConfigTrace is for the settings that Git does not track. Code changes have review history, but production-critical settings across GitHub, AWS, Cloudflare, Stripe, Shopify, Firebase, Azure, Google Cloud, Twilio, and other tools often change without the same discipline.",
+      "ConfigTrace is for the settings that Git does not track. Code changes have review history, but production-critical settings across GitHub, AWS, Cloudflare, Stripe, Shopify, Firebase, Azure, Google Cloud, Twilio, SendGrid, and other tools often change without the same discipline.",
     whatToClick: "Start on the Security Overview so the whole posture is visible at once.",
     emphasize: "The gap is configuration, not code — and it spans many providers.",
     avoid: "Don't imply we detect breaches or replace existing security tools.",

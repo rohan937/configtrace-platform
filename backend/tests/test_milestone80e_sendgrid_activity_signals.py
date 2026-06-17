@@ -668,7 +668,7 @@ class TestExpansionFramework:
 
     def test_g1_planned_next_stage_contains_m80f(self):
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M80I" in stage, f"expected M80I, got {stage!r}"
+        assert "M81A" in stage, f"expected M81A, got {stage!r}"
 
     def test_g2_planned_next_stage_not_m80e(self):
         stage = self._fw()["summary"]["planned_next_stage"]

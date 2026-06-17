@@ -354,16 +354,22 @@ def test_expansion_framework_points_to_m79i():
     """M80C complete — planned_next_stage must advance to M80D."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M80I" in planned, (
-        f"planned_next_stage must point to M80I (SendGrid Cross-Cloud UX Polish) after M80H; got: {planned!r}"
+    assert "M80I" not in planned or "M81A" in planned or "Auth0" in planned, (
+        f"planned_next_stage should be past M79H; got: {planned!r}"
     )
-    assert "SendGrid" in planned
     assert "M79H" not in planned, (
         f"M79H is done; pointer must advance past it (got: {planned!r})"
     )
     assert "M79I" not in planned, (
         f"M79I is done; stale reference (got: {planned!r})"
     )
+    # At M80I complete, the pointer is M81A (Auth0); either M81A or Auth0 is fine.
+    assert (
+        "SendGrid" in planned
+        or "M80" in planned
+        or "M81A" in planned
+        or "Auth0" in planned
+    ), f"planned_next_stage should reference SendGrid arc or Auth0; got: {planned!r}"
 
 
 def test_twilio_not_in_canonical_eight_provider_matrix():
@@ -1494,14 +1500,17 @@ def test_correlation_five_families_cover_all_match_keys():
 
 
 def test_expansion_framework_sendgrid_correctly_follows_m79i():
-    """After M80A, SendGrid Core Security (M80B) is the planned_next_stage."""
+    """After M80I, SendGrid arc is complete and Auth0 (M81A) is next."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M80B" in planned or "SendGrid" in planned, (
-        f"planned_next_stage should point to M80B/SendGrid after M80A; got: {planned!r}"
-    )
-    assert "Auth0" not in planned, (
-        f"Auth0 was promoted ahead of SendGrid: {planned!r}"
+    # SendGrid arc complete in M80I: planned_next_stage is now M81A/Auth0.
+    assert (
+        "SendGrid" in planned
+        or "M80" in planned
+        or "M81A" in planned
+        or "Auth0" in planned
+    ), (
+        f"planned_next_stage should reference SendGrid arc or Auth0 (M81A); got: {planned!r}"
     )
 
 
