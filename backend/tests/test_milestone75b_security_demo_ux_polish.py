@@ -135,10 +135,10 @@ def test_cases_page_uses_provider_demo_cards_array():
     # No "Try the …:" intro string is hand-rolled outside the array map.
     # The array carries one entry per provider with a demo: 8 canonical
     # providers plus Azure (M77G) plus Google Cloud (M78G) plus Twilio
-    # (M79G) plus SendGrid (M80G) = 12. Sanity-check by counting the
-    # ``intro: "Try the `` literal (filters out comments / prose).
-    assert text.count('intro: "Try the ') == 12, (
-        "expected exactly 12 PROVIDER_DEMO_CARDS intros"
+    # (M79G) plus SendGrid (M80G) plus Auth0 (M81G) = 13. Sanity-check by
+    # counting the ``intro: "Try the `` literal (filters out comments / prose).
+    assert text.count('intro: "Try the ') == 13, (
+        "expected exactly 13 PROVIDER_DEMO_CARDS intros"
     )
 
 
@@ -295,4 +295,6 @@ def test_backend_provider_label_map_remains_canonical():
         "google_cloud": "Google Cloud", "twilio": "Twilio",
         # M80I added SendGrid to the canonical case-report label map.
         "sendgrid": "SendGrid",
+        # M81G added Auth0 to the canonical case-report label map.
+        "auth0": "Auth0",
     }

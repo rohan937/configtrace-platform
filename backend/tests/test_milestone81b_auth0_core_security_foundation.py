@@ -895,9 +895,9 @@ def test_capability_matrix_auth0_security_rules_now_true():
     assert cap is not None
     assert cap.security.security_rules is True
     assert cap.drift.drift_risk_classification is True
-    # activity_ingestion M81D, signals M81E, correlations M81F — only demo deferred
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
+    # activity_ingestion M81D, signals M81E, correlations M81F, demo M81G — all complete
+    assert cap.security.demo_seed_clear is True
+    assert cap.security.case_report is True
     assert cap.maturity == "partial"
 
 

@@ -828,11 +828,11 @@ class TestCapabilityMatrixAndExpansionFramework:
         assert cap.drift.drift_risk_classification is True
 
     def test_capability_matrix_auth0_activity_false(self):
-        # activity_ingestion M81D, signals M81E, correlations M81F — only demo deferred
+        # activity_ingestion M81D, signals M81E, correlations M81F, demo M81G — all complete
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("auth0")
         assert cap is not None
-        assert cap.security.demo_seed_clear is False
+        assert cap.security.demo_seed_clear is True
 
     def test_capability_matrix_auth0_maturity_partial(self):
         from app.services.provider_capability_matrix_service import get_provider_capability

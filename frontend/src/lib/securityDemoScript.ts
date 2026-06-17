@@ -277,8 +277,8 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Load a provider demo",
     talkTrack:
-      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, or SendGrid (with SendGrid covering API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression posture for a synthetic SendGrid account — no email bodies, recipient emails, mail event payloads, or raw webhook URLs). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
-    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, or SendGrid incident demo.",
+      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, or Auth0 (with Auth0 covering tenant session posture, application OAuth posture, connection password policy, resource server RBAC, auth-pipeline rule and action posture, MFA factor posture, and custom domain posture for a synthetic Auth0 tenant — no client secrets, management tokens, JWTs, raw callback URLs, rule/action code, user emails, login history, or IP addresses). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
+    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, or Auth0 incident demo.",
     emphasize: "One click seeds a full, clearly-marked evidence chain — no real provider sync.",
     avoid: "Don't present demo data as a live finding from the customer's environment.",
   },
@@ -343,7 +343,7 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Open a case",
     talkTrack:
-      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, or SendGrid — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
+      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, or Auth0 — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
     whatToClick: "Open a case and scroll to the chronological timeline and the evidence relationship map.",
     emphasize: "Timeline + relationship map turn linked evidence into a reviewable investigation, across providers.",
     avoid: "Don't describe the map as an attack path or call any relationship a confirmed compromise.",
@@ -365,7 +365,7 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Clear the demo",
     talkTrack:
-      "When you're done, clear the demo from the same banner that seeded it — for GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, or SendGrid. Clearing removes only the clearly-marked demo case and its seeded evidence; any real connected-provider evidence is untouched.",
+      "When you're done, clear the demo from the same banner that seeded it — for GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, or Auth0. Clearing removes only the clearly-marked demo case and its seeded evidence; any real connected-provider evidence is untouched.",
     whatToClick: "Use the demo banner's Clear action for the provider you seeded.",
     emphasize: "Demo data is isolated and reversible; clearing preserves real evidence.",
     avoid: "Don't imply clearing affects real provider data — it only removes the seeded demo.",

@@ -70,7 +70,7 @@ def _ids_by_type(links: list[SecurityCaseLink]) -> dict[str, list[uuid.UUID]]:
 # response bodies). It correlates evidence for review — it does NOT confirm
 # compromise, attacker presence, unauthorized access, or breach.
 
-_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud", "twilio": "Twilio", "sendgrid": "SendGrid"}
+_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud", "twilio": "Twilio", "sendgrid": "SendGrid", "auth0": "Auth0"}
 
 # Item-type tie-breaker order (stable, deterministic) when timestamps are equal.
 _TYPE_RANK = {"finding": 0, "activity_event": 1, "incident_signal": 2, "correlation": 3}
@@ -129,6 +129,32 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "sender_id",              # sender identity opaque ID (never email address)
     "domain_id",              # domain authentication opaque ID (never DNS values)
     "suppression_group_count",  # count of ASM groups (never recipient emails)
+    # Auth0-safe resource identifiers (M81G) — opaque IDs, booleans, counts,
+    # and category labels only. NEVER client_secret, management API tokens,
+    # access/refresh/ID tokens, JWTs, JWKS private material, signing private
+    # keys, authorization headers, raw Auth0 API responses, raw callback/logout/
+    # origin URLs, audience URIs, custom domain name strings, rule/action script
+    # content, action secret values, user emails, user IDs, user names, profile
+    # data, login history, IP addresses, device fingerprints, session data,
+    # MFA recovery codes, connection credentials, social provider secrets, SAML
+    # certificates, LDAP credentials, or any PII.
+    "client_id",              # Auth0 application opaque ID (never client_secret)
+    "connection_id",          # Auth0 connection opaque ID (never credentials)
+    "resource_server_id",     # Auth0 resource server opaque ID (never audience URI)
+    "action_id",              # Auth0 action opaque ID (never code or secrets)
+    "custom_domain_id",       # Auth0 custom domain opaque ID (never domain name)
+    "factor_name",            # Auth0 MFA factor name (otp/push/sms — never recovery codes)
+    "session_lifetime_category",  # "extended" / "standard" category label
+    "token_endpoint_auth_method", # "none" / "client_secret_post" etc.
+    "password_policy_category",   # "weak" / "good" / "excellent" category label
+    "allow_offline_access",       # bool — offline access posture
+    "rbac_enabled",               # bool — RBAC posture
+    "script_present",             # bool — rule script presence (never the script)
+    "script_length_category",     # "large" / "medium" / "small" category label
+    "code_present",               # bool — action code presence (never the code)
+    "code_length_category",       # "large" / "medium" / "small" category label
+    "secrets_count",              # int — action secrets count (never the values)
+    "status_category",            # "not_ready" / "ready" etc. category label
 })
 
 
@@ -650,7 +676,7 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
         "github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel",
         "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe",
         "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud",
-        "twilio": "Twilio",
+        "twilio": "Twilio", "sendgrid": "SendGrid", "auth0": "Auth0",
     }.get(provider_key, provider_key)
     evidence_label = f"{provider_label} incident evidence".strip()
     executive_summary = (

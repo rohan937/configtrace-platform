@@ -1179,21 +1179,21 @@ export async function getSecurityCaseGraph(
 
 export async function getIncidentDemoStatus(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" = "github",
 ): Promise<import("@/types").IncidentDemoStatus> {
   return apiFetch(`/security/incident-demo/status?provider=${provider}`, { token });
 }
 
 export async function seedIncidentDemo(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" = "github",
 ): Promise<import("@/types").IncidentDemoSeedResponse> {
   return apiFetch(`/security/incident-demo/seed?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }
 
 export async function clearIncidentDemo(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" = "github",
 ): Promise<{ cleared: boolean }> {
   return apiFetch(`/security/incident-demo/clear?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }

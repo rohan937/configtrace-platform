@@ -59,6 +59,8 @@ from app.services import twilio_activity_signal_service as twilio_sig
 from app.services import twilio_risk_activity_correlation_service as twilio_corr_svc
 from app.services import sendgrid_activity_signal_service as sg_sig
 from app.services import sendgrid_risk_activity_correlation_service as sg_corr_svc
+from app.services import auth0_activity_signal_service as auth0_sig
+from app.services import auth0_risk_activity_correlation_service as auth0_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -5491,6 +5493,742 @@ def clear_sendgrid(
         ).delete(synchronize_session=False)
 
     integ = get_sendgrid_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── Auth0 incident demo (M81G) ────────────────────────────────────────────────
+#
+# A SEPARATE hidden demo integration + case source so "Clear Auth0 demo" removes
+# only Auth0 demo objects and never touches any other provider's demo or real
+# evidence. Same safety rules: clearly marked demo, no real Auth0 sync, no
+# notifications, no client secrets, no management tokens, no JWTs, no raw
+# callback/logout/origin URLs, no raw Auth0 logs, no rule/action code, no user
+# emails, no user IDs, no IP addresses, no session data, no customer data or PII.
+#
+# Chain (one coherent story per resource type):
+#   Auth0 configuration risks (tenant, application, connection, resource_server,
+#   rule, action, mfa_factor, custom_domain) -> Auth0 config-state activity events
+#   (auth0.tenant.updated, auth0.application.updated, auth0.connection.updated,
+#   auth0.resource_server.updated, auth0.rule.updated, auth0.action.deployed,
+#   auth0.mfa_factor.updated, auth0.custom_domain.updated) -> Auth0 activity
+#   signals -> Auth0 risk x activity correlations -> case.
+
+AUTH0_DEMO_INTEGRATION_NAME = "ConfigTrace Auth0 incident demo (sample data)"
+AUTH0_DEMO_CASE_SOURCE = "demo_auth0_incident"
+AUTH0_DEMO_DATASET = "auth0_incident_demo_v1"
+
+# Safe placeholder IDs (no real-looking Auth0 values, no JWTs, no secrets).
+_AUTH0_DEMO_TENANT_ID = "AUTH0_DEMO_TENANT_ID"
+_AUTH0_DEMO_CLIENT_ID = "AUTH0_DEMO_CLIENT_ID"
+_AUTH0_DEMO_CONNECTION_ID = "AUTH0_DEMO_CONNECTION_ID"
+_AUTH0_DEMO_RESOURCE_SERVER_ID = "AUTH0_DEMO_RESOURCE_SERVER_ID"
+_AUTH0_DEMO_RULE_ID = "AUTH0_DEMO_RULE_ID"
+_AUTH0_DEMO_ACTION_ID = "AUTH0_DEMO_ACTION_ID"
+_AUTH0_DEMO_FACTOR_NAME = "otp"
+_AUTH0_DEMO_CUSTOM_DOMAIN_ID = "AUTH0_DEMO_CUSTOM_DOMAIN_ID"
+
+
+def get_auth0_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == AUTH0_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_auth0_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == AUTH0_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_auth0_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_auth0_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_auth0(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Auth0 demo incident chain (idempotent). No real Auth0 sync.
+
+    One coherent Auth0 story per resource type:
+      Configuration risks (tenant, application, connection, resource_server,
+      rule, action, mfa_factor, custom_domain) -> Auth0 config-state activity
+      events -> Auth0 activity signals -> Auth0 risk x activity correlations
+      -> case.
+
+    All objects are anchored on a hidden demo integration so ``clear_auth0``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace).
+
+    PRIVACY: no client secrets, management API tokens, access tokens, refresh
+    tokens, ID tokens, JWTs, JWKS private material, signing private keys,
+    authorization headers, raw Auth0 API responses, raw callback/logout/origin
+    URLs, user emails, user names, user IDs, login history, IP addresses,
+    session data, MFA recovery codes, connection credentials, rule/action code,
+    raw Auth0 logs, or customer data are ever included.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used. Placeholders
+    are uppercase ASCII sentinel strings only.
+    """
+    existing = _existing_auth0_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" → never shown / never synced).
+    integ = get_auth0_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": AUTH0_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=AUTH0_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real Auth0 rule keys (M81B/M81C).
+    #    Evidence uses only safe booleans, counts, opaque IDs, and category
+    #    labels — never client_secret, management tokens, JWTs, raw URLs,
+    #    rule/action code, user emails, IP addresses, or credentials.
+
+    tenant_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_tenant_session_lifetime_extended:{_AUTH0_DEMO_TENANT_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: Auth0 tenant has an extended session lifetime",
+        resource_id=None,
+        description=(
+            "Sample Auth0 tenant session posture risk for the incident-workflow "
+            f"demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_tenant_session_lifetime_extended", "demo": True,
+            "session_lifetime_category": "extended",
+        },
+        remediation={
+            "summary": (
+                "Review the Auth0 tenant session lifetime and reduce it to the "
+                "minimum value needed for your application users."
+            ),
+        },
+    )
+
+    application_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_application_token_endpoint_auth_none:{_AUTH0_DEMO_CLIENT_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Auth0 application uses no token endpoint authentication",
+        resource_id=None,
+        description=(
+            "Sample Auth0 application OAuth posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_application_token_endpoint_auth_none", "demo": True,
+            "client_id": _AUTH0_DEMO_CLIENT_ID,
+            "token_endpoint_auth_method": "none",
+            "app_type": "regular_web",
+            "callbacks_count": 12,
+            "allowed_origins_count": 6,
+        },
+        remediation={
+            "summary": (
+                "Configure a token endpoint authentication method "
+                "(client_secret_post or private_key_jwt) for this application."
+            ),
+        },
+    )
+
+    connection_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_connection_weak_password_policy:{_AUTH0_DEMO_CONNECTION_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Auth0 connection has a weak password policy",
+        resource_id=None,
+        description=(
+            "Sample Auth0 connection password policy risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_connection_weak_password_policy", "demo": True,
+            "connection_id": _AUTH0_DEMO_CONNECTION_ID,
+            "password_policy_category": "weak",
+            "enabled_clients_count": 0,
+        },
+        remediation={
+            "summary": (
+                "Upgrade the database connection password policy to at least "
+                "'good' strength."
+            ),
+        },
+    )
+
+    resource_server_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_resource_server_rbac_disabled:{_AUTH0_DEMO_RESOURCE_SERVER_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: Auth0 resource server has RBAC disabled",
+        resource_id=None,
+        description=(
+            "Sample Auth0 resource server / API posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_resource_server_rbac_disabled", "demo": True,
+            "resource_server_id": _AUTH0_DEMO_RESOURCE_SERVER_ID,
+            "rbac_enabled": False,
+            "allow_offline_access": True,
+        },
+        remediation={
+            "summary": (
+                "Enable RBAC on the Auth0 resource server and define "
+                "explicit permission scopes."
+            ),
+        },
+    )
+
+    rule_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_rule_disabled:{_AUTH0_DEMO_RULE_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: Auth0 auth-pipeline rule is disabled",
+        resource_id=None,
+        description=(
+            "Sample Auth0 auth-pipeline rule posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_rule_disabled", "demo": True,
+            "rule_id": _AUTH0_DEMO_RULE_ID,
+            "enabled": False,
+            "script_present": True,
+            "script_length_category": "large",
+        },
+        remediation={
+            "summary": (
+                "Review whether the disabled auth-pipeline rule should be "
+                "re-enabled or removed."
+            ),
+        },
+    )
+
+    action_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_action_secrets_present:{_AUTH0_DEMO_ACTION_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: Auth0 auth-pipeline action has secrets configured",
+        resource_id=None,
+        description=(
+            "Sample Auth0 auth-pipeline action posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_action_secrets_present", "demo": True,
+            "action_id": _AUTH0_DEMO_ACTION_ID,
+            "secrets_count": 2,
+            "code_present": True,
+            "code_length_category": "large",
+        },
+        remediation={
+            "summary": (
+                "Review the action secrets and confirm they are rotated and "
+                "scoped to minimum required access."
+            ),
+        },
+    )
+
+    mfa_factor_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_mfa_factor_disabled:{_AUTH0_DEMO_FACTOR_NAME}#demo"
+        ),
+        severity="medium",
+        title="Demo: Auth0 MFA / Guardian factor is disabled",
+        resource_id=None,
+        description=(
+            "Sample Auth0 MFA factor posture risk for the incident-workflow "
+            f"demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_mfa_factor_disabled", "demo": True,
+            "factor_name": _AUTH0_DEMO_FACTOR_NAME,
+            "enabled": False,
+        },
+        remediation={
+            "summary": (
+                "Enable the Auth0 MFA / Guardian OTP factor to require "
+                "a second authentication factor for users."
+            ),
+        },
+    )
+
+    custom_domain_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="auth0",
+        finding_key=(
+            f"auth0_custom_domain_not_ready:{_AUTH0_DEMO_CUSTOM_DOMAIN_ID}#demo"
+        ),
+        severity="low",
+        title="Demo: Auth0 custom domain is not yet provisioned",
+        resource_id=None,
+        description=(
+            "Sample Auth0 custom domain posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "auth0_custom_domain_not_ready", "demo": True,
+            "custom_domain_id": _AUTH0_DEMO_CUSTOM_DOMAIN_ID,
+            "status_category": "not_ready",
+        },
+        remediation={
+            "summary": (
+                "Complete the Auth0 custom domain DNS provisioning or "
+                "remove the pending domain record."
+            ),
+        },
+    )
+
+    auth0_findings = [
+        tenant_finding, application_finding, connection_finding,
+        resource_server_finding, rule_finding, action_finding,
+        mfa_factor_finding, custom_domain_finding,
+    ]
+
+    # 3. Activity events (provider="auth0", source="auth0_activity_event").
+    AUTH0_ACTIVITY_SOURCE = "auth0_activity_event"
+
+    def _mk_auth0_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        resource_id: str, extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+            "event_source": AUTH0_ACTIVITY_SOURCE,
+            "status": "observed",
+            "category": resource_type,
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="auth0", source=AUTH0_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    tenant_event = _mk_auth0_event(
+        event_type="auth0.tenant.updated",
+        resource_type="tenant_settings",
+        provider_event_id="AUTH0_DEMO_EVT_TENANT_001",
+        resource_id=_AUTH0_DEMO_TENANT_ID,
+        extra={
+            "operation_family": "tenant",
+            "operation_action": "update",
+        },
+    )
+    application_event = _mk_auth0_event(
+        event_type="auth0.application.updated",
+        resource_type="application",
+        provider_event_id="AUTH0_DEMO_EVT_APP_001",
+        resource_id=_AUTH0_DEMO_CLIENT_ID,
+        extra={
+            "client_id": _AUTH0_DEMO_CLIENT_ID,
+            "operation_family": "application",
+            "operation_action": "update",
+            "app_type": "regular_web",
+            "token_endpoint_auth_method": "none",
+            "callbacks_count": 12,
+            "allowed_origins_count": 6,
+        },
+    )
+    connection_event = _mk_auth0_event(
+        event_type="auth0.connection.updated",
+        resource_type="connection",
+        provider_event_id="AUTH0_DEMO_EVT_CONN_001",
+        resource_id=_AUTH0_DEMO_CONNECTION_ID,
+        extra={
+            "connection_id": _AUTH0_DEMO_CONNECTION_ID,
+            "operation_family": "connection",
+            "operation_action": "update",
+            "password_policy_category": "weak",
+            "enabled_clients_count": 0,
+        },
+    )
+    resource_server_event = _mk_auth0_event(
+        event_type="auth0.resource_server.updated",
+        resource_type="resource_server",
+        provider_event_id="AUTH0_DEMO_EVT_RS_001",
+        resource_id=_AUTH0_DEMO_RESOURCE_SERVER_ID,
+        extra={
+            "resource_server_id": _AUTH0_DEMO_RESOURCE_SERVER_ID,
+            "operation_family": "resource_server",
+            "operation_action": "update",
+            "rbac_enabled": False,
+            "allow_offline_access": True,
+        },
+    )
+    rule_event = _mk_auth0_event(
+        event_type="auth0.rule.updated",
+        resource_type="rule",
+        provider_event_id="AUTH0_DEMO_EVT_RULE_001",
+        resource_id=_AUTH0_DEMO_RULE_ID,
+        extra={
+            "rule_id": _AUTH0_DEMO_RULE_ID,
+            "operation_family": "rule",
+            "operation_action": "update",
+            "enabled": False,
+            "script_present": True,
+        },
+    )
+    action_event = _mk_auth0_event(
+        event_type="auth0.action.deployed",
+        resource_type="action",
+        provider_event_id="AUTH0_DEMO_EVT_ACTION_001",
+        resource_id=_AUTH0_DEMO_ACTION_ID,
+        extra={
+            "action_id": _AUTH0_DEMO_ACTION_ID,
+            "operation_family": "action",
+            "operation_action": "deploy",
+            "secrets_count": 2,
+            "code_present": True,
+        },
+    )
+    mfa_factor_event = _mk_auth0_event(
+        event_type="auth0.mfa_factor.updated",
+        resource_type="mfa_factor",
+        provider_event_id="AUTH0_DEMO_EVT_MFA_001",
+        resource_id=_AUTH0_DEMO_FACTOR_NAME,
+        extra={
+            "factor_name": _AUTH0_DEMO_FACTOR_NAME,
+            "operation_family": "mfa_factor",
+            "operation_action": "update",
+            "enabled": False,
+        },
+    )
+    custom_domain_event = _mk_auth0_event(
+        event_type="auth0.custom_domain.updated",
+        resource_type="custom_domain",
+        provider_event_id="AUTH0_DEMO_EVT_CD_001",
+        resource_id=_AUTH0_DEMO_CUSTOM_DOMAIN_ID,
+        extra={
+            "custom_domain_id": _AUTH0_DEMO_CUSTOM_DOMAIN_ID,
+            "operation_family": "custom_domain",
+            "operation_action": "update",
+            "status_category": "not_ready",
+        },
+    )
+
+    auth0_events = [
+        tenant_event, application_event, connection_event,
+        resource_server_event, rule_event, action_event,
+        mfa_factor_event, custom_domain_event,
+    ]
+
+    # 4. Activity signals via the real M81E signal builder.
+    auth0_signals: list[SecurityIncidentSignal] = []
+    for ev in auth0_events:
+        sig_dict = auth0_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            auth0_signals.append(sig)
+
+    # 5. Correlations via the real M81F builder.
+    auth0_correlations: list[SecuritySignalCorrelation] = []
+    signals_by_type_a0: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in auth0_signals
+    }
+
+    def _add_auth0_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+    ) -> SecuritySignalCorrelation:
+        rule = auth0_corr_svc.AUTH0_CORRELATION_RULES[correlation_type]
+        cdict = auth0_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        auth0_correlations.append(corr)
+        return corr
+
+    tenant_signal = signals_by_type_a0.get("auth0_tenant_config_changed")
+    application_signal = signals_by_type_a0.get("auth0_application_config_changed")
+    connection_signal = signals_by_type_a0.get("auth0_connection_config_changed")
+    rs_signal = signals_by_type_a0.get("auth0_resource_server_config_changed")
+    rule_signal_a0 = signals_by_type_a0.get("auth0_rule_config_changed")
+    action_signal = signals_by_type_a0.get("auth0_action_config_changed")
+    mfa_signal = signals_by_type_a0.get("auth0_mfa_factor_config_changed")
+    cd_signal = signals_by_type_a0.get("auth0_custom_domain_config_changed")
+
+    if tenant_signal is not None:
+        _add_auth0_correlation(
+            finding=tenant_finding, signal=tenant_signal,
+            correlation_type="auth0_tenant_risk_activity_correlation",
+            match_reason="tenant_level",
+        )
+    if application_signal is not None:
+        _add_auth0_correlation(
+            finding=application_finding, signal=application_signal,
+            correlation_type="auth0_application_risk_activity_correlation",
+            match_reason="client_id_match",
+        )
+    if connection_signal is not None:
+        _add_auth0_correlation(
+            finding=connection_finding, signal=connection_signal,
+            correlation_type="auth0_connection_risk_activity_correlation",
+            match_reason="connection_id_match",
+        )
+    if rs_signal is not None:
+        _add_auth0_correlation(
+            finding=resource_server_finding, signal=rs_signal,
+            correlation_type="auth0_resource_server_risk_activity_correlation",
+            match_reason="resource_server_id_match",
+        )
+    if rule_signal_a0 is not None:
+        _add_auth0_correlation(
+            finding=rule_finding, signal=rule_signal_a0,
+            correlation_type="auth0_rule_risk_activity_correlation",
+            match_reason="rule_id_match",
+        )
+    if action_signal is not None:
+        _add_auth0_correlation(
+            finding=action_finding, signal=action_signal,
+            correlation_type="auth0_action_risk_activity_correlation",
+            match_reason="action_id_match",
+        )
+    if mfa_signal is not None:
+        _add_auth0_correlation(
+            finding=mfa_factor_finding, signal=mfa_signal,
+            correlation_type="auth0_mfa_factor_risk_activity_correlation",
+            match_reason="factor_name_match",
+        )
+    if cd_signal is not None:
+        _add_auth0_correlation(
+            finding=custom_domain_finding, signal=cd_signal,
+            correlation_type="auth0_custom_domain_risk_activity_correlation",
+            match_reason="custom_domain_id_match",
+        )
+
+    # 6. Case linking 8 findings, 8 events, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title=(
+            "[Demo] Auth0 configuration review: tenant, application, connection, "
+            "resource server, rule, action, MFA factor, and custom domain posture"
+        ),
+        summary=(
+            "Review-safe Auth0 demo case linking configuration risks to "
+            "control-plane activity evidence. Groups Auth0 configuration "
+            "findings (extended tenant session lifetime, application token "
+            "endpoint auth none, connection weak password policy, resource "
+            "server RBAC disabled, auth-pipeline rule disabled, action secrets "
+            "present, MFA factor disabled, custom domain not ready) with Auth0 "
+            "configuration-state activity events for the same surfaces, plus "
+            "the matching activity signals and risk x activity correlations. "
+            "Marked demo — no real Auth0 sync, no client secrets, no management "
+            "tokens, no JWTs, no raw callback URLs, no logout URLs, no raw "
+            "origins, no rule/action code, no user emails, no user IDs, no "
+            "login history, no IP addresses, no raw Auth0 logs, no customer "
+            "data. Evidence for review. Does not confirm compromise, "
+            "unauthorized access, or data exposure."
+        ),
+        severity="high",
+        provider="auth0",
+        metadata={
+            "source": AUTH0_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+
+    for f in auth0_findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=f.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for ev in auth0_events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    seen_signal_ids: set = set()
+    for sig in auth0_signals:
+        seen_signal_ids.add(sig.id)
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for corr in auth0_correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids
+        ):
+            seen_signal_ids.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    logger.info(
+        "auth0_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_auth0(
+    *, workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Remove exactly the Auth0 demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == AUTH0_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = get_auth0_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

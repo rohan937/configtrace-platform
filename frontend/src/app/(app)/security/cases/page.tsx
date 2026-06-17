@@ -48,7 +48,7 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
-  | "google_cloud" | "twilio" | "sendgrid";
+  | "google_cloud" | "twilio" | "sendgrid" | "auth0";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -184,6 +184,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear SendGrid demo",
     seedColor: "#1a82e2",
   },
+  {
+    provider: "auth0",
+    label: "Auth0",
+    intro: "Try the Auth0 security demo:",
+    description:
+      "Seed a review-safe Auth0 security demo with configuration drift findings, control-plane activity evidence, activity signals, risk × activity correlations, and a case. No real Auth0 sync, client secrets, management tokens, JWTs, raw callback URLs, raw origins, rule/action code, user emails, login history, IP addresses, or raw Auth0 logs are stored.",
+    seedButton: "Load Auth0 security demo",
+    clearButton: "Clear Auth0 demo",
+    seedColor: "#eb5424",
+  },
 ];
 
 export default function CasesPage() {
@@ -242,7 +252,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -261,7 +271,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -290,7 +300,9 @@ export default function CasesPage() {
                             ? "Twilio demo data cleared."
                             : provider === "sendgrid"
                               ? "SendGrid demo data cleared."
-                              : "Demo data cleared.",
+                              : provider === "auth0"
+                                ? "Auth0 demo data cleared."
+                                : "Demo data cleared.",
       );
       await load();
     } catch {

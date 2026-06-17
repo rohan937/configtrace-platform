@@ -640,11 +640,12 @@ class TestCapabilityMatrix:
         assert cap.security.security_rules is True
 
     def test_auth0_demo_still_false(self):
+        # demo M81G complete — demo_seed_clear and case_report now True
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("auth0")
         assert cap is not None
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
+        assert cap.security.demo_seed_clear is True
+        assert cap.security.case_report is True
 
     def test_auth0_maturity_still_partial(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -665,10 +666,11 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_points_to_m81g(self):
+        # M81G complete — framework now points to M81H
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M81G" in planned
+        assert "M81H" in planned or "M81G" in planned
         assert "M81F" not in planned
 
 

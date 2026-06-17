@@ -699,10 +699,10 @@ _AUTH0 = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
@@ -778,8 +778,16 @@ _AUTH0 = ProviderCapability(
         "match), custom_domain (custom_domain_id exact match). Falls back to "
         "provider+family aggregate when no per-resource identity is available. "
         "POST /security/auth0-correlations/generate (admin-only). Idempotent. "
+        "M81G adds demo + QA: a review-safe Auth0 demo incident chain seeds 8 "
+        "configuration risks (one per drift surface), 8 activity events, 8 "
+        "activity signals, 8 risk x activity correlations, and a case via "
+        "POST /security/incident-demo/seed?provider=auth0. No client secrets, "
+        "management tokens, JWTs, raw URLs, rule/action code, user emails, "
+        "user IDs, login history, IP addresses, raw Auth0 logs, or customer "
+        "data are stored. evidence_timeline and evidence_graph supported via "
+        "the generic case evidence builders. "
         "Auth0 remains partial (not in the canonical dual-stack-complete "
-        "set of 8 providers). Demo is deferred to M81G."
+        "set of 8 providers). Next: M81H Auth0 Provider Depth QA."
     ),
 )
 

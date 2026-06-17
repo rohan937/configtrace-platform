@@ -604,12 +604,12 @@ class TestCapabilityMatrix:
         assert cap.security.activity_ingestion is True
 
     def test_auth0_correlations_still_false(self):
-        # correlations flipped True in M81F — only demo remains deferred
+        # correlations M81F, demo M81G — all now complete
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("auth0")
         assert cap is not None
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
+        assert cap.security.demo_seed_clear is True
+        assert cap.security.case_report is True
 
     def test_auth0_maturity_still_partial(self):
         from app.services.provider_capability_matrix_service import get_provider_capability

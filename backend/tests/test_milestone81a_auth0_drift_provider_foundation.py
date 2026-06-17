@@ -1210,10 +1210,10 @@ def test_capability_matrix_auth0_drift_only():
     # security_rules flipped on in M81B; activity/signals/correlations/demo
     # remain deferred to later M81 milestones.
     assert cap.security.security_rules is True
-    # activity_ingestion M81D, activity_signals M81E, correlations M81F
-    # only demo remains deferred to later M81 milestones
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
+    # activity_ingestion M81D, activity_signals M81E, correlations M81F,
+    # demo M81G — all now complete.
+    assert cap.security.demo_seed_clear is True
+    assert cap.security.case_report is True
     assert cap.maturity == "partial"
 
 
@@ -1305,8 +1305,8 @@ def test_fe_demo_script_page_auth0_in_capability_table():
     assert "Auth0" in text
 
 
-def test_fe_demo_script_page_auth0_row_is_drift_only():
-    """Auth0 capability row should have drift=true but security/demo=false."""
+def test_fe_demo_script_page_auth0_row_demo_true():
+    """Auth0 capability row should have demo=true (M81G completed)."""
     text = _read_fe("app/(app)/security/demo-script/page.tsx")
     m = re.search(
         r'provider:\s*"auth0"[^}]*demo:\s*(true|false)',
@@ -1314,7 +1314,7 @@ def test_fe_demo_script_page_auth0_row_is_drift_only():
         flags=re.DOTALL,
     )
     assert m is not None, "Auth0 row not found in PROVIDER_CAPABILITY_TABLE"
-    assert m.group(1) == "false", "Auth0 demo should be false in M81A (drift-only)"
+    assert m.group(1) == "true", "Auth0 demo should be true (M81G completed)"
 
 
 def test_fe_demo_script_page_auth0_not_in_next_providers():
