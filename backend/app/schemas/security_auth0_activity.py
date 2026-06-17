@@ -62,3 +62,20 @@ class Auth0ActivitySignalGenerateResponse(BaseModel):
     groups_scanned: int = 0
     signals_created: int = 0
     signals_skipped: int = 0
+
+
+class Auth0CorrelationGenerateRequest(BaseModel):
+    """POST /security/auth0-correlations/generate request body (all optional)."""
+
+    lookback_hours: int = Field(default=24, ge=1, le=168)
+    max_correlations: int = Field(default=100, ge=1, le=1000)
+
+
+class Auth0CorrelationGenerateResponse(BaseModel):
+    """Auth0 Risk × Activity correlation generation summary."""
+
+    provider: str = "auth0"
+    findings_scanned: int = 0
+    signals_scanned: int = 0
+    correlations_created: int = 0
+    correlations_skipped: int = 0

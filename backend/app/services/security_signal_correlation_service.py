@@ -334,6 +334,22 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         # Cross-provider safe correlation-context keys (M80F)
         "rule_key",                    # base rule key label (e.g. sendgrid_api_key_broad_scopes)
         "signal_type",                 # signal type label (e.g. sendgrid_api_key_config_changed)
+        # Auth0 risk × activity correlation context (M81F) — safe opaque
+        # identifiers and configuration labels only. NEVER client_secret,
+        # management API token, access/refresh/ID tokens, JWTs, JWKS, private
+        # keys, authorization headers, raw Auth0 API responses, raw log entries,
+        # raw callback/logout/origin URLs, audience URIs, custom domain name
+        # strings, rule/action script content, action secret values, user emails,
+        # user IDs, user names, profile data, IP addresses, device fingerprints,
+        # session data, MFA recovery codes, connection credentials, social
+        # provider secrets, SAML certificates, or PII of any kind.
+        "client_id",                   # Auth0 client ID (opaque; NEVER client_secret)
+        "connection_id",               # Auth0 connection ID (opaque identifier)
+        "resource_server_id",          # Auth0 resource server ID (opaque identifier)
+        "action_id",                   # Auth0 action ID (opaque; NEVER code or secrets)
+        "factor_name",                 # MFA factor name (e.g. "otp", "webauthn-roaming")
+        "custom_domain_id",            # Auth0 custom domain ID (opaque; NEVER domain string)
+        "tenant_id",                   # Auth0 tenant identifier (opaque)
     }
 )
 

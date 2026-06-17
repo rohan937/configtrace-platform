@@ -217,6 +217,8 @@ from app.schemas.security_auth0_activity import (
     Auth0ActivitySyncResponse,
     Auth0ActivitySignalGenerateRequest,
     Auth0ActivitySignalGenerateResponse,
+    Auth0CorrelationGenerateRequest,
+    Auth0CorrelationGenerateResponse,
 )
 from app.schemas.security_sendgrid_activity import (
     SendGridActivitySyncRequest,
@@ -3530,6 +3532,57 @@ def generate_twilio_risk_activity_correlations(
         workspace_id=workspace_id, db=db, **kwargs2
     )
     return TwilioCorrelationGenerateResponse(**result)
+
+
+@router.post(
+    "/auth0-correlations/generate",
+    response_model=Auth0CorrelationGenerateResponse,
+)
+def generate_auth0_risk_activity_correlations(
+    body: Optional[Auth0CorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Auth0CorrelationGenerateResponse:
+    """Generate Auth0 Risk × Activity correlations (M81F).
+
+    Admin/owner only. Joins active Auth0 configuration-risk findings with
+    Auth0 activity signals using safe resource identifiers (client_id,
+    connection_id, resource_server_id, rule_id, action_id, factor_name,
+    custom_domain_id) or provider+family aggregate matching when no
+    per-resource identity is available.
+
+    Covers eight correlation families: tenant, application, connection,
+    resource_server, rule, action, mfa_factor, and custom_domain.
+
+    Client secrets, management tokens, access tokens, JWTs, raw URLs,
+    callback/logout/origin URLs, audience URIs, custom domain name strings,
+    rule/action script content, action secret values, user emails, user IDs,
+    IP addresses, session data, connection credentials, and raw Auth0 API
+    responses are never used or stored. Does not confirm compromise,
+    unauthorized access, or data exposure. Idempotent — re-running creates
+    no duplicates.
+
+    Members can view the resulting correlations via
+    GET /security/correlations?provider=auth0.
+    """
+    from app.services.auth0_risk_activity_correlation_service import (
+        generate_auth0_correlations,
+    )
+
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs_auth0: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs_auth0["lookback_hours"] = body.lookback_hours
+        if body.max_correlations is not None:
+            kwargs_auth0["max_correlations"] = body.max_correlations
+    result = generate_auth0_correlations(
+        workspace_id=workspace_id, db=db, **kwargs_auth0
+    )
+    return Auth0CorrelationGenerateResponse(**result)
 
 
 @router.post(

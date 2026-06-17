@@ -698,7 +698,7 @@ _AUTH0 = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -769,8 +769,17 @@ _AUTH0 = ProviderCapability(
         "auth0_config_activity. Signals group by safe resource identity (client_id, "
         "connection_id, resource_server_id, rule_id, action_id, custom_domain_id, "
         "factor_name). POST /security/auth0-activity/generate-signals (admin-only). "
-        "Idempotent. Auth0 remains partial (not in the canonical dual-stack-complete "
-        "set of 8 providers). Correlations and demo are deferred to later milestones."
+        "Idempotent. "
+        "M81F adds Risk × Activity correlations. Eight correlation families "
+        "join Auth0 findings to Auth0 activity signals: tenant, application "
+        "(client_id exact match), connection (connection_id exact match), "
+        "resource_server (resource_server_id exact match), rule (rule_id exact "
+        "match), action (action_id exact match), mfa_factor (factor_name exact "
+        "match), custom_domain (custom_domain_id exact match). Falls back to "
+        "provider+family aggregate when no per-resource identity is available. "
+        "POST /security/auth0-correlations/generate (admin-only). Idempotent. "
+        "Auth0 remains partial (not in the canonical dual-stack-complete "
+        "set of 8 providers). Demo is deferred to M81G."
     ),
 )
 

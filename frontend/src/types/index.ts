@@ -2064,6 +2064,13 @@ export interface TwilioCorrelationGenerateResponse {
   correlations_created: number;
   correlations_skipped: number;
 }
+export interface Auth0CorrelationGenerateResponse {
+  provider: string;
+  findings_scanned: number;
+  signals_scanned: number;
+  correlations_created: number;
+  correlations_skipped: number;
+}
 export interface GoogleCloudActivitySignalGenerateResponse {
   provider: string;
   source: string;

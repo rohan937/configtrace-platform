@@ -604,10 +604,10 @@ class TestCapabilityMatrix:
         assert cap.security.activity_ingestion is True
 
     def test_auth0_correlations_still_false(self):
+        # correlations flipped True in M81F — only demo remains deferred
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("auth0")
         assert cap is not None
-        assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
 
@@ -630,11 +630,14 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_points_to_m81f(self):
+        # After M81F completes, pointer advances to M81G — M81F or beyond is fine
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M81F" in planned
         assert "M81E" not in planned
+        assert any(tag in planned for tag in ("M81F", "M81G", "M81H", "M81I")), (
+            f"planned_next_stage should point to M81F or beyond after M81E; got: {planned!r}"
+        )
 
 
 # ── Section H: Forbidden wording and secret shapes ────────────────────────────

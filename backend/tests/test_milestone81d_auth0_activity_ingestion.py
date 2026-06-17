@@ -866,11 +866,10 @@ class TestCapabilityMatrixAndExpansion:
         assert cap.security.activity_ingestion is True
 
     def test_auth0_signals_still_false(self):
-        # activity_signals flipped True in M81E; only correlations/demo remain deferred
+        # activity_signals M81E, correlations M81F — only demo remains deferred
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("auth0")
         assert cap is not None
-        assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
 

@@ -1080,6 +1080,25 @@ export async function generateTwilioCorrelations(
   });
 }
 
+/**
+ * generateAuth0Correlations — POST /security/auth0-correlations/generate
+ * Joins Auth0 configuration-risk findings with Auth0 activity signals using
+ * safe resource identifiers (client_id, connection_id, resource_server_id,
+ * rule_id, action_id, factor_name, custom_domain_id). Client secrets, JWTs,
+ * raw URLs, user emails, IPs, session data, and raw Auth0 logs are never used.
+ * Does not confirm compromise or unauthorized access.
+ */
+export async function generateAuth0Correlations(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").Auth0CorrelationGenerateResponse> {
+  return apiFetch(`/security/auth0-correlations/generate`, {
+    method: "POST",
+    body: JSON.stringify(opts ?? {}),
+    token,
+  });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

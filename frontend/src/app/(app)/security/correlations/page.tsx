@@ -19,8 +19,9 @@ import type {
   SecuritySignalCorrelation,
   SecurityCorrelationGenerateResponse,
   TwilioCorrelationGenerateResponse,
+  Auth0CorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -33,7 +34,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -179,6 +180,21 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "sendgrid_webhook_risk_activity_correlation",
     "sendgrid_suppression_settings_risk_activity_correlation",
   ],
+  auth0: [
+    // M81F — Auth0 Configuration Risk × Auth0 Activity evidence.
+    // Resource-identity-scoped matching for applications (client_id) /
+    // connections (connection_id) / resource servers (resource_server_id) /
+    // rules (rule_id) / actions (action_id) / MFA factors (factor_name) /
+    // custom domains (custom_domain_id); tenant-level match for tenant risks.
+    "auth0_tenant_risk_activity_correlation",
+    "auth0_application_risk_activity_correlation",
+    "auth0_connection_risk_activity_correlation",
+    "auth0_resource_server_risk_activity_correlation",
+    "auth0_rule_risk_activity_correlation",
+    "auth0_action_risk_activity_correlation",
+    "auth0_mfa_factor_risk_activity_correlation",
+    "auth0_custom_domain_risk_activity_correlation",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 
@@ -199,7 +215,7 @@ export default function CorrelationsPage() {
   const typeOptions = TYPE_OPTIONS_BY_PROVIDER[provider] ?? [];
 
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse) | null>(null);
+  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse) | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -241,6 +257,9 @@ export default function CorrelationsPage() {
         setGenResult(res);
       } else if (provider === "sendgrid") {
         const res = await generateSendGridCorrelations(token);
+        setGenResult(res);
+      } else if (provider === "auth0") {
+        const res = await generateAuth0Correlations(token);
         setGenResult(res);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);
@@ -376,7 +395,7 @@ function GenerateBar({
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
-  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse) | null;
+  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse) | null;
   genError: string | null;
   onGenerate: () => void;
 }) {
@@ -403,7 +422,9 @@ function GenerateBar({
                         ? "Correlate Twilio configuration risks with Twilio activity signals across phone numbers, messaging services, Verify services, API keys, and account configuration. Matches on safe resource identifiers (phone_number_last4, messaging_service_sid, verify_service_sid, api_key_sid) or provider+family aggregate. Message bodies, call logs, recordings, full phone numbers, auth tokens, and API secrets are never used."
                         : provider === "sendgrid"
                           ? "Correlate SendGrid configuration risks with SendGrid activity signals across API keys, sender identities, domain authentication, mail settings, tracking settings, event webhook, inbound parse, and suppression settings. Matches on safe resource identifiers (api_key_id, sender_id, domain_id) or provider+family aggregate for account-level surfaces. Email bodies, subject lines, recipient emails, mail event payloads, raw webhook URLs, API key values, and customer data are never used."
-                          : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                          : provider === "auth0"
+                            ? "Generate Auth0 risk × activity correlations from safe configuration findings and activity signals. ConfigTrace stores resource identifiers, OAuth/application posture, tenant settings, and activity summaries only — never user emails, login history, IP addresses, sessions, tokens, callback URLs, raw Auth0 logs, or client secrets. Matches on client_id (applications), connection_id, resource_server_id, rule_id, action_id, factor_name, or custom_domain_id."
+                            : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
