@@ -25,6 +25,8 @@ import GoogleCloudIntegrationForm from "@/components/integrations/GoogleCloudInt
 import TwilioIntegrationForm from "@/components/integrations/TwilioIntegrationForm";
 import SendGridIntegrationForm from "@/components/integrations/SendGridIntegrationForm";
 import Auth0IntegrationForm from "@/components/integrations/Auth0IntegrationForm";
+// ── M82A — Datadog drift provider foundation ───────────────────────────────────
+import DatadogIntegrationForm from "@/components/integrations/DatadogIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -51,6 +53,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   // M82-pre — security-preview categories.
   communications: "Communications",
   identity:       "Identity",
+  // M82A — Datadog observability category.
+  observability:  "Observability",
 };
 
 // M82-pre — fast lookup for security-preview providers.
@@ -784,6 +788,46 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M82A — Datadog setup guide ─────────────────────────────────────────────
+
+  if (provider === "datadog") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Datadog account
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Create an API key.",
+            body: <>Datadog → Organization Settings → API Keys → New Key. Give it a descriptive
+              name such as &ldquo;ConfigTrace read&rdquo;. Copy the key immediately — it is shown only once.</>,
+          },
+          {
+            heading: "Create an Application key.",
+            body: <>Datadog → Organization Settings → Application Keys → New Application Key.
+              Use a scoped key limited to{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>monitors_read</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>dashboards_read</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>api_keys_read</code>{" "}
+              when possible. Copy the value immediately.</>,
+          },
+          {
+            heading: "Select your Datadog site and connect below.",
+            body: <>Choose the region that matches your Datadog account URL. Both keys are
+              encrypted before storage and never returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores Datadog credentials encrypted and uses them only to read selected
+          configuration metadata. It does not store API key values, application key values,
+          OAuth tokens, webhook secrets, raw monitor queries, raw dashboard JSON, logs, traces,
+          metric values, incident text, emails, destination handles, customer data, or PII in
+          findings.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -925,6 +969,10 @@ export default function IntegrationsPage() {
     }
     if (selectedProvider === "auth0") {
       return <Auth0IntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M82A — Datadog ─────────────────────────────────────────────────────
+    if (selectedProvider === "datadog") {
+      return <DatadogIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

@@ -170,7 +170,9 @@ export interface IntegrationCreateRequest {
     | "cloudflare" | "github" | "vercel" | "stripe"
     | "aws" | "firebase" | "supabase" | "shopify"
     // ── M82-pre.1 — credential-connect parity ────────────────────────────────
-    | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0";
+    | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0"
+    // ── M82A — Datadog drift provider foundation ──────────────────────────────
+    | "datadog";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -297,6 +299,21 @@ export interface IntegrationCreateRequest {
    * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
    */
   auth0_management_api_token?: string;
+  // ── Datadog fields (M82A) ──────────────────────────────────────────────────
+  /**
+   * Datadog API key.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  datadog_api_key?: string;
+  /**
+   * Datadog Application key.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  datadog_application_key?: string;
+  /** Datadog site (e.g. "datadoghq.com", "datadoghq.eu"). Optional; defaults to "datadoghq.com". */
+  datadog_site?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

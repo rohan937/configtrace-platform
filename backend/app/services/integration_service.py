@@ -217,12 +217,23 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── M82A — Datadog drift provider ─────────────────────────────────────────
+    elif provider == "datadog":
+        return _create_datadog_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
-            "'twilio', 'sendgrid', 'auth0'."
+            "'twilio', 'sendgrid', 'auth0', 'datadog'."
         )
 
 
@@ -1137,6 +1148,75 @@ def _create_auth0_integration(
     db.add(resource)
 
     # ── 5. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_datadog_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Datadog integration + account resource (M82A).
+
+    SECURITY: credentials["api_key"] and credentials["application_key"] are
+    NEVER logged, NEVER returned, NEVER stored in plaintext. Only the safe
+    site string is exposed through resource_metadata.
+
+    Live API validation is deferred to the first sync — the connector's
+    validate_credentials() is called at sync time. This prevents synchronous
+    error messages from potentially surfacing credential values and avoids
+    network dependency at create time.
+    """
+    site: str = (credentials.get("site") or "datadoghq.com").strip().lower()
+
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    # SECURITY: api_key and application_key are encrypted here and NEVER
+    # stored in plaintext or returned in any response.
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="datadog",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the safe site string and
+    # a provider_family label. api_key and application_key are NEVER copied here.
+    # Normalize site to a safe label for display without exposing full URL.
+    site_category = "us" if "datadoghq.com" in site and "eu" not in site and "ap" not in site and "gov" not in site else site.split(".")[0] if "." in site else site
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="datadog_account",
+        provider_resource_id=str(integration.id),
+        display_name=f"{display_name} ({site})" if site else display_name,
+        resource_metadata={
+            "site": site,
+            "site_category": site_category,
+            "provider_family": "observability",
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
     db.commit()
     db.refresh(integration)
     return integration

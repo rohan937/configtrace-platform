@@ -125,8 +125,8 @@ def test_expansion_framework_top_recommendation_is_google_cloud():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "datadog"
-    assert top["label"] == "Datadog"
+    assert top["provider"] == "clerk"
+    assert top["label"] == "Clerk"
     # GCP and auth0 must no longer be in the recommended list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
@@ -153,8 +153,8 @@ def test_expansion_framework_google_cloud_recommendation_is_complete():
 def test_expansion_framework_summary_next_provider_is_google_cloud():
     """Flipped in M80A: Auth0 is now the head of the recommended queue."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Datadog"
-    assert "Datadog" in (fw["summary"]["next_milestone"] or "") or "M82" in (fw["summary"]["next_milestone"] or "")
+    assert fw["summary"]["next_provider"] == "Clerk"
+    assert "Clerk" in (fw["summary"]["next_milestone"] or "") or "M80A" in (fw["summary"]["next_milestone"] or "") or "M82B" in (fw["summary"]["next_milestone"] or "")
 
 
 # ════════════════════════════════════════════════════════════════════════════

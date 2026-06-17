@@ -27,17 +27,20 @@ Supported providers
 ``auth0``  (M82-pre.1)
     Credentials: ``auth0_domain`` + ``auth0_client_id`` + ``auth0_client_secret``
                  (or ``auth0_management_api_token`` for direct-token mode).
+``datadog``  (M82A)
+    Credentials: ``datadog_api_key`` + ``datadog_application_key`` + optional ``datadog_site``.
 
 Provider-specific fields are made optional at the Pydantic level and
 cross-validated by ``validate_provider_fields`` to produce clear error
 messages when a required field is missing for the selected provider.
 
-SECURITY: credential fields for M82-pre.1 providers follow the same
+SECURITY: credential fields for M82-pre.1 and M82A providers follow the same
 invariants as existing providers — stored encrypted, never returned,
 never logged.  azure_client_secret, twilio_auth_token, sendgrid_api_key,
-auth0_client_secret, auth0_management_api_token, and
-google_cloud_service_account_json (which embeds a private_key) are
-NEVER present in any API response or log output.
+auth0_client_secret, auth0_management_api_token,
+google_cloud_service_account_json (which embeds a private_key),
+datadog_api_key, and datadog_application_key are NEVER present in any
+API response or log output.
 """
 
 from __future__ import annotations
@@ -65,13 +68,15 @@ class IntegrationCreateRequest(BaseModel):
         "supabase", "shopify",
         # M82-pre.1 — credential-connect parity for completed security providers.
         "azure", "google_cloud", "twilio", "sendgrid", "auth0",
+        # M82A — Datadog drift provider foundation.
+        "datadog",
     ] = Field(
         ...,
         description=(
             "Provider identifier. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'shopify', 'azure', "
-            "'google_cloud', 'twilio', 'sendgrid', 'auth0'."
+            "'google_cloud', 'twilio', 'sendgrid', 'auth0', 'datadog'."
         ),
     )
     display_name: str = Field(
@@ -387,6 +392,34 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Datadog fields (M82A) ─────────────────────────────────────────────────
+    datadog_api_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Datadog API key. "
+            "Required when provider='datadog'. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+    datadog_application_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Datadog Application key. "
+            "Required when provider='datadog'. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+    datadog_site: Optional[str] = Field(
+        None,
+        description=(
+            "Datadog site to connect to (e.g. 'datadoghq.com', 'datadoghq.eu', "
+            "'us3.datadoghq.com'). Optional — defaults to 'datadoghq.com'. "
+            "Not a secret; stored in resource metadata."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -529,6 +562,16 @@ class IntegrationCreateRequest(BaseModel):
                 raise ValueError(
                     "Auth0 integrations require either auth0_client_id + "
                     "auth0_client_secret OR auth0_management_api_token."
+                )
+        # ── M82A — Datadog drift provider ────────────────────────────────────
+        elif self.provider == "datadog":
+            if not self.datadog_api_key:
+                raise ValueError(
+                    "datadog_api_key is required for Datadog integrations."
+                )
+            if not self.datadog_application_key:
+                raise ValueError(
+                    "datadog_application_key is required for Datadog integrations."
                 )
         return self
 

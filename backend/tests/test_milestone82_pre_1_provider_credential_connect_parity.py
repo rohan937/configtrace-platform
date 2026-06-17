@@ -53,7 +53,9 @@ CANONICAL_CONNECTABLE_PROVIDERS = (
     "aws", "firebase", "supabase", "shopify",
 )
 M82_PRE_1_PROVIDERS = ("azure", "google_cloud", "twilio", "sendgrid", "auth0")
-ALL_THIRTEEN = CANONICAL_CONNECTABLE_PROVIDERS + M82_PRE_1_PROVIDERS
+# M82A added Datadog — now 14 providers total.
+M82A_PROVIDERS = ("datadog",)
+ALL_THIRTEEN = CANONICAL_CONNECTABLE_PROVIDERS + M82_PRE_1_PROVIDERS + M82A_PROVIDERS
 
 # ── Safe placeholder credential values for tests ──────────────────────────────
 # NEVER use real-looking JWTs / Twilio SIDs / SendGrid keys / Azure secrets.
@@ -101,10 +103,11 @@ def test_schema_provider_literal_includes_all_thirteen():
 def test_schema_rejects_unknown_provider():
     """An unknown provider raises a Pydantic validation error."""
     from app.schemas.integration import IntegrationCreateRequest
-    with pytest.raises(Exception):
-        IntegrationCreateRequest(provider="datadog", display_name="x")
+    # datadog is now a valid provider (M82A) — test a different unknown provider.
     with pytest.raises(Exception):
         IntegrationCreateRequest(provider="totally-fake-provider", display_name="x")
+    with pytest.raises(Exception):
+        IntegrationCreateRequest(provider="clerk", display_name="x")
 
 
 # ════════════════════════════════════════════════════════════════════════════

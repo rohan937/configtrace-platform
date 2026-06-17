@@ -202,8 +202,8 @@ def test_expansion_framework_planned_next_stage_is_m81a():
     assert "M81A" not in stage, (
         f"planned_next_stage still points to M81A after it launched: {stage!r}"
     )
-    assert "M81B" in stage or "Auth0" in stage or "M82" in stage, (
-        f"planned_next_stage should point to M81B/Auth0/M82 after M81A; got: {stage!r}"
+    assert "M81B" in stage or "Auth0" in stage or "M82" in stage or "Datadog" in stage, (
+        f"planned_next_stage should point to M81B/Auth0/M82/Datadog after M81A; got: {stage!r}"
     )
 
 
@@ -213,8 +213,8 @@ def test_expansion_framework_top_recommendation_is_auth0():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "datadog"
-    assert top["label"] == "Datadog"
+    assert top["provider"] == "clerk"
+    assert top["label"] == "Clerk"
 
 
 def test_expansion_framework_sendgrid_not_in_recommended_queue():
@@ -234,11 +234,11 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_auth0():
-    """Framework summary next_provider = Datadog (Auth0 launched in M81A)."""
+    """Framework summary next_provider = Clerk (Datadog launched in M82A)."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Datadog"
+    assert fw["summary"]["next_provider"] == "Clerk"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "M82" in next_ms or "Datadog" in next_ms
+    assert "Clerk" in next_ms or "M80A" in next_ms or "M82B" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -466,48 +466,11 @@ class RecommendedProvider:
 # PROVIDER_CAPABILITIES_PARTIAL in provider_capability_matrix_service.py.
 # M80A launched SendGrid drift foundation; SendGrid also moved into
 # PROVIDER_CAPABILITIES_PARTIAL. M81A launched Auth0 drift foundation;
-# Auth0 also moved into PROVIDER_CAPABILITIES_PARTIAL. Datadog is now
-# the head of the recommended queue.
+# Auth0 also moved into PROVIDER_CAPABILITIES_PARTIAL. M82A launched
+# Datadog drift foundation; Datadog also moved into
+# PROVIDER_CAPABILITIES_PARTIAL. Clerk is now the head of the
+# recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="datadog",
-        label="Datadog",
-        category="observability",
-        why_high_fit=(
-            "Datadog has configuration surfaces relevant to security posture: "
-            "API key scopes, webhook integrations, monitor notification settings, "
-            "and SAML/SSO configuration. Drift in notification sinks or API key "
-            "permissions can silently break alert pipelines."
-        ),
-        drift_surfaces=(
-            "api_key_scopes_and_status",
-            "webhook_integrations",
-            "monitor_notification_channels",
-            "saml_sso_settings",
-            "log_pipeline_configuration",
-        ),
-        security_surfaces=(
-            "overly_broad_api_key_permissions",
-            "webhook_http_notification_endpoint",
-            "saml_not_enforced",
-            "sensitive_data_scanner_disabled",
-        ),
-        sensitive_data_to_avoid=(
-            "application_keys_or_values",
-            "raw_log_content",
-            "raw_metrics_data",
-            "trace_payloads",
-            "pii_in_logs_or_events",
-            "auth_tokens",
-        ),
-        first_milestone_name="M82A: Datadog Drift Provider Foundation",
-        notes=(
-            "Use the Datadog v1/v2 REST API. Focus on /api/v1/api_key "
-            "(key name + status, never value), /api/v1/integration/webhooks, "
-            "and /api/v1/settings/saml. Never store metric payloads, trace data, "
-            "raw log content, or auth token values."
-        ),
-    ),
     RecommendedProvider(
         provider="clerk",
         label="Clerk",
@@ -726,6 +689,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M82A: Datadog Drift Provider Foundation",
+            "planned_next_stage": "M82B: Datadog Core Security Foundation",
         },
     }

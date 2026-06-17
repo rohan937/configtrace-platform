@@ -232,8 +232,8 @@ def test_expansion_framework_top_recommendation_is_datadog():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "datadog"
-    assert top["label"] == "Datadog"
+    assert top["provider"] == "clerk"
+    assert top["label"] == "Clerk"
 
 
 def test_expansion_framework_auth0_not_in_recommended_queue():
@@ -253,11 +253,11 @@ def test_expansion_framework_sendgrid_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_is_datadog():
-    """Framework summary next_provider = Datadog."""
+    """Framework summary next_provider = Clerk (Datadog launched in M82A)."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Datadog"
+    assert fw["summary"]["next_provider"] == "Clerk"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "M82" in next_ms or "Datadog" in next_ms
+    assert "Clerk" in next_ms or "M80A" in next_ms or "M82B" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

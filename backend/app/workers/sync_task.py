@@ -306,6 +306,12 @@ def sync_integration(
 
                 connector = Auth0Connector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "datadog":
+                # SECURITY: api_key and application_key are NEVER logged.
+                from app.connectors.datadog import DatadogConnector
+
+                connector = DatadogConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

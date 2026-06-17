@@ -820,6 +820,61 @@ _AUTH0 = ProviderCapability(
 )
 
 
+_DATADOG = ProviderCapability(
+    provider="datadog",
+    label="Datadog",
+    category="observability",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Datadog observability infrastructure drift foundation (M82A). "
+        "Drift snapshots cover 10 safe surfaces from the Datadog API: "
+        "monitor metadata (type, status, priority category, query/message "
+        "presence booleans and length categories — raw query strings and raw "
+        "message text are NEVER stored), SLOs (type, target categories, "
+        "timeframe/monitor/group counts — raw descriptions never stored), "
+        "dashboards (layout type, widget count, template variable count — "
+        "raw dashboard JSON and widget queries never stored), webhook "
+        "integrations (presence booleans — URL, headers, payload templates, "
+        "and secrets never stored), notification integrations (type, "
+        "handle/channel counts — destination handles, service keys, and "
+        "channel names never stored), API key metadata (ID, name, created/"
+        "modified presence, last4_present boolean — key value and last4 digits "
+        "never stored), application key metadata (ID, name, scope count — "
+        "key value never stored), roles (name, permission/user/team counts — "
+        "user identities never stored), teams (name, member count, "
+        "handle_present boolean — member identities and handles never stored), "
+        "and cloud integrations (cloud_provider, collection enabled flags, "
+        "account_id_present boolean — account IDs never stored). "
+        "Logs, traces, metric values, incident content, and all raw Datadog "
+        "API response payloads are NEVER fetched or stored. "
+        "Pagination is bounded with conservative per-surface caps. "
+        "Security rules, activity ingestion, signals, correlations, and demo "
+        "seed/clear are planned for M82B–M82G. "
+        "M82-pre.1 adds Datadog connectability: POST /integrations accepts "
+        "provider='datadog' with api_key, application_key, and site; "
+        "credentials are encrypted via AES-256-GCM and never returned. "
+        "planned_next_stage: M82B: Datadog Core Security Foundation."
+    ),
+)
+
+
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
@@ -827,6 +882,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _TWILIO,
     _SENDGRID,
     _AUTH0,
+    _DATADOG,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

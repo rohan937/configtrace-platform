@@ -65,7 +65,7 @@ CONNECTABLE_PROVIDERS = (
 
 
 def test_backend_post_integrations_allowlist_is_thirteen_connectable_providers():
-    """POST /integrations Literal type contains all 13 providers (M82-pre.1)."""
+    """POST /integrations Literal type contains all 13 M82-pre.1 providers plus Datadog (M82A)."""
     from app.schemas.integration import IntegrationCreateRequest
     # Pydantic v2: the provider field's allowed literal values.
     field = IntegrationCreateRequest.model_fields["provider"]
@@ -73,7 +73,7 @@ def test_backend_post_integrations_allowlist_is_thirteen_connectable_providers()
     # annotation is Literal["cloudflare", "github", ...] — extract its args.
     import typing
     allowed = set(typing.get_args(annotation))
-    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS)
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog"}
     assert allowed == expected, (
         f"POST /integrations allowlist drift: expected {expected}, got {allowed}"
     )
@@ -187,7 +187,7 @@ def test_fe_providers_ts_provider_id_union_includes_all_thirteen():
 
 
 def test_fe_providers_ts_provider_ids_array_includes_all_thirteen():
-    """providers.ts PROVIDER_IDS array includes all 13 provider keys."""
+    """providers.ts PROVIDER_IDS array includes all 13 M82-pre.1 providers plus Datadog (M82A)."""
     text = _read_fe("lib/providers.ts")
     m = re.search(
         r"export const PROVIDER_IDS\s*:\s*ProviderId\[\]\s*=\s*\[(.*?)\];",
@@ -197,7 +197,8 @@ def test_fe_providers_ts_provider_ids_array_includes_all_thirteen():
     assert m is not None, "PROVIDER_IDS array not found in providers.ts"
     arr_block = m.group(1)
     ids = re.findall(r'"([a-z0-9_]+)"', arr_block)
-    assert set(ids) == set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS), (
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog"}
+    assert set(ids) == expected, (
         f"PROVIDER_IDS drift: got {ids}"
     )
 
@@ -220,7 +221,7 @@ def test_fe_providers_ts_security_preview_subset_is_empty_after_m82_pre_1():
 
 
 def test_fe_providers_ts_connectable_subset_covers_all_thirteen():
-    """M82-pre.1 — CONNECTABLE_PROVIDER_IDS covers every provider in the registry."""
+    """M82-pre.1/M82A — CONNECTABLE_PROVIDER_IDS covers every provider in the registry (now 14)."""
     text = _read_fe("lib/providers.ts")
     m = re.search(
         r"export const CONNECTABLE_PROVIDER_IDS\s*:\s*ProviderId\[\]\s*=\s*\[(.*?)\];",
@@ -231,9 +232,9 @@ def test_fe_providers_ts_connectable_subset_covers_all_thirteen():
         "CONNECTABLE_PROVIDER_IDS array not found in providers.ts"
     )
     ids = re.findall(r'"([a-z0-9_]+)"', m.group(1))
-    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS)
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog"}
     assert set(ids) == expected, (
-        f"CONNECTABLE_PROVIDER_IDS drift: expected all 13, got {ids}"
+        f"CONNECTABLE_PROVIDER_IDS drift: expected all 14, got {ids}"
     )
 
 
@@ -409,11 +410,14 @@ def test_expansion_framework_auth0_arc_complete_not_in_recommendations():
 
 
 def test_expansion_framework_datadog_is_next():
-    """Datadog is the top recommendation after the Auth0 arc closed."""
+    """Clerk is the top recommendation after the Datadog drift foundation (M82A) shipped."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    assert recs[0]["provider"] == "datadog"
+    # Datadog has shipped (M82A) — it is no longer in the recommended queue.
+    assert recs[0]["provider"] == "clerk"
+    providers = [r["provider"] for r in recs]
+    assert "datadog" not in providers
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -330,6 +330,55 @@ export const TRUST_PROFILES: Partial<Record<ProviderId, ProviderTrustProfile>> =
     ],
     remediation_supported: true,
   },
+
+  // ── M82A — Datadog trust profile ───────────────────────────────────────────
+  datadog: {
+    id: "datadog",
+    reads: [
+      "Monitor metadata: type, status, priority category, query/message presence and length categories",
+      "SLO metadata: type, target categories, timeframe/monitor/group counts",
+      "Dashboard metadata: layout type, widget count, template variable count",
+      "Webhook integration metadata: presence booleans only (URL, headers, and payload never read)",
+      "Notification integration metadata: type and handle/channel counts",
+      "API key metadata: name, created/modified presence, last4_present boolean",
+      "Application key metadata: name, scope count",
+      "Role metadata: name, permission/user/team counts",
+      "Team metadata: name, member count, handle_present boolean",
+      "Cloud integration metadata: cloud provider type, collection enabled flags",
+    ],
+    never_reads: [
+      "API key values or application key values",
+      "Monitor query strings or raw monitor message text",
+      "Dashboard JSON or widget query strings",
+      "Webhook URLs, custom headers, payload templates, or signing secrets",
+      "Notification handles (Slack channels, PagerDuty service IDs, OpsGenie keys)",
+      "Team handles or member identities (names, emails, or IDs)",
+      "AWS account IDs, GCP project IDs, or Azure tenant/subscription IDs",
+      "Log data, trace payloads, or metric values",
+      "Incident content or notebook content",
+      "OAuth tokens, bearer tokens, or SAML assertions",
+      "Customer data or PII of any kind",
+    ],
+    credential_note:
+      "Datadog API key and Application key are stored encrypted at rest using AES-256-GCM. They are never returned in API responses, never logged, and never copied to resource metadata. Only the Datadog site (region) is stored in plain text as a safe non-secret identifier.",
+    permissions: [
+      "monitors_read (monitor list and metadata)",
+      "dashboards_read (dashboard list and metadata)",
+      "api_keys_read (API key metadata — never values)",
+      "roles_read (role list and permission counts)",
+      "teams_read (team list and member counts)",
+      "No write permissions of any kind",
+      "No logs_read, metrics_read, traces_read, or incident data access",
+    ],
+    revoke_steps: [
+      "Sign in to your Datadog account",
+      "Go to Organization Settings → API Keys",
+      "Find and delete the ConfigTrace API key",
+      "Go to Organization Settings → Application Keys",
+      "Find and delete the ConfigTrace Application key",
+    ],
+    remediation_supported: false,
+  },
 };
 
 // ── Global trust summary constants ────────────────────────────────────────────

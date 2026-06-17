@@ -26,7 +26,9 @@ export type ProviderId =
   | "google_cloud"
   | "twilio"
   | "sendgrid"
-  | "auth0";
+  | "auth0"
+  // ── M82A — Datadog drift provider foundation ──────────────────────────────
+  | "datadog";
 
 export type ProviderCategory =
   | "cdn_dns"
@@ -38,7 +40,9 @@ export type ProviderCategory =
   | "commerce"
   // ── M82-pre: new categories for completed security providers ──────────────
   | "communications"
-  | "identity";
+  | "identity"
+  // ── M82A: observability category for Datadog ──────────────────────────────
+  | "observability";
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -355,6 +359,30 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     bgColor: "rgba(235,84,36,0.10)",
     borderColor: "rgba(235,84,36,0.25)",
   },
+
+  // ── M82A — Datadog drift provider foundation ──────────────────────────────
+  datadog: {
+    id: "datadog",
+    label: "Datadog",
+    shortLabel: "Datadog",
+    category: "observability",
+    description:
+      "Track Datadog monitors, SLOs, dashboards, integrations, keys, roles, teams, and cloud integration posture for review-safe configuration evidence.",
+    monitoredSurfaces: [
+      "Monitors (type, status, priority — never raw query or message)",
+      "SLOs (type, target categories, counts — never raw description)",
+      "Dashboards (layout, widget/variable counts — never raw JSON or queries)",
+      "Webhooks (presence booleans — never URL, headers, payload, or secrets)",
+      "API/application keys (name, created/modified presence — never key values)",
+      "Roles and teams (name, counts — never user identities or handles)",
+      "Cloud integrations (AWS/GCP/Azure collection flags — never account IDs)",
+    ],
+    trustNote:
+      "ConfigTrace stores Datadog credentials encrypted and uses them only to read selected configuration metadata. It does not store API key values, application key values, OAuth tokens, webhook secrets, raw monitor queries, raw dashboard JSON, logs, traces, metric values, incident text, emails, destination handles, customer data, or PII in findings.",
+    color: "#632ca6",
+    bgColor: "rgba(99,44,166,0.10)",
+    borderColor: "rgba(99,44,166,0.25)",
+  },
 };
 
 /** All provider IDs in display order. */
@@ -373,6 +401,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "twilio",
   "sendgrid",
   "auth0",
+  // ── M82A — Datadog drift provider foundation ────────────────────────────
+  "datadog",
 ];
 
 /**
@@ -397,6 +427,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "twilio",
   "sendgrid",
   "auth0",
+  // ── M82A — Datadog drift provider foundation ────────────────────────────
+  "datadog",
 ];
 
 /**

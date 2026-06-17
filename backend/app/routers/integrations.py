@@ -217,6 +217,15 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
         if body.auth0_management_api_token:
             creds["management_api_token"] = body.auth0_management_api_token
         return creds
+    # ── M82A — Datadog drift provider ────────────────────────────────────────
+    elif body.provider == "datadog":
+        # SECURITY: datadog_api_key and datadog_application_key are never
+        # logged here or in the service. site is not a secret.
+        return {
+            "api_key":         body.datadog_api_key,
+            "application_key": body.datadog_application_key,
+            "site":            body.datadog_site or "datadoghq.com",
+        }
     return {}
 
 
