@@ -1,8 +1,15 @@
 /**
- * Central provider metadata registry for all 7 supported providers.
+ * Central provider metadata registry for all supported providers.
  *
  * Import `PROVIDERS` for the full map, or `getProviderMeta` for a safe
  * single-provider lookup that never returns undefined.
+ *
+ * M82-pre adds Azure, Google Cloud, Twilio, SendGrid, and Auth0 as
+ * security-preview providers. They have a full security arc (drift rules,
+ * activity ingestion, signals, correlations, demo + case evidence) but
+ * the credential connect UI is not wired yet — they render with a
+ * "Security preview" CTA that routes to /security/cases (the demo home)
+ * instead of an integration connect form.
  */
 
 export type ProviderId =
@@ -13,7 +20,13 @@ export type ProviderId =
   | "aws"
   | "firebase"
   | "supabase"
-  | "shopify";
+  | "shopify"
+  // ── M82-pre: security-preview providers (no connect form yet) ─────────────
+  | "azure"
+  | "google_cloud"
+  | "twilio"
+  | "sendgrid"
+  | "auth0";
 
 export type ProviderCategory =
   | "cdn_dns"
@@ -22,7 +35,10 @@ export type ProviderCategory =
   | "payments"
   | "cloud"
   | "backend"
-  | "commerce";
+  | "commerce"
+  // ── M82-pre: new categories for completed security providers ──────────────
+  | "communications"
+  | "identity";
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -43,6 +59,13 @@ export interface ProviderMeta {
   bgColor: string;
   /** Border color for badges (CSS colour string). */
   borderColor: string;
+  /**
+   * M82-pre: when true, the provider has a complete security/demo arc but
+   * no credential connect UI. The integrations card renders a "Security
+   * preview" CTA that routes to /security/cases (where the demo lives)
+   * instead of opening a credential form.
+   */
+  securityPreview?: boolean;
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
@@ -215,6 +238,127 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     bgColor: "rgba(150,191,72,0.10)",
     borderColor: "rgba(150,191,72,0.25)",
   },
+
+  // ── M82-pre: security-preview providers ─────────────────────────────────
+  // These providers have a complete security arc (drift rules, activity
+  // ingestion, signals, risk × activity correlations, demo + case evidence)
+  // but the credential connect UI is not wired yet. Their cards show a
+  // "Security preview" CTA that routes to /security/cases instead of opening
+  // a credential form. ConfigTrace never stores secrets, tokens, JWTs, raw
+  // payloads, customer data, or PII for any of these providers.
+
+  azure: {
+    id: "azure",
+    label: "Azure",
+    shortLabel: "Azure",
+    category: "cloud",
+    description:
+      "Track Azure identity, storage, networking, key vault, and security posture settings for review-safe drift and security evidence.",
+    monitoredSurfaces: [
+      "Identity and RBAC (role assignments, scope categories)",
+      "Storage account exposure (public network access, secure transfer)",
+      "Networking controls (NSG rule names — not raw rules)",
+      "Key Vault posture (network access, soft-delete, purge protection)",
+      "Security policy (Defender for Cloud plans)",
+    ],
+    trustNote:
+      "ConfigTrace reads Azure configuration metadata only. Client secrets, access tokens, private keys, storage SAS tokens, connection strings, Key Vault secret names/values, raw policies, principal IDs, claims, customer/workload data, and PII are never accessed or stored.",
+    color: "#0078d4",
+    bgColor: "rgba(0,120,212,0.10)",
+    borderColor: "rgba(0,120,212,0.25)",
+    securityPreview: true,
+  },
+
+  google_cloud: {
+    id: "google_cloud",
+    label: "Google Cloud",
+    shortLabel: "Google Cloud",
+    category: "cloud",
+    description:
+      "Track Google Cloud IAM, storage, networking, service accounts, and security posture settings for review-safe drift and security evidence.",
+    monitoredSurfaces: [
+      "IAM policy summary (role + member-type categories — no principal emails)",
+      "Cloud Storage bucket exposure (public access prevention, IAM)",
+      "Service account key posture (count, age categories — no key material)",
+      "Firewall and networking (VPC firewall rule names, target categories)",
+      "Cloud Run / GKE / Cloud SQL posture",
+      "Secret Manager presence (counts only — no secret values)",
+    ],
+    trustNote:
+      "ConfigTrace reads Google Cloud configuration metadata only. Service account JSON key material, OAuth tokens, principal emails, caller IPs, raw protoPayload, full IAM bindings, container args, kubeconfig, secret payloads, customer/workload data, and PII are never accessed or stored.",
+    color: "#4285f4",
+    bgColor: "rgba(66,133,244,0.10)",
+    borderColor: "rgba(66,133,244,0.25)",
+    securityPreview: true,
+  },
+
+  twilio: {
+    id: "twilio",
+    label: "Twilio",
+    shortLabel: "Twilio",
+    category: "communications",
+    description:
+      "Track Twilio messaging, voice, phone number, webhook, key, and account posture settings for review-safe configuration evidence.",
+    monitoredSurfaces: [
+      "Messaging services (SID-prefix, observability posture)",
+      "Webhook configuration presence (URL never stored)",
+      "Phone numbers (last 4 digits only — never full numbers)",
+      "API keys (SID only — never the secret)",
+      "Account posture (Verify service settings, status)",
+    ],
+    trustNote:
+      "ConfigTrace reads Twilio configuration metadata only. Auth tokens, API key secret values, full account SIDs, full phone-number strings, message bodies, call recordings, raw webhook URLs, customer phone data, and PII are never accessed or stored.",
+    color: "#f22f46",
+    bgColor: "rgba(242,47,70,0.10)",
+    borderColor: "rgba(242,47,70,0.25)",
+    securityPreview: true,
+  },
+
+  sendgrid: {
+    id: "sendgrid",
+    label: "SendGrid",
+    shortLabel: "SendGrid",
+    category: "communications",
+    description:
+      "Track SendGrid sender authentication, API keys, suppression settings, inbound parse, webhook, and mail security posture.",
+    monitoredSurfaces: [
+      "Sender authentication (sender identity verification, domain auth)",
+      "API keys (opaque ID and scope counts only — never key values)",
+      "Inbound parse posture (enabled, spam-check posture)",
+      "Event webhooks (presence and enabled-events posture — never URLs)",
+      "Suppression settings (group counts — never recipient emails)",
+    ],
+    trustNote:
+      "ConfigTrace reads SendGrid configuration metadata only. API key values, bearer tokens, email content, subject lines, recipient/sender emails, template content, raw webhook URLs, mail event payloads, message IDs, customer data, and PII are never accessed or stored.",
+    color: "#1a82e2",
+    bgColor: "rgba(26,130,226,0.10)",
+    borderColor: "rgba(26,130,226,0.25)",
+    securityPreview: true,
+  },
+
+  auth0: {
+    id: "auth0",
+    label: "Auth0",
+    shortLabel: "Auth0",
+    category: "identity",
+    description:
+      "Track Auth0 tenant, application, connection, API, rule, action, MFA, and custom-domain posture for review-safe identity configuration evidence.",
+    monitoredSurfaces: [
+      "Tenant settings (session lifetime categories, dynamic-client flags)",
+      "Applications / clients (OAuth posture, URL counts — never raw URLs)",
+      "Connections (strategy, password policy categories)",
+      "Resource servers / APIs (RBAC, offline access, scope counts)",
+      "Rules and actions (presence, code-length categories — never code)",
+      "MFA / Guardian factors (factor name, enabled status)",
+      "Custom domains (status, TLS policy — never domain strings)",
+    ],
+    trustNote:
+      "ConfigTrace reads Auth0 configuration metadata only. Client secrets, management tokens, access/refresh/ID tokens, JWTs, user emails, user IDs, login history, IP addresses, sessions, raw callback URLs, raw Auth0 logs, rule/action code, MFA recovery codes, and customer PII are never accessed or stored.",
+    color: "#eb5424",
+    bgColor: "rgba(235,84,36,0.10)",
+    borderColor: "rgba(235,84,36,0.25)",
+    securityPreview: true,
+  },
 };
 
 /** All provider IDs in display order. */
@@ -227,6 +371,43 @@ export const PROVIDER_IDS: ProviderId[] = [
   "firebase",
   "supabase",
   "shopify",
+  // ── M82-pre: security-preview providers (no connect form yet) ───────────
+  "azure",
+  "google_cloud",
+  "twilio",
+  "sendgrid",
+  "auth0",
+];
+
+/**
+ * M82-pre: subset of providers that have a connect form on /integrations.
+ * Security-preview providers (azure, google_cloud, twilio, sendgrid, auth0)
+ * have a complete security arc but no credential UI yet — their cards route
+ * to /security/cases instead of opening a credential form.
+ */
+export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
+  "cloudflare",
+  "github",
+  "vercel",
+  "stripe",
+  "aws",
+  "firebase",
+  "supabase",
+  "shopify",
+];
+
+/**
+ * M82-pre: provider IDs whose card is rendered as a "Security preview"
+ * card linking to /security/cases. These providers have drift rules,
+ * activity ingestion, signals, correlations, and a demo case — but no
+ * credential connect form yet.
+ */
+export const SECURITY_PREVIEW_PROVIDER_IDS: ProviderId[] = [
+  "azure",
+  "google_cloud",
+  "twilio",
+  "sendgrid",
+  "auth0",
 ];
 
 /**

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import type { Integration } from "@/types";
 import { getIntegrations } from "@/lib/api";
@@ -20,7 +21,11 @@ import SupabaseIntegrationForm from "@/components/integrations/SupabaseIntegrati
 import ShopifyIntegrationForm from "@/components/integrations/ShopifyIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
-import { PROVIDERS, PROVIDER_IDS } from "@/lib/providers";
+import {
+  PROVIDERS,
+  PROVIDER_IDS,
+  SECURITY_PREVIEW_PROVIDER_IDS,
+} from "@/lib/providers";
 import type { ProviderId } from "@/lib/providers";
 
 type Provider = ProviderId;
@@ -30,14 +35,20 @@ type GitHubMode = "app" | "pat";
 // ── Category display labels ───────────────────────────────────────────────────
 
 const CATEGORY_LABELS: Record<string, string> = {
-  cdn_dns:   "CDN · DNS",
-  developer: "Developer tools",
-  hosting:   "Hosting",
-  payments:  "Payments",
-  cloud:     "Cloud infrastructure",
-  backend:   "App backend",
-  commerce:  "Commerce",
+  cdn_dns:        "CDN · DNS",
+  developer:      "Developer tools",
+  hosting:        "Hosting",
+  payments:       "Payments",
+  cloud:          "Cloud infrastructure",
+  backend:        "App backend",
+  commerce:       "Commerce",
+  // M82-pre — security-preview categories.
+  communications: "Communications",
+  identity:       "Identity",
 };
+
+// M82-pre — fast lookup for security-preview providers.
+const SECURITY_PREVIEW_SET = new Set<ProviderId>(SECURITY_PREVIEW_PROVIDER_IDS);
 
 // Providers where a trust / data-minimisation note is shown on the card.
 // All providers show a trust note so users know what ConfigTrace does and doesn't access.
@@ -111,6 +122,9 @@ function ProviderCard({
   const totalRows = counts.healthy + counts.failing + counts.needsReconnect;
   const connected = totalRows > 0;
   const catLabel   = CATEGORY_LABELS[meta.category] ?? meta.category;
+  // M82-pre — security-preview providers have a complete security arc but
+  // no credential connect UI yet. Their CTA routes to /security/cases.
+  const isSecurityPreview = SECURITY_PREVIEW_SET.has(providerId);
 
   return (
     <div
@@ -200,30 +214,74 @@ function ProviderCard({
         </p>
       )}
 
-      {/* CTA button */}
-      <button
-        onClick={() => onConnect(providerId)}
-        aria-label={
-          connected
-            ? `Add another ${meta.label} integration`
-            : `Connect ${meta.label}`
-        }
-        style={{
-          alignSelf: "flex-start",
-          background: connected ? "transparent" : meta.bgColor,
-          color: meta.color,
-          border: `1px solid ${meta.borderColor}`,
-          borderRadius: "5px",
-          padding: "5px 14px",
-          fontSize: "12px",
-          fontWeight: 500,
-          cursor: "pointer",
-          fontFamily: "inherit",
-          marginTop: "2px",
-        }}
-      >
-        {connected ? "Add another" : "Connect"}
-      </button>
+      {/* CTA button — M82-pre: security-preview providers show a
+          "Security preview" CTA that routes to /security/cases (where the
+          demo lives) instead of opening a connect form. */}
+      {isSecurityPreview ? (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+            marginTop: "2px",
+          }}
+        >
+          <span
+            style={{
+              alignSelf: "flex-start",
+              fontSize: "10px",
+              color: "#8b90a0",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+            aria-label={`${meta.label} security preview`}
+          >
+            Security preview · Credential UI pending
+          </span>
+          <button
+            onClick={() => onConnect(providerId)}
+            aria-label={`Open ${meta.label} security demo`}
+            style={{
+              alignSelf: "flex-start",
+              background: meta.bgColor,
+              color: meta.color,
+              border: `1px solid ${meta.borderColor}`,
+              borderRadius: "5px",
+              padding: "5px 14px",
+              fontSize: "12px",
+              fontWeight: 500,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            View security demo
+          </button>
+        </div>
+      ) : (
+        <button
+          onClick={() => onConnect(providerId)}
+          aria-label={
+            connected
+              ? `Add another ${meta.label} integration`
+              : `Connect ${meta.label}`
+          }
+          style={{
+            alignSelf: "flex-start",
+            background: connected ? "transparent" : meta.bgColor,
+            color: meta.color,
+            border: `1px solid ${meta.borderColor}`,
+            borderRadius: "5px",
+            padding: "5px 14px",
+            fontSize: "12px",
+            fontWeight: 500,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            marginTop: "2px",
+          }}
+        >
+          {connected ? "Add another" : "Connect"}
+        </button>
+      )}
     </div>
   );
 }
@@ -561,6 +619,7 @@ export default function IntegrationsPage() {
   const [selectedProvider, setSelectedProvider] = useState<Provider>("cloudflare");
   const [githubMode, setGithubMode]     = useState<GitHubMode>("app");
   const { getToken, isLoaded }          = useAuth();
+  const router                          = useRouter();
 
   const fetchIntegrations = useCallback(async () => {
     setError(null);
@@ -617,6 +676,14 @@ export default function IntegrationsPage() {
   // ── Handlers ─────────────────────────────────────────────────────────────
 
   function handleConnect(p: Provider) {
+    // M82-pre — security-preview providers (azure, google_cloud, twilio,
+    // sendgrid, auth0) have a complete security arc but no credential
+    // connect form yet. Route them to /security/cases (where the demo card
+    // lives) instead of opening a credential form.
+    if (SECURITY_PREVIEW_SET.has(p)) {
+      router.push("/security/cases");
+      return;
+    }
     setSelectedProvider(p);
     if (p === "github") setGithubMode("app");
     setShowForm(true);

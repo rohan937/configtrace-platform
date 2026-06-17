@@ -802,7 +802,12 @@ _AUTH0 = ProviderCapability(
         "UX polish: signals and correlations empty states gain Auth0-specific "
         "guidance; the demo-script page description updated from 'drift-only' "
         "to reflect the full Auth0 arc (M81A–M81I); stale milestone references "
-        "removed from frontend copy."
+        "removed from frontend copy. "
+        "M82-pre surfaces Auth0 on /integrations as a security-preview card "
+        "linking to the security demo (no credential connect form yet — the "
+        "Auth0 connector requires domain + client_id + client_secret (or "
+        "management_api_token) which the integrations API allowlist does not "
+        "yet accept)."
     ),
 )
 

@@ -1,10 +1,15 @@
 /**
  * Provider Trust Center catalog — M58.12.
  *
- * Static, read-only profiles for all 8 supported providers.
- * Each profile describes exactly what ConfigTrace reads, what it never reads,
- * how credentials are stored, what permissions are required, and how to revoke
- * access.
+ * Static, read-only profiles for connectable providers (the 8 canonical
+ * dual-stack-complete set). Each profile describes exactly what ConfigTrace
+ * reads, what it never reads, how credentials are stored, what permissions
+ * are required, and how to revoke access.
+ *
+ * M82-pre note: security-preview providers (azure, google_cloud, twilio,
+ * sendgrid, auth0) intentionally have no trust profile here because they
+ * have no credential connect form yet. The consumer renders nothing for
+ * providers without a profile (Partial<Record<...>> below).
  *
  * Design rules:
  *   - No raw credential values, secret values, webhook URLs, or API key values.
@@ -34,7 +39,7 @@ export interface ProviderTrustProfile {
 
 // ── Per-provider profiles ─────────────────────────────────────────────────────
 
-export const TRUST_PROFILES: Record<ProviderId, ProviderTrustProfile> = {
+export const TRUST_PROFILES: Partial<Record<ProviderId, ProviderTrustProfile>> = {
   aws: {
     id: "aws",
     reads: [
