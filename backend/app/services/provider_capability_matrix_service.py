@@ -697,7 +697,7 @@ _AUTH0 = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -760,9 +760,17 @@ _AUTH0 = ProviderCapability(
         "events are never ingested. Client secrets, JWTs, raw URLs, script "
         "content, action secrets, user data, IP addresses, and raw Auth0 log "
         "entries are never stored. "
-        "Auth0 remains partial (not in the canonical dual-stack-complete set of "
-        "8 providers). Signals, correlations, and demo are deferred to later "
-        "milestones in the M81 arc."
+        "M81E adds configuration activity signals. Auth0 activity events "
+        "(provider=auth0, source=auth0_activity_event) are promoted into 9 "
+        "signal types: auth0_tenant_config_changed, auth0_application_config_changed, "
+        "auth0_connection_config_changed, auth0_resource_server_config_changed, "
+        "auth0_rule_config_changed, auth0_action_config_changed, "
+        "auth0_mfa_factor_config_changed, auth0_custom_domain_config_changed, "
+        "auth0_config_activity. Signals group by safe resource identity (client_id, "
+        "connection_id, resource_server_id, rule_id, action_id, custom_domain_id, "
+        "factor_name). POST /security/auth0-activity/generate-signals (admin-only). "
+        "Idempotent. Auth0 remains partial (not in the canonical dual-stack-complete "
+        "set of 8 providers). Correlations and demo are deferred to later milestones."
     ),
 )
 

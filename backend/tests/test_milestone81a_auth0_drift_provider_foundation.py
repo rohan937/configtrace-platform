@@ -1210,8 +1210,8 @@ def test_capability_matrix_auth0_drift_only():
     # security_rules flipped on in M81B; activity/signals/correlations/demo
     # remain deferred to later M81 milestones.
     assert cap.security.security_rules is True
-    # activity_ingestion flipped on in M81D; later milestones remain deferred
-    assert cap.security.activity_signals is False
+    # activity_ingestion flipped on in M81D; activity_signals flipped on in M81E
+    # only correlations/demo remain deferred to later M81 milestones
     assert cap.security.risk_activity_correlations is False
     assert cap.security.demo_seed_clear is False
     assert cap.security.case_report is False

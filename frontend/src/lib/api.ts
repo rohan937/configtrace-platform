@@ -1020,6 +1020,22 @@ export async function generateTwilioActivitySignals(
 }
 
 /**
+ * generateAuth0ActivitySignals — POST /security/auth0-activity/generate-signals
+ * Generates review-priority Incident Signals from safe Auth0 configuration activity.
+ * Promotes tenant settings, application, connection, resource server, rule, action,
+ * MFA factor, and custom domain change events into signals grouped by resource identity.
+ * Stores opaque IDs, safe booleans, counts, and category labels only — never client
+ * secrets, JWTs, raw URLs, user emails, user IDs, IP addresses, script content, action
+ * secrets, or raw Auth0 log entries. Does not confirm compromise or unauthorized access.
+ */
+export async function generateAuth0ActivitySignals(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").Auth0ActivitySignalGenerateResponse> {
+  return apiFetch(`/security/auth0-activity/generate-signals`, { method: "POST", body: JSON.stringify(opts ?? {}), token });
+}
+
+/**
  * generateSendGridActivitySignals — POST /security/sendgrid-activity/generate-signals
  * Generates review-priority Incident Signals from safe SendGrid configuration activity.
  * Stores resource identifiers, configuration status, webhook-presence metadata, and

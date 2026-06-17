@@ -293,6 +293,49 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "sender_verified",           # bool — whether sender identity is verified
         "sender_locked",             # bool — whether sender identity is locked
         "suppression_group_count",   # int — count of ASM suppression groups
+        # Auth0 configuration activity signal fields (M81E) — safe control-plane
+        # config-state change summary ONLY. Auth0 Management API logs are NEVER
+        # ingested because they contain user_id, email, and IP address.
+        # NEVER: client_secret, management_api_token, access/refresh/ID tokens,
+        # JWTs, JWKS, private keys, authorization headers, raw callback/logout/
+        # origin URLs, audience URIs, custom domain name strings, rule/action
+        # script content, action secret values, user emails, user IDs, user names,
+        # profile data, IP addresses, device fingerprints, session data, MFA
+        # recovery codes, connection credentials, social provider secrets, SAML
+        # certificates, raw Auth0 API responses, raw log entries, or PII.
+        "client_id",                 # Auth0 client ID (opaque identifier; NEVER client_secret)
+        "connection_id",             # Auth0 connection ID (opaque identifier)
+        "resource_server_id",        # Auth0 resource server ID (opaque identifier)
+        "action_id",                 # Auth0 action ID (opaque identifier; NEVER code or secrets)
+        "factor_name",               # MFA factor name (e.g. "otp", "webauthn-roaming")
+        "custom_domain_id",          # Auth0 custom domain ID (opaque; NEVER domain string)
+        "tenant_id",                 # Auth0 tenant identifier (opaque)
+        "app_type",                  # safe category (e.g. "spa", "native", "regular_web")
+        "is_first_party",            # bool — whether application is first-party
+        "jwt_alg",                   # JWT signing algorithm (e.g. "RS256") — never a key
+        "oidc_conformant",           # bool — OIDC conformance setting
+        "token_endpoint_auth_method", # safe category (e.g. "client_secret_basic", "none")
+        "refresh_token_rotation_enabled",  # bool — rotation setting
+        "refresh_token_lifetime_category", # safe category (e.g. "standard", "extended")
+        "callbacks_count",           # int — count of configured callback URLs (NEVER raw URLs)
+        "allowed_logout_urls_count", # int — count of logout URLs (NEVER raw URLs)
+        "allowed_origins_count",     # int — count of allowed origins (NEVER raw URLs)
+        "web_origins_count",         # int — count of web origins (NEVER raw URLs)
+        "grant_types_count",         # int — count of OAuth grant types enabled
+        "enabled_clients_count",     # int — count of enabled clients on a connection
+        "password_policy_category",  # safe category (e.g. "good", "fair")
+        "signing_alg",               # resource server signing algorithm (e.g. "RS256")
+        "token_lifetime_category",   # safe category (e.g. "standard", "extended")
+        "allow_offline_access",      # bool — resource server offline access setting
+        "rbac_enabled",              # bool — resource server RBAC enforcement setting
+        "script_present",            # bool — rule has script (NEVER script content)
+        "script_length_category",    # safe category (e.g. "short", "medium", "long")
+        "code_present",              # bool — action has code (NEVER code content)
+        "code_length_category",      # safe category (e.g. "short", "medium", "long")
+        "secrets_count",             # int — count of action secrets (NEVER names/values)
+        "enabled",                   # bool — rule or factor enabled setting
+        "status_category",           # safe category (e.g. "ready", "pending_verification")
+        "tls_policy_category",       # safe TLS policy category (e.g. "recommended")
     }
 )
 

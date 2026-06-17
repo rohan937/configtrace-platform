@@ -215,6 +215,8 @@ from app.schemas.security_twilio_activity import (
 from app.schemas.security_auth0_activity import (
     Auth0ActivitySyncRequest,
     Auth0ActivitySyncResponse,
+    Auth0ActivitySignalGenerateRequest,
+    Auth0ActivitySignalGenerateResponse,
 )
 from app.schemas.security_sendgrid_activity import (
     SendGridActivitySyncRequest,
@@ -271,6 +273,7 @@ from app.services import google_cloud_activity_ingestion_service
 from app.services import google_cloud_activity_signal_service
 from app.services import twilio_activity_ingestion_service
 from app.services import auth0_activity_ingestion_service
+from app.services import auth0_activity_signal_service
 from app.services import sendgrid_activity_ingestion_service
 from app.services import sendgrid_activity_signal_service
 from app.services import twilio_activity_signal_service
@@ -3302,6 +3305,50 @@ def sync_auth0_activity_events(
         db=db,
     )
     return Auth0ActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/auth0-activity/generate-signals",
+    response_model=Auth0ActivitySignalGenerateResponse,
+)
+def generate_auth0_activity_signals_endpoint(
+    body: Optional[Auth0ActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Auth0ActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe Auth0 configuration activity events (M81E).
+
+    Admin/owner only. Promotes ingested Auth0 config-state events (tenant
+    settings, applications, connections, resource servers, rules, actions,
+    MFA factors, and custom domains) into review-priority Incident Signals.
+    Groups events by resource identity within the lookback window.
+    Idempotent — re-running creates no duplicates.
+
+    Client secrets, management tokens, access tokens, JWTs, raw URLs,
+    callback/logout/origin URLs, audience URIs, custom domain name strings,
+    rule/action script content, action secret values, user emails, user IDs,
+    IP addresses, session data, connection credentials, and raw Auth0 API
+    responses are never stored.
+    These are review signals; they do not confirm compromise, unauthorized
+    access, leaked credentials, or data exposure.
+
+    Members can view the resulting signals via
+    GET /security/signals?provider=auth0.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = auth0_activity_signal_service.generate_auth0_activity_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return Auth0ActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

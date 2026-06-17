@@ -44,3 +44,21 @@ class Auth0ActivitySyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class Auth0ActivitySignalGenerateRequest(BaseModel):
+    """POST /security/auth0-activity/generate-signals request body (all optional)."""
+
+    lookback_hours: int = Field(default=24, ge=1, le=168)
+    max_signals: int = Field(default=100, ge=1, le=1000)
+
+
+class Auth0ActivitySignalGenerateResponse(BaseModel):
+    """Auth0 configuration activity signal generation summary."""
+
+    provider: str = "auth0"
+    source: str = "auth0_activity_event"
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

@@ -2042,6 +2042,14 @@ export interface SendGridActivitySignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface Auth0ActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface SendGridCorrelationGenerateResponse {
   provider: string;
   findings_scanned: number;
