@@ -239,6 +239,22 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "auth0_mfa_factor_disabled": ("auth0", "medium", "MFA factor posture"),
     "auth0_custom_domain_not_ready": ("auth0", "medium", "Custom domain"),
     "auth0_custom_domain_weak_tls_policy": ("auth0", "low", "Custom domain"),
+    # Auth0 — M81C OAuth/application risk expansion
+    "auth0_application_password_grant_enabled": ("auth0", "high", "OAuth grant type posture"),
+    "auth0_application_implicit_grant_enabled": ("auth0", "high", "OAuth grant type posture"),
+    "auth0_application_public_client_credentials_enabled": ("auth0", "high", "OAuth grant type posture"),
+    "auth0_application_refresh_grant_without_rotation": ("auth0", "medium", "Refresh token posture"),
+    "auth0_application_many_grant_types": ("auth0", "medium", "OAuth grant type posture"),
+    "auth0_application_device_code_grant_enabled": ("auth0", "low", "OAuth grant type posture"),
+    "auth0_application_wildcard_callback": ("auth0", "high", "Application callback posture"),
+    "auth0_application_wildcard_allowed_origin": ("auth0", "high", "Application origin posture"),
+    "auth0_application_wildcard_logout_url": ("auth0", "medium", "Application logout posture"),
+    "auth0_application_localhost_callback": ("auth0", "low", "Application callback posture"),
+    "auth0_application_localhost_origin": ("auth0", "low", "Application origin posture"),
+    "auth0_application_callback_missing_https": ("auth0", "medium", "Application callback posture"),
+    "auth0_application_origin_missing_https": ("auth0", "medium", "Application origin posture"),
+    "auth0_public_client_refresh_tokens_enabled": ("auth0", "medium", "Refresh token posture"),
+    "auth0_application_token_endpoint_auth_none": ("auth0", "medium", "Token endpoint posture"),
 }
 
 

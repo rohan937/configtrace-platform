@@ -3229,6 +3229,322 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when tls_policy_category=='compatible'. Tenants that need legacy client support may acknowledge this finding.",
   },
+  // ── Auth0 — M81C OAuth/application risk expansion ──────────────────────────
+  {
+    key: "auth0_application_password_grant_enabled",
+    provider: "auth0",
+    severity: "high",
+    confidence: "high",
+    metadataOnly: true,
+    category: "OAuth grant type posture",
+    title: "Auth0 application has the password grant enabled",
+    description:
+      "The application has the OAuth 2.0 Resource Owner Password Credentials (ROPC) grant enabled. The password grant requires the application to handle user credentials directly, bypassing Auth0 Universal Login.",
+    whatItChecks:
+      "grant_password_enabled=true on an auth0_application record.",
+    whyItMatters:
+      "The password grant is deprecated in OAuth 2.1 and reduces phishing resistance by bypassing the identity provider's login UI. Authorization code + PKCE is the recommended replacement.",
+    evidence:
+      "client_id, name, app_type, grant_password_enabled. No credential values are stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, then Advanced Settings > Grant Types and disable Password. Migrate to authorization_code with PKCE.",
+    falsePositiveGuard:
+      "Only fires when grant_password_enabled=true. Legacy applications that cannot yet migrate may need to acknowledge this finding.",
+  },
+  {
+    key: "auth0_application_implicit_grant_enabled",
+    provider: "auth0",
+    severity: "high",
+    confidence: "high",
+    metadataOnly: true,
+    category: "OAuth grant type posture",
+    title: "Auth0 application has the implicit grant enabled",
+    description:
+      "The application has the OAuth 2.0 implicit grant enabled. The implicit grant returns access tokens in the URL fragment, which may expose tokens in browser history, referrer headers, and server logs.",
+    whatItChecks:
+      "grant_implicit_enabled=true on an auth0_application record.",
+    whyItMatters:
+      "The implicit grant is deprecated in OAuth 2.1 in favor of authorization code + PKCE, which does not expose tokens in the URL.",
+    evidence:
+      "client_id, name, app_type, grant_implicit_enabled.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, then Advanced Settings > Grant Types and disable Implicit. Migrate to authorization_code with PKCE.",
+    falsePositiveGuard:
+      "Only fires when grant_implicit_enabled=true. Legacy SPAs that cannot yet migrate to PKCE may need to acknowledge this finding.",
+  },
+  {
+    key: "auth0_application_public_client_credentials_enabled",
+    provider: "auth0",
+    severity: "high",
+    confidence: "high",
+    metadataOnly: true,
+    category: "OAuth grant type posture",
+    title: "Auth0 public or client-side application has client credentials grant enabled",
+    description:
+      "The application has the client_credentials grant enabled, but the application is a public or client-side app (SPA, native, or token_endpoint_auth_method=none). Public apps cannot securely store client secrets.",
+    whatItChecks:
+      "grant_client_credentials_enabled=true AND (app_type is spa/native OR token_endpoint_auth_method=none) on an auth0_application record.",
+    whyItMatters:
+      "The client credentials grant requires a confidential client that can protect a client secret. Public apps that expose a client secret may broaden access beyond what is intended.",
+    evidence:
+      "client_id, name, app_type, grant_client_credentials_enabled, token_endpoint_auth_method. No client secret is stored.",
+    remediation:
+      "In the Auth0 Dashboard, disable the Client Credentials grant for this application. If M2M access is needed, create a separate non_interactive (M2M) application.",
+    falsePositiveGuard:
+      "Only fires when client_credentials is enabled AND the application is a public/client-side app. Confidential regular_web and non_interactive apps are not flagged.",
+  },
+  {
+    key: "auth0_application_refresh_grant_without_rotation",
+    provider: "auth0",
+    severity: "medium",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Refresh token posture",
+    title: "Auth0 application has the refresh token grant enabled without rotation",
+    description:
+      "The application has the refresh_token grant explicitly enabled but does not have refresh token rotation configured. Without rotation, a refresh token remains valid until it expires or is explicitly revoked.",
+    whatItChecks:
+      "grant_refresh_token_enabled=true AND refresh_token_rotation_enabled=false on an auth0_application record.",
+    whyItMatters:
+      "Refresh token rotation limits the window during which a token may require review or rotation by issuing a new token on each use and invalidating the previous one.",
+    evidence:
+      "client_id, name, grant_refresh_token_enabled, refresh_token_rotation_enabled. No token values are stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and enable Refresh Token Rotation under Settings.",
+    falsePositiveGuard:
+      "Only fires when grant_refresh_token_enabled=true AND rotation is explicitly false.",
+  },
+  {
+    key: "auth0_application_many_grant_types",
+    provider: "auth0",
+    severity: "medium",
+    confidence: "high",
+    metadataOnly: true,
+    category: "OAuth grant type posture",
+    title: "Auth0 application has a broad OAuth grant type surface",
+    description:
+      "The application has more than 4 OAuth grant types enabled, which may include deprecated or high-risk grant types and increases the number of OAuth flows the application accepts.",
+    whatItChecks:
+      "grant_types_count > 4 on an auth0_application record.",
+    whyItMatters:
+      "Each enabled grant type adds an additional OAuth flow surface. Restricting grant types to only what is needed reduces the attack surface.",
+    evidence:
+      "client_id, name, grant_types_count, grant_types_summary.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, then Advanced Settings > Grant Types and disable any grants not required.",
+    falsePositiveGuard:
+      "Only fires when grant_types_count exceeds 4. Applications with legitimate broad grant type requirements may need to acknowledge this finding.",
+  },
+  {
+    key: "auth0_application_device_code_grant_enabled",
+    provider: "auth0",
+    severity: "low",
+    confidence: "high",
+    metadataOnly: true,
+    category: "OAuth grant type posture",
+    title: "Auth0 application has the device code grant enabled",
+    description:
+      "The application has the Device Authorization Grant (RFC 8628) enabled. This adds an additional OAuth flow surface designed for input-constrained devices.",
+    whatItChecks:
+      "grant_device_code_enabled=true on an auth0_application record.",
+    whyItMatters:
+      "The device code flow adds an additional OAuth surface that may require review if not needed for the application's intended use case.",
+    evidence:
+      "client_id, name, app_type, grant_device_code_enabled.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, then Advanced Settings > Grant Types and disable Device Code if not needed.",
+    falsePositiveGuard:
+      "Only fires when grant_device_code_enabled=true. IoT and device-flow applications legitimately use this grant.",
+  },
+  {
+    key: "auth0_application_wildcard_callback",
+    provider: "auth0",
+    severity: "high",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Application callback posture",
+    title: "Auth0 application has a wildcard callback URL configured",
+    description:
+      "The application has one or more callback URLs containing a wildcard character. Wildcard callbacks may allow authorization codes and tokens to be redirected to unexpected destinations.",
+    whatItChecks:
+      "wildcard_callback_present=true (a boolean derived from callback URLs during normalization) on an auth0_application record.",
+    whyItMatters:
+      "A wildcard callback may accept redirects to a broad set of destinations, potentially including attacker-controlled domains. Raw callback URL strings are never stored by ConfigTrace.",
+    evidence:
+      "client_id, name, wildcard_callback_present, callbacks_count. Raw callback URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and replace wildcard callback URLs with fully-qualified, explicit URLs.",
+    falsePositiveGuard:
+      "Only fires when wildcard_callback_present=true. Raw callback URLs are never stored or surfaced.",
+  },
+  {
+    key: "auth0_application_wildcard_allowed_origin",
+    provider: "auth0",
+    severity: "high",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Application origin posture",
+    title: "Auth0 application has a wildcard allowed origin configured",
+    description:
+      "The application has one or more allowed origins containing a wildcard character. Wildcard origins may permit cross-origin requests from a broad set of domains.",
+    whatItChecks:
+      "wildcard_allowed_origin_present=true (a boolean derived from allowed_origins during normalization) on an auth0_application record.",
+    whyItMatters:
+      "A wildcard origin may expose targeted resources to unintended callers by permitting cross-origin requests from any domain matching the pattern. Raw origin URL strings are never stored.",
+    evidence:
+      "client_id, name, wildcard_allowed_origin_present, allowed_origins_count. Raw origin URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and replace wildcard allowed origins with specific, fully-qualified origins.",
+    falsePositiveGuard:
+      "Only fires when wildcard_allowed_origin_present=true. Raw origin URLs are never stored or surfaced.",
+  },
+  {
+    key: "auth0_application_wildcard_logout_url",
+    provider: "auth0",
+    severity: "medium",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Application logout posture",
+    title: "Auth0 application has a wildcard logout URL configured",
+    description:
+      "The application has one or more allowed logout URLs containing a wildcard character. Wildcard logout URLs may allow post-logout redirects to unexpected destinations.",
+    whatItChecks:
+      "wildcard_logout_url_present=true (a boolean derived from allowed_logout_urls during normalization) on an auth0_application record.",
+    whyItMatters:
+      "A wildcard logout URL may redirect users to unintended destinations after logout. Raw logout URL strings are never stored by ConfigTrace.",
+    evidence:
+      "client_id, name, wildcard_logout_url_present. Raw logout URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and replace wildcard logout URLs with specific, fully-qualified URLs.",
+    falsePositiveGuard:
+      "Only fires when wildcard_logout_url_present=true. Raw logout URLs are never stored or surfaced.",
+  },
+  {
+    key: "auth0_application_localhost_callback",
+    provider: "auth0",
+    severity: "low",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Application callback posture",
+    title: "Auth0 application has a localhost callback URL configured",
+    description:
+      "The application has one or more callback URLs pointing to localhost or a loopback address. These are common during local development but may indicate development configuration left in a production application.",
+    whatItChecks:
+      "localhost_callback_present=true (a boolean derived from callback URLs during normalization) on an auth0_application record.",
+    whyItMatters:
+      "Localhost callbacks in production applications may indicate stale development configuration that should be reviewed and cleaned up.",
+    evidence:
+      "client_id, name, localhost_callback_present, callbacks_count. Raw callback URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and remove localhost callback URLs if this is a production application.",
+    falsePositiveGuard:
+      "Only fires when localhost_callback_present=true. Development and local-testing applications legitimately use localhost callbacks.",
+  },
+  {
+    key: "auth0_application_localhost_origin",
+    provider: "auth0",
+    severity: "low",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Application origin posture",
+    title: "Auth0 application has a localhost allowed origin configured",
+    description:
+      "The application has one or more allowed origins pointing to localhost or a loopback address. These are common during local development but may indicate development configuration left in a production application.",
+    whatItChecks:
+      "localhost_origin_present=true (a boolean derived from allowed_origins during normalization) on an auth0_application record.",
+    whyItMatters:
+      "Localhost origins in production applications may indicate stale development configuration that should be reviewed.",
+    evidence:
+      "client_id, name, localhost_origin_present, allowed_origins_count. Raw origin URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and remove localhost allowed origins if this is a production application.",
+    falsePositiveGuard:
+      "Only fires when localhost_origin_present=true. Development and local-testing applications legitimately use localhost origins.",
+  },
+  {
+    key: "auth0_application_callback_missing_https",
+    provider: "auth0",
+    severity: "medium",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Application callback posture",
+    title: "Auth0 application has callback URLs using insecure HTTP",
+    description:
+      "The application has one or more callback URLs configured with http:// rather than https:// (excluding localhost). Unencrypted callbacks may expose authorization codes or tokens in transit.",
+    whatItChecks:
+      "callbacks_missing_https=true (a boolean derived from callback URLs during normalization, excluding localhost) on an auth0_application record.",
+    whyItMatters:
+      "HTTP callbacks transmit authorization codes and state in cleartext, which may allow interception. Raw callback URL strings are never stored by ConfigTrace.",
+    evidence:
+      "client_id, name, callbacks_missing_https, callbacks_count. Raw callback URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and update any http:// callback URLs to use https://.",
+    falsePositiveGuard:
+      "Only fires when callbacks_missing_https=true (excluding localhost and loopback). Internal or controlled-network applications may acknowledge this finding.",
+  },
+  {
+    key: "auth0_application_origin_missing_https",
+    provider: "auth0",
+    severity: "medium",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Application origin posture",
+    title: "Auth0 application has allowed origins using insecure HTTP",
+    description:
+      "The application has one or more allowed origins configured with http:// rather than https:// (excluding localhost). Permitting unencrypted origins may allow cross-origin requests from insecure contexts.",
+    whatItChecks:
+      "allowed_origins_missing_https=true (a boolean derived from allowed_origins during normalization, excluding localhost) on an auth0_application record.",
+    whyItMatters:
+      "HTTP origins may expose cross-origin requests to interception. Raw origin URL strings are never stored by ConfigTrace.",
+    evidence:
+      "client_id, name, allowed_origins_missing_https, allowed_origins_count. Raw origin URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and update any http:// allowed origins to use https://.",
+    falsePositiveGuard:
+      "Only fires when allowed_origins_missing_https=true (excluding localhost). Internal or controlled-network applications may acknowledge this finding.",
+  },
+  {
+    key: "auth0_public_client_refresh_tokens_enabled",
+    provider: "auth0",
+    severity: "medium",
+    confidence: "medium",
+    metadataOnly: true,
+    category: "Refresh token posture",
+    title: "Auth0 public client has the refresh token grant enabled",
+    description:
+      "The application is a public client (SPA or native app) and has the refresh_token grant enabled. Public clients cannot securely store client secrets, making long-lived refresh tokens harder to protect.",
+    whatItChecks:
+      "grant_refresh_token_enabled=true AND app_type is spa/native on an auth0_application record.",
+    whyItMatters:
+      "Public clients should use short-lived tokens with refresh token rotation and sender-constraining where possible to reduce the impact window if a token may require review or rotation.",
+    evidence:
+      "client_id, name, app_type, grant_refresh_token_enabled. No token values are stored.",
+    remediation:
+      "Ensure refresh token rotation is enabled for this application. Set a short absolute expiry appropriate for the risk profile. In the Auth0 Dashboard navigate to Applications > Applications > Settings > Refresh Token Rotation.",
+    falsePositiveGuard:
+      "Only fires when grant_refresh_token_enabled=true AND app_type is spa/native. This is expected posture; the finding prompts review of rotation and expiry settings.",
+  },
+  {
+    key: "auth0_application_token_endpoint_auth_none",
+    provider: "auth0",
+    severity: "medium",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Token endpoint posture",
+    title: "Auth0 application has token endpoint authentication method set to none",
+    description:
+      "The application has token_endpoint_auth_method set to 'none', meaning it does not authenticate to the token endpoint with a client secret or assertion. This is expected for public clients using PKCE but may require review for confidential client types.",
+    whatItChecks:
+      "token_endpoint_auth_method=='none' on an auth0_application record.",
+    whyItMatters:
+      "Confidential clients (regular_web, non_interactive) should authenticate to the token endpoint. An auth method of 'none' on a confidential client type may indicate misconfiguration.",
+    evidence:
+      "client_id, name, app_type, token_endpoint_auth_method.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the app, and verify the token endpoint authentication method matches the application type. Confidential clients should use client_secret_basic or client_secret_post.",
+    falsePositiveGuard:
+      "Only fires when token_endpoint_auth_method=='none'. SPAs and native apps using authorization_code + PKCE legitimately use this setting.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────

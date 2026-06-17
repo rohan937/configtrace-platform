@@ -1,4 +1,4 @@
-"""Auth0 configuration-risk security rules — M81B.
+"""Auth0 configuration-risk security rules — M81B/M81C.
 
 Every rule fires only on explicit, reliable normalized fields produced by the
 Auth0 connector (app/connectors/auth0.py + auth0_schema.py, M81A). Evidence
@@ -20,7 +20,8 @@ Record types consumed (M81A)
 - ``auth0_tenant_settings``     → session lifetime, flags
 - ``auth0_application``         → app type, grant types, URL counts, JWT alg,
                                    token_endpoint_auth_method, OIDC conformance,
-                                   refresh token configuration
+                                   refresh token configuration, grant type booleans
+                                   (M81C), URL posture booleans (M81C)
 - ``auth0_connection``          → strategy, enabled clients count, password policy
 - ``auth0_resource_server``     → signing alg, token lifetime, offline access, RBAC
 - ``auth0_rule``                → enabled status, script presence/length
@@ -99,6 +100,33 @@ _RULE_MFA_FACTOR_DISABLED = "auth0_mfa_factor_disabled"
 _RULE_CUSTOM_DOMAIN_NOT_READY = "auth0_custom_domain_not_ready"
 _RULE_CUSTOM_DOMAIN_WEAK_TLS_POLICY = "auth0_custom_domain_weak_tls_policy"
 
+# ── Rule keys — M81C OAuth/application risk expansion ─────────────────────────
+
+# Grant type posture
+_RULE_APP_PASSWORD_GRANT_ENABLED = "auth0_application_password_grant_enabled"
+_RULE_APP_IMPLICIT_GRANT_ENABLED = "auth0_application_implicit_grant_enabled"
+_RULE_APP_PUBLIC_CLIENT_CREDENTIALS = "auth0_application_public_client_credentials_enabled"
+_RULE_APP_REFRESH_GRANT_WITHOUT_ROTATION = "auth0_application_refresh_grant_without_rotation"
+_RULE_APP_MANY_GRANT_TYPES = "auth0_application_many_grant_types"
+_RULE_APP_DEVICE_CODE_GRANT_ENABLED = "auth0_application_device_code_grant_enabled"
+
+# Wildcard posture
+_RULE_APP_WILDCARD_CALLBACK = "auth0_application_wildcard_callback"
+_RULE_APP_WILDCARD_ALLOWED_ORIGIN = "auth0_application_wildcard_allowed_origin"
+_RULE_APP_WILDCARD_LOGOUT_URL = "auth0_application_wildcard_logout_url"
+
+# Localhost posture
+_RULE_APP_LOCALHOST_CALLBACK = "auth0_application_localhost_callback"
+_RULE_APP_LOCALHOST_ORIGIN = "auth0_application_localhost_origin"
+
+# HTTPS posture
+_RULE_APP_CALLBACK_MISSING_HTTPS = "auth0_application_callback_missing_https"
+_RULE_APP_ORIGIN_MISSING_HTTPS = "auth0_application_origin_missing_https"
+
+# Public client / token endpoint posture
+_RULE_PUBLIC_CLIENT_REFRESH_TOKENS = "auth0_public_client_refresh_tokens_enabled"
+_RULE_APP_TOKEN_ENDPOINT_AUTH_NONE = "auth0_application_token_endpoint_auth_none"
+
 AUTH0_RULE_KEYS: frozenset[str] = frozenset({
     # Tenant settings (M81B)
     _RULE_TENANT_SESSION_LIFETIME_EXTENDED,
@@ -112,6 +140,26 @@ AUTH0_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_APP_WEAK_JWT_ALGORITHM,
     _RULE_REFRESH_TOKEN_ROTATION_DISABLED,
     _RULE_REFRESH_TOKEN_LIFETIME_EXTENDED,
+    # Application — OAuth/grant type posture (M81C)
+    _RULE_APP_PASSWORD_GRANT_ENABLED,
+    _RULE_APP_IMPLICIT_GRANT_ENABLED,
+    _RULE_APP_PUBLIC_CLIENT_CREDENTIALS,
+    _RULE_APP_REFRESH_GRANT_WITHOUT_ROTATION,
+    _RULE_APP_MANY_GRANT_TYPES,
+    _RULE_APP_DEVICE_CODE_GRANT_ENABLED,
+    # Application — wildcard posture (M81C)
+    _RULE_APP_WILDCARD_CALLBACK,
+    _RULE_APP_WILDCARD_ALLOWED_ORIGIN,
+    _RULE_APP_WILDCARD_LOGOUT_URL,
+    # Application — localhost posture (M81C)
+    _RULE_APP_LOCALHOST_CALLBACK,
+    _RULE_APP_LOCALHOST_ORIGIN,
+    # Application — HTTPS posture (M81C)
+    _RULE_APP_CALLBACK_MISSING_HTTPS,
+    _RULE_APP_ORIGIN_MISSING_HTTPS,
+    # Application — public client / token endpoint posture (M81C)
+    _RULE_PUBLIC_CLIENT_REFRESH_TOKENS,
+    _RULE_APP_TOKEN_ENDPOINT_AUTH_NONE,
     # Connection (M81B)
     _RULE_CONNECTION_NO_ENABLED_CLIENTS,
     _RULE_CONNECTION_WEAK_PASSWORD_POLICY,
@@ -132,7 +180,10 @@ AUTH0_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_CUSTOM_DOMAIN_WEAK_TLS_POLICY,
 })
 
-# Web-based application types for which missing callbacks are noteworthy.
+# Public / client-side application types (M81C).
+_PUBLIC_APP_TYPES = frozenset({"spa", "native"})
+
+# Web-based application types for which missing callbacks is noteworthy.
 _WEB_APP_TYPES = frozenset({"spa", "regular_web"})
 
 # Callback count threshold above which the surface is considered broad.
@@ -140,6 +191,9 @@ _MANY_CALLBACKS_THRESHOLD = 10
 
 # Origins count threshold (allowed_origins_count + web_origins_count).
 _MANY_ORIGINS_THRESHOLD = 10
+
+# Grant types count threshold above which the OAuth surface is broad (M81C).
+_MANY_GRANT_TYPES_THRESHOLD = 4
 
 # JWT algorithms that use symmetric signing (client must share the secret).
 _WEAK_JWT_ALGS = frozenset({"HS256", "HS384", "HS512", "none"})
@@ -538,6 +592,544 @@ def _eval_application(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Under Settings > Refresh Token Expiration, review the absolute lifetime.",
                     "Reduce to match your token lifecycle policy (typically ≤ 24 hours for "
                     "sensitive contexts).",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M81C: OAuth / application risk expansion ──────────────────────────────
+
+    grant_password_enabled = _bool_field(record, "grant_password_enabled")
+    grant_implicit_enabled = _bool_field(record, "grant_implicit_enabled")
+    grant_client_credentials_enabled = _bool_field(record, "grant_client_credentials_enabled")
+    grant_refresh_token_enabled = _bool_field(record, "grant_refresh_token_enabled")
+    grant_device_code_enabled = _bool_field(record, "grant_device_code_enabled")
+    grant_types_count = _int(record, "grant_types_count")
+    token_endpoint_auth_method = get_str(record, "token_endpoint_auth_method")
+
+    # ── auth0_application_password_grant_enabled ──────────────────────────────
+    if grant_password_enabled:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_PASSWORD_GRANT_ENABLED,
+            finding_key=make_finding_key(_RULE_APP_PASSWORD_GRANT_ENABLED, record_id),
+            severity="high",
+            title="Auth0 application has the password grant enabled",
+            description=(
+                f"The Auth0 application '{app_name}' has the OAuth 2.0 Resource Owner "
+                "Password Credentials (ROPC) grant enabled. The password grant requires "
+                "the application to handle user credentials directly, bypassing Auth0's "
+                "Universal Login and reducing phishing resistance. This grant type is "
+                "deprecated in OAuth 2.1 and may require review for applications that "
+                "can be migrated to the authorization code flow. "
+                "This is configuration metadata only."
+            ),
+            evidence={
+                "rule": _RULE_APP_PASSWORD_GRANT_ENABLED,
+                "client_id": record_id,
+                "name": app_name,
+                "app_type": app_type,
+                "grant_password_enabled": True,
+            },
+            remediation={
+                "summary": "Migrate this application from the password grant to the authorization code flow.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings > Advanced Settings > Grant Types, disable "
+                    "Password and review whether authorization_code with PKCE meets your needs.",
+                    "Update your application to use the authorization code + PKCE flow.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_implicit_grant_enabled ──────────────────────────────
+    if grant_implicit_enabled:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_IMPLICIT_GRANT_ENABLED,
+            finding_key=make_finding_key(_RULE_APP_IMPLICIT_GRANT_ENABLED, record_id),
+            severity="high",
+            title="Auth0 application has the implicit grant enabled",
+            description=(
+                f"The Auth0 application '{app_name}' has the OAuth 2.0 implicit grant "
+                "enabled. The implicit grant returns access tokens in the URL fragment, "
+                "which may expose tokens in browser history, referrer headers, and server "
+                "logs. This grant type is deprecated in OAuth 2.1 in favor of the "
+                "authorization code flow with PKCE. The configuration may require review "
+                "for applications that can migrate to authorization_code + PKCE. "
+                "This is configuration metadata only."
+            ),
+            evidence={
+                "rule": _RULE_APP_IMPLICIT_GRANT_ENABLED,
+                "client_id": record_id,
+                "name": app_name,
+                "app_type": app_type,
+                "grant_implicit_enabled": True,
+            },
+            remediation={
+                "summary": "Migrate this application from the implicit grant to authorization code + PKCE.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings > Advanced Settings > Grant Types, disable Implicit.",
+                    "Migrate the application to use authorization_code with PKCE.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_public_client_credentials_enabled ───────────────────
+    # Client credentials on a public/SPA/native app or token_endpoint_auth_method=none
+    is_public_client = (app_type in _PUBLIC_APP_TYPES or token_endpoint_auth_method == "none")
+    if grant_client_credentials_enabled and is_public_client:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_PUBLIC_CLIENT_CREDENTIALS,
+            finding_key=make_finding_key(_RULE_APP_PUBLIC_CLIENT_CREDENTIALS, record_id),
+            severity="high",
+            title="Auth0 public or client-side application has client credentials grant enabled",
+            description=(
+                f"The Auth0 application '{app_name}' (type: {app_type}) has the "
+                "client_credentials grant enabled, but the application appears to be a public "
+                "or client-side application (SPA, native, or token_endpoint_auth_method=none). "
+                "The client credentials grant requires a confidential client that can securely "
+                "store a client secret. Public/client-side apps cannot protect client secrets "
+                "and should not use this grant. This configuration may broaden access and "
+                "may require review. This is configuration metadata only."
+            ),
+            evidence={
+                "rule": _RULE_APP_PUBLIC_CLIENT_CREDENTIALS,
+                "client_id": record_id,
+                "name": app_name,
+                "app_type": app_type,
+                "grant_client_credentials_enabled": True,
+                "token_endpoint_auth_method": token_endpoint_auth_method,
+            },
+            remediation={
+                "summary": "Remove the client credentials grant from public/client-side applications.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings > Advanced Settings > Grant Types, disable Client Credentials.",
+                    "If machine-to-machine access is required, create a separate M2M application "
+                    "of type non_interactive.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_refresh_grant_without_rotation ─────────────────────
+    # More specific variant of M81B's auth0_refresh_token_rotation_disabled:
+    # uses the explicit grant_refresh_token_enabled boolean rather than string search.
+    if grant_refresh_token_enabled and record.get("refresh_token_rotation_enabled") is False:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_REFRESH_GRANT_WITHOUT_ROTATION,
+            finding_key=make_finding_key(_RULE_APP_REFRESH_GRANT_WITHOUT_ROTATION, record_id),
+            severity="medium",
+            title="Auth0 application has the refresh token grant enabled without rotation",
+            description=(
+                f"The Auth0 application '{app_name}' has the refresh_token grant explicitly "
+                "enabled but does not have refresh token rotation configured. Without rotation, "
+                "a refresh token remains valid until it expires or is explicitly revoked. "
+                "Enabling refresh token rotation limits the usability window of any token "
+                "that may require review or rotation. "
+                "This is configuration metadata — no token values are stored."
+            ),
+            evidence={
+                "rule": _RULE_APP_REFRESH_GRANT_WITHOUT_ROTATION,
+                "client_id": record_id,
+                "name": app_name,
+                "grant_refresh_token_enabled": True,
+                "refresh_token_rotation_enabled": False,
+            },
+            remediation={
+                "summary": "Enable refresh token rotation for this application.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings > Refresh Token Rotation, enable rotation.",
+                    "Set an appropriate rotation interval and reuse interval.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_many_grant_types ────────────────────────────────────
+    if grant_types_count > _MANY_GRANT_TYPES_THRESHOLD:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_MANY_GRANT_TYPES,
+            finding_key=make_finding_key(_RULE_APP_MANY_GRANT_TYPES, record_id),
+            severity="medium",
+            title="Auth0 application has a broad OAuth grant type surface",
+            description=(
+                f"The Auth0 application '{app_name}' has {grant_types_count} OAuth grant "
+                f"types enabled (threshold: {_MANY_GRANT_TYPES_THRESHOLD}). A broad grant "
+                "type surface increases the number of OAuth flows the application accepts "
+                "and may include deprecated or high-risk grant types. Review whether all "
+                "enabled grants are required for this application's use case."
+            ),
+            evidence={
+                "rule": _RULE_APP_MANY_GRANT_TYPES,
+                "client_id": record_id,
+                "name": app_name,
+                "grant_types_count": grant_types_count,
+                "grant_types_summary": grant_types_summary,
+            },
+            remediation={
+                "summary": "Review and restrict the OAuth grant types to only those required.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings > Advanced Settings > Grant Types, disable any "
+                    "grant types that are not needed for this application.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_device_code_grant_enabled ───────────────────────────
+    if grant_device_code_enabled:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_DEVICE_CODE_GRANT_ENABLED,
+            finding_key=make_finding_key(_RULE_APP_DEVICE_CODE_GRANT_ENABLED, record_id),
+            severity="low",
+            title="Auth0 application has the device code grant enabled",
+            description=(
+                f"The Auth0 application '{app_name}' has the Device Authorization Grant "
+                "(RFC 8628) enabled. The device code flow is designed for input-constrained "
+                "devices and adds an additional OAuth flow surface to this application. "
+                "Review whether this grant type is required for the application's intended "
+                "use case. This is configuration metadata only."
+            ),
+            evidence={
+                "rule": _RULE_APP_DEVICE_CODE_GRANT_ENABLED,
+                "client_id": record_id,
+                "name": app_name,
+                "app_type": app_type,
+                "grant_device_code_enabled": True,
+            },
+            remediation={
+                "summary": "Review whether the device code grant is required for this application.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings > Advanced Settings > Grant Types, disable Device Code "
+                    "if it is not needed for this application.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_wildcard_callback ───────────────────────────────────
+    if _bool_field(record, "wildcard_callback_present"):
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_WILDCARD_CALLBACK,
+            finding_key=make_finding_key(_RULE_APP_WILDCARD_CALLBACK, record_id),
+            severity="high",
+            title="Auth0 application has a wildcard callback URL configured",
+            description=(
+                f"The Auth0 application '{app_name}' has one or more callback URLs "
+                "that contain a wildcard character. Wildcard callbacks may allow "
+                "authorization codes and tokens to be redirected to unexpected destinations "
+                "and may broaden the redirect surface beyond what is intended. "
+                "This configuration may require review. "
+                "Raw callback URL strings are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_APP_WILDCARD_CALLBACK,
+                "client_id": record_id,
+                "name": app_name,
+                "wildcard_callback_present": True,
+                "callbacks_count": callbacks_count,
+            },
+            remediation={
+                "summary": "Replace wildcard callback URLs with explicit, fully-qualified URLs.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings, review the Allowed Callback URLs and replace any "
+                    "wildcard entries with specific URLs.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_wildcard_allowed_origin ─────────────────────────────
+    if _bool_field(record, "wildcard_allowed_origin_present"):
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_WILDCARD_ALLOWED_ORIGIN,
+            finding_key=make_finding_key(_RULE_APP_WILDCARD_ALLOWED_ORIGIN, record_id),
+            severity="high",
+            title="Auth0 application has a wildcard allowed origin configured",
+            description=(
+                f"The Auth0 application '{app_name}' has one or more allowed origins "
+                "that contain a wildcard character. Wildcard origins may permit "
+                "cross-origin requests from a broad set of domains and may expose "
+                "targeted resources to unintended callers. This configuration may "
+                "require review. "
+                "Raw origin URL strings are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_APP_WILDCARD_ALLOWED_ORIGIN,
+                "client_id": record_id,
+                "name": app_name,
+                "wildcard_allowed_origin_present": True,
+                "allowed_origins_count": allowed_origins_count,
+            },
+            remediation={
+                "summary": "Replace wildcard allowed origins with specific, fully-qualified origins.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings, review the Allowed Origins and replace any wildcard "
+                    "entries with specific origins.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_wildcard_logout_url ─────────────────────────────────
+    if _bool_field(record, "wildcard_logout_url_present"):
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_WILDCARD_LOGOUT_URL,
+            finding_key=make_finding_key(_RULE_APP_WILDCARD_LOGOUT_URL, record_id),
+            severity="medium",
+            title="Auth0 application has a wildcard logout URL configured",
+            description=(
+                f"The Auth0 application '{app_name}' has one or more allowed logout URLs "
+                "that contain a wildcard character. Wildcard logout URLs may allow "
+                "post-logout redirects to unexpected destinations and may require review. "
+                "Raw logout URL strings are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_APP_WILDCARD_LOGOUT_URL,
+                "client_id": record_id,
+                "name": app_name,
+                "wildcard_logout_url_present": True,
+            },
+            remediation={
+                "summary": "Replace wildcard logout URLs with specific, fully-qualified URLs.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings, review the Allowed Logout URLs and replace any "
+                    "wildcard entries with specific URLs.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_localhost_callback ──────────────────────────────────
+    if _bool_field(record, "localhost_callback_present"):
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_LOCALHOST_CALLBACK,
+            finding_key=make_finding_key(_RULE_APP_LOCALHOST_CALLBACK, record_id),
+            severity="low",
+            title="Auth0 application has a localhost callback URL configured",
+            description=(
+                f"The Auth0 application '{app_name}' has one or more callback URLs "
+                "pointing to localhost or a loopback address. Localhost callbacks are "
+                "common during local development but may indicate development configuration "
+                "left in a production application and may require review. "
+                "Raw callback URL strings are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_APP_LOCALHOST_CALLBACK,
+                "client_id": record_id,
+                "name": app_name,
+                "localhost_callback_present": True,
+                "callbacks_count": callbacks_count,
+            },
+            remediation={
+                "summary": "Review whether localhost callback URLs are appropriate for this environment.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings, review the Allowed Callback URLs.",
+                    "Remove localhost entries if this is a production application.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_localhost_origin ────────────────────────────────────
+    if _bool_field(record, "localhost_origin_present"):
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_LOCALHOST_ORIGIN,
+            finding_key=make_finding_key(_RULE_APP_LOCALHOST_ORIGIN, record_id),
+            severity="low",
+            title="Auth0 application has a localhost allowed origin configured",
+            description=(
+                f"The Auth0 application '{app_name}' has one or more allowed origins "
+                "pointing to localhost or a loopback address. Localhost origins are "
+                "common during local development but may indicate development configuration "
+                "left in a production application and may require review. "
+                "Raw origin URL strings are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_APP_LOCALHOST_ORIGIN,
+                "client_id": record_id,
+                "name": app_name,
+                "localhost_origin_present": True,
+                "allowed_origins_count": allowed_origins_count,
+            },
+            remediation={
+                "summary": "Review whether localhost allowed origins are appropriate for this environment.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings, review the Allowed Origins.",
+                    "Remove localhost entries if this is a production application.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_callback_missing_https ──────────────────────────────
+    if _bool_field(record, "callbacks_missing_https"):
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_CALLBACK_MISSING_HTTPS,
+            finding_key=make_finding_key(_RULE_APP_CALLBACK_MISSING_HTTPS, record_id),
+            severity="medium",
+            title="Auth0 application has callback URLs using insecure HTTP",
+            description=(
+                f"The Auth0 application '{app_name}' has one or more callback URLs "
+                "configured with http:// rather than https:// (excluding localhost). "
+                "Unencrypted callback URLs may expose authorization codes or tokens "
+                "in transit and may require review for production deployments. "
+                "Raw callback URL strings are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_APP_CALLBACK_MISSING_HTTPS,
+                "client_id": record_id,
+                "name": app_name,
+                "callbacks_missing_https": True,
+                "callbacks_count": callbacks_count,
+            },
+            remediation={
+                "summary": "Update callback URLs to use HTTPS.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings, review the Allowed Callback URLs.",
+                    "Replace any http:// URLs with their https:// equivalents.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_origin_missing_https ────────────────────────────────
+    if _bool_field(record, "allowed_origins_missing_https"):
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_ORIGIN_MISSING_HTTPS,
+            finding_key=make_finding_key(_RULE_APP_ORIGIN_MISSING_HTTPS, record_id),
+            severity="medium",
+            title="Auth0 application has allowed origins using insecure HTTP",
+            description=(
+                f"The Auth0 application '{app_name}' has one or more allowed origins "
+                "configured with http:// rather than https:// (excluding localhost). "
+                "Permitting unencrypted origins may allow cross-origin requests from "
+                "insecure contexts and may require review. "
+                "Raw origin URL strings are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_APP_ORIGIN_MISSING_HTTPS,
+                "client_id": record_id,
+                "name": app_name,
+                "allowed_origins_missing_https": True,
+                "allowed_origins_count": allowed_origins_count,
+            },
+            remediation={
+                "summary": "Update allowed origins to use HTTPS.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Under Settings, review the Allowed Origins.",
+                    "Replace any http:// origins with their https:// equivalents.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_public_client_refresh_tokens_enabled ────────────────────────────
+    if grant_refresh_token_enabled and app_type in _PUBLIC_APP_TYPES:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_PUBLIC_CLIENT_REFRESH_TOKENS,
+            finding_key=make_finding_key(_RULE_PUBLIC_CLIENT_REFRESH_TOKENS, record_id),
+            severity="medium",
+            title="Auth0 public client has the refresh token grant enabled",
+            description=(
+                f"The Auth0 application '{app_name}' (type: {app_type}) is a public client "
+                "and has the refresh_token grant enabled. Public clients such as SPAs and "
+                "native apps cannot securely store client secrets, which makes long-lived "
+                "refresh tokens harder to protect. Ensure refresh token rotation and "
+                "sender-constraining (if available) are enabled. "
+                "This is configuration metadata — no token values are stored."
+            ),
+            evidence={
+                "rule": _RULE_PUBLIC_CLIENT_REFRESH_TOKENS,
+                "client_id": record_id,
+                "name": app_name,
+                "app_type": app_type,
+                "grant_refresh_token_enabled": True,
+            },
+            remediation={
+                "summary": "Enable refresh token rotation and review refresh token settings for this public client.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Enable refresh token rotation under Settings > Refresh Token Rotation.",
+                    "Set a short absolute expiry appropriate for the application's risk profile.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_application_token_endpoint_auth_none ────────────────────────────
+    if token_endpoint_auth_method == "none":
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_APP_TOKEN_ENDPOINT_AUTH_NONE,
+            finding_key=make_finding_key(_RULE_APP_TOKEN_ENDPOINT_AUTH_NONE, record_id),
+            severity="medium",
+            title="Auth0 application has token endpoint authentication method set to none",
+            description=(
+                f"The Auth0 application '{app_name}' has token_endpoint_auth_method "
+                "set to 'none', indicating the application does not authenticate to the "
+                "token endpoint with a client secret or assertion. This is expected for "
+                "public clients using PKCE, but may require review if the application "
+                "is of a type that should authenticate with a client secret (e.g. "
+                "regular_web or non_interactive). This is configuration metadata only."
+            ),
+            evidence={
+                "rule": _RULE_APP_TOKEN_ENDPOINT_AUTH_NONE,
+                "client_id": record_id,
+                "name": app_name,
+                "app_type": app_type,
+                "token_endpoint_auth_method": "none",
+            },
+            remediation={
+                "summary": "Review whether token endpoint authentication of 'none' is appropriate for this application.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > Applications and select the application.",
+                    "Verify the application type and grant types match the expected "
+                    "token endpoint authentication method.",
+                    "For confidential clients, set the method to 'client_secret_basic' or "
+                    "'client_secret_post' and store the client secret securely.",
                 ],
             },
             record_id=record_id,

@@ -168,6 +168,45 @@ def _token_category(seconds: Any) -> str:
     return "extended"
 
 
+def _has_wildcard(urls: list) -> bool:
+    """Return True if any URL in the list contains a wildcard character.
+
+    Used for M81C posture booleans. Raw URL strings are NEVER stored.
+    """
+    return any("*" in u for u in urls if isinstance(u, str))
+
+
+def _has_localhost(urls: list) -> bool:
+    """Return True if any URL starts with a localhost / loopback origin.
+
+    Matches http(s)://localhost, http(s)://127.0.0.1, http(s)://[::1].
+    Raw URL strings are NEVER stored.
+    """
+    _LOCALHOST_PREFIXES = (
+        "http://localhost", "https://localhost",
+        "http://127.0.0.1", "https://127.0.0.1",
+        "http://[::1]", "https://[::1]",
+    )
+    return any(
+        isinstance(u, str) and any(u.startswith(p) for p in _LOCALHOST_PREFIXES)
+        for u in urls
+    )
+
+
+def _has_http_non_localhost(urls: list) -> bool:
+    """Return True if any URL uses http:// for a non-localhost origin.
+
+    Raw URL strings are NEVER stored.
+    """
+    _LOCALHOST_HTTP_PREFIXES = ("http://localhost", "http://127.0.0.1", "http://[::1]")
+    return any(
+        isinstance(u, str)
+        and u.startswith("http://")
+        and not any(u.startswith(p) for p in _LOCALHOST_HTTP_PREFIXES)
+        for u in urls
+    )
+
+
 def _code_length_category(code: Any) -> str:
     """Return a safe length category for rule script or action code.
 
@@ -560,6 +599,18 @@ class Auth0Connector(BaseConnector):
             else "RS256"
         )
 
+        # M81C: grant type booleans — derived from grant_types list only
+        _gt_set = frozenset(g for g in grant_types if isinstance(g, str))
+        grant_mfa = bool(
+            "http://auth0.com/oauth/grant-type/mfa-otp" in _gt_set
+            or "http://auth0.com/oauth/grant-type/mfa-bearer" in _gt_set
+        )
+
+        # M81C: URL posture booleans — compute before discarding URL lists
+        _callbacks = raw.get("callbacks") or []
+        _logout_urls = raw.get("allowed_logout_urls") or []
+        _allowed_origins = raw.get("allowed_origins") or []
+
         return {
             "record_type": AUTH0_APPLICATION,
             "record_id": _trunc(client_id, 100),
@@ -570,9 +621,9 @@ class Auth0Connector(BaseConnector):
             "is_first_party": _bool(raw.get("is_first_party", True)),
             "grant_types_summary": grant_types_summary,
             # URL lists stored as COUNTS ONLY — raw URL strings NEVER stored
-            "callbacks_count": len(raw.get("callbacks") or []),
-            "allowed_logout_urls_count": len(raw.get("allowed_logout_urls") or []),
-            "allowed_origins_count": len(raw.get("allowed_origins") or []),
+            "callbacks_count": len(_callbacks),
+            "allowed_logout_urls_count": len(_logout_urls),
+            "allowed_origins_count": len(_allowed_origins),
             "web_origins_count": len(raw.get("web_origins") or []),
             "jwt_alg": jwt_alg,
             "oidc_conformant": _bool(raw.get("oidc_conformant", True)),
@@ -581,6 +632,25 @@ class Auth0Connector(BaseConnector):
             ),
             "refresh_token_rotation_enabled": rt_rotation,
             "refresh_token_lifetime_category": rt_lifetime_cat,
+            # ── M81C: grant type booleans ──────────────────────────────────────
+            "grant_types_count": len(_gt_set),
+            "grant_password_enabled": "password" in _gt_set,
+            "grant_implicit_enabled": "implicit" in _gt_set,
+            "grant_client_credentials_enabled": "client_credentials" in _gt_set,
+            "grant_authorization_code_enabled": "authorization_code" in _gt_set,
+            "grant_refresh_token_enabled": "refresh_token" in _gt_set,
+            "grant_device_code_enabled": (
+                "urn:ietf:params:oauth:grant-type:device_code" in _gt_set
+            ),
+            "grant_mfa_enabled": grant_mfa,
+            # ── M81C: URL posture booleans — raw URLs discarded after this ─────
+            "wildcard_callback_present": _has_wildcard(_callbacks),
+            "wildcard_logout_url_present": _has_wildcard(_logout_urls),
+            "wildcard_allowed_origin_present": _has_wildcard(_allowed_origins),
+            "localhost_callback_present": _has_localhost(_callbacks),
+            "localhost_origin_present": _has_localhost(_allowed_origins),
+            "callbacks_missing_https": _has_http_non_localhost(_callbacks),
+            "allowed_origins_missing_https": _has_http_non_localhost(_allowed_origins),
         }
 
     @staticmethod

@@ -1246,17 +1246,15 @@ def test_capability_matrix_auth0_in_partial_list():
 
 
 def test_expansion_framework_planned_next_stage_is_m81b():
-    """After M81A and M81B, planned_next_stage points to M81C Auth0 OAuth/Application
-    Risk Expansion. Either M81B or M81C in the pointer is acceptable here."""
+    """After M81A, planned_next_stage must advance past M81A (M81B or later)."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M81B" in stage or "M81C" in stage, (
-        f"planned_next_stage should point to M81B or beyond after M81A; got: {stage!r}"
-    )
-    assert "Auth0" in stage
     assert "M81A" not in stage, (
         f"M81A is done; pointer must advance past it (got: {stage!r})"
+    )
+    assert any(tag in stage for tag in ("M81B", "M81C", "M81D", "M81E", "M81F", "M81G", "M81H", "M81I")), (
+        f"planned_next_stage should point to M81B or beyond after M81A; got: {stage!r}"
     )
 
 

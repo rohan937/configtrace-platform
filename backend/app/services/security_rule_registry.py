@@ -211,6 +211,22 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "auth0_mfa_factor_disabled",
         "auth0_custom_domain_not_ready",
         "auth0_custom_domain_weak_tls_policy",
+        # Auth0 — M81C OAuth/application risk expansion
+        "auth0_application_password_grant_enabled",
+        "auth0_application_implicit_grant_enabled",
+        "auth0_application_public_client_credentials_enabled",
+        "auth0_application_refresh_grant_without_rotation",
+        "auth0_application_many_grant_types",
+        "auth0_application_device_code_grant_enabled",
+        "auth0_application_wildcard_callback",
+        "auth0_application_wildcard_allowed_origin",
+        "auth0_application_wildcard_logout_url",
+        "auth0_application_localhost_callback",
+        "auth0_application_localhost_origin",
+        "auth0_application_callback_missing_https",
+        "auth0_application_origin_missing_https",
+        "auth0_public_client_refresh_tokens_enabled",
+        "auth0_application_token_endpoint_auth_none",
     }
 )
 

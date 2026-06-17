@@ -371,10 +371,10 @@ def test_expansion_framework_points_to_m80i():
     assert "M80H" not in planned, (
         f"M80H is done; pointer must advance past it (got: {planned!r})"
     )
-    # After M80I completes, the pointer advances to M81A — either is acceptable here.
-    assert (
-        "M80I" in planned or "M81A" in planned or "M81B" in planned or "M81C" in planned
-    ), (
+    # After M80I/M81x completes, the pointer advances further — any M80I/M81x is acceptable.
+    assert any(tag in planned for tag in (
+        "M80I", "M81A", "M81B", "M81C", "M81D", "M81E", "M81F", "M81G", "M81H", "M81I",
+    )), (
         f"planned_next_stage must point past M80H; got: {planned!r}"
     )
 

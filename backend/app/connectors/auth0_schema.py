@@ -138,12 +138,16 @@ class Auth0TenantSettingsRecord(TypedDict):
 
 
 class Auth0ApplicationRecord(TypedDict):
-    """Safe normalised record for an Auth0 application/client (M81A).
+    """Safe normalised record for an Auth0 application/client (M81A/M81C).
 
     SECURITY: client_secret, JWKS, raw callback_urls, raw allowed_logout_urls,
     raw allowed_origins, raw web_origins, encryption_key, initiate_login_uri,
     and all raw client payload are NEVER stored.
     URLs are stored as integer COUNTS only.
+    URL posture booleans (wildcard, localhost, https) are derived from URL lists
+    during normalization; raw URL strings are discarded immediately after.
+    Grant type booleans are derived from the grant_types list; no token values
+    or authorization material is ever stored.
     """
 
     record_type: str           # always "auth0_application"
@@ -164,6 +168,23 @@ class Auth0ApplicationRecord(TypedDict):
     token_endpoint_auth_method: str  # "client_secret_basic"/"none"/etc.
     refresh_token_rotation_enabled: bool
     refresh_token_lifetime_category: str  # or "not_configured"
+    # ── M81C: grant type booleans — derived from grant_types list; no token values stored ──
+    grant_types_count: int
+    grant_password_enabled: bool
+    grant_implicit_enabled: bool
+    grant_client_credentials_enabled: bool
+    grant_authorization_code_enabled: bool
+    grant_refresh_token_enabled: bool
+    grant_device_code_enabled: bool
+    grant_mfa_enabled: bool
+    # ── M81C: URL posture booleans — derived from URL lists; raw URLs NEVER stored ──
+    wildcard_callback_present: bool
+    wildcard_logout_url_present: bool
+    wildcard_allowed_origin_present: bool
+    localhost_callback_present: bool
+    localhost_origin_present: bool
+    callbacks_missing_https: bool
+    allowed_origins_missing_https: bool
 
 
 class Auth0ConnectionRecord(TypedDict):

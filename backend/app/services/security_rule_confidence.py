@@ -239,6 +239,22 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "auth0_mfa_factor_disabled": (HIGH, "Only fires for strong second factors (otp / webauthn-roaming / push-notification) when enabled is explicitly false; no enrollment data ever stored."),
     "auth0_custom_domain_not_ready": (HIGH, "Only fires when status is 'pending_verification'/'provisioning'/'disabled' on an auth0_custom_domain record; custom domain name strings NEVER stored."),
     "auth0_custom_domain_weak_tls_policy": (HIGH, "Only fires when tls_policy_category=='compatible' on an auth0_custom_domain record."),
+    # Auth0 — M81C OAuth/application risk expansion
+    "auth0_application_password_grant_enabled": (HIGH, "Only fires when grant_password_enabled=true on an auth0_application record; no credential values are stored."),
+    "auth0_application_implicit_grant_enabled": (HIGH, "Only fires when grant_implicit_enabled=true on an auth0_application record."),
+    "auth0_application_public_client_credentials_enabled": (HIGH, "Only fires when grant_client_credentials_enabled=true AND app_type is spa/native OR token_endpoint_auth_method=none; no client secret is stored."),
+    "auth0_application_refresh_grant_without_rotation": (HIGH, "Only fires when grant_refresh_token_enabled=true AND refresh_token_rotation_enabled is explicitly false; no token values are stored."),
+    "auth0_application_many_grant_types": (HIGH, "Only fires when grant_types_count exceeds the conservative threshold; no token values are stored."),
+    "auth0_application_device_code_grant_enabled": (HIGH, "Only fires when grant_device_code_enabled=true on an auth0_application record."),
+    "auth0_application_wildcard_callback": (HIGH, "Only fires when wildcard_callback_present=true (a boolean derived from callbacks during normalization); raw callback URLs are NEVER stored."),
+    "auth0_application_wildcard_allowed_origin": (HIGH, "Only fires when wildcard_allowed_origin_present=true (a boolean derived from allowed_origins during normalization); raw origin URLs are NEVER stored."),
+    "auth0_application_wildcard_logout_url": (HIGH, "Only fires when wildcard_logout_url_present=true (a boolean derived from allowed_logout_urls during normalization); raw logout URLs are NEVER stored."),
+    "auth0_application_localhost_callback": (HIGH, "Only fires when localhost_callback_present=true (a boolean derived from callbacks during normalization); raw callback URLs are NEVER stored."),
+    "auth0_application_localhost_origin": (HIGH, "Only fires when localhost_origin_present=true (a boolean derived from allowed_origins during normalization); raw origin URLs are NEVER stored."),
+    "auth0_application_callback_missing_https": (HIGH, "Only fires when callbacks_missing_https=true (a boolean derived from callbacks during normalization, excluding localhost); raw callback URLs are NEVER stored."),
+    "auth0_application_origin_missing_https": (HIGH, "Only fires when allowed_origins_missing_https=true (a boolean derived from allowed_origins during normalization, excluding localhost); raw origin URLs are NEVER stored."),
+    "auth0_public_client_refresh_tokens_enabled": (MEDIUM, "Only fires when grant_refresh_token_enabled=true AND app_type is spa/native; no token values are stored."),
+    "auth0_application_token_endpoint_auth_none": (HIGH, "Only fires when token_endpoint_auth_method=='none' on an auth0_application record."),
 }
 
 
