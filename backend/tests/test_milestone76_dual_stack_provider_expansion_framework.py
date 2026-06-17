@@ -259,6 +259,7 @@ def test_get_framework_structure():
     assert (
         "Auth0" in summary["planned_next_stage"]
         or "M81B" in summary["planned_next_stage"]
+        or "M82" in summary["planned_next_stage"]
     )
 
 

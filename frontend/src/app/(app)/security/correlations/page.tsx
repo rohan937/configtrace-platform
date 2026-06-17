@@ -612,7 +612,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                         ? "the same Twilio resource (phone number / messaging service / Verify service / API key), or the same account + family for account and config-level risks. Sync Twilio activity, generate Twilio signals, then generate Twilio correlations."
                         : provider === "sendgrid"
                           ? "the same SendGrid resource (API key / sender identity / domain), or the same account + family for mail settings, tracking settings, webhook, and suppression risks. Sync SendGrid activity, generate SendGrid signals, then generate SendGrid correlations."
-                          : "the same GitHub repository";
+                          : provider === "auth0"
+                            ? "the same Auth0 resource (application / connection / resource server / rule / action / MFA factor / custom domain), or the same tenant for tenant-level risks. Sync Auth0 activity, generate Auth0 signals, then generate Auth0 correlations to align configuration risks with control-plane activity evidence on the same Auth0 surface."
+                            : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

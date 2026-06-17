@@ -798,7 +798,11 @@ _AUTH0 = ProviderCapability(
         "correlations page, rule catalog, demo card, API unions), and regression "
         "smoke (evaluator dispatch, allowlist shape, correlation rule structure). "
         "Auth0 remains partial (not in the canonical dual-stack-complete "
-        "set of 8 providers). Next: M81I Auth0 Cross-Cloud UX Polish."
+        "set of 8 providers). M81I completes the Auth0 arc with cross-cloud "
+        "UX polish: signals and correlations empty states gain Auth0-specific "
+        "guidance; the demo-script page description updated from 'drift-only' "
+        "to reflect the full Auth0 arc (M81A–M81I); stale milestone references "
+        "removed from frontend copy."
     ),
 )
 

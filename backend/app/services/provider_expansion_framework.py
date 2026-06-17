@@ -726,6 +726,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M81I: Auth0 Cross-Cloud UX Polish",
+            "planned_next_stage": "M82-pre: Provider Integration Card Parity",
         },
     }

@@ -182,7 +182,7 @@ def test_expansion_framework_planned_next_stage_is_m80a():
     assert "M79I" not in stage, (
         f"planned_next_stage still points to M79I after arc closed: {stage!r}"
     )
-    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage, (
+    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage or "M82" in stage, (
         f"planned_next_stage should point past M80I (got: {stage!r})"
     )
 

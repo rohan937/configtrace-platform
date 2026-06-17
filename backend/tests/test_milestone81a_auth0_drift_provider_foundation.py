@@ -1252,7 +1252,7 @@ def test_expansion_framework_planned_next_stage_is_m81b():
     assert "M81A" not in stage, (
         f"M81A is done; pointer must advance past it (got: {stage!r})"
     )
-    assert any(tag in stage for tag in ("M81B", "M81C", "M81D", "M81E", "M81F", "M81G", "M81H", "M81I")), (
+    assert any(tag in stage for tag in ("M81B", "M81C", "M81D", "M81E", "M81F", "M81G", "M81H", "M81I", "M82")), (
         f"planned_next_stage should point to M81B or beyond after M81A; got: {stage!r}"
     )
 

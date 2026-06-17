@@ -1157,6 +1157,11 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               (isAdmin
                 ? " Use \"Generate SendGrid signals\" above once SendGrid configuration-state events have been ingested via the Activity page. Signals summarize review-worthy configuration activity patterns across API keys, sender identities, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression settings. Email bodies, subject lines, recipient emails, mail event payloads, raw webhook URLs, and API key values are never stored."
                 : " A workspace admin can sync SendGrid activity and generate SendGrid activity signals.")
+          : provider === "auth0"
+            ? "Sync Auth0 activity first, then generate Auth0 signals." +
+              (isAdmin
+                ? " Use \"Generate Auth0 signals\" above once Auth0 configuration-state events have been ingested via the Activity page. Signals summarize review-worthy configuration activity patterns across tenant settings, applications, connections, resource servers, rules, actions, MFA factors, and custom domains. User emails, login history, IP addresses, sessions, tokens, callback URLs, rule/action code, and raw Auth0 logs are never stored."
+                : " A workspace admin can sync Auth0 activity and generate Auth0 signals.")
           : "Run GitHub activity sync first, then generate signals." +
             (isAdmin
               ? " Use “Generate signals” above once activity has been ingested."

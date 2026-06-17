@@ -670,7 +670,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert any(tag in planned for tag in ("M81G", "M81H", "M81I"))
+        assert any(tag in planned for tag in ("M81G", "M81H", "M81I", "M82"))
         assert "M81F" not in planned
 
 

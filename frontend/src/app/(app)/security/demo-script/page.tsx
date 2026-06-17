@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, Twilio, and SendGrid are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. SendGrid (M80A–M80I) covers configuration drift across account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression surfaces. Auth0 (M81A) is drift-only — snapshots cover 8 safe surfaces from the Auth0 Management API v2: tenant settings, applications, connections, resource servers, rules, actions, MFA factors, and custom domains (URL counts and boolean flags only — never client secrets, raw callback URLs, audience URIs, domain names, or script content).{" "}
+          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, Twilio, and SendGrid are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. SendGrid (M80A–M80I) covers configuration drift across account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression surfaces. Auth0 (M81A–M81I) is demo-ready through drift findings, 37 security rules, activity ingestion, Incident Signals, risk × activity correlations, and case evidence, covering 8 Auth0 surfaces: tenant settings, applications, connections, resource servers, rules, actions, MFA factors, and custom domains (URL counts and boolean flags only — never client secrets, raw callback URLs, audience URIs, domain names, script content, user emails, login history, IP addresses, or raw Auth0 logs).{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -325,7 +325,7 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 
 // M76 — Recommended next providers (compact display data).
 // NOTE: Twilio arc complete M79A–M79I; SendGrid arc complete M80A–M80I;
-// Auth0 drift foundation launched M81A.
+// Auth0 arc complete M81A–M81I.
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
   { label: "Datadog",   category: "observability",  milestone: "M82A" },
   { label: "Clerk",     category: "auth",           milestone: "M82B" },
