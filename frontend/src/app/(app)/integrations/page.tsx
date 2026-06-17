@@ -19,6 +19,12 @@ import AWSIntegrationForm from "@/components/integrations/AWSIntegrationForm";
 import FirebaseIntegrationForm from "@/components/integrations/FirebaseIntegrationForm";
 import SupabaseIntegrationForm from "@/components/integrations/SupabaseIntegrationForm";
 import ShopifyIntegrationForm from "@/components/integrations/ShopifyIntegrationForm";
+// ── M82-pre.1 — credential connect forms ──────────────────────────────────────
+import AzureIntegrationForm from "@/components/integrations/AzureIntegrationForm";
+import GoogleCloudIntegrationForm from "@/components/integrations/GoogleCloudIntegrationForm";
+import TwilioIntegrationForm from "@/components/integrations/TwilioIntegrationForm";
+import SendGridIntegrationForm from "@/components/integrations/SendGridIntegrationForm";
+import Auth0IntegrationForm from "@/components/integrations/Auth0IntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -605,6 +611,179 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M82-pre.1 — credential connect setup guides ────────────────────────────
+
+  if (provider === "azure") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect an Azure subscription
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Register a service principal.",
+            body: <>Azure portal → Microsoft Entra ID → App registrations → New registration.
+              Note the <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Application (client) ID</code> and{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Directory (tenant) ID</code>.</>,
+          },
+          {
+            heading: "Create a client secret.",
+            body: <>Certificates &amp; secrets → New client secret. Copy the value immediately —
+              Azure shows it only once.</>,
+          },
+          {
+            heading: "Grant read-only access.",
+            body: <>Subscription → Access control (IAM) → Add role assignment → assign{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Reader</code> to the service principal.</>,
+          },
+          {
+            heading: "Connect below.",
+            body: <>Paste the tenant ID, client ID, client secret, and subscription ID into the form.
+              The secret is encrypted before storage and never returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores Azure credentials encrypted and uses them only to read selected
+          configuration metadata. It does not store client secrets, access tokens, private keys,
+          raw policies, or customer data in findings.
+        </p>
+      </>
+    );
+  }
+
+  if (provider === "google_cloud") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Google Cloud project
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Create a read-only service account.",
+            body: <>Google Cloud Console → IAM &amp; Admin → Service Accounts → Create service account.
+              Grant <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Viewer</code> at the project level,
+              plus <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Security Reviewer</code> if you
+              want IAM-policy posture findings.</>,
+          },
+          {
+            heading: "Download a JSON key.",
+            body: <>Service account → Keys → Add key → Create new key → JSON. The JSON includes
+              the private_key — store it securely.</>,
+          },
+          {
+            heading: "Connect below.",
+            body: <>Paste the full JSON into the form. The entire JSON (including the private_key)
+              is stored encrypted and never returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores Google Cloud credentials encrypted and uses them only to read selected
+          configuration metadata. It does not store private keys, OAuth tokens, principal emails,
+          raw IAM payloads, secret payloads, or customer data in findings.
+        </p>
+      </>
+    );
+  }
+
+  if (provider === "twilio") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Twilio account
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Find your Account SID and Auth Token.",
+            body: <>twilio.com/console → Account → API keys &amp; tokens. The Live Account SID and
+              Live Auth Token are at the top of the page.</>,
+          },
+          {
+            heading: "Connect below.",
+            body: <>Paste both into the form. The auth token is encrypted before storage and
+              never returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores Twilio credentials encrypted and uses them only to read selected
+          account configuration metadata. It does not store auth tokens, API secret values,
+          message bodies, call recordings, phone-message content, customer phone data, or
+          customer PII in findings.
+        </p>
+      </>
+    );
+  }
+
+  if (provider === "sendgrid") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a SendGrid account
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Create a restricted API key.",
+            body: <>SendGrid Console → Settings → API Keys → Create API Key → Restricted Access.
+              Grant read-only on API Keys, Sender Authentication, Mail Settings, Tracking
+              Settings, and Event Webhooks.</>,
+          },
+          {
+            heading: "Connect below.",
+            body: <>Paste the API key into the form. It is encrypted before storage and never
+              returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores SendGrid credentials encrypted and uses them only to read selected
+          mail configuration metadata. It does not store API key values, email content, recipient
+          data, raw event payloads, webhook secrets, or customer PII in findings.
+        </p>
+      </>
+    );
+  }
+
+  if (provider === "auth0") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect an Auth0 tenant
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Pick an authentication mode.",
+            body: <>Recommended: <strong style={{ color: "#b0b5c4" }}>client credentials</strong>.
+              Auth0 Dashboard → Applications → Create Application → Machine-to-Machine →
+              authorise it against the <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>Auth0 Management API</code>.</>,
+          },
+          {
+            heading: "Grant minimal read scopes.",
+            body: <>Authorize read-only scopes such as{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:tenant_settings</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:clients</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:connections</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:resource_servers</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:rules</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:actions</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:guardian_factors</code>,{" "}
+              <code style={{ fontFamily: "monospace", color: "#b0b5c4" }}>read:custom_domains</code>.</>,
+          },
+          {
+            heading: "Connect below.",
+            body: <>Paste the tenant domain plus either the M2M client ID + secret, or a Management
+              API token for direct-token mode. All secrets are encrypted before storage and never
+              returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "14px 0 0", fontSize: "11px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores Auth0 credentials encrypted and uses them only to read selected
+          tenant/application configuration metadata. It does not store client secrets, management
+          tokens, access tokens, refresh tokens, ID tokens, JWTs, user emails, user IDs, login
+          history, IP addresses, sessions, raw callback URLs, raw Auth0 logs, rule/action code,
+          or customer PII in findings.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -730,6 +909,22 @@ export default function IntegrationsPage() {
     }
     if (selectedProvider === "shopify") {
       return <ShopifyIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M82-pre.1 — credential connect forms ──────────────────────────────
+    if (selectedProvider === "azure") {
+      return <AzureIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    if (selectedProvider === "google_cloud") {
+      return <GoogleCloudIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    if (selectedProvider === "twilio") {
+      return <TwilioIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    if (selectedProvider === "sendgrid") {
+      return <SendGridIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    if (selectedProvider === "auth0") {
+      return <Auth0IntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

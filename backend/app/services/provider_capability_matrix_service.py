@@ -807,7 +807,15 @@ _AUTH0 = ProviderCapability(
         "linking to the security demo (no credential connect form yet — the "
         "Auth0 connector requires domain + client_id + client_secret (or "
         "management_api_token) which the integrations API allowlist does not "
-        "yet accept)."
+        "yet accept). "
+        "M82-pre.1 retires the security-preview routing and adds real "
+        "credential-connect parity: POST /integrations now accepts "
+        "provider='auth0' (and azure, google_cloud, twilio, sendgrid), the "
+        "schema requires either auth0_client_id + auth0_client_secret OR "
+        "auth0_management_api_token alongside auth0_domain, credentials are "
+        "encrypted via the existing AES-256-GCM pattern, and the integrations "
+        "page renders a real Auth0 credential form (with mode toggle) instead "
+        "of routing to /security/cases."
     ),
 )
 

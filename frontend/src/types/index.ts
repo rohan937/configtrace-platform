@@ -166,7 +166,11 @@ export type IntegrationStatus =
  *             aws_selected_regions (optional, defaults to [aws_default_region])
  */
 export interface IntegrationCreateRequest {
-  provider: "cloudflare" | "github" | "vercel" | "stripe" | "aws" | "firebase" | "supabase" | "shopify";
+  provider:
+    | "cloudflare" | "github" | "vercel" | "stripe"
+    | "aws" | "firebase" | "supabase" | "shopify"
+    // ── M82-pre.1 — credential-connect parity ────────────────────────────────
+    | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -236,6 +240,63 @@ export interface IntegrationCreateRequest {
    * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
    */
   shopify_access_token?: string;
+  // ── Azure fields (M82-pre.1) ───────────────────────────────────────────────
+  /** Azure AD / Entra ID tenant GUID. */
+  azure_tenant_id?: string;
+  /** Azure service principal application (client) ID. */
+  azure_client_id?: string;
+  /**
+   * Azure service principal client secret.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  azure_client_secret?: string;
+  /** Azure subscription GUID to monitor. */
+  azure_subscription_id?: string;
+  // ── Google Cloud fields (M82-pre.1) ────────────────────────────────────────
+  /** Google Cloud project ID to monitor. May be derived from the SA JSON. */
+  google_cloud_project_id?: string;
+  /**
+   * Google Cloud service account JSON key file contents (full JSON).
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: contains a private_key — never stored in localStorage/sessionStorage;
+   * never returned by backend; stored encrypted at rest.
+   */
+  google_cloud_service_account_json?: string;
+  // ── Twilio fields (M82-pre.1) ──────────────────────────────────────────────
+  /** Twilio Account SID. */
+  twilio_account_sid?: string;
+  /**
+   * Twilio auth token.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  twilio_auth_token?: string;
+  // ── SendGrid fields (M82-pre.1) ────────────────────────────────────────────
+  /**
+   * SendGrid API key with read-only configuration permissions.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  sendgrid_api_key?: string;
+  // ── Auth0 fields (M82-pre.1) ───────────────────────────────────────────────
+  /** Auth0 tenant domain, e.g. "mytenant.auth0.com". */
+  auth0_domain?: string;
+  /** Auth0 M2M application client ID (omit when using management_api_token). */
+  auth0_client_id?: string;
+  /**
+   * Auth0 M2M application client secret.
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  auth0_client_secret?: string;
+  /**
+   * Auth0 Management API token (direct-token mode, used instead of
+   * client_id + client_secret).
+   * Sent once; cleared from state immediately after submission.
+   * SECURITY: never stored in localStorage/sessionStorage; never returned by backend.
+   */
+  auth0_management_api_token?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

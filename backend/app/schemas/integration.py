@@ -15,10 +15,29 @@ Supported providers
     Credentials: ``vercel_token`` + ``vercel_project_id``.
 ``stripe``
     Credentials: ``stripe_api_key``.
+``azure``  (M82-pre.1)
+    Credentials: ``azure_tenant_id`` + ``azure_client_id`` + ``azure_client_secret``
+                 + ``azure_subscription_id``.
+``google_cloud``  (M82-pre.1)
+    Credentials: ``google_cloud_project_id`` + ``google_cloud_service_account_json``.
+``twilio``  (M82-pre.1)
+    Credentials: ``twilio_account_sid`` + ``twilio_auth_token``.
+``sendgrid``  (M82-pre.1)
+    Credentials: ``sendgrid_api_key``.
+``auth0``  (M82-pre.1)
+    Credentials: ``auth0_domain`` + ``auth0_client_id`` + ``auth0_client_secret``
+                 (or ``auth0_management_api_token`` for direct-token mode).
 
 Provider-specific fields are made optional at the Pydantic level and
 cross-validated by ``validate_provider_fields`` to produce clear error
 messages when a required field is missing for the selected provider.
+
+SECURITY: credential fields for M82-pre.1 providers follow the same
+invariants as existing providers — stored encrypted, never returned,
+never logged.  azure_client_secret, twilio_auth_token, sendgrid_api_key,
+auth0_client_secret, auth0_management_api_token, and
+google_cloud_service_account_json (which embeds a private_key) are
+NEVER present in any API response or log output.
 """
 
 from __future__ import annotations
@@ -41,11 +60,18 @@ class IntegrationCreateRequest(BaseModel):
     is present for the chosen provider.
     """
 
-    provider: Literal["cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase", "shopify"] = Field(
+    provider: Literal[
+        "cloudflare", "github", "vercel", "stripe", "aws", "firebase",
+        "supabase", "shopify",
+        # M82-pre.1 — credential-connect parity for completed security providers.
+        "azure", "google_cloud", "twilio", "sendgrid", "auth0",
+    ] = Field(
         ...,
         description=(
             "Provider identifier. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase', 'supabase', 'shopify'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
+            "'aws', 'firebase', 'supabase', 'shopify', 'azure', "
+            "'google_cloud', 'twilio', 'sendgrid', 'auth0'."
         ),
     )
     display_name: str = Field(
@@ -228,6 +254,139 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Azure fields (M82-pre.1) ──────────────────────────────────────────────
+    azure_tenant_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Azure AD / Entra ID tenant GUID. Required when provider='azure'. "
+            "Used as the OAuth2 token-endpoint tenant for the service principal."
+        ),
+    )
+    azure_client_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Azure service principal application (client) ID. "
+            "Required when provider='azure'."
+        ),
+    )
+    azure_client_secret: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Azure service principal client secret. "
+            "Required when provider='azure'. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+    azure_subscription_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Azure subscription GUID to monitor. "
+            "Required when provider='azure'."
+        ),
+    )
+
+    # ── Google Cloud fields (M82-pre.1) ───────────────────────────────────────
+    google_cloud_project_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Google Cloud project ID to monitor (e.g. 'my-project-12345'). "
+            "Required when provider='google_cloud'. If absent, the backend "
+            "attempts to read it from the service account JSON."
+        ),
+    )
+    google_cloud_service_account_json: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Google Cloud service account JSON key file contents (full JSON "
+            "downloaded from console.cloud.google.com → IAM & Admin → "
+            "Service Accounts → Keys → Create new key → JSON). "
+            "Required when provider='google_cloud'. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "SECURITY: the embedded private_key is encrypted at rest and is "
+            "NEVER logged, returned to the frontend, or stored in plaintext."
+        ),
+    )
+
+    # ── Twilio fields (M82-pre.1) ─────────────────────────────────────────────
+    twilio_account_sid: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Twilio Account SID. "
+            "Required when provider='twilio'. "
+            "Used as the HTTP Basic auth username for read-only Twilio "
+            "configuration API calls."
+        ),
+    )
+    twilio_auth_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Twilio auth token. "
+            "Required when provider='twilio'. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "SECURITY: never appears in error messages or sync diagnostics."
+        ),
+    )
+
+    # ── SendGrid fields (M82-pre.1) ───────────────────────────────────────────
+    sendgrid_api_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "SendGrid API key with read-only access to account configuration "
+            "(API keys list, sender authentication, mail settings, tracking "
+            "settings, event webhook, inbound parse, suppression settings). "
+            "Required when provider='sendgrid'. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+
+    # ── Auth0 fields (M82-pre.1) ──────────────────────────────────────────────
+    auth0_domain: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Auth0 tenant domain, e.g. 'mytenant.auth0.com'. "
+            "Required when provider='auth0'."
+        ),
+    )
+    auth0_client_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Auth0 M2M application client ID. "
+            "Required when provider='auth0' and using the OAuth2 "
+            "client_credentials flow (omit when supplying "
+            "auth0_management_api_token directly)."
+        ),
+    )
+    auth0_client_secret: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Auth0 M2M application client secret. "
+            "Required when provider='auth0' and using the OAuth2 "
+            "client_credentials flow. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+    auth0_management_api_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Auth0 Management API token (direct-token mode — used instead of "
+            "client_id + client_secret). Optional when provider='auth0'. "
+            "Stored encrypted — NEVER returned in API responses or logged."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -308,6 +467,68 @@ class IntegrationCreateRequest(BaseModel):
             if not self.shopify_access_token:
                 raise ValueError(
                     "shopify_access_token is required for Shopify integrations."
+                )
+        # ── M82-pre.1 — credential presence validation ──────────────────────────
+        # New connectable providers: presence and basic shape only. Live
+        # validation against the provider API happens on first sync, not at
+        # create time. This avoids tight coupling to network availability
+        # during integration creation and keeps secret values from appearing
+        # in synchronous error messages.
+        elif self.provider == "azure":
+            if not self.azure_tenant_id:
+                raise ValueError(
+                    "azure_tenant_id is required for Azure integrations."
+                )
+            if not self.azure_client_id:
+                raise ValueError(
+                    "azure_client_id is required for Azure integrations."
+                )
+            if not self.azure_client_secret:
+                raise ValueError(
+                    "azure_client_secret is required for Azure integrations."
+                )
+            if not self.azure_subscription_id:
+                raise ValueError(
+                    "azure_subscription_id is required for Azure integrations."
+                )
+        elif self.provider == "google_cloud":
+            if not self.google_cloud_service_account_json:
+                raise ValueError(
+                    "google_cloud_service_account_json is required for "
+                    "Google Cloud integrations."
+                )
+            # project_id is recommended but may be derived from the service
+            # account JSON's project_id field; we accept either here.
+        elif self.provider == "twilio":
+            if not self.twilio_account_sid:
+                raise ValueError(
+                    "twilio_account_sid is required for Twilio integrations."
+                )
+            if not self.twilio_auth_token:
+                raise ValueError(
+                    "twilio_auth_token is required for Twilio integrations."
+                )
+        elif self.provider == "sendgrid":
+            if not self.sendgrid_api_key:
+                raise ValueError(
+                    "sendgrid_api_key is required for SendGrid integrations."
+                )
+        elif self.provider == "auth0":
+            if not self.auth0_domain:
+                raise ValueError(
+                    "auth0_domain is required for Auth0 integrations."
+                )
+            # Either client_credentials (client_id + client_secret) OR a
+            # direct management_api_token must be provided. The connector
+            # supports both modes.
+            has_client_creds = bool(self.auth0_client_id) and bool(
+                self.auth0_client_secret
+            )
+            has_mgmt_token = bool(self.auth0_management_api_token)
+            if not (has_client_creds or has_mgmt_token):
+                raise ValueError(
+                    "Auth0 integrations require either auth0_client_id + "
+                    "auth0_client_secret OR auth0_management_api_token."
                 )
         return self
 

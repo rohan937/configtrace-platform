@@ -174,6 +174,49 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "shop_domain": body.shopify_shop_domain,
             "shopify_access_token": body.shopify_access_token,
         }
+    # ── M82-pre.1 — connectable security providers ────────────────────────────
+    # SECURITY: credentials are passed through to encrypt_credentials() and
+    # NEVER logged, NEVER returned to the frontend, and NEVER stored in
+    # plaintext. The dict keys here match the connector's expected
+    # credentials-dict shape (without the front-end's provider prefix).
+    elif body.provider == "azure":
+        # SECURITY: azure_client_secret is never logged here or in the service.
+        return {
+            "tenant_id":       body.azure_tenant_id,
+            "client_id":       body.azure_client_id,
+            "client_secret":   body.azure_client_secret,
+            "subscription_id": body.azure_subscription_id,
+        }
+    elif body.provider == "google_cloud":
+        # SECURITY: the service-account JSON embeds a private_key. The full
+        # JSON string is stored encrypted only and NEVER logged or returned.
+        return {
+            "project_id":           body.google_cloud_project_id,
+            "service_account_json": body.google_cloud_service_account_json,
+        }
+    elif body.provider == "twilio":
+        # SECURITY: twilio_auth_token is never logged here or in the service.
+        return {
+            "account_sid": body.twilio_account_sid,
+            "auth_token":  body.twilio_auth_token,
+        }
+    elif body.provider == "sendgrid":
+        # SECURITY: sendgrid_api_key is never logged here or in the service.
+        return {
+            "api_key": body.sendgrid_api_key,
+        }
+    elif body.provider == "auth0":
+        # SECURITY: auth0_client_secret and auth0_management_api_token are
+        # never logged here or in the service. Only present keys are included
+        # so the connector can pick the appropriate auth mode.
+        creds: dict = {"domain": body.auth0_domain}
+        if body.auth0_client_id:
+            creds["client_id"] = body.auth0_client_id
+        if body.auth0_client_secret:
+            creds["client_secret"] = body.auth0_client_secret
+        if body.auth0_management_api_token:
+            creds["management_api_token"] = body.auth0_management_api_token
+        return creds
     return {}
 
 

@@ -4,12 +4,12 @@
  * Import `PROVIDERS` for the full map, or `getProviderMeta` for a safe
  * single-provider lookup that never returns undefined.
  *
- * M82-pre adds Azure, Google Cloud, Twilio, SendGrid, and Auth0 as
- * security-preview providers. They have a full security arc (drift rules,
- * activity ingestion, signals, correlations, demo + case evidence) but
- * the credential connect UI is not wired yet — they render with a
- * "Security preview" CTA that routes to /security/cases (the demo home)
- * instead of an integration connect form.
+ * M82-pre.1: Azure, Google Cloud, Twilio, SendGrid, and Auth0 are now
+ * fully connectable. They each have a backend POST /integrations
+ * allowlist entry, a credential form, encrypted credential storage, and
+ * the existing connector dispatch in sync_service / sync_task. The
+ * security-preview routing (M82-pre) is retired — the cards now render
+ * the same "Connect" CTA as the canonical 8 providers.
  */
 
 export type ProviderId =
@@ -21,7 +21,7 @@ export type ProviderId =
   | "firebase"
   | "supabase"
   | "shopify"
-  // ── M82-pre: security-preview providers (no connect form yet) ─────────────
+  // ── M82-pre.1 — fully connectable security providers ─────────────────────
   | "azure"
   | "google_cloud"
   | "twilio"
@@ -60,10 +60,10 @@ export interface ProviderMeta {
   /** Border color for badges (CSS colour string). */
   borderColor: string;
   /**
-   * M82-pre: when true, the provider has a complete security/demo arc but
-   * no credential connect UI. The integrations card renders a "Security
-   * preview" CTA that routes to /security/cases (where the demo lives)
-   * instead of opening a credential form.
+   * Legacy M82-pre flag. M82-pre.1 retired the security-preview path so
+   * every provider in this registry is now fully connectable. Kept as an
+   * optional field so historical entries that set it explicitly still
+   * type-check; new entries should omit it.
    */
   securityPreview?: boolean;
 }
@@ -239,13 +239,14 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     borderColor: "rgba(150,191,72,0.25)",
   },
 
-  // ── M82-pre: security-preview providers ─────────────────────────────────
+  // ── M82-pre.1 — fully connectable security providers ─────────────────────
   // These providers have a complete security arc (drift rules, activity
   // ingestion, signals, risk × activity correlations, demo + case evidence)
-  // but the credential connect UI is not wired yet. Their cards show a
-  // "Security preview" CTA that routes to /security/cases instead of opening
-  // a credential form. ConfigTrace never stores secrets, tokens, JWTs, raw
-  // payloads, customer data, or PII for any of these providers.
+  // AND a credential connect form, backend POST /integrations allowlist
+  // entry, encrypted credential storage, and sync_task dispatch. ConfigTrace
+  // never stores secrets, tokens, JWTs, raw payloads, customer data, or PII
+  // for any of these providers — credential values are encrypted at rest
+  // and never returned in API responses.
 
   azure: {
     id: "azure",
@@ -266,7 +267,6 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#0078d4",
     bgColor: "rgba(0,120,212,0.10)",
     borderColor: "rgba(0,120,212,0.25)",
-    securityPreview: true,
   },
 
   google_cloud: {
@@ -289,7 +289,6 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#4285f4",
     bgColor: "rgba(66,133,244,0.10)",
     borderColor: "rgba(66,133,244,0.25)",
-    securityPreview: true,
   },
 
   twilio: {
@@ -311,7 +310,6 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#f22f46",
     bgColor: "rgba(242,47,70,0.10)",
     borderColor: "rgba(242,47,70,0.25)",
-    securityPreview: true,
   },
 
   sendgrid: {
@@ -333,7 +331,6 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#1a82e2",
     bgColor: "rgba(26,130,226,0.10)",
     borderColor: "rgba(26,130,226,0.25)",
-    securityPreview: true,
   },
 
   auth0: {
@@ -357,7 +354,6 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#eb5424",
     bgColor: "rgba(235,84,36,0.10)",
     borderColor: "rgba(235,84,36,0.25)",
-    securityPreview: true,
   },
 };
 
@@ -371,7 +367,7 @@ export const PROVIDER_IDS: ProviderId[] = [
   "firebase",
   "supabase",
   "shopify",
-  // ── M82-pre: security-preview providers (no connect form yet) ───────────
+  // ── M82-pre.1 — fully connectable security providers ────────────────────
   "azure",
   "google_cloud",
   "twilio",
@@ -380,10 +376,11 @@ export const PROVIDER_IDS: ProviderId[] = [
 ];
 
 /**
- * M82-pre: subset of providers that have a connect form on /integrations.
- * Security-preview providers (azure, google_cloud, twilio, sendgrid, auth0)
- * have a complete security arc but no credential UI yet — their cards route
- * to /security/cases instead of opening a credential form.
+ * M82-pre.1: every provider in the registry has a credential connect form
+ * and a backend POST /integrations allowlist entry. SECURITY_PREVIEW_*
+ * is retained as an empty array for backwards compatibility with the
+ * integrations page's preview branch — no provider currently routes
+ * through the security-preview fallback.
  */
 export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "cloudflare",
@@ -394,21 +391,21 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "firebase",
   "supabase",
   "shopify",
-];
-
-/**
- * M82-pre: provider IDs whose card is rendered as a "Security preview"
- * card linking to /security/cases. These providers have drift rules,
- * activity ingestion, signals, correlations, and a demo case — but no
- * credential connect form yet.
- */
-export const SECURITY_PREVIEW_PROVIDER_IDS: ProviderId[] = [
+  // ── M82-pre.1 — fully connectable security providers ────────────────────
   "azure",
   "google_cloud",
   "twilio",
   "sendgrid",
   "auth0",
 ];
+
+/**
+ * M82-pre.1: empty. The five M82-pre providers (azure/google_cloud/twilio/
+ * sendgrid/auth0) are now fully connectable so none route through the
+ * security-preview fallback. The constant remains exported (rather than
+ * deleted) so callers can keep referencing it without churn.
+ */
+export const SECURITY_PREVIEW_PROVIDER_IDS: ProviderId[] = [];
 
 /**
  * Safe single-provider lookup.  Returns a minimal fallback object if the

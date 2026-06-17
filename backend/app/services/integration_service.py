@@ -159,10 +159,70 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── M82-pre.1 — credential-connect parity for completed security providers ──
+    # These providers have full security arcs (drift rules, activity ingestion,
+    # signals, correlations, demo cases) and connectors with tested sync paths.
+    # Credentials are validated for presence at the schema level and stored
+    # encrypted. Live API validation is deferred to the first sync (the
+    # existing connector.validate_credentials() is called by the sync_task
+    # path on demand), so create-time failures cannot leak secret values
+    # through synchronous error messages.
+    elif provider == "azure":
+        return _create_azure_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
+    elif provider == "google_cloud":
+        return _create_google_cloud_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
+    elif provider == "twilio":
+        return _create_twilio_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
+    elif provider == "sendgrid":
+        return _create_sendgrid_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
+    elif provider == "auth0":
+        return _create_auth0_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
-            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', 'aws', 'firebase', 'supabase'."
+            "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
+            "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
+            "'twilio', 'sendgrid', 'auth0'."
         )
 
 
@@ -659,6 +719,424 @@ def create_firebase_integration(
     db.add(resource)
 
     # ── 6. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+# ── M82-pre.1 — credential-connect parity helpers ────────────────────────────
+#
+# Shared design for the five M82-pre.1 helpers (azure, google_cloud, twilio,
+# sendgrid, auth0):
+#
+#   1. Presence / shape validation happens in IntegrationCreateRequest
+#      (Pydantic model_validator). By the time we reach these helpers the
+#      credentials dict has every required key.
+#   2. Live API validation is intentionally NOT performed here. The first
+#      scheduled or manual sync will call connector.validate_credentials()
+#      and surface errors through the normal SyncRun failure path. This
+#      prevents secret-bearing API error messages from being raised
+#      synchronously through the create endpoint.
+#   3. Credentials are encrypted with AES-256-GCM via encrypt_credentials().
+#      The plaintext dict is dropped immediately after.
+#   4. A Resource row is created with a stable, opaque provider_resource_id
+#      derived from the credential identity field (subscription_id, project_id,
+#      account_sid, integration.id fallback for SendGrid, or domain).
+#   5. The resource_metadata dict carries only non-secret identifiers — never
+#      a token, secret, JWT, private key, or PEM material.
+#
+# SECURITY: at no point are these credentials returned to the caller, written
+# to a log, or stored in plaintext. The encrypted_credentials column is the
+# only persistent home.
+
+
+def _create_azure_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create an Azure integration + subscription resource (M82-pre.1).
+
+    SECURITY: credentials["client_secret"] is NEVER logged, NEVER returned,
+    NEVER stored in plaintext. tenant_id, client_id, and subscription_id
+    are opaque identifiers used for resource keying.
+    """
+    subscription_id: str = credentials.get("subscription_id", "")
+
+    # ── 1. Duplicate-subscription check (non-deleted only) ────────────────────
+    if subscription_id:
+        existing = (
+            db.query(Resource)
+            .join(Integration, Integration.id == Resource.integration_id)
+            .filter(
+                Resource.user_id == user_id,
+                Resource.provider_resource_type == "azure_subscription",
+                Resource.provider_resource_id == subscription_id,
+                Integration.status != "deleted",
+            )
+            .first()
+        )
+        if existing is not None:
+            raise ValueError(
+                f"Azure subscription {subscription_id!r} is already connected."
+            )
+
+    # ── 2. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 3. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="azure",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 4. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores only opaque identifiers (tenant_id
+    # and subscription_id are GUIDs that are not secret). client_id and
+    # client_secret are NEVER stored here.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="azure_subscription",
+        provider_resource_id=subscription_id or str(integration.id),
+        display_name=(
+            f"{display_name} ({subscription_id})"
+            if subscription_id
+            else display_name
+        ),
+        resource_metadata={
+            "tenant_id": credentials.get("tenant_id", ""),
+            "subscription_id": subscription_id,
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 5. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_google_cloud_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Google Cloud integration + project resource (M82-pre.1).
+
+    SECURITY: the service account JSON embeds a private_key. The full JSON
+    string is stored encrypted only and NEVER logged or returned. The
+    private_key is NEVER copied into resource_metadata or any other field.
+    """
+    import json as _json
+
+    # ── 1. Resolve project_id ─────────────────────────────────────────────────
+    # Prefer the explicit project_id; fall back to parsing the SA JSON if it
+    # contains one. Parsing failures here are non-fatal — the connector will
+    # raise a clearer error at sync time.
+    project_id: str = (credentials.get("project_id") or "").strip()
+    sa_raw = credentials.get("service_account_json") or ""
+    if not project_id and isinstance(sa_raw, str) and sa_raw.strip():
+        try:
+            sa_dict = _json.loads(sa_raw)
+            if isinstance(sa_dict, dict):
+                project_id = (sa_dict.get("project_id") or "").strip()
+        except (_json.JSONDecodeError, ValueError):
+            # Parsing failure — defer to first-sync validation. We do NOT
+            # raise here because the error message could echo the JSON text
+            # back into the response, which might re-surface private_key
+            # bytes if the user pasted them by accident.
+            project_id = ""
+
+    # ── 2. Duplicate-project check (non-deleted only) ─────────────────────────
+    if project_id:
+        existing = (
+            db.query(Resource)
+            .join(Integration, Integration.id == Resource.integration_id)
+            .filter(
+                Resource.user_id == user_id,
+                Resource.provider_resource_type == "google_cloud_project",
+                Resource.provider_resource_id == project_id,
+                Integration.status != "deleted",
+            )
+            .first()
+        )
+        if existing is not None:
+            raise ValueError(
+                f"Google Cloud project {project_id!r} is already connected."
+            )
+
+    # ── 3. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 4. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="google_cloud",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 5. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the safe project_id. The
+    # service_account_json (and its embedded private_key, private_key_id,
+    # client_email) is NEVER copied here.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="google_cloud_project",
+        provider_resource_id=project_id or str(integration.id),
+        display_name=(
+            f"{display_name} ({project_id})" if project_id else display_name
+        ),
+        resource_metadata={"project_id": project_id},
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 6. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_twilio_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Twilio integration + account resource (M82-pre.1).
+
+    SECURITY: credentials["auth_token"] is NEVER logged, NEVER returned,
+    NEVER stored in plaintext. Only the account_sid is exposed as the
+    resource key.
+    """
+    account_sid: str = credentials.get("account_sid", "")
+
+    # ── 1. Duplicate-account check (non-deleted only) ─────────────────────────
+    if account_sid:
+        existing = (
+            db.query(Resource)
+            .join(Integration, Integration.id == Resource.integration_id)
+            .filter(
+                Resource.user_id == user_id,
+                Resource.provider_resource_type == "twilio_account",
+                Resource.provider_resource_id == account_sid,
+                Integration.status != "deleted",
+            )
+            .first()
+        )
+        if existing is not None:
+            raise ValueError(
+                "This Twilio account is already connected."
+            )
+
+    # ── 2. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 3. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="twilio",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 4. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY a prefix of the account_sid
+    # (first 8 chars) so the full identifier is not echoed back through
+    # downstream UIs that render resource metadata directly.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="twilio_account",
+        provider_resource_id=account_sid or str(integration.id),
+        display_name=(
+            f"{display_name} (Twilio account)"
+            if account_sid
+            else display_name
+        ),
+        resource_metadata={
+            "account_sid_prefix": account_sid[:8] if account_sid else "",
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 5. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_sendgrid_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a SendGrid integration + account resource (M82-pre.1).
+
+    SECURITY: credentials["api_key"] is NEVER logged, NEVER returned,
+    NEVER stored in plaintext. SendGrid does not expose an account-level
+    GUID at create time, so the resource is keyed by integration.id —
+    duplicate connections are intentionally allowed (the user may have
+    multiple sub-accounts on the same SendGrid plan).
+    """
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="sendgrid",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata is empty (no SendGrid identifier is safe to
+    # store at create time without a live API call). The api_key value is
+    # NEVER copied here.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="sendgrid_account",
+        provider_resource_id=str(integration.id),
+        display_name=display_name,
+        resource_metadata={},
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_auth0_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create an Auth0 integration + tenant resource (M82-pre.1).
+
+    SECURITY: credentials["client_secret"] and
+    credentials["management_api_token"] are NEVER logged, NEVER returned,
+    NEVER stored in plaintext. Only the safe domain string is exposed
+    through resource_metadata.
+    """
+    domain: str = (credentials.get("domain") or "").strip().lower()
+
+    # ── 1. Duplicate-tenant check (non-deleted only) ──────────────────────────
+    if domain:
+        existing = (
+            db.query(Resource)
+            .join(Integration, Integration.id == Resource.integration_id)
+            .filter(
+                Resource.user_id == user_id,
+                Resource.provider_resource_type == "auth0_tenant",
+                Resource.provider_resource_id == domain,
+                Integration.status != "deleted",
+            )
+            .first()
+        )
+        if existing is not None:
+            raise ValueError(
+                f"Auth0 tenant {domain!r} is already connected."
+            )
+
+    # ── 2. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 3. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="auth0",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 4. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the safe domain string. client_id,
+    # client_secret, and management_api_token are NEVER copied here.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="auth0_tenant",
+        provider_resource_id=domain or str(integration.id),
+        display_name=(
+            f"{display_name} ({domain})" if domain else display_name
+        ),
+        resource_metadata={"domain": domain},
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 5. Commit ─────────────────────────────────────────────────────────────
     db.commit()
     db.refresh(integration)
     return integration

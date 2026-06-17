@@ -1,29 +1,27 @@
 """M82-pre — Provider integration card parity guardrails.
 
-Pins the M82-pre product change: Azure, Google Cloud, Twilio, SendGrid, and
-Auth0 are surfaced on the integrations page as security-preview cards that
-route to /security/cases (where each provider's demo lives) instead of
-opening a credential connect form.
+Originally pinned the M82-pre state where Azure, Google Cloud, Twilio,
+SendGrid, and Auth0 were surfaced as security-preview cards (no
+credential connect form yet). M82-pre.1 retired that intermediate
+state: all five providers are now fully connectable through the
+existing encrypted-credential pattern.
 
-CRITICAL PRINCIPLE: the integrations card grid is allowed to advertise a
-provider only when one of the following is true:
-
-  * Backend POST /integrations validates the provider AND the connector
-    has a tested credential-driven sync path (the 8 canonical providers).
-  * The provider has a complete security arc (drift rules, activity
-    ingestion, signals, correlations, demo + case evidence) but no
-    credential connect form yet — surfaced as a "Security preview" card
-    that links to /security/cases (the demo home).
+This file's tests have been migrated forward — assertions about the
+"security-preview" surface area now confirm the *retirement* of that
+surface (empty SECURITY_PREVIEW_PROVIDER_IDS, allowlist accepts all 13
+providers) rather than its presence. The dedicated M82-pre.1 test
+file covers the new credential-connect surface in detail.
 
 This file adds NO product code — it pins:
 
-  A. Backend integrations allowlist still excludes security-preview providers
+  A. Backend integrations allowlist accepts all 13 providers (M82-pre.1)
   B. Sync layer / sync_task already supports all 13 provider keys
-  C. Each security-preview provider has a real connector class
+  C. Each completed security provider has a real connector class
   D. Frontend provider registry (providers.ts) surfaces all 13 providers
-  E. Integrations page renders security-preview CTA for the 5 new providers
-  F. Provider expansion framework advances past M82-pre
-  G. Capability matrix Auth0 notes mention M82-pre
+  E. Integrations page retains the security-preview routing scaffolding
+     but no providers route through it post-M82-pre.1
+  F. Provider expansion framework points to M82A Datadog
+  G. Capability matrix Auth0 notes mention M82-pre and M82-pre.1
   H. No forbidden claim phrases, no JWT/secret-shape strings on the
      integrations surface
 """
@@ -60,14 +58,14 @@ CONNECTABLE_PROVIDERS = (
 # Section A — Backend integrations allowlist
 # ════════════════════════════════════════════════════════════════════════════
 #
-# The POST /integrations schema must keep the existing 8-provider allowlist.
-# The 5 security-preview providers (azure, google_cloud, twilio, sendgrid,
-# auth0) have connectors and sync support but no validated credential UI,
-# so they MUST NOT be in the integration-creation allowlist yet.
+# M82-pre.1 expanded POST /integrations to accept all 13 provider keys.
+# Each of azure, google_cloud, twilio, sendgrid, auth0 has a real
+# credential form, schema-level presence validation, encrypted storage,
+# and sync_task dispatch.
 
 
-def test_backend_post_integrations_allowlist_is_eight_connectable_providers():
-    """POST /integrations Literal type contains exactly the 8 canonical providers."""
+def test_backend_post_integrations_allowlist_is_thirteen_connectable_providers():
+    """POST /integrations Literal type contains all 13 providers (M82-pre.1)."""
     from app.schemas.integration import IntegrationCreateRequest
     # Pydantic v2: the provider field's allowed literal values.
     field = IntegrationCreateRequest.model_fields["provider"]
@@ -75,22 +73,22 @@ def test_backend_post_integrations_allowlist_is_eight_connectable_providers():
     # annotation is Literal["cloudflare", "github", ...] — extract its args.
     import typing
     allowed = set(typing.get_args(annotation))
-    assert allowed == set(CONNECTABLE_PROVIDERS), (
-        f"POST /integrations allowlist drift: expected {set(CONNECTABLE_PROVIDERS)}, "
-        f"got {allowed}"
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS)
+    assert allowed == expected, (
+        f"POST /integrations allowlist drift: expected {expected}, got {allowed}"
     )
 
 
-def test_backend_post_integrations_allowlist_excludes_security_preview_providers():
-    """The 5 security-preview providers must NOT yet be accepted by POST /integrations."""
+def test_backend_post_integrations_allowlist_includes_m82_pre_1_providers():
+    """M82-pre.1 — the 5 previously-preview providers are now in the allowlist."""
     from app.schemas.integration import IntegrationCreateRequest
     import typing
     annotation = IntegrationCreateRequest.model_fields["provider"].annotation
     allowed = set(typing.get_args(annotation))
     for p in SECURITY_PREVIEW_PROVIDERS:
-        assert p not in allowed, (
-            f"Security-preview provider {p!r} must NOT be in the integration-creation "
-            f"allowlist until its credential UI is wired."
+        assert p in allowed, (
+            f"Provider {p!r} must now be in the integration-creation allowlist "
+            f"(M82-pre.1 added the credential UI)."
         )
 
 
@@ -204,8 +202,8 @@ def test_fe_providers_ts_provider_ids_array_includes_all_thirteen():
     )
 
 
-def test_fe_providers_ts_security_preview_subset_exists():
-    """providers.ts exposes SECURITY_PREVIEW_PROVIDER_IDS with exactly the 5 providers."""
+def test_fe_providers_ts_security_preview_subset_is_empty_after_m82_pre_1():
+    """M82-pre.1 retired the security-preview routing — the subset is empty."""
     text = _read_fe("lib/providers.ts")
     m = re.search(
         r"export const SECURITY_PREVIEW_PROVIDER_IDS\s*:\s*ProviderId\[\]\s*=\s*\[(.*?)\];",
@@ -216,13 +214,13 @@ def test_fe_providers_ts_security_preview_subset_exists():
         "SECURITY_PREVIEW_PROVIDER_IDS array not found in providers.ts"
     )
     ids = re.findall(r'"([a-z0-9_]+)"', m.group(1))
-    assert set(ids) == set(SECURITY_PREVIEW_PROVIDERS), (
-        f"SECURITY_PREVIEW_PROVIDER_IDS drift: got {ids}"
+    assert ids == [], (
+        f"SECURITY_PREVIEW_PROVIDER_IDS must be empty after M82-pre.1; got {ids}"
     )
 
 
-def test_fe_providers_ts_connectable_subset_exists():
-    """providers.ts exposes CONNECTABLE_PROVIDER_IDS with exactly the 8 connectable providers."""
+def test_fe_providers_ts_connectable_subset_covers_all_thirteen():
+    """M82-pre.1 — CONNECTABLE_PROVIDER_IDS covers every provider in the registry."""
     text = _read_fe("lib/providers.ts")
     m = re.search(
         r"export const CONNECTABLE_PROVIDER_IDS\s*:\s*ProviderId\[\]\s*=\s*\[(.*?)\];",
@@ -233,13 +231,14 @@ def test_fe_providers_ts_connectable_subset_exists():
         "CONNECTABLE_PROVIDER_IDS array not found in providers.ts"
     )
     ids = re.findall(r'"([a-z0-9_]+)"', m.group(1))
-    assert set(ids) == set(CONNECTABLE_PROVIDERS), (
-        f"CONNECTABLE_PROVIDER_IDS drift: got {ids}"
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS)
+    assert set(ids) == expected, (
+        f"CONNECTABLE_PROVIDER_IDS drift: expected all 13, got {ids}"
     )
 
 
-def test_fe_providers_ts_each_security_preview_has_security_preview_flag():
-    """Every security-preview provider entry has securityPreview: true."""
+def test_fe_providers_ts_security_preview_flag_removed_from_m82_pre_1_providers():
+    """M82-pre.1 — securityPreview is removed from the 5 now-connectable providers."""
     text = _read_fe("lib/providers.ts")
     for p in SECURITY_PREVIEW_PROVIDERS:
         # Locate the entry block for this provider id.
@@ -250,8 +249,9 @@ def test_fe_providers_ts_each_security_preview_has_security_preview_flag():
         )
         assert m is not None, f"providers.ts entry for {p!r} not found"
         block = m.group(1)
-        assert "securityPreview: true" in block, (
-            f"providers.ts entry for {p!r} missing securityPreview: true flag"
+        assert "securityPreview: true" not in block, (
+            f"providers.ts entry for {p!r} must NOT carry securityPreview: true "
+            f"after M82-pre.1 (the provider is now fully connectable)."
         )
 
 
