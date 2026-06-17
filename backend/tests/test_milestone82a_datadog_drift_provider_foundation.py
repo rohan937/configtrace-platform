@@ -1068,13 +1068,14 @@ class TestProviderRegistration:
         assert datadog_cap.provider == "datadog"
         assert datadog_cap.drift.drift_snapshots is True
         assert datadog_cap.drift.drift_diff is True
-        assert datadog_cap.drift.drift_risk_classification is False
-        assert datadog_cap.security.security_rules is False
+        # M82B set drift_risk_classification=True (security rules added)
+        assert datadog_cap.drift.drift_risk_classification is True
+        # M82B set security_rules=True
+        assert datadog_cap.security.security_rules is True
         assert datadog_cap.security.activity_ingestion is False
         assert datadog_cap.security.demo_seed_clear is False
         assert datadog_cap.maturity == "partial"
-        assert "M82A" in datadog_cap.notes
-        assert "M82B" in datadog_cap.notes
+        assert "M82A" in datadog_cap.notes or "M82B" in datadog_cap.notes
 
     def test_datadog_in_partial_providers_list(self):
         from app.services.provider_capability_matrix_service import PROVIDER_CAPABILITIES_PARTIAL

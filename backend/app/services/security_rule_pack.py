@@ -255,6 +255,24 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "auth0_application_origin_missing_https": ("auth0", "medium", "Application origin posture"),
     "auth0_public_client_refresh_tokens_enabled": ("auth0", "medium", "Refresh token posture"),
     "auth0_application_token_endpoint_auth_none": ("auth0", "medium", "Token endpoint posture"),
+    # Datadog — M82B core security rules
+    "datadog_monitor_disabled": ("datadog", "medium", "Monitor posture"),
+    "datadog_monitor_unrestricted_roles": ("datadog", "low", "Monitor posture"),
+    "datadog_monitor_notify_no_data_disabled": ("datadog", "low", "Monitor posture"),
+    "datadog_monitor_long_query": ("datadog", "low", "Monitor posture"),
+    "datadog_slo_no_monitors": ("datadog", "medium", "SLO posture"),
+    "datadog_slo_low_target": ("datadog", "low", "SLO posture"),
+    "datadog_dashboard_public_url_present": ("datadog", "medium", "Dashboard posture"),
+    "datadog_dashboard_unrestricted_roles": ("datadog", "low", "Dashboard posture"),
+    "datadog_webhook_without_secret_headers": ("datadog", "high", "Webhook posture"),
+    "datadog_webhook_payload_template_present": ("datadog", "low", "Webhook posture"),
+    "datadog_notification_integration_no_channels": ("datadog", "low", "Notification integration posture"),
+    "datadog_application_key_broad_scopes": ("datadog", "medium", "Application key posture"),
+    "datadog_api_key_disabled": ("datadog", "low", "API key posture"),
+    "datadog_role_high_permission_count": ("datadog", "medium", "Role posture"),
+    "datadog_team_no_members": ("datadog", "low", "Team posture"),
+    "datadog_cloud_integration_broad_collection": ("datadog", "medium", "Cloud integration posture"),
+    "datadog_cloud_integration_log_collection_enabled": ("datadog", "low", "Cloud integration posture"),
 }
 
 

@@ -45,6 +45,7 @@ PROVIDERS = [
     "twilio",
     "sendgrid",
     "auth0",
+    "datadog",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -267,6 +268,24 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "auth0_application_origin_missing_https": ("auth0_application",),
     "auth0_public_client_refresh_tokens_enabled": ("auth0_application",),
     "auth0_application_token_endpoint_auth_none": ("auth0_application",),
+    # Datadog — M82B
+    "datadog_monitor_disabled": ("datadog_monitor",),
+    "datadog_monitor_unrestricted_roles": ("datadog_monitor",),
+    "datadog_monitor_notify_no_data_disabled": ("datadog_monitor",),
+    "datadog_monitor_long_query": ("datadog_monitor",),
+    "datadog_slo_no_monitors": ("datadog_slo",),
+    "datadog_slo_low_target": ("datadog_slo",),
+    "datadog_dashboard_public_url_present": ("datadog_dashboard",),
+    "datadog_dashboard_unrestricted_roles": ("datadog_dashboard",),
+    "datadog_webhook_without_secret_headers": ("datadog_webhook_integration",),
+    "datadog_webhook_payload_template_present": ("datadog_webhook_integration",),
+    "datadog_notification_integration_no_channels": ("datadog_notification_integration",),
+    "datadog_application_key_broad_scopes": ("datadog_application_key_metadata",),
+    "datadog_api_key_disabled": ("datadog_api_key_metadata",),
+    "datadog_role_high_permission_count": ("datadog_role",),
+    "datadog_team_no_members": ("datadog_team",),
+    "datadog_cloud_integration_broad_collection": ("datadog_cloud_integration",),
+    "datadog_cloud_integration_log_collection_enabled": ("datadog_cloud_integration",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -324,6 +343,18 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Actions",
         "MFA / Guardian factors",
         "Custom domains",
+    ],
+    "datadog": [
+        "Monitors",
+        "SLOs",
+        "Dashboards",
+        "Webhook integrations",
+        "Notification integrations",
+        "API key metadata",
+        "Application key metadata",
+        "Roles",
+        "Teams",
+        "Cloud integrations",
     ],
 }
 
@@ -516,6 +547,47 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "google_cloud_secret_manager_summary": {
         "message": "Secret Manager summary metadata was not observed.",
         "hints": ["Verify the service account has roles/secretmanager.viewer or secretmanager.secrets.list permission. This surface may be absent if the Secret Manager API is not enabled."],
+    },
+    # Datadog — M82B
+    "datadog_monitor": {
+        "message": "Datadog monitor metadata was not observed.",
+        "hints": ["Verify the API key and Application key have monitors_read permission."],
+    },
+    "datadog_slo": {
+        "message": "Datadog SLO metadata was not observed.",
+        "hints": ["Verify the API key and Application key have slos_read permission. This surface may be absent if no SLOs are configured."],
+    },
+    "datadog_dashboard": {
+        "message": "Datadog dashboard metadata was not observed.",
+        "hints": ["Verify the API key and Application key have dashboards_read permission. This surface may be absent if no dashboards are configured."],
+    },
+    "datadog_webhook_integration": {
+        "message": "Datadog webhook integration metadata was not observed.",
+        "hints": ["Verify the API key and Application key have integrations_read permission. This surface may be absent if no webhook integrations are configured."],
+    },
+    "datadog_notification_integration": {
+        "message": "Datadog notification integration metadata was not observed.",
+        "hints": ["Verify the API key has access to read configured notification integrations. This surface may be absent if no notification integrations (PagerDuty, Slack, OpsGenie) are configured."],
+    },
+    "datadog_api_key_metadata": {
+        "message": "Datadog API key metadata was not observed.",
+        "hints": ["Verify the Application key has api_keys_read permission (GET /api/v2/api_keys). Some keys may not have this scope."],
+    },
+    "datadog_application_key_metadata": {
+        "message": "Datadog application key metadata was not observed.",
+        "hints": ["Verify the Application key has application_keys_read permission (GET /api/v2/application_keys). This surface may require elevated permissions."],
+    },
+    "datadog_role": {
+        "message": "Datadog role metadata was not observed.",
+        "hints": ["Verify the Application key has roles_read permission (GET /api/v2/roles). This surface may be absent if no custom roles are configured."],
+    },
+    "datadog_team": {
+        "message": "Datadog team metadata was not observed.",
+        "hints": ["Verify the Application key has teams_read permission (GET /api/v2/teams). This surface may be absent if no teams are configured."],
+    },
+    "datadog_cloud_integration": {
+        "message": "Datadog cloud integration metadata was not observed.",
+        "hints": ["Verify the Application key has integrations_read permission. This surface may be absent if no AWS/GCP/Azure cloud integrations are configured."],
     },
 }
 

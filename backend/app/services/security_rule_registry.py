@@ -227,6 +227,24 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "auth0_application_origin_missing_https",
         "auth0_public_client_refresh_tokens_enabled",
         "auth0_application_token_endpoint_auth_none",
+        # Datadog — M82B core security rules
+        "datadog_monitor_disabled",
+        "datadog_monitor_unrestricted_roles",
+        "datadog_monitor_notify_no_data_disabled",
+        "datadog_monitor_long_query",
+        "datadog_slo_no_monitors",
+        "datadog_slo_low_target",
+        "datadog_dashboard_public_url_present",
+        "datadog_dashboard_unrestricted_roles",
+        "datadog_webhook_without_secret_headers",
+        "datadog_webhook_payload_template_present",
+        "datadog_notification_integration_no_channels",
+        "datadog_application_key_broad_scopes",
+        "datadog_api_key_disabled",
+        "datadog_role_high_permission_count",
+        "datadog_team_no_members",
+        "datadog_cloud_integration_broad_collection",
+        "datadog_cloud_integration_log_collection_enabled",
     }
 )
 

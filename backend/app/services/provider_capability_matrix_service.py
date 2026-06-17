@@ -827,12 +827,12 @@ _DATADOG = ProviderCapability(
     drift=DriftCapabilities(
         drift_snapshots=True,
         drift_diff=True,
-        drift_risk_classification=False,
+        drift_risk_classification=True,
         drift_review_workflow=False,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -865,12 +865,22 @@ _DATADOG = ProviderCapability(
         "Logs, traces, metric values, incident content, and all raw Datadog "
         "API response payloads are NEVER fetched or stored. "
         "Pagination is bounded with conservative per-surface caps. "
-        "Security rules, activity ingestion, signals, correlations, and demo "
-        "seed/clear are planned for M82B–M82G. "
-        "M82-pre.1 adds Datadog connectability: POST /integrations accepts "
-        "provider='datadog' with api_key, application_key, and site; "
-        "credentials are encrypted via AES-256-GCM and never returned. "
-        "planned_next_stage: M82B: Datadog Core Security Foundation."
+        "M82B adds 17 core security rules across 10 record types: "
+        "Monitor posture (disabled, unrestricted roles, no-data notification "
+        "disabled, long query); SLO posture (no monitors, low target); "
+        "Dashboard posture (public URL, unrestricted roles); Webhook posture "
+        "(missing secret headers, custom payload template); Notification "
+        "integration posture (no channels); Application key posture (broad "
+        "scopes); API key posture (disabled); Role posture (high permission "
+        "count); Team posture (no members); Cloud integration posture (broad "
+        "collection, log collection enabled). Evidence is metadata-only: "
+        "booleans, counts, categories, and opaque IDs — no API key values, "
+        "application key values, webhook URLs, query strings, message text, "
+        "dashboard JSON, log data, trace data, metric values, emails, user "
+        "identities, or customer data are ever stored in findings. "
+        "Activity ingestion, signals, correlations, demo seed/clear, and "
+        "case report are planned for M82C–M82G. "
+        "planned_next_stage: M82C: Datadog Monitor/Webhook Risk Expansion."
     ),
 )
 

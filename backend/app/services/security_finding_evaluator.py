@@ -48,6 +48,7 @@ from app.services.security_rules import shopify as shopify_rules
 from app.services.security_rules import stripe as stripe_rules
 from app.services.security_rules import supabase as supabase_rules
 from app.services.security_rules import vercel as vercel_rules
+from app.services.security_rules import datadog as datadog_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,8 @@ _PROVIDER_RULES = {
     "shopify": [shopify_rules.evaluate],
     "azure": [azure_rules.evaluate],
     "google_cloud": [google_cloud_rules.evaluate],
+    # M82B: Datadog core security rules
+    "datadog": [datadog_rules.evaluate],
 }
 
 

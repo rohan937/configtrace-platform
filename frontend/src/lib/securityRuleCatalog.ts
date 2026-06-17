@@ -3545,6 +3545,324 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when token_endpoint_auth_method=='none'. SPAs and native apps using authorization_code + PKCE legitimately use this setting.",
   },
+
+  // ── Datadog (M82B) ────────────────────────────────────────────────────────
+  {
+    key: "datadog_monitor_disabled",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog monitor is disabled",
+    category: "Monitor posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor is currently disabled (silenced or muted).",
+    whatItChecks: "The enabled boolean on each datadog_monitor record.",
+    whyItMatters:
+      "Disabled monitors do not send alerts, which may leave gaps in observability coverage and alert posture.",
+    evidence: "Monitor record ID, monitor type, enabled status.",
+    remediation: "Re-enable the monitor if it should be active, or archive it if no longer needed.",
+    falsePositiveGuard:
+      "Only fires when enabled is explicitly false. Intentionally silenced monitors may fire; review the context before acting.",
+  },
+  {
+    key: "datadog_monitor_unrestricted_roles",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor has no restricted roles",
+    category: "Monitor posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog monitor is not restricted to any role, allowing any team member with edit access to modify it.",
+    whatItChecks: "The restricted_roles_count on each datadog_monitor record.",
+    whyItMatters:
+      "Monitors without role restrictions can be muted, modified, or deleted by any Datadog user with editor access.",
+    evidence: "Monitor record ID, restricted_roles_count.",
+    remediation: "Add role-based access restrictions to the monitor in Organization Settings > Roles.",
+    falsePositiveGuard:
+      "Many monitors are intentionally open within an organization. Medium confidence — review before acting.",
+  },
+  {
+    key: "datadog_monitor_notify_no_data_disabled",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor does not notify on missing data",
+    category: "Monitor posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog monitor has the 'notify on no data' option disabled.",
+    whatItChecks: "The notify_no_data boolean on each datadog_monitor record.",
+    whyItMatters:
+      "When data stops arriving (e.g. an agent or integration goes offline), the monitor will not alert, creating a silent monitoring gap.",
+    evidence: "Monitor record ID, notify_no_data status.",
+    remediation:
+      "Enable 'Notify if data is missing' in the monitor settings if the monitor covers a surface where data loss should trigger an alert.",
+    falsePositiveGuard:
+      "Many monitors legitimately do not require no-data notification (e.g. event-based monitors). Review context before acting.",
+  },
+  {
+    key: "datadog_monitor_long_query",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor has a long query",
+    category: "Monitor posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog monitor has a query classified as long in length.",
+    whatItChecks: "The query_complexity_category on each datadog_monitor record (value: 'long').",
+    whyItMatters:
+      "Complex, long queries may be harder to audit, more prone to unintended behavior, and more difficult to maintain.",
+    evidence: "Monitor record ID, query_complexity_category. Raw query content is never stored.",
+    remediation:
+      "Review the monitor query for clarity and consider splitting it into multiple focused monitors.",
+    falsePositiveGuard:
+      "Only fires for 'long' query complexity. Length alone does not indicate a security issue — review the query intent.",
+  },
+  {
+    key: "datadog_slo_no_monitors",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog monitor-based SLO has no linked monitors",
+    category: "SLO posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor-based SLO has zero linked monitors and may not be measuring anything.",
+    whatItChecks: "The slo_type and monitor_count on each datadog_slo record.",
+    whyItMatters:
+      "An SLO without linked monitors does not track reliability and may represent an incomplete or outdated configuration.",
+    evidence: "SLO record ID, slo_type, monitor_count.",
+    remediation:
+      "Link the relevant monitors to this SLO, or delete the SLO if it is no longer needed.",
+    falsePositiveGuard:
+      "Only fires for slo_type='monitor' SLOs. Metric-based SLOs are not evaluated by this rule.",
+  },
+  {
+    key: "datadog_slo_low_target",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog SLO has a target below 95%",
+    category: "SLO posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog SLO has a configured target below 95%.",
+    whatItChecks: "The target_category on each datadog_slo record.",
+    whyItMatters:
+      "A very low reliability target may indicate the SLO is outdated, set as a placeholder, or does not reflect operational expectations.",
+    evidence: "SLO record ID, target_category.",
+    remediation: "Review and update the SLO target to align with your service-level agreements.",
+    falsePositiveGuard:
+      "A low target may be a deliberate business decision for non-critical services. Review context before acting.",
+  },
+  {
+    key: "datadog_dashboard_public_url_present",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog dashboard has a public sharing URL",
+    category: "Dashboard posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog dashboard has a public sharing URL enabled, making it accessible without Datadog authentication.",
+    whatItChecks: "The public_url_present boolean on each datadog_dashboard record.",
+    whyItMatters:
+      "Publicly shared dashboards are accessible to anyone with the URL, which may expose metric names, infrastructure topology, or operational indicators.",
+    evidence: "Dashboard record ID, public_url_present. The URL value is never stored.",
+    remediation:
+      "Revoke the public sharing URL in the dashboard Share settings if external access is not required.",
+    falsePositiveGuard:
+      "Only fires when public_url_present=true. Public dashboards may be intentional for status pages — review before acting.",
+  },
+  {
+    key: "datadog_dashboard_unrestricted_roles",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog dashboard has no restricted roles",
+    category: "Dashboard posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog dashboard is not restricted to any role.",
+    whatItChecks: "The restricted_roles_count on each datadog_dashboard record.",
+    whyItMatters:
+      "Dashboards without role restrictions can be viewed and edited by any Datadog user, which may be inappropriate for sensitive operational data.",
+    evidence: "Dashboard record ID, restricted_roles_count.",
+    remediation: "Add role-based access restrictions to sensitive dashboards in the Dashboard Settings.",
+    falsePositiveGuard:
+      "Dashboards are commonly open within an organization. Low severity — review sensitive dashboards specifically.",
+  },
+  {
+    key: "datadog_webhook_without_secret_headers",
+    provider: "datadog",
+    severity: "high",
+    title: "Datadog webhook has no secret header",
+    category: "Webhook posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A Datadog webhook integration has a URL configured but no secret header to verify the origin of deliveries.",
+    whatItChecks:
+      "The url_present and secret_headers_present booleans on each datadog_webhook_integration record.",
+    whyItMatters:
+      "Without a shared secret header, the receiving endpoint cannot verify that incoming requests originate from Datadog, potentially allowing spoofed deliveries.",
+    evidence:
+      "Webhook record ID, url_present, secret_headers_present. Webhook URL and header values are never stored.",
+    remediation:
+      "Add a custom secret header to the webhook in Integrations > Webhooks and validate it on the receiving endpoint.",
+    falsePositiveGuard:
+      "Only fires when url_present=true AND secret_headers_present=false. Webhook URL values are never read or stored.",
+  },
+  {
+    key: "datadog_webhook_payload_template_present",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog webhook has a custom payload template",
+    category: "Webhook posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog webhook integration has a custom payload template configured.",
+    whatItChecks: "The payload_template_present boolean on each datadog_webhook_integration record.",
+    whyItMatters:
+      "Custom payload templates define the structure of data sent to webhook endpoints. Templates may include variable substitutions that expose operational details.",
+    evidence: "Webhook record ID, payload_template_present. Raw template content is never stored.",
+    remediation:
+      "Review the webhook payload template in Integrations > Webhooks to confirm it does not include sensitive variable substitutions.",
+    falsePositiveGuard:
+      "Only fires when payload_template_present=true. Custom templates are commonly used and may be intentional.",
+  },
+  {
+    key: "datadog_notification_integration_no_channels",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog notification integration has no configured channels",
+    category: "Notification integration posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "A Datadog notification integration is configured but has no channels or handles set up.",
+    whatItChecks:
+      "The enabled, handle_count, and channel_count on each datadog_notification_integration record.",
+    whyItMatters:
+      "A notification integration without configured destinations will not deliver alerts, creating a silent routing gap.",
+    evidence:
+      "Notification integration record ID, integration_type, handle_count, channel_count. Destination handles and channel names are never stored.",
+    remediation:
+      "Configure the required notification channels in the integration settings, or remove the integration if it is no longer needed.",
+    falsePositiveGuard:
+      "Only fires when the integration is enabled but both handle_count and channel_count are 0.",
+  },
+  {
+    key: "datadog_application_key_broad_scopes",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog application key has a broad scope count",
+    category: "Application key posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A Datadog application key has more than 10 scopes configured, granting broad API access.",
+    whatItChecks: "The scopes_count on each datadog_application_key_metadata record.",
+    whyItMatters:
+      "Application keys with many scopes have broad access to the Datadog organization's API. Limiting scopes reduces the blast radius of a compromised key.",
+    evidence:
+      "Application key record ID, scopes_count. Scope names and key values are never stored.",
+    remediation:
+      "Review the application key's scopes in Organization Settings > Application Keys and remove unnecessary permissions.",
+    falsePositiveGuard:
+      "Only fires when scopes_count exceeds 10. Some automation use cases legitimately require broad scopes.",
+  },
+  {
+    key: "datadog_api_key_disabled",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog API key is disabled",
+    category: "API key posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog API key in the inventory is disabled or revoked.",
+    whatItChecks: "The disabled boolean on each datadog_api_key_metadata record.",
+    whyItMatters:
+      "Disabled keys in the active inventory may represent stale automation credentials or a prior revocation event that should be cleaned up.",
+    evidence: "API key record ID, disabled status. Key values are never stored.",
+    remediation:
+      "Remove disabled API keys from the inventory in Organization Settings > API Keys if they are no longer needed.",
+    falsePositiveGuard:
+      "Only fires when disabled=true. Disabled keys do not grant access but may warrant inventory cleanup.",
+  },
+  {
+    key: "datadog_role_high_permission_count",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog role has a high permission count",
+    category: "Role posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A Datadog role has more than 25 permissions configured, granting broad organizational access.",
+    whatItChecks: "The permission_count on each datadog_role record.",
+    whyItMatters:
+      "Roles with many permissions grant broad access to Datadog resources. Limiting permissions follows the principle of least privilege.",
+    evidence:
+      "Role record ID, permission_count. User identities assigned to the role are never stored.",
+    remediation:
+      "Review the role's permissions in Organization Settings > Roles and remove unnecessary grants.",
+    falsePositiveGuard:
+      "Only fires when permission_count exceeds 25. Some administrative roles legitimately require many permissions.",
+  },
+  {
+    key: "datadog_team_no_members",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog team has no members",
+    category: "Team posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog team has zero members.",
+    whatItChecks: "The member_count on each datadog_team record.",
+    whyItMatters:
+      "An empty team may indicate stale configuration. Notifications and on-call routing that reference this team may not reach any responders.",
+    evidence: "Team record ID, member_count. Member identities are never stored.",
+    remediation:
+      "Add members to the team or delete it if it is no longer needed.",
+    falsePositiveGuard:
+      "Only fires when member_count==0. Teams are counted at the time of the last sync.",
+  },
+  {
+    key: "datadog_cloud_integration_broad_collection",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog cloud integration has all collection types enabled",
+    category: "Cloud integration posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A Datadog cloud integration has resource collection, metric collection, and log collection all simultaneously enabled.",
+    whatItChecks:
+      "The resource_collection_enabled, metric_collection_enabled, and log_collection_enabled flags on each datadog_cloud_integration record.",
+    whyItMatters:
+      "Enabling all collection types grants Datadog broad read access to your cloud environment, including logs that may contain application data.",
+    evidence:
+      "Cloud integration record ID, cloud_provider, collection flags. Account IDs are never stored.",
+    remediation:
+      "Review the cloud integration's collection scope and disable collection types that are not required.",
+    falsePositiveGuard:
+      "Only fires when all three collection flags are simultaneously true. Broad collection may be intentional for full observability.",
+  },
+  {
+    key: "datadog_cloud_integration_log_collection_enabled",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog cloud integration has log collection enabled",
+    category: "Cloud integration posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog cloud integration has log collection enabled.",
+    whatItChecks: "The log_collection_enabled flag on each datadog_cloud_integration record.",
+    whyItMatters:
+      "Log collection forwards cloud logs to Datadog, which may include application output, access logs, or other operational data. The scope of log forwarding may warrant review.",
+    evidence:
+      "Cloud integration record ID, cloud_provider, log_collection_enabled. Log content and account IDs are never stored.",
+    remediation:
+      "Review log forwarding scope and configure exclusion filters to prevent sensitive application logs from being forwarded.",
+    falsePositiveGuard:
+      "Log collection is a primary Datadog use case. Low severity — review the log exclusion filter configuration.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -3712,6 +4030,21 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "Actions",
       "MFA / Guardian factors",
       "Custom domains",
+    ],
+  },
+  {
+    provider: "datadog",
+    surfaces: [
+      "Monitor posture",
+      "SLO posture",
+      "Dashboard posture",
+      "Webhook integrations",
+      "Notification integrations",
+      "API key metadata",
+      "Application key metadata",
+      "Role posture",
+      "Team posture",
+      "Cloud integrations",
     ],
   },
 ];

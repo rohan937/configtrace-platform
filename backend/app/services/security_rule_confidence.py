@@ -255,6 +255,24 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "auth0_application_origin_missing_https": (HIGH, "Only fires when allowed_origins_missing_https=true (a boolean derived from allowed_origins during normalization, excluding localhost); raw origin URLs are NEVER stored."),
     "auth0_public_client_refresh_tokens_enabled": (MEDIUM, "Only fires when grant_refresh_token_enabled=true AND app_type is spa/native; no token values are stored."),
     "auth0_application_token_endpoint_auth_none": (HIGH, "Only fires when token_endpoint_auth_method=='none' on an auth0_application record."),
+    # Datadog — M82B core security rules
+    "datadog_monitor_disabled": (HIGH, "Only fires when enabled is explicitly false on a datadog_monitor record; raw query and message NEVER stored."),
+    "datadog_monitor_unrestricted_roles": (MEDIUM, "Fires when restricted_roles_count==0; many monitors are intentionally open, so medium confidence applies."),
+    "datadog_monitor_notify_no_data_disabled": (MEDIUM, "Only fires when notify_no_data is explicitly false; absence of no-data notification is common and may be intentional."),
+    "datadog_monitor_long_query": (MEDIUM, "Only fires when query_complexity_category=='long'; raw query content NEVER stored."),
+    "datadog_slo_no_monitors": (HIGH, "Only fires for slo_type=='monitor' SLOs where monitor_count==0; other SLO types are not flagged."),
+    "datadog_slo_low_target": (MEDIUM, "Fires when target_category=='below_95'; a low target may be a business decision rather than a misconfiguration."),
+    "datadog_dashboard_public_url_present": (HIGH, "Only fires when public_url_present=true on a datadog_dashboard record; the URL string NEVER stored."),
+    "datadog_dashboard_unrestricted_roles": (MEDIUM, "Fires when restricted_roles_count==0; dashboards are commonly open within an organization."),
+    "datadog_webhook_without_secret_headers": (HIGH, "Only fires when url_present=true AND secret_headers_present=false; webhook URL and header values NEVER stored."),
+    "datadog_webhook_payload_template_present": (MEDIUM, "Only fires when payload_template_present=true; template content NEVER stored."),
+    "datadog_notification_integration_no_channels": (MEDIUM, "Fires when enabled=true AND handle_count==0 AND channel_count==0; destination handles NEVER stored."),
+    "datadog_application_key_broad_scopes": (HIGH, "Only fires when scopes_count exceeds the conservative threshold; scope names and key values NEVER stored."),
+    "datadog_api_key_disabled": (HIGH, "Only fires when disabled=true on a datadog_api_key_metadata record; key values NEVER stored."),
+    "datadog_role_high_permission_count": (HIGH, "Only fires when permission_count exceeds the conservative threshold; user identities NEVER stored."),
+    "datadog_team_no_members": (HIGH, "Only fires when member_count==0 on a datadog_team record; member identities NEVER stored."),
+    "datadog_cloud_integration_broad_collection": (HIGH, "Fires only when all three collection flags (resource, metric, log) are simultaneously true; account IDs NEVER stored."),
+    "datadog_cloud_integration_log_collection_enabled": (HIGH, "Only fires when log_collection_enabled=true; log content and account IDs NEVER stored."),
 }
 
 
