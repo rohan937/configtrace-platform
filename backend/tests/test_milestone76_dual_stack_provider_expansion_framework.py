@@ -61,9 +61,8 @@ EXPECTED_STAGE_KEYS_IN_ORDER = [
 
 EXPECTED_NEXT_PROVIDER_ORDER = [
     # M77I added Google Cloud at the top of the queue; M78A launched it.
-    # M79A launched Twilio. M80A launched SendGrid (it moved into
-    # PROVIDER_CAPABILITIES_PARTIAL). Auth0 is now the head.
-    "auth0",
+    # M79A launched Twilio. M80A launched SendGrid. M81A launched Auth0
+    # (moved into PROVIDER_CAPABILITIES_PARTIAL). Datadog is now the head.
     "datadog",
     "clerk",
     "pagerduty",
@@ -254,12 +253,12 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # SendGrid arc complete (M80A–M80I); Auth0 is now the queue head at M81A.
-    assert summary["next_provider"] == "Auth0"
-    assert "Auth0" in (summary["next_milestone"] or "") or "M81" in (summary["next_milestone"] or "")
+    # Auth0 launched M81A; Datadog is now the queue head.
+    assert summary["next_provider"] == "Datadog"
+    assert "Datadog" in (summary["next_milestone"] or "") or "M82" in (summary["next_milestone"] or "")
     assert (
         "Auth0" in summary["planned_next_stage"]
-        or "M81A" in summary["planned_next_stage"]
+        or "M81B" in summary["planned_next_stage"]
     )
 
 
@@ -270,15 +269,16 @@ def test_framework_is_static_no_db_needed():
 
 
 def test_get_next_provider_recommendations_first_is_twilio():
-    """Flipped in M80A: SendGrid launched and moved into PROVIDER_CAPABILITIES_PARTIAL;
-    Auth0 reclaims the head of the recommended-next queue."""
+    """Flipped in M81A: Auth0 launched and moved into PROVIDER_CAPABILITIES_PARTIAL;
+    Datadog reclaims the head of the recommended-next queue."""
     recs = svc.get_next_provider_recommendations()
-    assert recs[0]["provider"] == "auth0"
-    assert recs[0]["label"] == "Auth0"
-    assert len(recs[0]["sensitive_data_to_avoid"]) >= 3
-    # google_cloud must no longer be in this list.
+    assert recs[0]["provider"] == "datadog"
+    assert recs[0]["label"] == "Datadog"
+    assert len(recs[0]["sensitive_data_to_avoid"]) >= 1
+    # google_cloud and auth0 must no longer be in this list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
+    assert "auth0" not in providers
 
 
 def test_capability_matrix_planned_next_stage_references_dual_stack():
@@ -302,8 +302,8 @@ def test_endpoint_returns_framework(client):
     body = r.json()
     assert "template" in body and "recommended_next_providers" in body
     assert body["summary"]["stage_count"] == 6
-    # M80A: SendGrid launched (now in PARTIAL); Auth0 reclaims the queue head.
-    assert body["summary"]["next_provider"] == "Auth0"
+    # M81A: Auth0 launched (now in PARTIAL); Datadog is now the queue head.
+    assert body["summary"]["next_provider"] == "Datadog"
 
 
 def test_endpoint_stages_in_order(client):
@@ -317,10 +317,12 @@ def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
     r = client.get("/security/provider-expansion-framework")
     assert r.status_code == 200
     labels = [p["label"] for p in r.json()["recommended_next_providers"]]
-    # Twilio launched in M79A; SendGrid launched in M80A — both no longer in queue.
+    # Twilio/SendGrid/Auth0 all launched — none in the recommended queue.
     assert "Twilio" not in labels
     assert "SendGrid" not in labels
-    assert "Auth0" in labels
+    assert "Auth0" not in labels
+    # Datadog is now the head.
+    assert "Datadog" in labels
 
 
 def test_endpoint_unauthenticated_rejected():

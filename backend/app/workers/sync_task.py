@@ -300,6 +300,12 @@ def sync_integration(
 
                 connector = SendGridConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "auth0":
+                # SECURITY: client_secret and management_api_token are NEVER logged.
+                from app.connectors.auth0 import Auth0Connector
+
+                connector = Auth0Connector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

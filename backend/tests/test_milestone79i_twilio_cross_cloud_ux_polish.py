@@ -182,8 +182,8 @@ def test_expansion_framework_planned_next_stage_is_m80a():
     assert "M79I" not in stage, (
         f"planned_next_stage still points to M79I after arc closed: {stage!r}"
     )
-    assert "M81A" in stage or "Auth0" in stage, (
-        f"planned_next_stage should point to M81A/Auth0 after M80I: {stage!r}"
+    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage, (
+        f"planned_next_stage should point past M80I (got: {stage!r})"
     )
 
 
@@ -193,8 +193,8 @@ def test_expansion_framework_top_recommendation_is_sendgrid():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "auth0"
-    assert top["label"] == "Auth0"
+    assert top["provider"] == "datadog"
+    assert top["label"] == "Datadog"
 
 
 def test_expansion_framework_twilio_not_in_recommended_queue():
@@ -220,8 +220,8 @@ def test_expansion_framework_sendgrid_first_milestone_is_m80a():
 def test_expansion_framework_summary_next_provider_sendgrid():
     """Framework summary next_provider = Auth0 (SendGrid launched M80A); next_milestone mentions M80B."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Auth0"
-    assert "M80B" in (fw["summary"]["next_milestone"] or "") or "Auth0" in (fw["summary"]["next_milestone"] or "")
+    assert fw["summary"]["next_provider"] == "Datadog"
+    assert "Datadog" in (fw["summary"]["next_milestone"] or "") or "M82" in (fw["summary"]["next_milestone"] or "")
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -115,7 +115,7 @@ def test_expansion_framework_next_stage_is_beyond_m79d():
     """Rolled forward in M80C: SendGrid Mail/Webhook complete; next stage is M80D."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M81A" in stage or "Auth0" in stage or "SendGrid" in stage
+    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():
@@ -125,11 +125,12 @@ def test_expansion_framework_top_recommendation_is_google_cloud():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "auth0"
-    assert top["label"] == "Auth0"
-    # GCP must no longer be in the recommended list.
+    assert top["provider"] == "datadog"
+    assert top["label"] == "Datadog"
+    # GCP and auth0 must no longer be in the recommended list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
+    assert "auth0" not in providers
 
 
 def test_expansion_framework_google_cloud_recommendation_is_complete():
@@ -152,8 +153,8 @@ def test_expansion_framework_google_cloud_recommendation_is_complete():
 def test_expansion_framework_summary_next_provider_is_google_cloud():
     """Flipped in M80A: Auth0 is now the head of the recommended queue."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Auth0"
-    assert "Auth0" in fw["summary"]["next_milestone"] or "M80B" in fw["summary"]["next_milestone"]
+    assert fw["summary"]["next_provider"] == "Datadog"
+    assert "Datadog" in (fw["summary"]["next_milestone"] or "") or "M82" in (fw["summary"]["next_milestone"] or "")
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -193,26 +193,28 @@ def test_capability_matrix_sendgrid_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_m81a():
-    """After M80I, planned_next_stage points to M81A Auth0 Drift Provider Foundation."""
+    """After M80I and M81A, planned_next_stage points to M81B Auth0 Core Security."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M80I" not in stage, (
         f"planned_next_stage still points to M80I after arc closed: {stage!r}"
     )
-    assert "M81A" in stage, (
-        f"planned_next_stage should point to M81A after M80I; got: {stage!r}"
+    assert "M81A" not in stage, (
+        f"planned_next_stage still points to M81A after it launched: {stage!r}"
     )
-    assert "Auth0" in stage
+    assert "M81B" in stage or "Auth0" in stage, (
+        f"planned_next_stage should point to M81B/Auth0 after M81A; got: {stage!r}"
+    )
 
 
 def test_expansion_framework_top_recommendation_is_auth0():
-    """Auth0 is the head of the recommended queue (SendGrid arc complete in M80I)."""
+    """Datadog is the head of the recommended queue (Auth0 launched in M81A)."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "auth0"
-    assert top["label"] == "Auth0"
+    assert top["provider"] == "datadog"
+    assert top["label"] == "Datadog"
 
 
 def test_expansion_framework_sendgrid_not_in_recommended_queue():
@@ -232,11 +234,11 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_auth0():
-    """Framework summary next_provider = Auth0; next_milestone is M81A or Auth0."""
+    """Framework summary next_provider = Datadog (Auth0 launched in M81A)."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Auth0"
+    assert fw["summary"]["next_provider"] == "Datadog"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "M81" in next_ms or "Auth0" in next_ms
+    assert "M82" in next_ms or "Datadog" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -535,11 +537,11 @@ def test_fe_demo_script_page_next_providers_has_auth0_first():
     )
     # Twilio arc complete — no stale M79A reference.
     assert '"M79A"' not in block
-    # Auth0 must now be first and reference M81A.
-    assert "Auth0" in block, "Auth0 must be in NEXT_PROVIDERS_BRIEF"
-    assert "M81A" in block, (
-        "Auth0 first_milestone in NEXT_PROVIDERS_BRIEF must reference M81A"
+    # Auth0 launched M81A — must not still be in NEXT_PROVIDERS_BRIEF.
+    assert "Auth0" not in block, (
+        "Auth0 launched M81A and must not be in NEXT_PROVIDERS_BRIEF"
     )
+    assert '"M81A"' not in block, "Stale M81A milestone in NEXT_PROVIDERS_BRIEF"
 
 
 def test_fe_demo_script_page_sendgrid_arc_range_updated():

@@ -465,52 +465,10 @@ class RecommendedProvider:
 # NOTE: M79A launched Twilio drift foundation; Twilio moved into
 # PROVIDER_CAPABILITIES_PARTIAL in provider_capability_matrix_service.py.
 # M80A launched SendGrid drift foundation; SendGrid also moved into
-# PROVIDER_CAPABILITIES_PARTIAL. Auth0 is now the head of the recommended queue.
+# PROVIDER_CAPABILITIES_PARTIAL. M81A launched Auth0 drift foundation;
+# Auth0 also moved into PROVIDER_CAPABILITIES_PARTIAL. Datadog is now
+# the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="auth0",
-        label="Auth0",
-        category="auth",
-        why_high_fit=(
-            "Auth0 is a high-value auth provider with clear configuration risk: "
-            "application callback URL posture, connection settings, MFA enforcement, "
-            "token lifetime, log stream webhooks, and attack protection settings. "
-            "Misconfigurations here affect every user in the tenant."
-        ),
-        drift_surfaces=(
-            "application_callback_urls",
-            "allowed_origins_and_logout_urls",
-            "connection_settings",
-            "mfa_enforcement_posture",
-            "token_lifetime_settings",
-            "attack_protection_settings",
-            "log_stream_webhook_endpoints",
-        ),
-        security_surfaces=(
-            "mfa_not_enforced",
-            "overly_broad_allowed_origins",
-            "log_stream_http_endpoint",
-            "weak_token_lifetime",
-            "attack_protection_disabled",
-            "suspicious_callback_url_change",
-        ),
-        sensitive_data_to_avoid=(
-            "user_passwords_or_hashes",
-            "user_emails_unless_safe",
-            "raw_auth_logs",
-            "management_api_tokens",
-            "client_secrets",
-            "personal_identifiable_information",
-        ),
-        first_milestone_name="M80B: Auth0 Drift Provider Foundation",
-        notes=(
-            "Use the Auth0 Management API v2. Focus on /api/v2/clients "
-            "(application config — callback URLs, allowed origins), "
-            "/api/v2/connections (connection type and status), and "
-            "/api/v2/attack-protection (brute-force and suspicious IP settings). "
-            "Never store user records, tokens, or client_secret values."
-        ),
-    ),
     RecommendedProvider(
         provider="datadog",
         label="Datadog",
@@ -542,7 +500,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "pii_in_logs_or_events",
             "auth_tokens",
         ),
-        first_milestone_name="M80C: Datadog Drift Provider Foundation",
+        first_milestone_name="M82A: Datadog Drift Provider Foundation",
         notes=(
             "Use the Datadog v1/v2 REST API. Focus on /api/v1/api_key "
             "(key name + status, never value), /api/v1/integration/webhooks, "
@@ -768,6 +726,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M81A: Auth0 Drift Provider Foundation",
+            "planned_next_stage": "M81B: Auth0 Core Security Foundation",
         },
     }

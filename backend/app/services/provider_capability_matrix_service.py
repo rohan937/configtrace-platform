@@ -683,12 +683,65 @@ _SENDGRID = ProviderCapability(
 )
 
 
+_AUTH0 = ProviderCapability(
+    provider="auth0",
+    label="Auth0",
+    category="auth",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,   # deferred to M81B
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Auth0 identity infrastructure drift foundation (M81A). Drift snapshots "
+        "cover 8 safe surfaces from the Auth0 Management API v2: tenant settings "
+        "(boolean flags and session categories — never support email, error page "
+        "HTML, or raw settings payload), applications/clients (client_id, name, "
+        "app_type, grant types, URL counts — never client_secret, raw callback "
+        "URLs, JWKS, or certificate material), connections (strategy, enabled "
+        "clients count — never credentials, passwords, or user data), resource "
+        "servers (signing algorithm, scopes count — never audience URI or signing "
+        "secret), rules (name, enabled, order, script_present — never script "
+        "content), actions (name, status, runtime, trigger — never code or secret "
+        "values), MFA/Guardian factors (factor name and enabled status — never "
+        "enrollment data, recovery codes, or phone numbers), and custom domains "
+        "(status, type, tls_policy — never domain name string or verification "
+        "tokens). "
+        "Authentication: OAuth2 client_credentials grant OR direct "
+        "management_api_token; neither the minted access token nor the "
+        "client_secret is ever stored on the connector instance or logged. "
+        "URL fields (callback URLs, logout URLs, allowed origins, web origins) "
+        "are stored as integer counts only. The resource server identifier "
+        "(audience URI) is stored as a boolean presence flag only. Custom domain "
+        "names are never stored. Rule and action code are stored as a boolean "
+        "presence flag and a length category only. "
+        "Auth0 remains partial (not in the canonical dual-stack-complete set of "
+        "8 providers). Security rules, activity ingestion, signals, correlations, "
+        "and demo are deferred to later milestones in the M81 arc."
+    ),
+)
+
+
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
     _TWILIO,
     _SENDGRID,
+    _AUTH0,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

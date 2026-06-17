@@ -177,7 +177,7 @@ def test_expansion_framework_planned_next_stage_is_beyond_m78i():
     assert "M78I" not in stage, (
         f"planned_next_stage still points to M78I after arc closed: {stage!r}"
     )
-    assert "M81A" in stage or "Auth0" in stage or "SendGrid" in stage
+    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage
 
 
 def test_expansion_framework_top_recommendation_is_twilio():
@@ -186,8 +186,8 @@ def test_expansion_framework_top_recommendation_is_twilio():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "auth0"
-    assert top["label"] == "Auth0"
+    assert top["provider"] == "datadog"
+    assert top["label"] == "Datadog"
 
 
 def test_expansion_framework_google_cloud_not_in_recommended_queue():
@@ -200,8 +200,8 @@ def test_expansion_framework_google_cloud_not_in_recommended_queue():
 def test_expansion_framework_summary_next_provider_and_milestone():
     """Framework summary next_provider = Auth0 (SendGrid launched M80A); next_milestone mentions M80B."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Auth0"
-    assert "M80B" in fw["summary"]["next_milestone"] or "Auth0" in fw["summary"]["next_milestone"]
+    assert fw["summary"]["next_provider"] == "Datadog"
+    assert "Datadog" in (fw["summary"]["next_milestone"] or "") or "M82" in (fw["summary"]["next_milestone"] or "")
 
 
 def test_expansion_framework_twilio_first_milestone_is_m79a():
