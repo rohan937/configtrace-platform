@@ -666,11 +666,11 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_points_to_m81g(self):
-        # M81G complete — framework now points to M81H
+        # M81H complete — framework now points to M81I
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M81H" in planned or "M81G" in planned
+        assert any(tag in planned for tag in ("M81G", "M81H", "M81I"))
         assert "M81F" not in planned
 
 

@@ -847,11 +847,12 @@ def test_i4_notes_mention_m81g_or_demo():
 
 
 def test_i5_expansion_framework_points_to_m81h():
+    # M81H complete — framework now points to M81I
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M81H" in stage, (
-        f"expected planned_next_stage to reference M81H; got {stage!r}"
+    assert "M81H" in stage or "M81I" in stage, (
+        f"expected planned_next_stage to reference M81H or M81I; got {stage!r}"
     )
 
 

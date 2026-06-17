@@ -357,6 +357,8 @@ _ACTIVITY_PROVIDERS = [
     "twilio",
     # M80D added SendGrid config-state activity ingestion.
     "sendgrid",
+    # M81D added Auth0 config-state activity ingestion.
+    "auth0",
 ]
 _SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 _CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
@@ -365,14 +367,14 @@ _CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 def _provider_selector_array(text: str) -> list[str] | None:
     """Extract the first ``options={["a","b",...]}`` provider selector array.
 
-    M78D added ``google_cloud`` which contains an underscore — the literal
-    parser now accepts ``[a-z_]+`` so it matches that provider id too.
+    M78D added ``google_cloud`` which contains an underscore.
+    M81D added ``auth0`` which contains a digit — accept ``[a-z0-9_]+``.
     """
     m = re.search(
-        r"options=\{\s*\[\s*((?:\"[a-z_]+\"\s*,?\s*)+)\]\s*\}", text)
+        r"options=\{\s*\[\s*((?:\"[a-z0-9_]+\"\s*,?\s*)+)\]\s*\}", text)
     if not m:
         return None
-    return re.findall(r"\"([a-z_]+)\"", m.group(1))
+    return re.findall(r"\"([a-z0-9_]+)\"", m.group(1))
 
 
 def test_fe_activity_provider_selector_has_all():
@@ -397,12 +399,12 @@ def test_fe_correlations_provider_selector_has_all():
     # options list directly on the <Select> — accept either shape. ``[a-z_]+``
     # accommodates ``google_cloud``.
     m = re.search(
-        r"const\s+PROVIDER_OPTIONS\s*=\s*\[\s*((?:\"[a-z_]+\"\s*,?\s*)+)\]", text)
+        r"const\s+PROVIDER_OPTIONS\s*=\s*\[\s*((?:\"[a-z0-9_]+\"\s*,?\s*)+)\]", text)
     if m is None:
         m = re.search(
-            r"options=\{\s*\[\s*((?:\"[a-z_]+\"\s*,?\s*)+)\]\s*\}", text)
+            r"options=\{\s*\[\s*((?:\"[a-z0-9_]+\"\s*,?\s*)+)\]\s*\}", text)
     assert m is not None, "PROVIDER_OPTIONS / inline literal not found on correlations page"
-    arr = re.findall(r"\"([a-z_]+)\"", m.group(1))
+    arr = re.findall(r"\"([a-z0-9_]+)\"", m.group(1))
     assert arr == _CORRELATIONS_PROVIDERS, (
         f"correlations PROVIDER_OPTIONS drift: {arr}"
     )

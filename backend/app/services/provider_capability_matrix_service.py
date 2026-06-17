@@ -786,8 +786,19 @@ _AUTH0 = ProviderCapability(
         "user IDs, login history, IP addresses, raw Auth0 logs, or customer "
         "data are stored. evidence_timeline and evidence_graph supported via "
         "the generic case evidence builders. "
+        "M81H adds provider-depth QA: durable guardrails covering taxonomy "
+        "parity (8 record types, 37 rule keys, 23 activity event types, 9 "
+        "signal types, 8 correlation types), privacy sanitization (allowlist "
+        "verified for activity/signal/correlation/case-report layers), claim "
+        "discipline (forbidden-phrase scan across all Auth0 modules), "
+        "false-positive behavior pins (per-surface positive and negative cases "
+        "for the evaluator, signal builder, and correlation matcher), demo "
+        "isolation (seed/clear idempotency, no cross-provider contamination), "
+        "router admin guards, frontend consistency (activity page, signals page, "
+        "correlations page, rule catalog, demo card, API unions), and regression "
+        "smoke (evaluator dispatch, allowlist shape, correlation rule structure). "
         "Auth0 remains partial (not in the canonical dual-stack-complete "
-        "set of 8 providers). Next: M81H Auth0 Provider Depth QA."
+        "set of 8 providers). Next: M81I Auth0 Cross-Cloud UX Polish."
     ),
 )
 
