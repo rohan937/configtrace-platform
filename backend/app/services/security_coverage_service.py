@@ -44,6 +44,7 @@ PROVIDERS = [
     "google_cloud",
     "twilio",
     "sendgrid",
+    "auth0",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -227,6 +228,29 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "sendgrid_inbound_parse_enabled": ("sendgrid_webhook_settings",),
     "sendgrid_inbound_parse_raw_email_enabled": ("sendgrid_webhook_settings",),
     "sendgrid_inbound_parse_spam_check_disabled": ("sendgrid_webhook_settings",),
+    # Auth0 — M81B
+    "auth0_tenant_session_lifetime_extended": ("auth0_tenant_settings",),
+    "auth0_tenant_idle_session_lifetime_extended": ("auth0_tenant_settings",),
+    "auth0_tenant_dynamic_client_registration_enabled": ("auth0_tenant_settings",),
+    "auth0_application_no_callbacks": ("auth0_application",),
+    "auth0_application_many_callbacks": ("auth0_application",),
+    "auth0_application_many_allowed_origins": ("auth0_application",),
+    "auth0_application_oidc_non_conformant": ("auth0_application",),
+    "auth0_application_weak_jwt_algorithm": ("auth0_application",),
+    "auth0_refresh_token_rotation_disabled": ("auth0_application",),
+    "auth0_refresh_token_lifetime_extended": ("auth0_application",),
+    "auth0_connection_no_enabled_clients": ("auth0_connection",),
+    "auth0_connection_weak_password_policy": ("auth0_connection",),
+    "auth0_resource_server_offline_access_enabled": ("auth0_resource_server",),
+    "auth0_resource_server_token_lifetime_extended": ("auth0_resource_server",),
+    "auth0_resource_server_rbac_disabled": ("auth0_resource_server",),
+    "auth0_rule_disabled": ("auth0_rule",),
+    "auth0_rule_large_script": ("auth0_rule",),
+    "auth0_action_not_deployed": ("auth0_action",),
+    "auth0_action_secrets_present": ("auth0_action",),
+    "auth0_mfa_factor_disabled": ("auth0_mfa_factor",),
+    "auth0_custom_domain_not_ready": ("auth0_custom_domain",),
+    "auth0_custom_domain_weak_tls_policy": ("auth0_custom_domain",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -274,6 +298,16 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Tracking settings",
         "Event webhook configuration",
         "Suppression settings",
+    ],
+    "auth0": [
+        "Tenant settings",
+        "Applications / clients",
+        "Connections",
+        "APIs / resource servers",
+        "Rules",
+        "Actions",
+        "MFA / Guardian factors",
+        "Custom domains",
     ],
 }
 

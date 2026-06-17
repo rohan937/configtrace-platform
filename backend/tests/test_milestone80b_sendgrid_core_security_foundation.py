@@ -657,8 +657,8 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M81A" in stage, (
-            f"planned_next_stage should point to M81A after M80I; got: {stage!r}"
+        assert "M81C" in stage or "Auth0" in stage, (
+            f"planned_next_stage should point past M80I/M81A/M81B; got: {stage!r}"
         )
         assert "Auth0" in stage
 

@@ -2766,6 +2766,469 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when inbound_parse_enabled=true AND inbound_parse_spam_check_enabled=false are both explicitly present. Some senders intentionally handle spam filtering at the application level.",
   },
+  // ── Auth0 — M81B ──────────────────────────────────────────────────────────
+  {
+    key: "auth0_tenant_session_lifetime_extended",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 tenant login session lifetime is extended",
+    category: "Tenant session",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 tenant is configured with an extended login session lifetime (greater than 7 days). Extended session lifetimes may increase the window during which a session can be used without re-authentication and may require review for your organization's access-management policy.",
+    whatItChecks:
+      "session_lifetime_category=='extended' on an auth0_tenant_settings record.",
+    whyItMatters:
+      "Extended login session lifetimes broaden the window during which authentication state persists without re-validation. Reducing the lifetime aligns with least-privilege access posture.",
+    evidence:
+      "session_lifetime_category (a safe category label only). No tokens or session content is stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Settings > Tenant Settings > Advanced. Review and reduce the Login Session Lifetime to match your access-management policy (e.g. 1–7 days).",
+    falsePositiveGuard:
+      "Only fires when session_lifetime_category=='extended'. Tenants that intentionally use extended sessions for specific UX requirements can acknowledge this finding.",
+  },
+  {
+    key: "auth0_tenant_idle_session_lifetime_extended",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 tenant idle session lifetime is extended",
+    category: "Tenant session",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 tenant is configured with an extended idle session lifetime (greater than 7 days). Idle sessions that persist for an extended period without activity may warrant review for alignment with your access-management policy.",
+    whatItChecks:
+      "idle_session_lifetime_category=='extended' on an auth0_tenant_settings record.",
+    whyItMatters:
+      "Extended idle session lifetimes increase the duration over which an unattended session can be re-used. Shorter idle timeouts reduce exposure to abandoned sessions.",
+    evidence:
+      "idle_session_lifetime_category (a safe category label only).",
+    remediation:
+      "In the Auth0 Dashboard navigate to Settings > Tenant Settings > Advanced. Reduce the Idle Session Lifetime to match your policy.",
+    falsePositiveGuard:
+      "Only fires when idle_session_lifetime_category=='extended'.",
+  },
+  {
+    key: "auth0_tenant_dynamic_client_registration_enabled",
+    provider: "auth0",
+    severity: "high",
+    title: "Auth0 tenant has dynamic client registration enabled",
+    category: "Tenant configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 tenant has the dynamic client registration flag enabled. Dynamic client registration (RFC 7591) allows external parties to register OAuth clients programmatically and may broaden the tenant's OAuth client surface.",
+    whatItChecks:
+      "flag_enable_dynamic_client_registration=true on an auth0_tenant_settings record.",
+    whyItMatters:
+      "Dynamic client registration accepts new OAuth clients without pre-approval. Review is warranted to confirm the capability is required and access is appropriately restricted.",
+    evidence:
+      "flag_enable_dynamic_client_registration boolean only.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Settings > Advanced. Disable dynamic client registration if it is not required for your use case.",
+    falsePositiveGuard:
+      "Only fires when the flag is explicitly true. Tenants that integrate with consent frameworks requiring dynamic registration can acknowledge this finding.",
+  },
+  {
+    key: "auth0_application_no_callbacks",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 application has no configured callback URLs",
+    category: "Application configuration",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The Auth0 application has no callback URLs configured. Web-based applications typically require at least one callback URL for the OAuth authorization flow to redirect authenticated users.",
+    whatItChecks:
+      "callbacks_count==0 AND app_type is 'spa' or 'regular_web' on an auth0_application record.",
+    whyItMatters:
+      "An OAuth-capable web application with zero callback URLs cannot complete the authorization redirect flow. The missing configuration may indicate setup that is incomplete or applications that are stale.",
+    evidence:
+      "client_id, name (truncated), app_type, callbacks_count (integer). Raw callback URLs are never stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications and select the application. Add the appropriate Allowed Callback URLs under Settings.",
+    falsePositiveGuard:
+      "CLI / Machine-to-Machine / Native applications are skipped — they do not require callback URLs. Only spa/regular_web apps with callbacks_count==0 fire this rule.",
+  },
+  {
+    key: "auth0_application_many_callbacks",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 application has a large number of callback URLs",
+    category: "Application configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 application has more than 10 callback URLs configured. A large callback surface increases the set of redirect destinations that Auth0 will accept after authentication and may include stale entries.",
+    whatItChecks:
+      "callbacks_count > 10 on an auth0_application record.",
+    whyItMatters:
+      "Every callback URL is a permitted redirect target. A large set may include test/staging URLs that were never removed and may require review for cleanup.",
+    evidence:
+      "client_id, name, app_type, callbacks_count (integer). Raw callback URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the application, and review the Allowed Callback URLs. Remove any stale, test, or non-production entries.",
+    falsePositiveGuard:
+      "Only fires when callbacks_count > 10. Some applications legitimately require many callbacks (multi-environment deployments) and can acknowledge this finding.",
+  },
+  {
+    key: "auth0_application_many_allowed_origins",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 application has a large number of allowed origins",
+    category: "Application configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 application has more than 10 allowed/web origins configured (combined). A large origin surface increases the set of domains permitted to make cross-origin requests to Auth0.",
+    whatItChecks:
+      "(allowed_origins_count + web_origins_count) > 10 on an auth0_application record.",
+    whyItMatters:
+      "Every allowed origin permits cross-origin authentication requests. A large set may include stale or unintended origins and may require review.",
+    evidence:
+      "allowed_origins_count and web_origins_count (integers). Raw origin URLs are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications and select the application. Review the Allowed Web Origins and Allowed Origins lists; remove stale or non-production entries.",
+    falsePositiveGuard:
+      "Only fires when the combined count exceeds 10. Multi-tenant or multi-region applications may legitimately require many origins.",
+  },
+  {
+    key: "auth0_application_oidc_non_conformant",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 application is not OIDC conformant",
+    category: "Application configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 application has OIDC conformance disabled. Non-OIDC-conformant applications use a legacy Auth0 authentication pipeline that may not support the latest OAuth 2.0 / OpenID Connect features.",
+    whatItChecks:
+      "oidc_conformant is explicitly false on an auth0_application record.",
+    whyItMatters:
+      "OIDC-conformant mode aligns Auth0 token formats and flows with the modern OAuth 2.0 / OIDC standards. Non-conformant apps miss security improvements available in newer flows.",
+    evidence:
+      "client_id, name, app_type, oidc_conformant boolean only.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the application, and under Settings > Advanced Settings > OAuth enable OIDC Conformant. Test your integration after enabling.",
+    falsePositiveGuard:
+      "Only fires when oidc_conformant is explicitly false. Some legacy applications may have specific reasons for staying on the non-conformant pipeline.",
+  },
+  {
+    key: "auth0_application_weak_jwt_algorithm",
+    provider: "auth0",
+    severity: "high",
+    title: "Auth0 application uses a symmetric JWT signing algorithm",
+    category: "Application token signing",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 application is configured to use a symmetric (HS-family) or 'none' JWT signing algorithm. Symmetric HMAC algorithms require the signing secret to be shared with the application for token verification, broadening the secret surface compared to asymmetric algorithms.",
+    whatItChecks:
+      "jwt_alg is HS256, HS384, HS512, or 'none' on an auth0_application record.",
+    whyItMatters:
+      "Symmetric signing requires the client to hold the signing secret to verify tokens. RS256/PS256 use Auth0's public key (.well-known/jwks.json), so the client never needs the private signing key.",
+    evidence:
+      "client_id, name, jwt_alg (a short algorithm label only). No signing keys are ever stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the application, and under Settings > Advanced Settings > OAuth change the JsonWebToken Signature Algorithm to RS256. Update token verification to fetch the public key from Auth0's JWKS endpoint.",
+    falsePositiveGuard:
+      "Only fires for HS256/HS384/HS512/'none'. RS256/PS256 are considered safe and do not fire this rule.",
+  },
+  {
+    key: "auth0_refresh_token_rotation_disabled",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 application has refresh token rotation disabled",
+    category: "Refresh token posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The Auth0 application issues refresh tokens but does not have refresh token rotation enabled. Without rotation, a refresh token remains valid indefinitely until explicitly revoked.",
+    whatItChecks:
+      "refresh_token_rotation_enabled is false AND grant_types_summary contains 'refresh_token' on an auth0_application record.",
+    whyItMatters:
+      "Rotation invalidates a refresh token each time it is used, so a copied token has a short window of validity. Without rotation, the token is reusable until expiration or explicit revocation.",
+    evidence:
+      "client_id, name, refresh_token_rotation_enabled, grant_types_summary (safe labels only). No tokens are ever stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the application, and under Settings > Refresh Token Rotation enable rotation. Set appropriate rotation and reuse intervals.",
+    falsePositiveGuard:
+      "Only fires when the application's grant_types include refresh_token. M2M/CLI apps without refresh tokens are skipped.",
+  },
+  {
+    key: "auth0_refresh_token_lifetime_extended",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 application refresh token lifetime is extended",
+    category: "Refresh token posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 application has an extended refresh token lifetime (greater than 24 hours). Long-lived refresh tokens extend the window during which a copied token could be used and may require review.",
+    whatItChecks:
+      "refresh_token_lifetime_category=='extended' on an auth0_application record.",
+    whyItMatters:
+      "Extended refresh token lifetimes broaden the time window for token misuse if a token were obtained by an unauthorized party. Shorter lifetimes (≤ 24 hours) align with current best practice for sensitive contexts.",
+    evidence:
+      "client_id, name, refresh_token_lifetime_category (a safe category label only).",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > Applications, select the application, and under Settings > Refresh Token Expiration reduce the absolute lifetime to match your policy.",
+    falsePositiveGuard:
+      "Only fires when the category is 'extended'. Applications with legitimate long-running offline access needs can acknowledge this finding.",
+  },
+  {
+    key: "auth0_connection_no_enabled_clients",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 connection has no enabled client applications",
+    category: "Connection configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 connection has no enabled client applications. A connection without enabled clients cannot be used for authentication and may indicate stale or inactive configuration.",
+    whatItChecks:
+      "enabled_clients_count==0 on an auth0_connection record.",
+    whyItMatters:
+      "Connections that are not enabled for any application are inert but still consume tenant configuration. Stale connections may warrant cleanup.",
+    evidence:
+      "connection_id, name (truncated), strategy, enabled_clients_count (integer). Connection credentials NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Authentication (Database / Social / Enterprise) and either enable the connection for the appropriate applications or remove it if unused.",
+    falsePositiveGuard:
+      "Only fires when enabled_clients_count is exactly 0.",
+  },
+  {
+    key: "auth0_connection_weak_password_policy",
+    provider: "auth0",
+    severity: "high",
+    title: "Auth0 database connection has a weak or unconfigured password policy",
+    category: "Connection password policy",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The Auth0 database connection has a password policy category of 'none', 'low', 'fair', or unconfigured. Weak password policies may allow low-complexity passwords that are easier to guess or brute-force.",
+    whatItChecks:
+      "strategy=='auth0' AND password_policy_category is 'none'/'low'/'fair' or missing on an auth0_connection record.",
+    whyItMatters:
+      "A 'good' or 'excellent' password policy is recommended for production database connections to reduce the impact of credential-based attacks.",
+    evidence:
+      "connection_id, name, strategy, password_policy_category (a safe category label only). Connection credentials NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Authentication > Database, select the connection, and under Password Policy set the policy to 'Good' or 'Excellent'. Communicate policy changes to users as required.",
+    falsePositiveGuard:
+      "Only fires for strategy=='auth0' database connections. Social and enterprise connections (Google, GitHub, SAML, etc.) are skipped.",
+  },
+  {
+    key: "auth0_resource_server_offline_access_enabled",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 API allows offline access (refresh tokens)",
+    category: "Resource server token posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 resource server allows offline access. Offline access permits applications to request refresh tokens (the offline_access scope) that persist beyond the active session.",
+    whatItChecks:
+      "allow_offline_access=true on an auth0_resource_server record.",
+    whyItMatters:
+      "Offline access broadens the token footprint for the API. Review is warranted to confirm offline access is needed by all consumers of this resource server.",
+    evidence:
+      "resource_server_id, name, allow_offline_access boolean only.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > APIs, select the resource server, and disable Allow Offline Access if refresh tokens are not required.",
+    falsePositiveGuard:
+      "Only fires when allow_offline_access is explicitly true.",
+  },
+  {
+    key: "auth0_resource_server_token_lifetime_extended",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 API access token lifetime is extended",
+    category: "Resource server token posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 resource server has an extended access token lifetime (greater than 24 hours). Long-lived access tokens extend the period during which a token is valid.",
+    whatItChecks:
+      "token_lifetime_category=='extended' on an auth0_resource_server record.",
+    whyItMatters:
+      "Extended access token lifetimes broaden the impact window if a token requires review or rotation. Short-lived tokens (15 minutes to 1 hour) are recommended for production APIs.",
+    evidence:
+      "resource_server_id, name, token_lifetime_category (a safe category label only).",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > APIs, select the resource server, and reduce the Token Expiration to ≤ 3600 seconds (1 hour) for sensitive APIs.",
+    falsePositiveGuard:
+      "Only fires when the category is 'extended'.",
+  },
+  {
+    key: "auth0_resource_server_rbac_disabled",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 API does not enforce RBAC policies",
+    category: "Resource server authorization",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 resource server does not enforce RBAC policies. Without RBAC enforcement, permissions and roles are not applied to tokens for this API.",
+    whatItChecks:
+      "rbac_enabled (enforce_policies) is explicitly false on an auth0_resource_server record.",
+    whyItMatters:
+      "RBAC enforcement controls access by attaching permissions to access tokens based on the caller's roles. Without enforcement, the access surface may be broader than each caller requires.",
+    evidence:
+      "resource_server_id, name, rbac_enabled boolean only.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > APIs, select the resource server, and under Settings > RBAC Settings enable 'Enable RBAC' and 'Add Permissions in the Access Token'. Define permissions and assign them to roles.",
+    falsePositiveGuard:
+      "Only fires when rbac_enabled is explicitly false. APIs that do not use Auth0 RBAC (e.g. those using custom authorization in the resource server) can acknowledge this finding.",
+  },
+  {
+    key: "auth0_rule_disabled",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 rule has a script but is disabled",
+    category: "Auth pipeline rule",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The Auth0 rule has script content configured but the rule is currently disabled. A disabled rule with an existing script may indicate automation that was paused intentionally or unintentionally.",
+    whatItChecks:
+      "enabled is explicitly false AND script_present=true on an auth0_rule record.",
+    whyItMatters:
+      "A disabled rule that contains a script may indicate orphaned automation. Review helps confirm the rule should remain disabled or be removed entirely.",
+    evidence:
+      "rule_id, name, enabled, script_present, stage. Rule script content is NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Auth Pipeline > Rules, review the rule, and either re-enable it or delete it if no longer needed.",
+    falsePositiveGuard:
+      "Only fires when a rule has script content AND is disabled. Rules without scripts do not fire this rule.",
+  },
+  {
+    key: "auth0_rule_large_script",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 rule has a large script",
+    category: "Auth pipeline rule",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 rule has a script greater than 2,000 characters. Large rule scripts can be harder to review, audit, and maintain.",
+    whatItChecks:
+      "script_length_category=='long' on an auth0_rule record.",
+    whyItMatters:
+      "Large rule scripts increase the surface that must be reviewed for each change. Refactoring into smaller rules or migrating to Auth0 Actions improves maintainability.",
+    evidence:
+      "rule_id, name, script_length_category (a safe category label only). Rule script content is NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Auth Pipeline > Rules, review the rule, and consider refactoring or migrating the logic to Auth0 Actions (the modern replacement for Rules).",
+    falsePositiveGuard:
+      "Only fires when script_length_category is 'long' (>2,000 chars).",
+  },
+  {
+    key: "auth0_action_not_deployed",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 action has no deployed version",
+    category: "Auth pipeline action",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 action has no deployed version. Actions must be deployed to be active in the authentication pipeline. An action without a deployed version is not currently executing.",
+    whatItChecks:
+      "deployed_version_present is false on an auth0_action record.",
+    whyItMatters:
+      "An undeployed action contributes to action-library clutter and may indicate work-in-progress that was never finished or a previously deployed action that was undeployed.",
+    evidence:
+      "action_id, name, status, deployed_version_present, trigger_id. Action code is NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Auth Pipeline > Actions > Library, select the action, and either deploy it if it is ready or delete it if it is no longer needed.",
+    falsePositiveGuard:
+      "Only fires when deployed_version_present is false.",
+  },
+  {
+    key: "auth0_action_secrets_present",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 action has secrets configured",
+    category: "Auth pipeline action",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The Auth0 action has one or more secrets configured. Action secrets are credentials stored in Auth0 for use within action code. They represent a credential surface that may require periodic review and rotation.",
+    whatItChecks:
+      "secrets_count > 0 on an auth0_action record.",
+    whyItMatters:
+      "Action secrets are credentials embedded in the authentication pipeline. Periodic rotation and access review reduce the impact of any leaked secret.",
+    evidence:
+      "action_id, name, secrets_count (integer). Secret names and values are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Auth Pipeline > Actions > Library, review the action's secrets, and rotate them per your organization's credential rotation policy. Remove unused secrets.",
+    falsePositiveGuard:
+      "Only fires when secrets_count > 0. Actions without configured secrets do not fire this rule.",
+  },
+  {
+    key: "auth0_mfa_factor_disabled",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 strong MFA factor is disabled",
+    category: "MFA factor posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "An Auth0 strong Guardian/MFA factor (TOTP, WebAuthn, or push notification) is disabled. Strong second factors provide phishing-resistant or time-based authentication.",
+    whatItChecks:
+      "enabled is explicitly false AND factor_name is otp / webauthn-roaming / push-notification on an auth0_mfa_factor record.",
+    whyItMatters:
+      "Disabling strong second factors limits users' ability to enroll in robust MFA. Review is warranted if other strong factors are also unavailable.",
+    evidence:
+      "factor_name, enabled, provider_category (safe labels only). No enrollment data, recovery codes, or user-level factor status are ever stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Security > Multi-factor Auth. Enable the appropriate strong factors and configure the MFA policy.",
+    falsePositiveGuard:
+      "Only fires for strong factors (otp / webauthn-roaming / push-notification). Tenants relying on alternative strong factors can acknowledge this finding.",
+  },
+  {
+    key: "auth0_custom_domain_not_ready",
+    provider: "auth0",
+    severity: "medium",
+    title: "Auth0 custom domain is not in a ready state",
+    category: "Custom domain",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "An Auth0 custom domain is in 'pending_verification', 'provisioning', or 'disabled' state rather than 'ready'. A non-ready custom domain may indicate pending DNS verification or a provisioning issue.",
+    whatItChecks:
+      "status in {pending_verification, provisioning, disabled} on an auth0_custom_domain record.",
+    whyItMatters:
+      "A non-ready custom domain causes users to fall back to the default Auth0 domain for authentication and may indicate setup work that was never completed.",
+    evidence:
+      "custom_domain_id, status, type, primary. Custom domain name strings are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Branding > Custom Domains. Complete pending DNS verification or remove the domain if it should not exist.",
+    falsePositiveGuard:
+      "Only fires for explicit non-ready statuses. A 'ready' or empty status does not fire this rule.",
+  },
+  {
+    key: "auth0_custom_domain_weak_tls_policy",
+    provider: "auth0",
+    severity: "low",
+    title: "Auth0 custom domain uses a compatible (non-recommended) TLS policy",
+    category: "Custom domain",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "An Auth0 custom domain is configured with the 'compatible' TLS policy rather than the 'recommended' policy. The compatible policy supports older TLS versions and cipher suites.",
+    whatItChecks:
+      "tls_policy_category=='compatible' on an auth0_custom_domain record.",
+    whyItMatters:
+      "The 'recommended' policy enforces current TLS best practices, while 'compatible' allows legacy clients but may also accept weaker cipher negotiations.",
+    evidence:
+      "custom_domain_id, tls_policy_category, status. Custom domain name strings are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Branding > Custom Domains, select the domain, and change the TLS policy to 'Recommended'. Verify legacy clients still work after the change.",
+    falsePositiveGuard:
+      "Only fires when tls_policy_category=='compatible'. Tenants that need legacy client support may acknowledge this finding.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -2920,6 +3383,19 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "Event webhook configuration",
       "Inbound parse configuration",
       "Suppression settings",
+    ],
+  },
+  {
+    provider: "auth0",
+    surfaces: [
+      "Tenant settings",
+      "Applications / clients",
+      "Connections",
+      "APIs / resource servers",
+      "Rules",
+      "Actions",
+      "MFA / Guardian factors",
+      "Custom domains",
     ],
   },
 ];

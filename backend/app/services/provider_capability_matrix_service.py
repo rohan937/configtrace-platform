@@ -690,12 +690,12 @@ _AUTH0 = ProviderCapability(
     drift=DriftCapabilities(
         drift_snapshots=True,
         drift_diff=True,
-        drift_risk_classification=False,   # deferred to M81B
+        drift_risk_classification=True,
         drift_review_workflow=False,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -728,9 +728,24 @@ _AUTH0 = ProviderCapability(
         "(audience URI) is stored as a boolean presence flag only. Custom domain "
         "names are never stored. Rule and action code are stored as a boolean "
         "presence flag and a length category only. "
+        "M81B adds 22 core security rules across 8 drift surfaces: tenant "
+        "session lifetime (extended login/idle session categories) and dynamic "
+        "client registration posture; application configuration (no callbacks, "
+        "many callbacks, many allowed/web origins, OIDC non-conformance, weak "
+        "JWT signing algorithm); refresh token posture (rotation disabled, "
+        "extended lifetime); connection configuration (no enabled clients, weak "
+        "database password policy); resource server posture (offline access "
+        "enabled, extended token lifetime, RBAC disabled); auth pipeline rule "
+        "and action posture (disabled rule with script, large script, action "
+        "not deployed, action secrets present); MFA factor posture (strong "
+        "factors disabled); custom domain posture (not ready, weak/compatible "
+        "TLS policy). All rule evidence is metadata-only — booleans, counts, "
+        "categories, opaque IDs, and safe labels. No client secrets, management "
+        "tokens, JWTs, raw URLs, audience URIs, domain names, script content, "
+        "action secrets, or user data are ever stored or surfaced. "
         "Auth0 remains partial (not in the canonical dual-stack-complete set of "
-        "8 providers). Security rules, activity ingestion, signals, correlations, "
-        "and demo are deferred to later milestones in the M81 arc."
+        "8 providers). Activity ingestion, signals, correlations, and demo are "
+        "deferred to later milestones in the M81 arc."
     ),
 )
 

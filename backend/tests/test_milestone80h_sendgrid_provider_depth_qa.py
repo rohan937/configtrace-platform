@@ -373,7 +373,7 @@ def test_expansion_framework_points_to_m80i():
     )
     # After M80I completes, the pointer advances to M81A — either is acceptable here.
     assert (
-        "M80I" in planned or "M81A" in planned or "M81B" in planned
+        "M80I" in planned or "M81A" in planned or "M81B" in planned or "M81C" in planned
     ), (
         f"planned_next_stage must point past M80H; got: {planned!r}"
     )

@@ -1205,8 +1205,11 @@ def test_capability_matrix_auth0_drift_only():
     cap = get_provider_capability("auth0")
     assert cap.drift.drift_snapshots is True
     assert cap.drift.drift_diff is True
-    assert cap.drift.drift_risk_classification is False  # deferred to M81B
-    assert cap.security.security_rules is False
+    # drift_risk_classification flipped on in M81B with the core security rules.
+    assert cap.drift.drift_risk_classification is True
+    # security_rules flipped on in M81B; activity/signals/correlations/demo
+    # remain deferred to later M81 milestones.
+    assert cap.security.security_rules is True
     assert cap.security.activity_ingestion is False
     assert cap.security.activity_signals is False
     assert cap.security.risk_activity_correlations is False
@@ -1243,11 +1246,13 @@ def test_capability_matrix_auth0_in_partial_list():
 
 
 def test_expansion_framework_planned_next_stage_is_m81b():
+    """After M81A and M81B, planned_next_stage points to M81C Auth0 OAuth/Application
+    Risk Expansion. Either M81B or M81C in the pointer is acceptable here."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M81B" in stage, (
-        f"planned_next_stage should point to M81B after M81A; got: {stage!r}"
+    assert "M81B" in stage or "M81C" in stage, (
+        f"planned_next_stage should point to M81B or beyond after M81A; got: {stage!r}"
     )
     assert "Auth0" in stage
     assert "M81A" not in stage, (
