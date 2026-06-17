@@ -356,6 +356,71 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "sender_verified",           # bool — whether sender identity is verified
         "sender_locked",             # bool — whether sender identity is locked
         "suppression_group_count",   # int — count of ASM suppression groups
+        # Auth0 configuration activity fields (M81D) — control-plane config-state
+        # events ONLY. Auth0 Management API logs (/api/v2/logs) are NEVER ingested
+        # because they include user_id, email, IP address, and device data.
+        # Events are synthesized from safe drift surfaces instead.
+        # NEVER stored: client_secret, management_api_token, access/refresh/ID tokens,
+        # JWTs, JWKS, raw callback/logout/origin URLs, audience URIs, custom domain
+        # name strings, rule/action script content, action secret values, user emails,
+        # user IDs, user names, profile data, IP addresses, device fingerprints,
+        # session data, MFA enrollment data, recovery codes, connection credentials,
+        # social provider secrets, SAML certificates, raw Auth0 API responses, or PII.
+        "auth0_event_id",            # stable synthetic event identifier (day-scoped)
+        "client_id",                 # Auth0 client ID (opaque identifier; NEVER client_secret)
+        "connection_id",             # Auth0 connection ID (opaque identifier)
+        "resource_server_id",        # Auth0 resource server ID (opaque identifier)
+        "action_id",                 # Auth0 action ID (opaque identifier; NEVER code or secrets)
+        "factor_name",               # MFA factor name (e.g. "otp", "webauthn-roaming")
+        "custom_domain_id",          # Auth0 custom domain ID (opaque identifier; NEVER domain string)
+        "tenant_id",                 # Auth0 tenant identifier (opaque)
+        "callbacks_count",           # int — count of configured callback URLs (NEVER raw URLs)
+        "allowed_logout_urls_count", # int — count of allowed logout URLs (NEVER raw URLs)
+        "allowed_origins_count",     # int — count of allowed origins (NEVER raw URLs)
+        "web_origins_count",         # int — count of web origins (NEVER raw URLs)
+        "grant_types_count",         # int — count of OAuth grant types enabled
+        "app_type",                  # safe category (e.g. "spa", "native", "regular_web")
+        "is_first_party",            # bool — whether application is first-party
+        "jwt_alg",                   # JWT signing algorithm (e.g. "RS256") — never a key
+        "oidc_conformant",           # bool — OIDC conformance setting
+        "token_endpoint_auth_method",  # safe category (e.g. "client_secret_basic", "none")
+        "refresh_token_rotation_enabled",  # bool — whether token rotation is enabled
+        "refresh_token_lifetime_category", # safe category (e.g. "standard", "extended")
+        "enabled_clients_count",     # int — count of enabled client applications on a connection
+        "password_policy_category",  # safe category (e.g. "good", "fair") — never raw policy
+        "signing_alg",               # resource server signing algorithm (e.g. "RS256")
+        "token_lifetime_category",   # safe category (e.g. "standard", "extended")
+        "allow_offline_access",      # bool — whether resource server allows offline access
+        "rbac_enabled",              # bool — whether resource server enforces RBAC
+        "script_present",            # bool — whether a rule has a script (NEVER script content)
+        "script_length_category",    # safe category (e.g. "short", "medium", "long")
+        "code_present",              # bool — whether an action has code (NEVER code content)
+        "code_length_category",      # safe category (e.g. "short", "medium", "long")
+        "secrets_count",             # int — count of action secrets (NEVER names or values)
+        "enabled",                   # bool — whether a rule or factor is enabled
+        "status_category",           # safe status category (e.g. "ready", "pending_verification")
+        "grant_password_enabled",    # bool — whether password grant is enabled
+        "grant_implicit_enabled",    # bool — whether implicit grant is enabled
+        "grant_client_credentials_enabled",  # bool — whether client_credentials grant is enabled
+        "grant_refresh_token_enabled",  # bool — whether refresh_token grant is enabled
+        "grant_device_code_enabled", # bool — whether device_code grant is enabled
+        "wildcard_callback_present", # bool — wildcard in callbacks (NEVER raw URLs)
+        "wildcard_allowed_origin_present",  # bool — wildcard in origins (NEVER raw URLs)
+        "wildcard_logout_url_present",  # bool — wildcard in logout URLs (NEVER raw URLs)
+        "localhost_callback_present", # bool — localhost callback present (NEVER raw URLs)
+        "localhost_origin_present",  # bool — localhost origin present (NEVER raw URLs)
+        "callbacks_missing_https",   # bool — any non-localhost callback uses http://
+        "allowed_origins_missing_https",  # bool — any non-localhost origin uses http://
+        "session_lifetime_category", # safe category (e.g. "standard", "extended")
+        "idle_session_lifetime_category",  # safe category for idle session lifetime
+        "enabled_locales_count",     # int — count of enabled locales on tenant
+        "flag_enable_dynamic_client_registration",  # bool — dynamic client registration flag
+        "flag_revoke_refresh_token_grant",  # bool — revoke refresh token grant flag
+        "flag_universal_login",      # bool — universal login flag
+        "deployed_version_present",  # bool — whether an action has a deployed version
+        "scopes_count",              # int — count of scopes on a resource server
+        "provider_category",         # safe MFA factor category (e.g. "totp", "webauthn")
+        "tls_policy_category",       # safe TLS policy category (e.g. "recommended", "compatible")
     }
 )
 

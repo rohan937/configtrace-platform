@@ -866,6 +866,31 @@ export async function syncSendGridActivity(
 }
 
 /**
+ * syncAuth0Activity — POST /security/auth0-activity/sync
+ * Ingests review-safe Auth0 configuration-state events synthesized from
+ * tenant settings, applications, connections, resource servers, rules, actions,
+ * MFA factors, and custom domains. Auth0 Management API logs are never ingested.
+ * Client secrets, JWTs, raw URLs, user emails, IPs, session data, script
+ * content, action secrets, and raw log entries are never stored.
+ */
+export async function syncAuth0Activity(
+  token?: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").Auth0ActivitySyncResponse> {
+  return apiFetch<import("@/types").Auth0ActivitySyncResponse>(
+    "/security/auth0-activity/sync",
+    {
+      method: "POST",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(opts ?? {}),
+    },
+  );
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.

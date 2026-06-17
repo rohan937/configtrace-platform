@@ -212,6 +212,10 @@ from app.schemas.security_twilio_activity import (
     TwilioCorrelationGenerateRequest,
     TwilioCorrelationGenerateResponse,
 )
+from app.schemas.security_auth0_activity import (
+    Auth0ActivitySyncRequest,
+    Auth0ActivitySyncResponse,
+)
 from app.schemas.security_sendgrid_activity import (
     SendGridActivitySyncRequest,
     SendGridActivitySyncResponse,
@@ -266,6 +270,7 @@ from app.services import azure_activity_signal_service
 from app.services import google_cloud_activity_ingestion_service
 from app.services import google_cloud_activity_signal_service
 from app.services import twilio_activity_ingestion_service
+from app.services import auth0_activity_ingestion_service
 from app.services import sendgrid_activity_ingestion_service
 from app.services import sendgrid_activity_signal_service
 from app.services import twilio_activity_signal_service
@@ -3247,6 +3252,56 @@ def sync_sendgrid_activity_events(
         db=db,
     )
     return SendGridActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/auth0-activity/sync",
+    response_model=Auth0ActivitySyncResponse,
+)
+def sync_auth0_activity_events(
+    body: Optional[Auth0ActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Auth0ActivitySyncResponse:
+    """Sync review-safe Auth0 configuration activity events (M81D).
+
+    Admin/owner only. Synthesizes configuration-state events from safe
+    Auth0 Management API surfaces: tenant settings, applications, connections,
+    resource servers, rules, actions, MFA/Guardian factors, and custom domains.
+
+    Auth0 Management API logs (/api/v2/logs) are NEVER ingested — they
+    contain user_id, email, IP address, and device data in every entry.
+    Events are synthesized from the same safe configuration surfaces the
+    drift connector already reads.
+
+    Login, authentication, session, token-exchange, password-reset,
+    MFA-enrollment, user profile, and organization-member events are
+    NEVER stored. Client secrets, management tokens, access tokens, JWTs,
+    raw callback/logout/origin URLs, audience URIs, custom domain names,
+    rule/action script content, action secret values, user emails, user IDs,
+    IP addresses, session data, connection credentials, SAML certificates,
+    and raw Auth0 API response dicts are NEVER stored.
+
+    Evidence is configuration-state metadata only. Does not confirm breach,
+    compromise, unauthorized access, or data exposure.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = auth0_activity_ingestion_service.sync_auth0_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return Auth0ActivitySyncResponse(**summary)
 
 
 @router.post(

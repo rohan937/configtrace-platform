@@ -828,10 +828,11 @@ class TestCapabilityMatrixAndExpansionFramework:
         assert cap.drift.drift_risk_classification is True
 
     def test_capability_matrix_auth0_activity_false(self):
+        # activity_ingestion was False at M81C time; M81D flipped it True.
+        # Now verify only that signals/correlations/demo remain deferred.
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("auth0")
         assert cap is not None
-        assert cap.security.activity_ingestion is False
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
@@ -859,11 +860,14 @@ class TestCapabilityMatrixAndExpansionFramework:
         assert "M81C" in notes
 
     def test_expansion_framework_points_to_m81d(self):
+        # After M81D completes, pointer advances to M81E — M81D or beyond is fine
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M81D" in planned
         assert "M81C" not in planned
+        assert any(tag in planned for tag in ("M81D", "M81E", "M81F", "M81G", "M81H", "M81I")), (
+            f"planned_next_stage should point to M81D or beyond after M81C; got: {planned!r}"
+        )
 
 
 # ── Section K: Forbidden wording in auth0 security rules module ───────────────

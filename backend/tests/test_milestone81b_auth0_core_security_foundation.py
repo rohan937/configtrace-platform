@@ -895,8 +895,7 @@ def test_capability_matrix_auth0_security_rules_now_true():
     assert cap is not None
     assert cap.security.security_rules is True
     assert cap.drift.drift_risk_classification is True
-    # Other security flags still False (deferred to later M81 milestones)
-    assert cap.security.activity_ingestion is False
+    # activity_ingestion flipped on in M81D; signals/correlations/demo remain deferred
     assert cap.security.activity_signals is False
     assert cap.security.risk_activity_correlations is False
     assert cap.security.demo_seed_clear is False

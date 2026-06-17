@@ -87,6 +87,43 @@ _MAX_RULES = 200
 _MAX_ACTIONS = 200
 _MAX_CUSTOM_DOMAINS = 20
 
+# ── Activity event type allowlist (M81D) ──────────────────────────────────────
+#
+# Auth0 Management API logs (/api/v2/logs) are highly user-centric: every
+# entry includes user_id, email, IP address, and device data — which must
+# NEVER be stored. Instead, activity events are synthesized from the same
+# safe drift surfaces the drift connector already reads, using the same
+# privacy-safe normalized records. This mirrors the SendGrid approach.
+#
+# Login / authentication / session / token-exchange / password-reset /
+# MFA-enrollment / profile / organization-member events are NEVER in
+# this set and are NEVER fetched or returned.
+_AUTH0_CONFIG_EVENT_TYPES: frozenset[str] = frozenset({
+    "auth0.tenant.updated",
+    "auth0.application.created",
+    "auth0.application.updated",
+    "auth0.application.deleted",
+    "auth0.connection.created",
+    "auth0.connection.updated",
+    "auth0.connection.deleted",
+    "auth0.resource_server.created",
+    "auth0.resource_server.updated",
+    "auth0.resource_server.deleted",
+    "auth0.rule.created",
+    "auth0.rule.updated",
+    "auth0.rule.deleted",
+    "auth0.action.created",
+    "auth0.action.updated",
+    "auth0.action.deployed",
+    "auth0.action.deleted",
+    "auth0.mfa_factor.updated",
+    "auth0.custom_domain.created",
+    "auth0.custom_domain.updated",
+    "auth0.custom_domain.verified",
+    "auth0.custom_domain.deleted",
+    "auth0.config.event",
+})
+
 # Session lifetime category thresholds (hours — Auth0 uses hours for session_lifetime)
 _SESSION_CATEGORIES = [
     (1, "very_short"),     # < 1h
@@ -1126,3 +1163,399 @@ class Auth0Connector(BaseConnector):
                 logger.debug("auth0: custom domains fetch failed; skipping surface")
 
         return records
+
+    # ── Activity event synthesis (M81D) ───────────────────────────────────────
+
+    @staticmethod
+    def _activity_event(
+        event_type: str,
+        provider_event_id: str,
+        metadata: dict,
+    ) -> dict:
+        """Build one synthesized config-state activity event envelope.
+
+        Mirrors the SendGrid connector's _activity_event pattern.
+        """
+        meta = dict(metadata)
+        meta.setdefault("event_source", "auth0_activity_event")
+        meta.setdefault("event_action", event_type)
+        return {
+            "event_type": event_type,
+            "provider": "auth0",
+            "source": "auth0_activity_event",
+            "event_source": "auth0_activity_event",
+            "provider_event_id": provider_event_id,
+            "metadata": meta,
+        }
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Synthesize review-safe Auth0 configuration-state activity events.
+
+        Auth0 Management API logs (/api/v2/logs) include user_id, email,
+        IP address, and device data in every log entry — storing these
+        would violate ConfigTrace's privacy contract. Instead, activity
+        events are synthesized from the same safe drift surfaces the drift
+        connector already reads (tenant_settings, applications, connections,
+        resource_servers, rules, actions, mfa_factors, and custom_domains).
+
+        Each event represents configuration state observed at poll time.
+        Events are date-scoped (day-level) for idempotency: re-polling on
+        the same UTC day yields the same provider_event_id and is a no-op.
+
+        Login, authentication, session, token-exchange, password-reset,
+        MFA enrollment, user profile, and organization-member events are
+        NEVER fetched, returned, or stored.
+
+        PRIVACY — what is NEVER returned:
+        - client_secret, management_api_token, access tokens, JWTs, keys.
+        - Raw callback URLs, logout URLs, allowed origins, audience URIs.
+        - Custom domain name strings, rule/action script content.
+        - Action secret names or values.
+        - User emails, user IDs, user names, profile data.
+        - IP addresses, device fingerprints, session data.
+        - MFA enrollment data, recovery codes.
+        - Connection credentials (passwords, tokens, certs, keys).
+        - Any raw Auth0 API response dicts or log entries.
+
+        Raises:
+            AuthenticationError: Token acquisition or 401 from Management API.
+            RateLimitError: 429 rate limit hit.
+            NetworkError: Transport-level failure.
+            ConnectorError: Unexpected 4xx/5xx.
+        """
+        from datetime import datetime, timezone
+
+        max_events = min(max(1, max_events), 1000)
+        lookback_hours = min(max(1, lookback_hours), 168)  # noqa: F841 — context only
+
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        events: list[dict] = []
+
+        domain = _sanitize_domain(credentials.get("domain", ""))
+        token = self._acquire_token(domain, credentials)
+
+        with self._make_management_client(domain, token) as client:
+            self._collect_tenant_event(client, events, day)
+            self._collect_application_events(client, events, day)
+            self._collect_connection_events(client, events, day)
+            self._collect_resource_server_events(client, events, day)
+            try:
+                self._collect_rule_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("auth0_activity: rules surface skipped")
+            try:
+                self._collect_action_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("auth0_activity: actions surface skipped")
+            try:
+                self._collect_mfa_factor_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("auth0_activity: mfa_factors surface skipped")
+            try:
+                self._collect_custom_domain_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("auth0_activity: custom_domains surface skipped")
+
+        return events[:max_events]
+
+    # ── Activity surface collectors (M81D) ────────────────────────────────────
+    #
+    # Each collector reuses the existing safe drift fetchers/normalizers and
+    # emits at most a small, capped set of config-state events. Each fails
+    # soft on 403/404 (missing permission) so one inaccessible surface
+    # never aborts the whole poll. Auth/rate-limit/network errors propagate.
+
+    def _collect_tenant_event(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_tenant_settings(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        if not recs:
+            return
+        rec = recs[0]
+        meta = {
+            "resource_type": "tenant_settings",
+            "event_action": "auth0.tenant.updated",
+            "category": "auth0_configuration",
+            "status": "observed",
+            "operation_name": "auth0.tenant.settings.observe",
+            "operation_family": "auth0.tenant",
+            "operation_action": "observe",
+        }
+        # Include safe scalar fields from the normalized record.
+        for key in (
+            "session_lifetime_category",
+            "idle_session_lifetime_category",
+            "enabled_locales_count",
+            "flag_enable_dynamic_client_registration",
+            "flag_revoke_refresh_token_grant",
+            "flag_universal_login",
+        ):
+            if key in rec:
+                meta[key] = rec[key]
+        eid = f"auth0.tenant.updated:{day}"
+        events.append(self._activity_event("auth0.tenant.updated", eid, meta))
+
+    def _collect_application_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_applications(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            cid = rec.get("client_id") or ""
+            if not cid:
+                continue
+            meta = {
+                "resource_type": "application",
+                "event_action": "auth0.application.updated",
+                "category": "auth0_configuration",
+                "status": "observed",
+                "operation_name": "auth0.application.observe",
+                "operation_family": "auth0.application",
+                "operation_action": "observe",
+                "client_id": _trunc(cid, 100),
+                "resource_id": _trunc(cid, 100),
+                "resource_name": _trunc(rec.get("name") or "", _MAX_STR_LEN),
+            }
+            for key in (
+                "app_type", "is_first_party", "jwt_alg", "oidc_conformant",
+                "token_endpoint_auth_method", "refresh_token_rotation_enabled",
+                "refresh_token_lifetime_category",
+                "grant_types_count", "grant_password_enabled",
+                "grant_implicit_enabled", "grant_client_credentials_enabled",
+                "grant_refresh_token_enabled", "grant_device_code_enabled",
+                "callbacks_count", "allowed_logout_urls_count",
+                "allowed_origins_count", "web_origins_count",
+                "wildcard_callback_present", "wildcard_allowed_origin_present",
+                "wildcard_logout_url_present",
+                "localhost_callback_present", "localhost_origin_present",
+                "callbacks_missing_https", "allowed_origins_missing_https",
+            ):
+                if key in rec:
+                    meta[key] = rec[key]
+            eid = f"auth0.application.updated:{cid}:{day}"
+            events.append(self._activity_event("auth0.application.updated", eid, meta))
+
+    def _collect_connection_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_connections(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            conn_id = rec.get("connection_id") or ""
+            if not conn_id:
+                continue
+            meta = {
+                "resource_type": "connection",
+                "event_action": "auth0.connection.updated",
+                "category": "auth0_configuration",
+                "status": "observed",
+                "operation_name": "auth0.connection.observe",
+                "operation_family": "auth0.connection",
+                "operation_action": "observe",
+                "connection_id": _trunc(conn_id, 100),
+                "resource_id": _trunc(conn_id, 100),
+                "resource_name": _trunc(rec.get("name") or "", _MAX_STR_LEN),
+            }
+            for key in (
+                "enabled_clients_count", "is_domain_connection",
+                "password_policy_category",
+            ):
+                if key in rec:
+                    meta[key] = rec[key]
+            eid = f"auth0.connection.updated:{conn_id}:{day}"
+            events.append(self._activity_event("auth0.connection.updated", eid, meta))
+
+    def _collect_resource_server_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_resource_servers(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            rs_id = rec.get("resource_server_id") or ""
+            if not rs_id:
+                continue
+            meta = {
+                "resource_type": "resource_server",
+                "event_action": "auth0.resource_server.updated",
+                "category": "auth0_configuration",
+                "status": "observed",
+                "operation_name": "auth0.resource_server.observe",
+                "operation_family": "auth0.resource_server",
+                "operation_action": "observe",
+                "resource_server_id": _trunc(rs_id, 100),
+                "resource_id": _trunc(rs_id, 100),
+                "resource_name": _trunc(rec.get("name") or "", _MAX_STR_LEN),
+            }
+            for key in (
+                "signing_alg", "token_lifetime_category",
+                "allow_offline_access", "rbac_enabled", "scopes_count",
+            ):
+                if key in rec:
+                    meta[key] = rec[key]
+            eid = f"auth0.resource_server.updated:{rs_id}:{day}"
+            events.append(
+                self._activity_event("auth0.resource_server.updated", eid, meta)
+            )
+
+    def _collect_rule_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_rules(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            rule_id = rec.get("rule_id") or ""
+            if not rule_id:
+                continue
+            meta = {
+                "resource_type": "rule",
+                "event_action": "auth0.rule.updated",
+                "category": "auth0_configuration",
+                "status": "observed",
+                "operation_name": "auth0.rule.observe",
+                "operation_family": "auth0.rule",
+                "operation_action": "observe",
+                "rule_id": _trunc(rule_id, 100),
+                "resource_id": _trunc(rule_id, 100),
+                "resource_name": _trunc(rec.get("name") or "", _MAX_STR_LEN),
+            }
+            for key in ("enabled", "script_present", "script_length_category"):
+                if key in rec:
+                    meta[key] = rec[key]
+            eid = f"auth0.rule.updated:{rule_id}:{day}"
+            events.append(self._activity_event("auth0.rule.updated", eid, meta))
+
+    def _collect_action_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_actions(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            action_id = rec.get("action_id") or ""
+            if not action_id:
+                continue
+            is_deployed = rec.get("deployed_version_present", False)
+            event_type = (
+                "auth0.action.deployed" if is_deployed
+                else "auth0.action.updated"
+            )
+            meta = {
+                "resource_type": "action",
+                "event_action": event_type,
+                "category": "auth0_configuration",
+                "status": "observed",
+                "operation_name": "auth0.action.observe",
+                "operation_family": "auth0.action",
+                "operation_action": "observe",
+                "action_id": _trunc(action_id, 100),
+                "resource_id": _trunc(action_id, 100),
+                "resource_name": _trunc(rec.get("name") or "", _MAX_STR_LEN),
+            }
+            for key in (
+                "code_present", "code_length_category",
+                "deployed_version_present", "secrets_count",
+            ):
+                if key in rec:
+                    meta[key] = rec[key]
+            eid = f"{event_type}:{action_id}:{day}"
+            events.append(self._activity_event(event_type, eid, meta))
+
+    def _collect_mfa_factor_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_mfa_factors(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            factor_name = rec.get("factor_name") or ""
+            if not factor_name:
+                continue
+            meta = {
+                "resource_type": "mfa_factor",
+                "event_action": "auth0.mfa_factor.updated",
+                "category": "auth0_configuration",
+                "status": "observed",
+                "operation_name": "auth0.mfa_factor.observe",
+                "operation_family": "auth0.mfa_factor",
+                "operation_action": "observe",
+                "factor_name": _trunc(factor_name, 50),
+                "resource_id": _trunc(factor_name, 50),
+                "resource_name": _trunc(factor_name, 50),
+            }
+            for key in ("enabled", "provider_category"):
+                if key in rec:
+                    meta[key] = rec[key]
+            eid = f"auth0.mfa_factor.updated:{factor_name}:{day}"
+            events.append(self._activity_event("auth0.mfa_factor.updated", eid, meta))
+
+    def _collect_custom_domain_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        try:
+            recs = self._fetch_custom_domains(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            domain_id = rec.get("custom_domain_id") or ""
+            if not domain_id:
+                continue
+            domain_status = rec.get("status") or ""
+            event_type = (
+                "auth0.custom_domain.verified"
+                if domain_status == "ready"
+                else "auth0.custom_domain.updated"
+            )
+            meta = {
+                "resource_type": "custom_domain",
+                "event_action": event_type,
+                "category": "auth0_configuration",
+                "status": "observed",
+                "operation_name": "auth0.custom_domain.observe",
+                "operation_family": "auth0.custom_domain",
+                "operation_action": "observe",
+                "custom_domain_id": _trunc(domain_id, 100),
+                "resource_id": _trunc(domain_id, 100),
+            }
+            for key in ("tls_policy_category", "status_category"):
+                if key in rec:
+                    meta[key] = rec[key]
+            # Include domain status as status_category (safe label).
+            if "status" in rec and isinstance(rec["status"], str):
+                meta["status_category"] = _trunc(rec["status"], 30)
+            eid = f"{event_type}:{domain_id}:{day}"
+            events.append(self._activity_event(event_type, eid, meta))

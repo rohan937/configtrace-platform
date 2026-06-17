@@ -696,7 +696,7 @@ _AUTH0 = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -748,15 +748,21 @@ _AUTH0 = ProviderCapability(
         "token endpoint auth method none. M81C adds safe grant type booleans "
         "(grant_password_enabled, grant_implicit_enabled, etc.) and URL posture "
         "booleans (wildcard_callback_present, localhost_callback_present, "
-        "callbacks_missing_https, etc.) to the auth0_application record. All "
-        "booleans are derived during normalization; raw URL strings are never "
-        "stored. All rule evidence is metadata-only — booleans, counts, "
-        "categories, opaque IDs, and safe labels. No client secrets, management "
-        "tokens, JWTs, raw URLs, audience URIs, domain names, script content, "
-        "action secrets, or user data are ever stored or surfaced. "
+        "callbacks_missing_https, etc.) to the auth0_application record. "
+        "M81D adds configuration activity ingestion. Auth0 Management API logs "
+        "(/api/v2/logs) are NEVER ingested because they include user_id, email, "
+        "IP address, and device data. Instead, activity events are synthesized "
+        "from the same 8 safe drift surfaces (tenant settings, applications, "
+        "connections, resource servers, rules, actions, MFA factors, custom "
+        "domains). Events are date-scoped for idempotency. POST "
+        "/security/auth0-activity/sync (admin-only). Login, authentication, "
+        "session, token-exchange, MFA enrollment, profile, and org-member "
+        "events are never ingested. Client secrets, JWTs, raw URLs, script "
+        "content, action secrets, user data, IP addresses, and raw Auth0 log "
+        "entries are never stored. "
         "Auth0 remains partial (not in the canonical dual-stack-complete set of "
-        "8 providers). Activity ingestion, signals, correlations, and demo are "
-        "deferred to later milestones in the M81 arc."
+        "8 providers). Signals, correlations, and demo are deferred to later "
+        "milestones in the M81 arc."
     ),
 )
 
