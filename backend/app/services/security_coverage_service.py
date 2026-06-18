@@ -46,6 +46,7 @@ PROVIDERS = [
     "sendgrid",
     "auth0",
     "datadog",
+    "clerk",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -301,6 +302,28 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "datadog_webhook_large_payload_template": ("datadog_webhook_integration",),
     "datadog_webhook_auth_material_present": ("datadog_webhook_integration",),
     "datadog_webhook_non_https_endpoint": ("datadog_webhook_integration",),
+    # Clerk — M83B
+    "clerk_instance_mfa_disabled": ("clerk_instance_settings",),
+    "clerk_instance_password_without_mfa": ("clerk_instance_settings",),
+    "clerk_instance_sign_up_enabled": ("clerk_instance_settings",),
+    "clerk_application_mfa_not_required": ("clerk_application",),
+    "clerk_domain_unverified": ("clerk_domain",),
+    "clerk_domain_ssl_disabled": ("clerk_domain",),
+    "clerk_redirect_url_non_https": ("clerk_redirect_url_config",),
+    "clerk_redirect_url_wildcard_present": ("clerk_redirect_url_config",),
+    "clerk_redirect_url_localhost_present": ("clerk_redirect_url_config",),
+    "clerk_jwt_template_custom_claims_present": ("clerk_jwt_template",),
+    "clerk_jwt_template_long_lifetime": ("clerk_jwt_template",),
+    "clerk_webhook_endpoint_disabled": ("clerk_webhook_endpoint",),
+    "clerk_webhook_without_signing": ("clerk_webhook_endpoint",),
+    "clerk_webhook_non_https": ("clerk_webhook_endpoint",),
+    "clerk_email_sms_custom_sender_present": ("clerk_email_sms_settings",),
+    "clerk_auth_strategy_mfa_not_required": ("clerk_auth_strategy",),
+    "clerk_auth_strategy_password_without_mfa": ("clerk_auth_strategy",),
+    "clerk_session_lifetime_extended": ("clerk_session_policy",),
+    "clerk_session_inactivity_timeout_extended": ("clerk_session_policy",),
+    "clerk_session_single_session_disabled": ("clerk_session_policy",),
+    "clerk_session_token_rotation_disabled": ("clerk_session_policy",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -370,6 +393,17 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Roles",
         "Teams",
         "Cloud integrations",
+    ],
+    "clerk": [
+        "Instance settings",
+        "Applications",
+        "Domains",
+        "Redirect URLs",
+        "JWT templates",
+        "Webhook endpoints",
+        "Email/SMS settings",
+        "Authentication strategies",
+        "Session policy",
     ],
 }
 
@@ -603,6 +637,43 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "datadog_cloud_integration": {
         "message": "Datadog cloud integration metadata was not observed.",
         "hints": ["Verify the Application key has integrations_read permission. This surface may be absent if no AWS/GCP/Azure cloud integrations are configured."],
+    },
+    # Clerk — M83B
+    "clerk_instance_settings": {
+        "message": "Clerk instance settings metadata was not observed.",
+        "hints": ["Verify the Clerk secret key has access to GET /v1/instance via the Clerk Backend API."],
+    },
+    "clerk_application": {
+        "message": "Clerk application metadata was not observed.",
+        "hints": ["Verify the Clerk secret key has access to application metadata via the Clerk Backend API."],
+    },
+    "clerk_domain": {
+        "message": "Clerk domain metadata was not observed.",
+        "hints": ["Verify the Clerk secret key can list domains via GET /v1/domains. This surface may be absent if no custom domains are configured."],
+    },
+    "clerk_redirect_url_config": {
+        "message": "Clerk redirect URL metadata was not observed.",
+        "hints": ["Verify the Clerk secret key can list redirect URLs. This surface may be absent if no redirect URLs are configured."],
+    },
+    "clerk_jwt_template": {
+        "message": "Clerk JWT template metadata was not observed.",
+        "hints": ["Verify the Clerk secret key can list JWT templates. This surface may be absent if no JWT templates are configured."],
+    },
+    "clerk_webhook_endpoint": {
+        "message": "Clerk webhook endpoint metadata was not observed.",
+        "hints": ["Verify the Clerk secret key can list webhook endpoints. This surface may be absent if no webhook endpoints are configured."],
+    },
+    "clerk_email_sms_settings": {
+        "message": "Clerk email/SMS settings metadata was not observed.",
+        "hints": ["Verify the Clerk secret key has access to email/SMS configuration via the Clerk Backend API."],
+    },
+    "clerk_auth_strategy": {
+        "message": "Clerk authentication strategy metadata was not observed.",
+        "hints": ["Verify the Clerk secret key can read authentication strategy posture."],
+    },
+    "clerk_session_policy": {
+        "message": "Clerk session policy metadata was not observed.",
+        "hints": ["Verify the Clerk secret key has access to session policy configuration via the Clerk Backend API."],
     },
 }
 

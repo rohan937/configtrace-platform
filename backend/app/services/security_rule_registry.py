@@ -260,6 +260,28 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "datadog_webhook_large_payload_template",
         "datadog_webhook_auth_material_present",
         "datadog_webhook_non_https_endpoint",
+        # Clerk — M83B core security rules
+        "clerk_instance_mfa_disabled",
+        "clerk_instance_password_without_mfa",
+        "clerk_instance_sign_up_enabled",
+        "clerk_application_mfa_not_required",
+        "clerk_domain_unverified",
+        "clerk_domain_ssl_disabled",
+        "clerk_redirect_url_non_https",
+        "clerk_redirect_url_wildcard_present",
+        "clerk_redirect_url_localhost_present",
+        "clerk_jwt_template_custom_claims_present",
+        "clerk_jwt_template_long_lifetime",
+        "clerk_webhook_endpoint_disabled",
+        "clerk_webhook_without_signing",
+        "clerk_webhook_non_https",
+        "clerk_email_sms_custom_sender_present",
+        "clerk_auth_strategy_mfa_not_required",
+        "clerk_auth_strategy_password_without_mfa",
+        "clerk_session_lifetime_extended",
+        "clerk_session_inactivity_timeout_extended",
+        "clerk_session_single_session_disabled",
+        "clerk_session_token_rotation_disabled",
     }
 )
 

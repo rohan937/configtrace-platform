@@ -288,6 +288,28 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "datadog_webhook_large_payload_template": ("datadog", "low", "Webhook posture"),
     "datadog_webhook_auth_material_present": ("datadog", "medium", "Webhook posture"),
     "datadog_webhook_non_https_endpoint": ("datadog", "high", "Webhook posture"),
+    # Clerk — M83B core security rules
+    "clerk_instance_mfa_disabled": ("clerk", "medium", "Instance MFA posture"),
+    "clerk_instance_password_without_mfa": ("clerk", "medium", "Instance authentication posture"),
+    "clerk_instance_sign_up_enabled": ("clerk", "low", "Instance sign-up posture"),
+    "clerk_application_mfa_not_required": ("clerk", "medium", "Application MFA posture"),
+    "clerk_domain_unverified": ("clerk", "medium", "Domain posture"),
+    "clerk_domain_ssl_disabled": ("clerk", "high", "Domain SSL posture"),
+    "clerk_redirect_url_non_https": ("clerk", "high", "Redirect URL posture"),
+    "clerk_redirect_url_wildcard_present": ("clerk", "medium", "Redirect URL posture"),
+    "clerk_redirect_url_localhost_present": ("clerk", "low", "Redirect URL posture"),
+    "clerk_jwt_template_custom_claims_present": ("clerk", "low", "JWT template posture"),
+    "clerk_jwt_template_long_lifetime": ("clerk", "medium", "JWT template lifetime posture"),
+    "clerk_webhook_endpoint_disabled": ("clerk", "low", "Webhook endpoint posture"),
+    "clerk_webhook_without_signing": ("clerk", "high", "Webhook signing posture"),
+    "clerk_webhook_non_https": ("clerk", "high", "Webhook endpoint posture"),
+    "clerk_email_sms_custom_sender_present": ("clerk", "low", "Email/SMS sender posture"),
+    "clerk_auth_strategy_mfa_not_required": ("clerk", "medium", "Authentication strategy posture"),
+    "clerk_auth_strategy_password_without_mfa": ("clerk", "medium", "Authentication strategy posture"),
+    "clerk_session_lifetime_extended": ("clerk", "medium", "Session lifetime posture"),
+    "clerk_session_inactivity_timeout_extended": ("clerk", "low", "Session inactivity posture"),
+    "clerk_session_single_session_disabled": ("clerk", "low", "Session policy posture"),
+    "clerk_session_token_rotation_disabled": ("clerk", "medium", "Session token rotation posture"),
 }
 
 

@@ -288,6 +288,28 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "datadog_webhook_large_payload_template": (MEDIUM, "Fires when payload_template_length_category=='long'; template content NEVER stored. Large templates are not inherently risky — medium confidence."),
     "datadog_webhook_auth_material_present": (HIGH, "Fires when auth_material_present=true, derived by checking header key names for auth patterns before discarding; header names and values NEVER stored."),
     "datadog_webhook_non_https_endpoint": (HIGH, "Fires when url_scheme_category=='http', derived from URL before discarding; URL string NEVER stored."),
+    # Clerk — M83B core security rules
+    "clerk_instance_mfa_disabled": (HIGH, "Only fires when mfa_enabled is explicitly false on a clerk_instance_settings record."),
+    "clerk_instance_password_without_mfa": (HIGH, "Only fires when password_enabled=true AND mfa_enabled=false on a clerk_instance_settings record."),
+    "clerk_instance_sign_up_enabled": (HIGH, "Only fires when sign_up_enabled=true on a clerk_instance_settings record; does not assert unauthorized access."),
+    "clerk_application_mfa_not_required": (HIGH, "Only fires when mfa_required is explicitly false on a clerk_application record."),
+    "clerk_domain_unverified": (HIGH, "Only fires when verified is explicitly false on a clerk_domain record; raw domain name strings are NEVER stored."),
+    "clerk_domain_ssl_disabled": (HIGH, "Only fires when ssl_enabled is explicitly false on a clerk_domain record; raw domain name strings are NEVER stored."),
+    "clerk_redirect_url_non_https": (HIGH, "Only fires when url_present=true AND url_scheme_category is not 'https' on a clerk_redirect_url_config record; raw URL strings are NEVER stored."),
+    "clerk_redirect_url_wildcard_present": (HIGH, "Only fires when wildcard_present=true on a clerk_redirect_url_config record; raw URL strings are NEVER stored."),
+    "clerk_redirect_url_localhost_present": (HIGH, "Only fires when localhost_present=true on a clerk_redirect_url_config record; raw URL strings are NEVER stored."),
+    "clerk_jwt_template_custom_claims_present": (HIGH, "Only fires when custom_claims_present=true on a clerk_jwt_template record; claim names, values, and template body are NEVER stored."),
+    "clerk_jwt_template_long_lifetime": (HIGH, "Only fires when lifetime_category is 'extended' or 'long' on a clerk_jwt_template record; no token values are stored."),
+    "clerk_webhook_endpoint_disabled": (HIGH, "Only fires when enabled is explicitly false on a clerk_webhook_endpoint record; this is an integration reliability posture item."),
+    "clerk_webhook_without_signing": (HIGH, "Only fires when url_present=true AND secret_present=false on a clerk_webhook_endpoint record; webhook URL and secret values are NEVER stored."),
+    "clerk_webhook_non_https": (HIGH, "Only fires when url_present=true AND url_scheme_category is not 'https' on a clerk_webhook_endpoint record; webhook URL strings are NEVER stored."),
+    "clerk_email_sms_custom_sender_present": (HIGH, "Only fires when custom_sender_present=true on a clerk_email_sms_settings record; sender addresses are NEVER stored."),
+    "clerk_auth_strategy_mfa_not_required": (MEDIUM, "Only fires when mfa_enabled=true AND mfa_required=false on a clerk_auth_strategy record; optional MFA is a valid configuration — medium confidence."),
+    "clerk_auth_strategy_password_without_mfa": (MEDIUM, "Only fires when password_enabled=true AND mfa_required=false on a clerk_auth_strategy record; connection credentials are NEVER stored."),
+    "clerk_session_lifetime_extended": (HIGH, "Only fires when session_lifetime_category is 'extended' or 'very_long' on a clerk_session_policy record; no session token values are stored."),
+    "clerk_session_inactivity_timeout_extended": (HIGH, "Only fires when inactivity_timeout_category=='extended' on a clerk_session_policy record; no session token values are stored."),
+    "clerk_session_single_session_disabled": (HIGH, "Only fires when single_session_mode is explicitly false on a clerk_session_policy record; no session data is stored."),
+    "clerk_session_token_rotation_disabled": (HIGH, "Only fires when token_rotation_enabled is explicitly false on a clerk_session_policy record; no token values are stored."),
 }
 
 
