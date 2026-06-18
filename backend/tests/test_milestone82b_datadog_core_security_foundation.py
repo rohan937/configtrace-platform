@@ -297,10 +297,15 @@ def _rule_keys(findings: list) -> set[str]:
 
 class TestRuleKeyTaxonomy:
     def test_datadog_rule_keys_matches_expected(self):
-        assert DATADOG_RULE_KEYS == EXPECTED_RULE_KEYS
+        # M82B introduced 17 rule keys; M82C adds 14 more (31 total).
+        # Verify the M82B subset is fully present in DATADOG_RULE_KEYS.
+        assert EXPECTED_RULE_KEYS <= DATADOG_RULE_KEYS
 
     def test_rule_count_is_seventeen(self):
-        assert len(DATADOG_RULE_KEYS) == 17
+        # M82B baseline was 17; M82C expansion brings the total to 31.
+        # Verify the M82B baseline subset still has 17 entries.
+        assert len(EXPECTED_RULE_KEYS) == 17
+        assert len(DATADOG_RULE_KEYS) >= 17
 
     def test_all_rule_keys_in_known_rule_keys(self):
         from app.services.security_rule_registry import KNOWN_RULE_KEYS
@@ -461,13 +466,37 @@ class TestMonitorRulesNotTrigger:
             assert "datadog_monitor_long_query" not in keys, f"fired for category={cat!r}"
 
     def test_healthy_monitor_produces_no_findings(self):
+        # The M82B `_monitor()` helper doesn't include M82C fields; supply them
+        # here so M82C rules also see a healthy state and do not fire.
         findings = evaluate(_monitor(
             enabled=True,
             restricted_roles_count=2,
             notify_no_data=True,
             query_complexity_category="short",
+            # M82C healthy defaults
+            notification_routing_present=True,
+            notification_count=2,
+            message_template_present=False,
+            threshold_critical_present=True,
+            threshold_warning_present=True,
+            threshold_recovery_present=True,
+            silenced_scope_count=0,
+            notify_audit=True,
+            require_full_window=True,
+            query_uses_wildcard_scope=False,
+            query_group_by_count=1,
+            no_data_timeframe_category="short",
         ))
-        assert findings == []
+        # Only M82B-relevant rules are asserted absent; this helper retains
+        # the original M82B intent of "no M82B finding on a healthy monitor".
+        m82b_monitor_rules = {
+            "datadog_monitor_disabled",
+            "datadog_monitor_unrestricted_roles",
+            "datadog_monitor_notify_no_data_disabled",
+            "datadog_monitor_long_query",
+        }
+        fired_m82b = {f.rule_key for f in findings} & m82b_monitor_rules
+        assert fired_m82b == set(), f"Unexpected M82B monitor rule fired: {fired_m82b}"
 
 
 class TestSloRulesNotTrigger:

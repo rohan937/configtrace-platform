@@ -273,6 +273,21 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "datadog_team_no_members": (HIGH, "Only fires when member_count==0 on a datadog_team record; member identities NEVER stored."),
     "datadog_cloud_integration_broad_collection": (HIGH, "Fires only when all three collection flags (resource, metric, log) are simultaneously true; account IDs NEVER stored."),
     "datadog_cloud_integration_log_collection_enabled": (HIGH, "Only fires when log_collection_enabled=true; log content and account IDs NEVER stored."),
+    # Datadog — M82C monitor/webhook risk expansion
+    "datadog_monitor_no_notifications": (HIGH, "Fires when notification_routing_present=false, derived from absence of @ in message before discarding; raw message NEVER stored."),
+    "datadog_monitor_message_template_present": (MEDIUM, "Fires when message_template_present=true ({{ in message), derived before discarding; raw message NEVER stored. Very common — medium confidence."),
+    "datadog_monitor_no_warning_threshold": (HIGH, "Fires only when threshold_critical_present=true AND threshold_warning_present=false; raw threshold values NEVER stored."),
+    "datadog_monitor_no_recovery_threshold": (HIGH, "Fires only when threshold_critical_present=true AND threshold_recovery_present=false; raw threshold values NEVER stored."),
+    "datadog_monitor_silenced_scopes_present": (HIGH, "Fires when silenced_scope_count > 0, derived from the silenced dict before discarding; scope identifiers NEVER stored."),
+    "datadog_monitor_notify_audit_disabled": (MEDIUM, "Fires when notify_audit=false; audit notifications are commonly disabled, so medium confidence applies."),
+    "datadog_monitor_require_full_window_disabled": (MEDIUM, "Fires when require_full_window=false; this is the default for many monitor types, so medium confidence applies."),
+    "datadog_monitor_query_wildcard_scope": (HIGH, "Fires when query_uses_wildcard_scope=true ({*} present in query), derived before discarding; raw query NEVER stored."),
+    "datadog_monitor_broad_group_by": (HIGH, "Fires when query_group_by_count >= 3, derived by counting 'by {' occurrences before discarding; raw query NEVER stored."),
+    "datadog_monitor_long_no_data_timeframe": (HIGH, "Fires when no_data_timeframe_category=='extended' (>= 2 hours), derived before discarding; raw timeframe value categorised only."),
+    "datadog_webhook_custom_headers_without_secret_headers": (HIGH, "Fires when custom_headers_present=true AND secret_headers_present=false; header names and values NEVER stored."),
+    "datadog_webhook_large_payload_template": (MEDIUM, "Fires when payload_template_length_category=='long'; template content NEVER stored. Large templates are not inherently risky — medium confidence."),
+    "datadog_webhook_auth_material_present": (HIGH, "Fires when auth_material_present=true, derived by checking header key names for auth patterns before discarding; header names and values NEVER stored."),
+    "datadog_webhook_non_https_endpoint": (HIGH, "Fires when url_scheme_category=='http', derived from URL before discarding; URL string NEVER stored."),
 }
 
 

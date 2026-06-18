@@ -245,6 +245,21 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "datadog_team_no_members",
         "datadog_cloud_integration_broad_collection",
         "datadog_cloud_integration_log_collection_enabled",
+        # Datadog — M82C monitor/webhook risk expansion
+        "datadog_monitor_no_notifications",
+        "datadog_monitor_message_template_present",
+        "datadog_monitor_no_warning_threshold",
+        "datadog_monitor_no_recovery_threshold",
+        "datadog_monitor_silenced_scopes_present",
+        "datadog_monitor_notify_audit_disabled",
+        "datadog_monitor_require_full_window_disabled",
+        "datadog_monitor_query_wildcard_scope",
+        "datadog_monitor_broad_group_by",
+        "datadog_monitor_long_no_data_timeframe",
+        "datadog_webhook_custom_headers_without_secret_headers",
+        "datadog_webhook_large_payload_template",
+        "datadog_webhook_auth_material_present",
+        "datadog_webhook_non_https_endpoint",
     }
 )
 

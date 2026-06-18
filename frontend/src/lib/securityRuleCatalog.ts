@@ -3863,6 +3863,265 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Log collection is a primary Datadog use case. Low severity — review the log exclusion filter configuration.",
   },
+
+  // ── Datadog (M82C — monitor/webhook risk expansion) ───────────────────────
+  {
+    key: "datadog_monitor_no_notifications",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog monitor has no notification routing",
+    category: "Monitor notification posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor's message contains no notification routing (no @mentions).",
+    whatItChecks: "The notification_routing_present boolean on each datadog_monitor record (derived from message before discarding).",
+    whyItMatters:
+      "Without notification routing, alerts from this monitor may not reach the on-call team. Raw message content is never stored.",
+    evidence: "Monitor record ID, notification_routing_present, notification_count. Raw message content is never stored.",
+    remediation:
+      "Add at least one @notification target (e.g. @slack-channel, @pagerduty-service) to the monitor message.",
+    falsePositiveGuard:
+      "Only fires when notification_routing_present=false. Monitors intentionally without routing (silent monitoring) may fire.",
+  },
+  {
+    key: "datadog_monitor_message_template_present",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor message uses template variables",
+    category: "Monitor notification posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog monitor's notification message uses template variables (e.g. {{value}}, {{host.name}}).",
+    whatItChecks: "The message_template_present boolean on each datadog_monitor record (derived from message before discarding).",
+    whyItMatters:
+      "Template variables expand to live values at alert time. Reviewing periodically confirms the expanded content is appropriate for the notification channel.",
+    evidence: "Monitor record ID, message_template_present. Raw message content is never stored.",
+    remediation:
+      "Review the monitor notification message template to confirm variable expansions are appropriate for the audience.",
+    falsePositiveGuard:
+      "Only fires when message_template_present=true. Template variables are very common and expected in most monitors.",
+  },
+  {
+    key: "datadog_monitor_no_warning_threshold",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog monitor has a critical threshold but no warning threshold",
+    category: "Monitor threshold posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor is configured with a critical threshold but no warning threshold.",
+    whatItChecks: "The threshold_critical_present and threshold_warning_present booleans on each datadog_monitor record.",
+    whyItMatters:
+      "Without a warning threshold, the monitor transitions directly from OK to ALERT with no intermediate state, reducing early-warning signal.",
+    evidence: "Monitor record ID, threshold_critical_present, threshold_warning_present. Raw threshold values are never stored.",
+    remediation:
+      "Add a Warning threshold below the Critical threshold in the monitor alert conditions.",
+    falsePositiveGuard:
+      "Only fires when threshold_critical_present=true AND threshold_warning_present=false. Some monitor types do not support warning thresholds.",
+  },
+  {
+    key: "datadog_monitor_no_recovery_threshold",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor has no recovery threshold",
+    category: "Monitor threshold posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor has a critical threshold but no recovery threshold configured.",
+    whatItChecks: "The threshold_critical_present and threshold_recovery_present booleans on each datadog_monitor record.",
+    whyItMatters:
+      "Without a recovery threshold, the monitor may remain in alert state or flap frequently between states.",
+    evidence: "Monitor record ID, threshold_critical_present, threshold_recovery_present. Raw threshold values are never stored.",
+    remediation:
+      "Add a recovery threshold in the monitor's advanced alert conditions.",
+    falsePositiveGuard:
+      "Only fires when threshold_critical_present=true AND threshold_recovery_present=false. Many monitors function correctly without explicit recovery thresholds.",
+  },
+  {
+    key: "datadog_monitor_silenced_scopes_present",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog monitor has silenced scopes",
+    category: "Monitor posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor has one or more silenced scopes that suppress alerts for specific hosts or tags.",
+    whatItChecks: "The silenced_scope_count on each datadog_monitor record (derived from silenced dict before discarding).",
+    whyItMatters:
+      "Silenced scopes may represent acknowledged maintenance or forgotten suppressions that should be reviewed periodically.",
+    evidence: "Monitor record ID, silenced_scope_count. Silenced scope identifiers are never stored.",
+    remediation:
+      "Review and remove expired or unintended silenced scopes in the Monitors > Manage Monitors > Muting section.",
+    falsePositiveGuard:
+      "Only fires when silenced_scope_count > 0. Active maintenance silences are expected and may fire intentionally.",
+  },
+  {
+    key: "datadog_monitor_notify_audit_disabled",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor does not notify on audit changes",
+    category: "Monitor posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog monitor has audit notifications disabled.",
+    whatItChecks: "The notify_audit boolean on each datadog_monitor record.",
+    whyItMatters:
+      "Without audit notifications, changes to monitor settings do not trigger alerts to the monitor's recipients, reducing visibility into configuration changes.",
+    evidence: "Monitor record ID, notify_audit.",
+    remediation:
+      "Enable 'Notify if this alert is modified' in the monitor settings.",
+    falsePositiveGuard:
+      "Audit notifications are commonly disabled. Low severity — review only for monitors covering sensitive surfaces.",
+  },
+  {
+    key: "datadog_monitor_require_full_window_disabled",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor does not require a full evaluation window",
+    category: "Monitor evaluation posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog monitor has 'require full window' disabled, allowing evaluation on partial data.",
+    whatItChecks: "The require_full_window boolean on each datadog_monitor record.",
+    whyItMatters:
+      "Evaluating on partial data windows can produce alerts based on incomplete data, leading to false positives.",
+    evidence: "Monitor record ID, require_full_window.",
+    remediation:
+      "Enable 'Require full window of data' in the monitor advanced options if incomplete data periods should not trigger alerts.",
+    falsePositiveGuard:
+      "Disabled by default for many monitor types. Medium confidence — review for alerting-sensitive monitors.",
+  },
+  {
+    key: "datadog_monitor_query_wildcard_scope",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog monitor uses a wildcard scope",
+    category: "Monitor query posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor's query uses a wildcard scope ({*}), monitoring all hosts/services/metrics.",
+    whatItChecks: "The query_uses_wildcard_scope boolean on each datadog_monitor record (derived from query before discarding).",
+    whyItMatters:
+      "Wildcard-scoped monitors can generate high alert volumes and may mask issues with specific services. Raw query content is never stored.",
+    evidence: "Monitor record ID, query_uses_wildcard_scope. Raw query content is never stored.",
+    remediation:
+      "Review and narrow the monitor scope to specific environments, services, or hosts where possible.",
+    falsePositiveGuard:
+      "Only fires when {*} is present in the query. Wildcard scopes are valid for infrastructure-wide monitors.",
+  },
+  {
+    key: "datadog_monitor_broad_group_by",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor has broad group-by configuration",
+    category: "Monitor query posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor has 3 or more group-by clauses in its query.",
+    whatItChecks: "The query_group_by_count on each datadog_monitor record (derived from query before discarding).",
+    whyItMatters:
+      "Many group-by dimensions create a large number of alert groups, which can produce high alert volumes and make alert management difficult.",
+    evidence: "Monitor record ID, query_group_by_count. Raw query content is never stored.",
+    remediation:
+      "Review and reduce the group-by dimensions in the monitor query to focus on the most actionable signals.",
+    falsePositiveGuard:
+      "Only fires when query_group_by_count >= 3. Multiple group-by dimensions are sometimes necessary for granular alerting.",
+  },
+  {
+    key: "datadog_monitor_long_no_data_timeframe",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog monitor has a long no-data timeframe",
+    category: "Monitor no-data posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog monitor has a no-data timeframe of 2 hours or more.",
+    whatItChecks: "The no_data_timeframe_category on each datadog_monitor record.",
+    whyItMatters:
+      "A long no-data window delays detection of agent or integration outages, reducing the speed of incident response.",
+    evidence: "Monitor record ID, no_data_timeframe_category.",
+    remediation:
+      "Reduce the no-data timeframe to a value appropriate for the expected data ingestion frequency.",
+    falsePositiveGuard:
+      "Only fires when no_data_timeframe_category=='extended' (>= 2 hours). Long timeframes may be appropriate for infrequent data sources.",
+  },
+  {
+    key: "datadog_webhook_custom_headers_without_secret_headers",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog webhook has custom headers but no secret header",
+    category: "Webhook posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A Datadog webhook has custom HTTP headers configured but no dedicated secret header for delivery integrity.",
+    whatItChecks:
+      "The custom_headers_present and secret_headers_present booleans on each datadog_webhook_integration record.",
+    whyItMatters:
+      "Without a secret header, the receiving endpoint cannot verify the origin and integrity of webhook deliveries, even when custom auth headers are present.",
+    evidence:
+      "Webhook record ID, custom_headers_present, custom_header_count, secret_headers_present. Header names and values are never stored.",
+    remediation:
+      "Add a dedicated secret header in the Webhooks configuration for delivery integrity verification.",
+    falsePositiveGuard:
+      "Only fires when custom_headers_present=true AND secret_headers_present=false. Distinct from M82B's no-secret-headers rule which checks url_present.",
+  },
+  {
+    key: "datadog_webhook_large_payload_template",
+    provider: "datadog",
+    severity: "low",
+    title: "Datadog webhook has a large payload template",
+    category: "Webhook posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description: "A Datadog webhook integration has a payload template classified as large in length.",
+    whatItChecks: "The payload_template_length_category on each datadog_webhook_integration record.",
+    whyItMatters:
+      "Large payload templates may contain many variable substitutions or embedded content that is harder to audit and maintain.",
+    evidence: "Webhook record ID, payload_template_length_category. Raw template content is never stored.",
+    remediation:
+      "Review and simplify the webhook payload template, or use the default Datadog payload if the receiving service supports it.",
+    falsePositiveGuard:
+      "Only fires when payload_template_length_category=='long'. Large templates are sometimes necessary for complex integrations.",
+  },
+  {
+    key: "datadog_webhook_auth_material_present",
+    provider: "datadog",
+    severity: "medium",
+    title: "Datadog webhook configuration includes authentication material",
+    category: "Webhook posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A Datadog webhook has custom headers that appear to contain authentication material (e.g. Authorization, API-Key, or Token headers).",
+    whatItChecks:
+      "The auth_material_present boolean on each datadog_webhook_integration record (derived by checking header key names before discarding).",
+    whyItMatters:
+      "Authentication headers embedded in webhook configurations may require periodic rotation review. Header names and values are never stored.",
+    evidence: "Webhook record ID, auth_material_present. Header names and values are never stored.",
+    remediation:
+      "Review and rotate any credentials in the webhook custom headers. Consider using a secret header for delivery verification instead.",
+    falsePositiveGuard:
+      "Only fires when auth-pattern header names are detected. Header names are checked but never stored — no header values are accessed.",
+  },
+  {
+    key: "datadog_webhook_non_https_endpoint",
+    provider: "datadog",
+    severity: "high",
+    title: "Datadog webhook endpoint uses insecure HTTP",
+    category: "Webhook posture",
+    confidence: "high",
+    metadataOnly: true,
+    description: "A Datadog webhook integration is configured with an endpoint using plain HTTP rather than HTTPS.",
+    whatItChecks: "The url_scheme_category on each datadog_webhook_integration record (derived from URL before discarding).",
+    whyItMatters:
+      "Webhook payloads delivered over HTTP are transmitted without transport-layer encryption. The webhook URL string is never stored.",
+    evidence: "Webhook record ID, url_scheme_category. The full URL string is never stored.",
+    remediation:
+      "Update the webhook endpoint URL to use HTTPS in Integrations > Webhooks.",
+    falsePositiveGuard:
+      "Only fires when url_scheme_category=='http'. The URL value itself is never stored — only the scheme category.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────

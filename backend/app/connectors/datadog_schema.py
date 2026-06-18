@@ -105,11 +105,13 @@ DATADOG_RECORD_TYPES: frozenset[str] = frozenset({
 
 
 class DatadogMonitorRecord(TypedDict):
-    """Safe normalised record for a Datadog monitor (M82A).
+    """Safe normalised record for a Datadog monitor (M82A/M82C).
 
     SECURITY: raw query string, raw message text, notification handles
     (PagerDuty, Slack, webhook URLs), and all raw monitor API response
-    payload are NEVER stored.
+    payload are NEVER stored. Raw query and message are read transiently to
+    compute safe derived fields (booleans and counts) and then discarded
+    immediately.
     """
 
     record_type: str          # always "datadog_monitor"
@@ -121,19 +123,35 @@ class DatadogMonitorRecord(TypedDict):
     enabled: bool             # False if monitor is silenced/muted
     status: str               # "OK" / "Alert" / "Warn" / "No Data" / "Unknown" / "Skipped"
     priority_category: str    # "critical" / "high" / "medium" / "low" / "info" / "none"
-    # query NEVER stored — presence and complexity only
+    # query NEVER stored — presence and complexity only; M82C adds safe derivations
     query_present: bool
-    query_complexity_category: str   # "absent" / "short" / "moderate" / "complex"
-    # message NEVER stored — presence and length only
+    query_complexity_category: str   # "absent" / "short" / "medium" / "long"
+    # M82C: derived from query before discarding — raw query NEVER stored
+    query_uses_wildcard_scope: bool  # True when query contains {*} (all-scope wildcard)
+    query_group_by_count: int        # count of group-by clauses (raw query discarded)
+    # message NEVER stored — presence and length only; M82C adds safe derivations
     message_present: bool
     message_length_category: str     # "absent" / "short" / "medium" / "long"
+    # M82C: derived from message before discarding — raw message NEVER stored
+    notification_routing_present: bool  # True if message contains at least one @ mention
+    notification_count: int             # count of @ characters in message (notification handles NEVER stored)
+    message_template_present: bool      # True if message contains {{ template variables
     tag_count: int
     threshold_count: int
+    # M82C: individual threshold presence booleans (raw threshold values not stored)
+    threshold_critical_present: bool   # options.thresholds.critical is set
+    threshold_warning_present: bool    # options.thresholds.warning is set
+    threshold_recovery_present: bool   # options.thresholds.critical_recovery or warning_recovery is set
     renotify_enabled: bool
+    renotify_interval_category: str  # M82C: "disabled"/"short"/"medium"/"long"
     restricted_roles_count: int
     notify_no_data: bool
     include_tags: bool
+    notify_audit: bool               # M82C: whether audit notifications are enabled
+    require_full_window: bool        # M82C: whether full evaluation window is required
     evaluation_delay_category: str   # "none" / "short" / "medium" / "long"
+    silenced_scope_count: int        # M82C: number of scopes in the silenced dict
+    no_data_timeframe_category: str  # M82C: "none"/"short"/"medium"/"extended"
 
 
 class DatadogSloRecord(TypedDict):
@@ -185,10 +203,14 @@ class DatadogDashboardRecord(TypedDict):
 
 
 class DatadogWebhookIntegrationRecord(TypedDict):
-    """Safe normalised record for a Datadog webhook integration (M82A).
+    """Safe normalised record for a Datadog webhook integration (M82A/M82C).
 
-    SECURITY: webhook URL, custom HTTP headers (names and values), payload
-    template body, and webhook signing secrets are NEVER stored.
+    SECURITY: webhook URL (full string), custom HTTP header names and values,
+    payload template body, and webhook signing secrets are NEVER stored. The
+    URL is read transiently to derive the scheme category only, then discarded.
+    Custom header keys are checked against auth-pattern names only to derive
+    auth_material_present, then discarded immediately — neither names nor values
+    are retained.
     """
 
     record_type: str          # always "datadog_webhook_integration"
@@ -196,11 +218,17 @@ class DatadogWebhookIntegrationRecord(TypedDict):
     record_id: str            # opaque webhook name
     resource_id: str          # opaque webhook name
     resource_name: str        # truncated to 100 chars
-    # url NEVER stored — presence boolean only
+    # url NEVER stored — presence boolean + scheme category only (M82C)
     url_present: bool
+    url_scheme_category: str           # M82C: "https"/"http"/"absent"/"unknown" — URL string NEVER stored
     custom_headers_present: bool
+    custom_header_count: int           # M82C: count only — header names/values NEVER stored
+    auth_material_present: bool        # M82C: any auth-like header name detected — header names NEVER stored
     payload_template_present: bool
+    payload_template_length_category: str  # M82C: "absent"/"short"/"medium"/"long" — content NEVER stored
     secret_headers_present: bool
+    secret_headers_count: int          # M82C: count only — secret names/values NEVER stored
+    encode_as_category: str            # M82C: "json"/"form"/"unknown"
 
 
 class DatadogNotificationIntegrationRecord(TypedDict):

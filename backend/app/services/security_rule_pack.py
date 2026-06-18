@@ -273,6 +273,21 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "datadog_team_no_members": ("datadog", "low", "Team posture"),
     "datadog_cloud_integration_broad_collection": ("datadog", "medium", "Cloud integration posture"),
     "datadog_cloud_integration_log_collection_enabled": ("datadog", "low", "Cloud integration posture"),
+    # Datadog — M82C monitor/webhook risk expansion
+    "datadog_monitor_no_notifications": ("datadog", "medium", "Monitor notification posture"),
+    "datadog_monitor_message_template_present": ("datadog", "low", "Monitor notification posture"),
+    "datadog_monitor_no_warning_threshold": ("datadog", "medium", "Monitor threshold posture"),
+    "datadog_monitor_no_recovery_threshold": ("datadog", "low", "Monitor threshold posture"),
+    "datadog_monitor_silenced_scopes_present": ("datadog", "medium", "Monitor posture"),
+    "datadog_monitor_notify_audit_disabled": ("datadog", "low", "Monitor posture"),
+    "datadog_monitor_require_full_window_disabled": ("datadog", "low", "Monitor evaluation posture"),
+    "datadog_monitor_query_wildcard_scope": ("datadog", "medium", "Monitor query posture"),
+    "datadog_monitor_broad_group_by": ("datadog", "low", "Monitor query posture"),
+    "datadog_monitor_long_no_data_timeframe": ("datadog", "low", "Monitor no-data posture"),
+    "datadog_webhook_custom_headers_without_secret_headers": ("datadog", "medium", "Webhook posture"),
+    "datadog_webhook_large_payload_template": ("datadog", "low", "Webhook posture"),
+    "datadog_webhook_auth_material_present": ("datadog", "medium", "Webhook posture"),
+    "datadog_webhook_non_https_endpoint": ("datadog", "high", "Webhook posture"),
 }
 
 

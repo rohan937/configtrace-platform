@@ -44,6 +44,7 @@ Credentials dict
 
 from __future__ import annotations
 
+import json as _json
 import logging
 from typing import Any, Optional
 
@@ -209,6 +210,121 @@ def _eval_delay_category(delay_seconds: Any) -> str:
     return "long"
 
 
+# ── M82C helper functions ──────────────────────────────────────────────────────
+
+
+def _renotify_interval_category(interval_minutes: Any) -> str:
+    """Categorise a monitor renotify_interval (in minutes).
+
+    Returns "disabled" when the interval is absent or zero.
+    SECURITY: the raw interval value is categorised and discarded.
+    """
+    if not isinstance(interval_minutes, (int, float)):
+        return "disabled"
+    m = int(interval_minutes)
+    if m <= 0:
+        return "disabled"
+    if m < 60:
+        return "short"     # < 1 hour
+    if m < 240:
+        return "medium"    # 1–4 hours
+    return "long"          # >= 4 hours
+
+
+def _no_data_timeframe_category(timeframe_minutes: Any) -> str:
+    """Categorise a monitor no_data_timeframe (in minutes).
+
+    Returns "none" when absent or zero.
+    SECURITY: the raw value is categorised and discarded.
+    """
+    if not isinstance(timeframe_minutes, (int, float)):
+        return "none"
+    m = int(timeframe_minutes)
+    if m <= 0:
+        return "none"
+    if m < 30:
+        return "short"      # < 30 min
+    if m < 120:
+        return "medium"     # 30–120 min
+    return "extended"       # >= 2 hours
+
+
+def _count_notification_mentions(message: Any) -> int:
+    """Count the number of @ characters in a monitor message.
+
+    This gives an approximation of notification handles without storing
+    any of the actual handles, channel names, or user references.
+    SECURITY: the raw message is NEVER stored. Only the count is returned.
+    Capped at 50 to avoid outsized values.
+    """
+    if not isinstance(message, str):
+        return 0
+    return min(message.count("@"), 50)
+
+
+def _detect_webhook_auth_material(raw_headers_str: Any) -> bool:
+    """Check whether custom_headers contains any auth-like header names.
+
+    Parses the custom_headers JSON string to inspect key names only. Neither
+    header names nor header values are returned or stored — only a boolean.
+    SECURITY: header names are matched against a fixed pattern list and then
+    discarded. Header values are NEVER read or stored.
+    """
+    if not isinstance(raw_headers_str, str) or not raw_headers_str.strip():
+        return False
+    try:
+        headers_dict = _json.loads(raw_headers_str)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(headers_dict, dict):
+        return False
+    # Pattern list of auth-suggestive header name substrings.
+    # SECURITY: these patterns are used for detection only — never stored.
+    _AUTH_PATTERNS = frozenset({
+        "authorization", "x-api-key", "x-auth-token", "apikey", "api-key",
+        "x-dd-api-key", "x-datadog-api-key", "token", "api_key",
+        "x-token", "auth", "bearer",
+    })
+    for key in headers_dict:
+        if not isinstance(key, str):
+            continue
+        key_lower = key.lower()
+        if any(p in key_lower for p in _AUTH_PATTERNS):
+            return True
+    return False
+
+
+def _count_headers(raw_headers_str: Any) -> int:
+    """Count the number of keys in a JSON-encoded headers dict.
+
+    SECURITY: header names and values are NEVER stored — only the count.
+    Returns 0 on parse error.
+    """
+    if not isinstance(raw_headers_str, str) or not raw_headers_str.strip():
+        return 0
+    try:
+        headers_dict = _json.loads(raw_headers_str)
+    except (ValueError, TypeError):
+        return 0
+    return len(headers_dict) if isinstance(headers_dict, dict) else 0
+
+
+def _url_scheme_category(url: Any) -> str:
+    """Extract the URL scheme category without storing the URL.
+
+    SECURITY: the full URL string is NEVER stored or returned. Only a safe
+    categorical label ("https"/"http"/"absent"/"unknown") is returned.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return "absent"
+    url_lower = url.lower().strip()
+    if url_lower.startswith("https://"):
+        return "https"
+    if url_lower.startswith("http://"):
+        return "http"
+    return "unknown"
+
+
 # ── Connector ──────────────────────────────────────────────────────────────────
 
 
@@ -317,6 +433,8 @@ class DatadogConnector(BaseConnector):
 
         SECURITY: raw query string and raw message text are NEVER stored.
         Notification handles embedded in the message are NEVER stored.
+        Query and message are read transiently to compute safe derived booleans
+        and counts (M82C), then discarded immediately.
         """
         mid = raw.get("id")
         if mid is None:
@@ -327,9 +445,9 @@ class DatadogConnector(BaseConnector):
         restricted_roles = raw.get("restricted_roles") or []
         tags = raw.get("tags") or []
 
-        # query is NEVER stored
+        # query is NEVER stored — compute derived fields then discard
         query = raw.get("query", "")
-        # message is NEVER stored
+        # message is NEVER stored — compute derived fields then discard
         message = raw.get("message", "")
 
         # enabled: False if monitor is currently silenced (dict with timestamps)
@@ -337,6 +455,48 @@ class DatadogConnector(BaseConnector):
         enabled = not bool(silenced and isinstance(silenced, dict) and silenced)
 
         eval_delay = options.get("evaluation_delay")
+
+        # ── M82C: safe derived fields from query (query NEVER stored) ─────────
+        # query_uses_wildcard_scope: monitor covers all hosts/metrics via {*}
+        query_uses_wildcard_scope = bool(
+            isinstance(query, str) and "{*}" in query
+        )
+        # query_group_by_count: count of group-by clauses (raw query discarded)
+        query_group_by_count = (
+            min(query.lower().count("by {"), 20)
+            if isinstance(query, str) else 0
+        )
+
+        # ── M82C: safe derived fields from message (message NEVER stored) ─────
+        # notification_routing_present: any @ mention in the message
+        notification_routing_present = bool(
+            isinstance(message, str) and "@" in message
+        )
+        # notification_count: count of @ characters (handles NEVER stored)
+        notification_count = _count_notification_mentions(message)
+        # message_template_present: message uses {{ template variables
+        message_template_present = bool(
+            isinstance(message, str) and "{{" in message
+        )
+
+        # ── M82C: individual threshold fields ─────────────────────────────────
+        threshold_critical_present = (
+            isinstance(thresholds, dict) and thresholds.get("critical") is not None
+        )
+        threshold_warning_present = (
+            isinstance(thresholds, dict) and thresholds.get("warning") is not None
+        )
+        threshold_recovery_present = (
+            isinstance(thresholds, dict) and (
+                thresholds.get("critical_recovery") is not None
+                or thresholds.get("warning_recovery") is not None
+            )
+        )
+
+        # ── M82C: silenced scope count (from silenced dict) ───────────────────
+        silenced_scope_count = (
+            len(silenced) if isinstance(silenced, dict) else 0
+        )
 
         return {
             "record_type": DATADOG_MONITOR,
@@ -351,16 +511,38 @@ class DatadogConnector(BaseConnector):
             # query NEVER stored — presence and complexity only
             "query_present": bool(isinstance(query, str) and query),
             "query_complexity_category": _length_category(query),
+            # M82C: safe derivations from query (query discarded)
+            "query_uses_wildcard_scope": query_uses_wildcard_scope,
+            "query_group_by_count": query_group_by_count,
             # message NEVER stored — presence and length only
             "message_present": bool(isinstance(message, str) and message),
             "message_length_category": _length_category(message),
+            # M82C: safe derivations from message (message discarded)
+            "notification_routing_present": notification_routing_present,
+            "notification_count": notification_count,
+            "message_template_present": message_template_present,
             "tag_count": len(tags) if isinstance(tags, list) else 0,
             "threshold_count": len(thresholds) if isinstance(thresholds, dict) else 0,
+            # M82C: individual threshold presence booleans
+            "threshold_critical_present": threshold_critical_present,
+            "threshold_warning_present": threshold_warning_present,
+            "threshold_recovery_present": threshold_recovery_present,
             "renotify_enabled": bool(options.get("renotify_interval")),
+            "renotify_interval_category": _renotify_interval_category(
+                options.get("renotify_interval")
+            ),
             "restricted_roles_count": len(restricted_roles) if isinstance(restricted_roles, list) else 0,
             "notify_no_data": _bool(options.get("notify_no_data", False)),
             "include_tags": _bool(options.get("include_tags", True)),
+            # M82C: additional option booleans
+            "notify_audit": _bool(options.get("notify_audit", False)),
+            "require_full_window": _bool(options.get("require_full_window", True)),
             "evaluation_delay_category": _eval_delay_category(eval_delay),
+            # M82C: derived silenced scope count and no-data timeframe category
+            "silenced_scope_count": silenced_scope_count,
+            "no_data_timeframe_category": _no_data_timeframe_category(
+                options.get("no_data_timeframe")
+            ),
         }
 
     @staticmethod
@@ -451,12 +633,42 @@ class DatadogConnector(BaseConnector):
     def _normalize_webhook(raw: dict) -> Optional[dict]:
         """Normalize one Datadog webhook integration record.
 
-        SECURITY: webhook URL, custom HTTP headers (names and values), payload
-        template body, and webhook signing secrets are NEVER stored.
+        SECURITY: webhook URL (full string), custom HTTP header names/values,
+        payload template body, and signing secrets are NEVER stored. The URL is
+        read transiently to derive only the scheme category, then discarded.
+        Custom header keys are scanned for auth patterns only (boolean result),
+        then discarded. Neither header names nor values are retained.
+        M82C expands with additional safe derived fields.
         """
         name = raw.get("name", "")
         if not isinstance(name, str) or not name.strip():
             return None
+
+        # ── M82C: safe URL scheme category (URL string NEVER stored) ──────────
+        url_str = raw.get("url", "")
+        url_scheme_cat = _url_scheme_category(url_str)
+
+        # ── M82C: custom header count and auth detection (names NEVER stored) ──
+        raw_custom_headers = raw.get("custom_headers", "")
+        custom_header_count = _count_headers(raw_custom_headers)
+        auth_material_present = _detect_webhook_auth_material(raw_custom_headers)
+
+        # ── M82C: secret headers count (secret values NEVER stored) ──────────
+        raw_secret_headers = raw.get("secret_headers", "")
+        secret_headers_count = _count_headers(raw_secret_headers)
+
+        # ── M82C: payload template length category (content NEVER stored) ─────
+        payload_str = raw.get("payload", "")
+        payload_template_length_cat = _length_category(payload_str)
+
+        # ── M82C: encode_as safe category ─────────────────────────────────────
+        encode_as = raw.get("encode_as", "")
+        if encode_as == "json":
+            encode_as_category = "json"
+        elif encode_as == "form":
+            encode_as_category = "form"
+        else:
+            encode_as_category = "unknown"
 
         return {
             "record_type": DATADOG_WEBHOOK_INTEGRATION,
@@ -464,14 +676,21 @@ class DatadogConnector(BaseConnector):
             "record_id": _trunc(name, 100),
             "resource_id": _trunc(name, 100),
             "resource_name": _trunc(name, 100),
-            # URL NEVER stored — presence boolean only
-            "url_present": bool(raw.get("url")),
-            # custom_headers NEVER stored — presence boolean only
-            "custom_headers_present": bool(raw.get("custom_headers")),
-            # payload_template NEVER stored — presence boolean only
-            "payload_template_present": bool(raw.get("payload")),
-            # secret_headers NEVER stored — presence boolean only
-            "secret_headers_present": bool(raw.get("secret_headers")),
+            # URL NEVER stored — presence boolean + scheme category only (M82C)
+            "url_present": bool(url_str),
+            "url_scheme_category": url_scheme_cat,
+            # custom_headers NEVER stored — presence boolean + count + auth detection (M82C)
+            "custom_headers_present": bool(raw_custom_headers),
+            "custom_header_count": custom_header_count,
+            "auth_material_present": auth_material_present,
+            # payload_template NEVER stored — presence boolean + length category (M82C)
+            "payload_template_present": bool(payload_str),
+            "payload_template_length_category": payload_template_length_cat,
+            # secret_headers NEVER stored — presence boolean + count (M82C)
+            "secret_headers_present": bool(raw_secret_headers),
+            "secret_headers_count": secret_headers_count,
+            # encode_as: safe category label (M82C)
+            "encode_as_category": encode_as_category,
         }
 
     @staticmethod

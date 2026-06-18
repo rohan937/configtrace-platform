@@ -1,14 +1,15 @@
-"""Datadog configuration-risk security rules — M82B.
+"""Datadog configuration-risk security rules — M82B/M82C.
 
 Every rule fires only on explicit, reliable normalized fields produced by the
-Datadog connector (app/connectors/datadog.py + datadog_schema.py, M82A). Evidence
-is metadata-only: booleans, counts, categories, opaque identifiers, and safe
-string labels. No API key values, application key values, OAuth tokens, bearer
-tokens, webhook secrets, webhook URLs, integration secrets, raw monitor queries,
-raw monitor messages, raw dashboard JSON, raw widget queries, raw incident text,
-raw log data, raw trace data, raw metric values, raw event payloads, email
-addresses, user names, user IDs, team member identities, notification channel
-destinations, or any customer data are ever read, stored, or surfaced.
+Datadog connector (app/connectors/datadog.py + datadog_schema.py, M82A/M82C).
+Evidence is metadata-only: booleans, counts, categories, opaque identifiers,
+and safe string labels. No API key values, application key values, OAuth tokens,
+bearer tokens, webhook secrets, webhook URLs, integration secrets, raw monitor
+queries, raw monitor messages, raw dashboard JSON, raw widget queries, raw
+incident text, raw log data, raw trace data, raw metric values, raw event
+payloads, email addresses, user names, user IDs, team member identities,
+notification channel destinations, or any customer data are ever read, stored,
+or surfaced.
 
 CLAIM DISCIPLINE
 ----------------
@@ -18,14 +19,23 @@ secret was exposed, that unauthorized access occurred, that an attacker is
 present, or that customer data was exposed. Severity reflects review priority,
 not confirmed impact.
 
-Record types consumed (M82A)
-----------------------------
-- ``datadog_monitor``               → enabled status, restricted roles count,
-                                       notify_no_data, query_complexity_category
+Record types consumed (M82A/M82C)
+----------------------------------
+- ``datadog_monitor``               → enabled, restricted_roles_count,
+                                       notify_no_data, query_complexity_category,
+                                       notification_routing_present, notification_count,
+                                       message_template_present, threshold_critical_present,
+                                       threshold_warning_present, threshold_recovery_present,
+                                       silenced_scope_count, notify_audit,
+                                       require_full_window, query_uses_wildcard_scope,
+                                       query_group_by_count, no_data_timeframe_category
 - ``datadog_slo``                   → monitor_count, target_category
 - ``datadog_dashboard``             → public_url_present, restricted_roles_count
-- ``datadog_webhook_integration``   → url_present, secret_headers_present,
-                                       payload_template_present
+- ``datadog_webhook_integration``   → url_present, url_scheme_category,
+                                       custom_headers_present, custom_header_count,
+                                       auth_material_present, secret_headers_present,
+                                       payload_template_present,
+                                       payload_template_length_category
 - ``datadog_notification_integration`` → enabled, handle_count, channel_count
 - ``datadog_api_key_metadata``      → disabled
 - ``datadog_application_key_metadata`` → scopes_count
@@ -35,16 +45,25 @@ Record types consumed (M82A)
                                        metric_collection_enabled,
                                        log_collection_enabled
 
-Rules deferred from M82B
+Rules deferred from M82B (resolved in M82C)
+--------------------------------------------
+- ``datadog_monitor_no_notifications`` — Resolved: M82C adds
+  ``notification_routing_present`` to the monitor schema, enabling this rule.
+
+Rules deferred from M82C
 --------------------------
-- ``datadog_monitor_no_notifications`` — The M82A schema does not include a
-  ``notification_count`` field. Notification routing is embedded in the raw
-  monitor message text which is never stored. Deferred until a safe count
-  can be computed during normalization.
-- ``datadog_application_key_disabled`` — The M82A schema's
-  ``datadog_application_key_metadata`` record does not include a ``disabled``
-  field; the Datadog v2 application_keys endpoint does not reliably expose a
-  revocation/disabled status in all API versions. Deferred.
+- ``datadog_webhook_url_without_secret_headers`` — Overlaps semantically with
+  M82B's ``datadog_webhook_without_secret_headers`` (url_present AND NOT
+  secret_headers_present). The M82C ``datadog_webhook_non_https_endpoint``
+  covers the URL scheme angle more precisely. Deferred to avoid duplicate
+  findings on the same record.
+- ``datadog_webhook_custom_payload_enabled`` — Overlaps with M82B's
+  ``datadog_webhook_payload_template_present`` (both fire when a custom payload
+  is configured). Deferred to avoid semantic duplication.
+- ``datadog_application_key_disabled`` — The datadog_application_key_metadata
+  record does not expose a ``disabled`` field (the Datadog v2 application_keys
+  endpoint does not reliably expose revocation/disabled status across all API
+  versions). Remains deferred.
 """
 
 from __future__ import annotations
@@ -71,11 +90,23 @@ from app.services.security_rules.base import (
 
 # ── Rule key constants ────────────────────────────────────────────────────────
 
-# Monitor
+# Monitor (M82B)
 _RULE_MONITOR_DISABLED = "datadog_monitor_disabled"
 _RULE_MONITOR_UNRESTRICTED_ROLES = "datadog_monitor_unrestricted_roles"
 _RULE_MONITOR_NOTIFY_NO_DATA_DISABLED = "datadog_monitor_notify_no_data_disabled"
 _RULE_MONITOR_LONG_QUERY = "datadog_monitor_long_query"
+
+# Monitor (M82C expansion)
+_RULE_MONITOR_NO_NOTIFICATIONS = "datadog_monitor_no_notifications"
+_RULE_MONITOR_MESSAGE_TEMPLATE = "datadog_monitor_message_template_present"
+_RULE_MONITOR_NO_WARNING_THRESHOLD = "datadog_monitor_no_warning_threshold"
+_RULE_MONITOR_NO_RECOVERY_THRESHOLD = "datadog_monitor_no_recovery_threshold"
+_RULE_MONITOR_SILENCED_SCOPES = "datadog_monitor_silenced_scopes_present"
+_RULE_MONITOR_NOTIFY_AUDIT_DISABLED = "datadog_monitor_notify_audit_disabled"
+_RULE_MONITOR_REQUIRE_FULL_WINDOW_DISABLED = "datadog_monitor_require_full_window_disabled"
+_RULE_MONITOR_QUERY_WILDCARD_SCOPE = "datadog_monitor_query_wildcard_scope"
+_RULE_MONITOR_BROAD_GROUP_BY = "datadog_monitor_broad_group_by"
+_RULE_MONITOR_LONG_NO_DATA_TIMEFRAME = "datadog_monitor_long_no_data_timeframe"
 
 # SLO
 _RULE_SLO_NO_MONITORS = "datadog_slo_no_monitors"
@@ -85,9 +116,15 @@ _RULE_SLO_LOW_TARGET = "datadog_slo_low_target"
 _RULE_DASHBOARD_PUBLIC_URL = "datadog_dashboard_public_url_present"
 _RULE_DASHBOARD_UNRESTRICTED_ROLES = "datadog_dashboard_unrestricted_roles"
 
-# Webhook integration
+# Webhook integration (M82B)
 _RULE_WEBHOOK_WITHOUT_SECRET_HEADERS = "datadog_webhook_without_secret_headers"
 _RULE_WEBHOOK_PAYLOAD_TEMPLATE = "datadog_webhook_payload_template_present"
+
+# Webhook integration (M82C expansion)
+_RULE_WEBHOOK_CUSTOM_HEADERS_NO_SECRET = "datadog_webhook_custom_headers_without_secret_headers"
+_RULE_WEBHOOK_LARGE_PAYLOAD_TEMPLATE = "datadog_webhook_large_payload_template"
+_RULE_WEBHOOK_AUTH_MATERIAL = "datadog_webhook_auth_material_present"
+_RULE_WEBHOOK_NON_HTTPS = "datadog_webhook_non_https_endpoint"
 
 # Notification integration
 _RULE_NOTIF_NO_CHANNELS = "datadog_notification_integration_no_channels"
@@ -109,6 +146,7 @@ _RULE_CLOUD_BROAD_COLLECTION = "datadog_cloud_integration_broad_collection"
 _RULE_CLOUD_LOG_COLLECTION = "datadog_cloud_integration_log_collection_enabled"
 
 DATADOG_RULE_KEYS: frozenset[str] = frozenset({
+    # M82B rules
     _RULE_MONITOR_DISABLED,
     _RULE_MONITOR_UNRESTRICTED_ROLES,
     _RULE_MONITOR_NOTIFY_NO_DATA_DISABLED,
@@ -126,6 +164,21 @@ DATADOG_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_TEAM_NO_MEMBERS,
     _RULE_CLOUD_BROAD_COLLECTION,
     _RULE_CLOUD_LOG_COLLECTION,
+    # M82C expansion rules
+    _RULE_MONITOR_NO_NOTIFICATIONS,
+    _RULE_MONITOR_MESSAGE_TEMPLATE,
+    _RULE_MONITOR_NO_WARNING_THRESHOLD,
+    _RULE_MONITOR_NO_RECOVERY_THRESHOLD,
+    _RULE_MONITOR_SILENCED_SCOPES,
+    _RULE_MONITOR_NOTIFY_AUDIT_DISABLED,
+    _RULE_MONITOR_REQUIRE_FULL_WINDOW_DISABLED,
+    _RULE_MONITOR_QUERY_WILDCARD_SCOPE,
+    _RULE_MONITOR_BROAD_GROUP_BY,
+    _RULE_MONITOR_LONG_NO_DATA_TIMEFRAME,
+    _RULE_WEBHOOK_CUSTOM_HEADERS_NO_SECRET,
+    _RULE_WEBHOOK_LARGE_PAYLOAD_TEMPLATE,
+    _RULE_WEBHOOK_AUTH_MATERIAL,
+    _RULE_WEBHOOK_NON_HTTPS,
 })
 
 # Threshold: application key scope count above which the key surface is broad.
@@ -133,6 +186,9 @@ _BROAD_SCOPES_THRESHOLD = 10
 
 # Threshold: role permission count above which the role is considered broad.
 _HIGH_PERMISSION_THRESHOLD = 25
+
+# M82C: group-by clause count above which a monitor query is considered broad.
+_BROAD_GROUP_BY_THRESHOLD = 3
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -294,6 +350,356 @@ def _eval_monitor(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Open the monitor and review the query for clarity.",
                     "Consider simplifying or splitting complex queries into "
                     "multiple focused monitors.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M82C expansion rules ──────────────────────────────────────────────────
+
+    # ── datadog_monitor_no_notifications ─────────────────────────────────────
+    # Fires when the monitor message contains no notification routing (@mentions).
+    # notification_routing_present is a safe boolean derived from the message
+    # before discarding it — the raw message is NEVER stored.
+    if not _bool_field(record, "notification_routing_present"):
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_NO_NOTIFICATIONS,
+            finding_key=make_finding_key(_RULE_MONITOR_NO_NOTIFICATIONS, record_id),
+            severity="medium",
+            title="Datadog monitor has no notification routing",
+            description=(
+                "A Datadog monitor's message contains no notification routing "
+                "(no @mentions such as @slack-channel, @pagerduty, or @email). "
+                "Without notification routing, alerts from this monitor may not "
+                "reach the on-call team. This is configuration evidence for "
+                "review. Raw message content is never stored."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_NO_NOTIFICATIONS,
+                "record_id": record_id,
+                "notification_routing_present": False,
+                "notification_count": _int(record, "notification_count"),
+            },
+            remediation={
+                "summary": "Add notification routing to the monitor message.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and add at least one @notification target "
+                    "(e.g. @slack-channel, @pagerduty-service, or @email).",
+                    "If the monitor intentionally has no routing, add a comment "
+                    "to the message explaining why.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_message_template_present ──────────────────────────────
+    # Fires when the monitor message contains {{ template variables.
+    # message_template_present is a safe boolean — raw message NEVER stored.
+    if _bool_field(record, "message_template_present"):
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_MESSAGE_TEMPLATE,
+            finding_key=make_finding_key(_RULE_MONITOR_MESSAGE_TEMPLATE, record_id),
+            severity="low",
+            title="Datadog monitor message uses template variables",
+            description=(
+                "A Datadog monitor's notification message uses template variables "
+                "(e.g. {{value}}, {{threshold}}, {{host.name}}). Template variables "
+                "expand to live values at alert time and should be reviewed "
+                "periodically to confirm the expanded content is appropriate for "
+                "the notification channel's audience. This is configuration "
+                "evidence for review. Raw message content is never stored."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_MESSAGE_TEMPLATE,
+                "record_id": record_id,
+                "message_template_present": True,
+            },
+            remediation={
+                "summary": "Review the monitor message template for appropriate variable usage.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and review the notification message.",
+                    "Confirm that template variables expand to content appropriate "
+                    "for the notification channel.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_no_warning_threshold ──────────────────────────────────
+    # Fires when a critical threshold is set but no warning threshold exists.
+    threshold_critical = _bool_field(record, "threshold_critical_present")
+    threshold_warning = _bool_field(record, "threshold_warning_present")
+    if threshold_critical and not threshold_warning:
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_NO_WARNING_THRESHOLD,
+            finding_key=make_finding_key(_RULE_MONITOR_NO_WARNING_THRESHOLD, record_id),
+            severity="medium",
+            title="Datadog monitor has a critical threshold but no warning threshold",
+            description=(
+                "A Datadog monitor is configured with a critical threshold but "
+                "no warning threshold. Without a warning threshold, the monitor "
+                "transitions directly from OK to ALERT with no intermediate state, "
+                "reducing early-warning signal. This is configuration evidence for "
+                "review."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_NO_WARNING_THRESHOLD,
+                "record_id": record_id,
+                "threshold_critical_present": True,
+                "threshold_warning_present": False,
+            },
+            remediation={
+                "summary": "Consider adding a warning threshold to provide early-warning signal.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and add a Warning threshold below the Critical threshold.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_no_recovery_threshold ─────────────────────────────────
+    # Fires when a critical threshold is set but no recovery threshold exists.
+    threshold_recovery = _bool_field(record, "threshold_recovery_present")
+    if threshold_critical and not threshold_recovery:
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_NO_RECOVERY_THRESHOLD,
+            finding_key=make_finding_key(_RULE_MONITOR_NO_RECOVERY_THRESHOLD, record_id),
+            severity="low",
+            title="Datadog monitor has no recovery threshold",
+            description=(
+                "A Datadog monitor is configured with a critical threshold but "
+                "no recovery threshold. Without a recovery threshold, the monitor "
+                "may remain in alert state or flap frequently. This is "
+                "configuration evidence for review."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_NO_RECOVERY_THRESHOLD,
+                "record_id": record_id,
+                "threshold_critical_present": True,
+                "threshold_recovery_present": False,
+            },
+            remediation={
+                "summary": "Consider adding a recovery threshold to stabilize alert resolution.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and add a recovery threshold in the alert conditions.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_silenced_scopes_present ───────────────────────────────
+    silenced_scope_count = _int(record, "silenced_scope_count")
+    if silenced_scope_count > 0:
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_SILENCED_SCOPES,
+            finding_key=make_finding_key(_RULE_MONITOR_SILENCED_SCOPES, record_id),
+            severity="medium",
+            title="Datadog monitor has silenced scopes",
+            description=(
+                f"A Datadog monitor has {silenced_scope_count} silenced scope(s). "
+                "Silenced scopes suppress alerts for specific hosts, environments, "
+                "or tags without disabling the entire monitor. Silenced scopes may "
+                "represent acknowledged maintenance or forgotten suppressions. "
+                "This is configuration evidence for review."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_SILENCED_SCOPES,
+                "record_id": record_id,
+                "silenced_scope_count": silenced_scope_count,
+            },
+            remediation={
+                "summary": "Review and remove expired or unintended silenced scopes.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and check the Muting / Silenced Scopes section.",
+                    "Remove silenced scopes that are no longer valid.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_notify_audit_disabled ─────────────────────────────────
+    if not _bool_field(record, "notify_audit"):
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_NOTIFY_AUDIT_DISABLED,
+            finding_key=make_finding_key(_RULE_MONITOR_NOTIFY_AUDIT_DISABLED, record_id),
+            severity="low",
+            title="Datadog monitor does not notify on audit changes",
+            description=(
+                "A Datadog monitor has audit notifications disabled. When "
+                "monitor settings are changed, no notification is sent to the "
+                "monitor's recipients. This can reduce visibility into who "
+                "modified the monitor configuration. This is configuration "
+                "evidence for review."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_NOTIFY_AUDIT_DISABLED,
+                "record_id": record_id,
+                "notify_audit": False,
+            },
+            remediation={
+                "summary": "Review enabling audit notifications for this monitor.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and check the 'Notify if this alert is "
+                    "modified' option.",
+                    "Enable it if you want notifications when the monitor "
+                    "configuration changes.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_require_full_window_disabled ──────────────────────────
+    if not _bool_field(record, "require_full_window"):
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_REQUIRE_FULL_WINDOW_DISABLED,
+            finding_key=make_finding_key(
+                _RULE_MONITOR_REQUIRE_FULL_WINDOW_DISABLED, record_id
+            ),
+            severity="low",
+            title="Datadog monitor does not require a full evaluation window",
+            description=(
+                "A Datadog monitor has 'require full window' disabled. This "
+                "means the monitor may evaluate on a partial data window, "
+                "which can produce alerts based on incomplete data. This is "
+                "configuration evidence for review."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_REQUIRE_FULL_WINDOW_DISABLED,
+                "record_id": record_id,
+                "require_full_window": False,
+            },
+            remediation={
+                "summary": "Review whether this monitor should require a full evaluation window.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor advanced options.",
+                    "Enable 'Require full window of data' if incomplete data "
+                    "periods should not trigger alerts.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_query_wildcard_scope ──────────────────────────────────
+    # Fires when the monitor query uses {*} (all-scope wildcard).
+    # query_uses_wildcard_scope is derived from the query before discarding —
+    # the raw query is NEVER stored.
+    if _bool_field(record, "query_uses_wildcard_scope"):
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_QUERY_WILDCARD_SCOPE,
+            finding_key=make_finding_key(_RULE_MONITOR_QUERY_WILDCARD_SCOPE, record_id),
+            severity="medium",
+            title="Datadog monitor uses a wildcard scope",
+            description=(
+                "A Datadog monitor's query uses a wildcard scope ({*}), which "
+                "monitors all hosts, services, or metrics across the entire "
+                "infrastructure. Wildcard-scoped monitors can generate high "
+                "alert volumes and may mask issues with specific services. "
+                "This is configuration evidence for review. Raw query content "
+                "is never stored."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_QUERY_WILDCARD_SCOPE,
+                "record_id": record_id,
+                "query_uses_wildcard_scope": True,
+            },
+            remediation={
+                "summary": "Review whether the wildcard scope is appropriate for this monitor.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and review the query scope.",
+                    "If possible, narrow the scope to specific environments, "
+                    "services, or hosts to reduce alert noise.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_broad_group_by ────────────────────────────────────────
+    query_group_by_count = _int(record, "query_group_by_count")
+    if query_group_by_count >= _BROAD_GROUP_BY_THRESHOLD:
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_BROAD_GROUP_BY,
+            finding_key=make_finding_key(_RULE_MONITOR_BROAD_GROUP_BY, record_id),
+            severity="low",
+            title="Datadog monitor has a broad group-by configuration",
+            description=(
+                f"A Datadog monitor has {query_group_by_count} group-by clause(s) "
+                "in its query, which may create a large number of alert groups "
+                "across many dimension combinations. This can produce high alert "
+                "volumes and make alert management difficult. This is configuration "
+                "evidence for review. Raw query content is never stored."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_BROAD_GROUP_BY,
+                "record_id": record_id,
+                "query_group_by_count": query_group_by_count,
+            },
+            remediation={
+                "summary": "Review and reduce the group-by dimensions in the monitor query.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and review the group-by configuration.",
+                    "Consider reducing the number of group-by dimensions to "
+                    "focus alerts on the most actionable signals.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_monitor_long_no_data_timeframe ────────────────────────────────
+    no_data_cat = get_str(record, "no_data_timeframe_category")
+    if no_data_cat == "extended":
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_MONITOR_LONG_NO_DATA_TIMEFRAME,
+            finding_key=make_finding_key(_RULE_MONITOR_LONG_NO_DATA_TIMEFRAME, record_id),
+            severity="low",
+            title="Datadog monitor has a long no-data timeframe",
+            description=(
+                "A Datadog monitor has a no-data timeframe classified as extended "
+                "(2 hours or more). A long no-data window means the monitor waits "
+                "an extended period before alerting on absent data, which may delay "
+                "detection of agent or integration outages. This is configuration "
+                "evidence for review."
+            ),
+            evidence={
+                "rule": _RULE_MONITOR_LONG_NO_DATA_TIMEFRAME,
+                "record_id": record_id,
+                "no_data_timeframe_category": no_data_cat,
+            },
+            remediation={
+                "summary": "Review and reduce the no-data timeframe for this monitor.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Monitors > Manage Monitors.",
+                    "Open the monitor and review the 'No Data' options.",
+                    "Reduce the no-data timeframe to a value appropriate for "
+                    "the expected data ingestion frequency.",
                 ],
             },
             record_id=record_id,
@@ -471,9 +877,11 @@ def _eval_dashboard(record: dict[str, Any]) -> list[FindingCandidate]:
 def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
     """Evaluate one datadog_webhook_integration record.
 
-    SECURITY: webhook URLs, custom HTTP headers, payload template content,
-    and signing secrets are NEVER stored. Evidence uses only presence booleans
-    and the opaque record_id.
+    SECURITY: webhook URLs (full strings), custom HTTP header names/values,
+    payload template content, and signing secrets are NEVER stored. Evidence
+    uses only presence booleans, counts, safe categories, and the opaque
+    record_id. M82C adds url_scheme_category, custom_header_count,
+    auth_material_present, and payload_template_length_category checks.
     """
     record_id = get_str(record, "record_id") or get_str(record, "resource_id")
     findings: list[FindingCandidate] = []
@@ -481,8 +889,9 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
     url_present = _bool_field(record, "url_present")
     secret_headers_present = _bool_field(record, "secret_headers_present")
     payload_template_present = _bool_field(record, "payload_template_present")
+    custom_headers_present = _bool_field(record, "custom_headers_present")
 
-    # ── datadog_webhook_without_secret_headers ────────────────────────────────
+    # ── datadog_webhook_without_secret_headers (M82B) ─────────────────────────
     if url_present and not secret_headers_present:
         findings.append(FindingCandidate(
             provider="datadog",
@@ -519,7 +928,7 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
             record_id=record_id,
         ))
 
-    # ── datadog_webhook_payload_template_present ──────────────────────────────
+    # ── datadog_webhook_payload_template_present (M82B) ───────────────────────
     if payload_template_present:
         findings.append(FindingCandidate(
             provider="datadog",
@@ -547,6 +956,160 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Navigate to Integrations > Webhooks.",
                     "Review the payload template to confirm it does not include "
                     "sensitive fields or credentials.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M82C expansion rules ──────────────────────────────────────────────────
+
+    # ── datadog_webhook_non_https_endpoint ────────────────────────────────────
+    # Fires when the URL scheme is http (insecure).
+    # url_scheme_category is derived from URL before discarding — URL NEVER stored.
+    url_scheme_cat = get_str(record, "url_scheme_category")
+    if url_scheme_cat == "http":
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_WEBHOOK_NON_HTTPS,
+            finding_key=make_finding_key(_RULE_WEBHOOK_NON_HTTPS, record_id),
+            severity="high",
+            title="Datadog webhook endpoint uses insecure HTTP",
+            description=(
+                "A Datadog webhook integration is configured with an endpoint that "
+                "uses plain HTTP rather than HTTPS. Webhook payloads delivered over "
+                "HTTP are transmitted without transport-layer encryption, which may "
+                "expose event content in transit. This is configuration evidence for "
+                "review. The webhook URL is never stored."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_NON_HTTPS,
+                "record_id": record_id,
+                "url_scheme_category": "http",
+            },
+            remediation={
+                "summary": "Update the webhook endpoint URL to use HTTPS.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Integrations > Webhooks.",
+                    "Open the webhook configuration and update the URL to use HTTPS.",
+                    "Verify the endpoint has a valid TLS certificate before updating.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_webhook_custom_headers_without_secret_headers ─────────────────
+    # Fires when custom headers are present but no secret headers are configured.
+    # This is distinct from M82B's url_present+no_secret rule: it specifically
+    # targets webhooks with custom headers that bypass the secret header pattern.
+    # Header names and values are NEVER stored.
+    if custom_headers_present and not secret_headers_present:
+        custom_header_count = _int(record, "custom_header_count")
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_WEBHOOK_CUSTOM_HEADERS_NO_SECRET,
+            finding_key=make_finding_key(_RULE_WEBHOOK_CUSTOM_HEADERS_NO_SECRET, record_id),
+            severity="medium",
+            title="Datadog webhook has custom headers but no secret header",
+            description=(
+                "A Datadog webhook integration has custom HTTP headers configured "
+                "but no dedicated secret header. Custom headers may contain "
+                "authentication material that should be tracked separately from "
+                "a signing secret. Without a secret header, the receiving endpoint "
+                "cannot verify the integrity of each delivery. This is configuration "
+                "evidence for review. Header names and values are never stored."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_CUSTOM_HEADERS_NO_SECRET,
+                "record_id": record_id,
+                "custom_headers_present": True,
+                "custom_header_count": custom_header_count,
+                "secret_headers_present": False,
+            },
+            remediation={
+                "summary": "Add a dedicated secret header for delivery integrity verification.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Integrations > Webhooks.",
+                    "Open the webhook configuration.",
+                    "Add a secret header (separate from custom auth headers) that "
+                    "the receiving endpoint can use to verify delivery origin.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_webhook_large_payload_template ────────────────────────────────
+    # Fires when the payload template is long (classified "long" by length).
+    # Content is NEVER stored — only the length category.
+    payload_template_len_cat = get_str(record, "payload_template_length_category")
+    if payload_template_len_cat == "long":
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_WEBHOOK_LARGE_PAYLOAD_TEMPLATE,
+            finding_key=make_finding_key(_RULE_WEBHOOK_LARGE_PAYLOAD_TEMPLATE, record_id),
+            severity="low",
+            title="Datadog webhook has a large payload template",
+            description=(
+                "A Datadog webhook integration has a payload template classified "
+                "as large in length. A large template may contain many variable "
+                "substitutions, complex logic, or embedded content that is harder "
+                "to audit and maintain. This is configuration evidence for review. "
+                "Raw payload template content is never stored."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_LARGE_PAYLOAD_TEMPLATE,
+                "record_id": record_id,
+                "payload_template_length_category": payload_template_len_cat,
+            },
+            remediation={
+                "summary": "Review and simplify the webhook payload template.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Integrations > Webhooks.",
+                    "Review the payload template and remove unnecessary content.",
+                    "Consider using the default Datadog payload instead of a "
+                    "custom template if the receiving service can accept it.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── datadog_webhook_auth_material_present ─────────────────────────────────
+    # Fires when auth-pattern header names are detected in custom_headers.
+    # Header names are used for detection only — NEVER stored.
+    # Header values are NEVER read or stored.
+    if _bool_field(record, "auth_material_present"):
+        findings.append(FindingCandidate(
+            provider="datadog",
+            rule_key=_RULE_WEBHOOK_AUTH_MATERIAL,
+            finding_key=make_finding_key(_RULE_WEBHOOK_AUTH_MATERIAL, record_id),
+            severity="medium",
+            title="Datadog webhook configuration includes authentication material",
+            description=(
+                "A Datadog webhook integration has custom headers that appear to "
+                "contain authentication material (e.g. Authorization, API-Key, or "
+                "Token headers). Authentication headers embedded in webhook "
+                "configurations may require periodic rotation review. This is "
+                "configuration evidence for review. Header names and values are "
+                "never stored."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_AUTH_MATERIAL,
+                "record_id": record_id,
+                "auth_material_present": True,
+            },
+            remediation={
+                "summary": "Review and rotate authentication material in the webhook headers.",
+                "steps": [
+                    "Sign in to Datadog.",
+                    "Navigate to Integrations > Webhooks.",
+                    "Review the webhook's custom headers and confirm the credentials "
+                    "are up to date.",
+                    "Rotate any credentials that may have been in use for an "
+                    "extended period.",
+                    "Consider using a secret header instead of embedding auth "
+                    "material in custom headers.",
                 ],
             },
             record_id=record_id,
