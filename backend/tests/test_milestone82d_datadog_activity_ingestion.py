@@ -1165,9 +1165,10 @@ class TestDatadogCapabilityMatrix:
         cap = self._get_cap()
         assert cap["security"]["activity_ingestion"] is True
 
-    def test_activity_signals_is_false(self):
+    def test_activity_signals_is_true_after_m82e(self):
+        # M82E set activity_signals=True (Datadog activity signal generation added)
         cap = self._get_cap()
-        assert cap["security"]["activity_signals"] is False
+        assert cap["security"]["activity_signals"] is True
 
     def test_risk_activity_correlations_is_false(self):
         cap = self._get_cap()
@@ -1191,19 +1192,20 @@ class TestDatadogCapabilityMatrix:
 
 class TestDatadogExpansionFramework:
 
-    def test_planned_next_stage_is_m82e(self):
+    def test_planned_next_stage_is_m82f_after_m82e(self):
+        # M82E shipped; planned_next_stage now points to M82F
         expansion_svc = _import_expansion_framework()
         framework = expansion_svc.get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "M82E" in planned, (
-            f"planned_next_stage should reference M82E, got: {planned!r}"
+        assert "M82F" in planned, (
+            f"planned_next_stage should reference M82F, got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_activity_signals(self):
+    def test_planned_next_stage_mentions_correlations(self):
         expansion_svc = _import_expansion_framework()
         framework = expansion_svc.get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "Activity Signals" in planned or "M82E" in planned
+        assert "Correlations" in planned or "M82F" in planned
 
 
 # ── Tests: API endpoint auth ───────────────────────────────────────────────────

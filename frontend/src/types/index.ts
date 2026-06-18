@@ -2140,6 +2140,14 @@ export interface Auth0ActivitySignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface DatadogActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface SendGridCorrelationGenerateResponse {
   provider: string;
   findings_scanned: number;

@@ -851,8 +851,9 @@ class TestCapabilityMatrix:
         # M82D set activity_ingestion=True (Datadog config-state activity ingestion added)
         assert self.cap.security.activity_ingestion is True
 
-    def test_activity_signals_false(self):
-        assert self.cap.security.activity_signals is False
+    def test_activity_signals_true_after_m82e(self):
+        # M82E set activity_signals=True (Datadog activity signal generation added)
+        assert self.cap.security.activity_signals is True
 
     def test_risk_activity_correlations_false(self):
         assert self.cap.security.risk_activity_correlations is False

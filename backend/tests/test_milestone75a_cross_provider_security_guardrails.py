@@ -362,9 +362,8 @@ _ACTIVITY_PROVIDERS = [
     # M82D added Datadog config-state activity ingestion.
     "datadog",
 ]
-# Datadog activity ingestion landed in M82D; signals (M82E) and correlations
-# (M82F) are not yet shipped, so datadog is excluded from those pages.
-_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "datadog"]
+# Datadog activity signals landed in M82E; correlations (M82F) not yet shipped.
+_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)  # datadog included from M82E
 _CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "datadog"]
 
 

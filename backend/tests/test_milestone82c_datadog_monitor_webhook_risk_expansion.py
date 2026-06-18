@@ -841,7 +841,8 @@ class TestCapabilityAndFramework:
         assert cap is not None
         # M82D set activity_ingestion=True (Datadog config-state activity ingestion added)
         assert cap.security.activity_ingestion is True
-        assert cap.security.activity_signals is False
+        # M82E set activity_signals=True (Datadog activity signal generation added)
+        assert cap.security.activity_signals is True
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
 

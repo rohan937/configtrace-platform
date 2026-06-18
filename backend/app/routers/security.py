@@ -223,6 +223,8 @@ from app.schemas.security_auth0_activity import (
 from app.schemas.security_datadog_activity import (
     DatadogActivitySyncRequest,
     DatadogActivitySyncResponse,
+    DatadogActivitySignalGenerateRequest,
+    DatadogActivitySignalGenerateResponse,
 )
 from app.schemas.security_sendgrid_activity import (
     SendGridActivitySyncRequest,
@@ -281,6 +283,7 @@ from app.services import twilio_activity_ingestion_service
 from app.services import auth0_activity_ingestion_service
 from app.services import auth0_activity_signal_service
 from app.services import datadog_activity_ingestion_service
+from app.services import datadog_activity_signal_service
 from app.services import sendgrid_activity_ingestion_service
 from app.services import sendgrid_activity_signal_service
 from app.services import twilio_activity_signal_service
@@ -3418,6 +3421,54 @@ def sync_datadog_activity_events(
         db=db,
     )
     return DatadogActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/datadog-activity/generate-signals",
+    response_model=DatadogActivitySignalGenerateResponse,
+)
+def generate_datadog_activity_signals_endpoint(
+    body: Optional[DatadogActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DatadogActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe Datadog configuration activity events (M82E).
+
+    Admin/owner only. Promotes ingested Datadog config-state events (monitors,
+    SLOs, dashboards, webhook integrations, notification integrations, API key
+    metadata, application key metadata, roles, teams, and cloud integrations)
+    into review-priority Incident Signals. Groups events by resource identity
+    within the lookback window. Idempotent — re-running creates no duplicates.
+
+    Datadog's audit/audit-trail API is never used. Events are synthesized from
+    the same safe configuration surfaces the drift connector already reads.
+
+    API key values, application key values, OAuth tokens, bearer tokens,
+    webhook secrets, raw monitor queries, raw monitor messages, raw dashboard
+    JSON, webhook URLs, headers, payload templates, notification handles, Slack
+    channel names, PagerDuty service IDs, email addresses, user IDs, team
+    member identities, IP addresses, user agents, raw Datadog audit payloads,
+    and raw API response dicts are never stored.
+    These are review signals; they do not confirm compromise, unauthorized
+    access, leaked credentials, or data exposure.
+
+    Members can view the resulting signals via
+    GET /security/signals?provider=datadog.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_signals is not None:
+            kwargs["max_signals"] = body.max_signals
+    summary = datadog_activity_signal_service.generate_datadog_activity_signals(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return DatadogActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

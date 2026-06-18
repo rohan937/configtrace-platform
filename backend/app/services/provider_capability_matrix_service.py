@@ -834,7 +834,7 @@ _DATADOG = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -880,9 +880,16 @@ _DATADOG = ProviderCapability(
         "webhook URLs/headers/payloads/secrets, notification handles, "
         "emails, user IDs, team member identities, logs, traces, metric "
         "values, and incident content are NEVER stored. "
-        "Activity signals, correlations, demo seed/clear, and case report "
-        "are planned for M82E–M82G. "
-        "planned_next_stage: M82E: Datadog Activity Signals."
+        "M82E adds Datadog activity signals. Generates review-worthy Incident "
+        "Signals from M82D activity events. 11 signal types cover all 10 drift "
+        "surfaces plus a generic config activity type. Groups by safe resource "
+        "identity (opaque IDs only); severity is medium for monitors/SLOs/"
+        "dashboards/webhooks/notification integrations/keys/roles and low for "
+        "teams/cloud integrations/generic config. Idempotent. No API key values, "
+        "application key values, raw queries, raw messages, webhook URLs, headers, "
+        "payloads, notification handles, emails, user IDs, or PII stored. "
+        "Correlations, demo seed/clear, and case report are planned for M82F–M82G. "
+        "planned_next_stage: M82F: Datadog Risk × Activity Correlations."
     ),
 )
 

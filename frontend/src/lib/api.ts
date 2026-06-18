@@ -1050,6 +1050,25 @@ export async function generateTwilioActivitySignals(
 }
 
 /**
+ * generateDatadogActivitySignals — POST /security/datadog-activity/generate-signals
+ * Generates review-priority Incident Signals from safe Datadog configuration activity.
+ * Promotes monitor, SLO, dashboard, webhook integration, notification integration,
+ * API key metadata, application key metadata, role, team, and cloud integration
+ * config-state events into signals grouped by safe resource identity.
+ * Stores opaque IDs, safe booleans, counts, and category labels only — never API keys,
+ * application keys, raw monitor queries, raw monitor messages, raw dashboard JSON, webhook
+ * URLs, headers, payload templates, notification handles, emails, user IDs, team member
+ * identities, IP addresses, user agents, raw audit payloads, or PII.
+ * Does not confirm compromise or unauthorized access.
+ */
+export async function generateDatadogActivitySignals(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").DatadogActivitySignalGenerateResponse> {
+  return apiFetch(`/security/datadog-activity/generate-signals`, { method: "POST", body: JSON.stringify(opts ?? {}), token });
+}
+
+/**
  * generateAuth0ActivitySignals — POST /security/auth0-activity/generate-signals
  * Generates review-priority Incident Signals from safe Auth0 configuration activity.
  * Promotes tenant settings, application, connection, resource server, rule, action,
