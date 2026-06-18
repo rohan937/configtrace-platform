@@ -226,7 +226,7 @@ export default function SecurityDemoScriptPage() {
         <p style={{ margin: "0 0 12px", fontSize: "12.5px", color: "#8b90a0", lineHeight: 1.6 }}>
           Shows which providers currently support drift monitoring, security configuration
           risk rules, activity evidence ingestion, Incident Signals, correlations, and
-          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, Twilio, SendGrid, Auth0, and Datadog are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. Auth0 (M81A–M81I) covers 8 Auth0 surfaces: tenant settings, applications, connections, resource servers, rules, actions, MFA factors, and custom domains (URL counts and boolean flags only — never client secrets, raw callback URLs, audience URIs, domain names, script content, user emails, login history, IP addresses, or raw Auth0 logs). Datadog (M82A–M82G) is demo-ready through 31 security rules across 10 Datadog surfaces (monitors, SLOs, dashboards, webhook integrations, notification integrations, API key metadata, application key metadata, roles, teams, cloud integrations), activity ingestion, 11 signal types, 10 correlation families, and a webhook integration review demo case — no API keys, application keys, raw monitor queries/messages, webhook URLs, header names/values, payload templates, notification handles, emails, user IDs, IP addresses, or raw Datadog audit payloads are stored.{" "}
+          demo cases. 8 providers are dual-stack complete. Azure, Google Cloud, Twilio, SendGrid, Auth0, and Datadog are demo-ready through drift findings, activity evidence, signals, risk × activity correlations, and case evidence, and remain tracked as partial providers. Auth0 (M81A–M81I) covers 8 Auth0 surfaces: tenant settings, applications, connections, resource servers, rules, actions, MFA factors, and custom domains (URL counts and boolean flags only — never client secrets, raw callback URLs, audience URIs, domain names, script content, user emails, login history, IP addresses, or raw Auth0 logs). Datadog (M82A–M82I) covers 10 observability configuration surfaces: monitors, SLOs, dashboards, webhook integrations, notification integrations, API key metadata, application key metadata, roles, teams, and cloud integrations. 31 security rules, activity ingestion (synthesized from safe configuration surfaces — Datadog audit API never used), 11 signal types, 10 correlation families, and a webhook integration review demo case are included. No API keys, application keys, raw monitor queries/messages, webhook URLs, header names/values, payload templates, notification handles, emails, user IDs, IP addresses, logs, traces, metric values, incident text, or raw Datadog audit payloads are stored.{" "}
           <span style={{ color: "#565b6e" }}>
             Future providers should follow the dual-stack template: drift foundation →
             security rules → activity ingestion → signals → correlations → demo + QA.
@@ -325,9 +325,8 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 
 // M76 — Recommended next providers (compact display data).
 // NOTE: Twilio arc complete M79A–M79I; SendGrid arc complete M80A–M80I;
-// Auth0 arc complete M81A–M81I. Datadog drift+security+activity+signals+
-// correlations+demo complete (M82A–M82G); depth QA + cross-cloud UX polish
-// pending (M82H–M82I) — moved into PROVIDER_CAPABILITY_TABLE as demo-ready.
+// Auth0 arc complete M81A–M81I; Datadog arc complete M82A–M82I.
+// Clerk is now the head of the recommended provider queue at M83A.
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
   { label: "Clerk",     category: "auth",           milestone: "M83A" },
 ];

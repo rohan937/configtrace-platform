@@ -679,8 +679,8 @@ def test_expansion_framework_planned_next_stage_is_m82a_datadog():
     """planned_next_stage points to M82A: Datadog (unchanged from M82-pre)."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M82A" in stage or "Datadog" in stage, (
-        f"planned_next_stage should point to M82A/Datadog; got: {stage!r}"
+    assert "M82A" in stage or "Datadog" in stage or "M83" in stage or "Clerk" in stage, (
+        f"planned_next_stage should point to M82A/Datadog or later; got: {stage!r}"
     )
     # The intermediate M82-pre / M82-pre.1 stages are done.
     assert "M82-pre" not in stage

@@ -917,20 +917,20 @@ class TestDatadogCapabilityMatrixF:
 
 class TestDatadogExpansionFrameworkF:
 
-    def test_planned_next_stage_is_m82i_after_m82h(self):
-        # M82H shipped; planned_next_stage now points to M82I
+    def test_planned_next_stage_is_m83a_after_m82i(self):
+        # M82I shipped; planned_next_stage now points to M83A Clerk
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "M82I" in planned, (
-            f"planned_next_stage should reference M82I (post-M82H), got: {planned!r}"
+        assert "M83A" in planned or "Clerk" in planned, (
+            f"planned_next_stage should reference M83A/Clerk (post-M82I), got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_polish_or_m82i(self):
+    def test_planned_next_stage_is_past_m82(self):
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "Polish" in planned or "M82I" in planned
+        assert "M82I" not in planned and "M82H" not in planned
 
 
 # ── Section H: Forbidden wording and secret-shape scan ────────────────────────

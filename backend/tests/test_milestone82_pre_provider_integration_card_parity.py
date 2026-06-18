@@ -397,8 +397,8 @@ def test_expansion_framework_planned_next_stage_is_m82a_datadog():
     assert "M82-pre" not in stage, (
         f"planned_next_stage still points to M82-pre after arc closed: {stage!r}"
     )
-    assert "M82A" in stage or "Datadog" in stage, (
-        f"planned_next_stage should point to M82A/Datadog; got: {stage!r}"
+    assert "M82A" in stage or "Datadog" in stage or "M83" in stage or "Clerk" in stage, (
+        f"planned_next_stage should point to M82A/Datadog or later; got: {stage!r}"
     )
 
 

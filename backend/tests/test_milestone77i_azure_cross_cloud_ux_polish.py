@@ -115,7 +115,7 @@ def test_expansion_framework_next_stage_is_beyond_m79d():
     """Rolled forward in M80C: SendGrid Mail/Webhook complete; next stage is M80D."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage or "M82" in stage
+    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage or "M82" in stage or "M83" in stage or "Clerk" in stage
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():

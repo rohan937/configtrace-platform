@@ -892,12 +892,12 @@ def test_i5_notes_mention_m82g_or_demo():
     )
 
 
-def test_i6_expansion_framework_points_to_m82i():
+def test_i6_expansion_framework_points_to_m83a():
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M82I" in stage, (
-        f"expected planned_next_stage to reference M82I (post-M82H QA); got {stage!r}"
+    assert "M83A" in stage or "Clerk" in stage, (
+        f"expected planned_next_stage to reference M83A/Clerk (post-M82I); got {stage!r}"
     )
 
 

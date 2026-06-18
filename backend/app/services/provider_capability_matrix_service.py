@@ -919,8 +919,11 @@ _DATADOG = ProviderCapability(
         "other demo-ready providers; (3) datadog_webhook_auth_material_present "
         "demo severity corrected from high to medium to match rule pack. "
         "Datadog remains partial (not in the canonical dual-stack-complete "
-        "set of 8 providers). planned_next_stage: M82I: Datadog Cross-Cloud "
-        "UX Polish."
+        "set of 8 providers). M82I completes the Datadog arc with cross-cloud "
+        "UX polish: demo-script description updated to reflect the full "
+        "M82A–M82I arc; capability matrix notes updated; provider expansion "
+        "framework planned_next_stage advances to M83A: Clerk Drift Provider "
+        "Foundation. Clerk is now the head of the recommended provider queue."
     ),
 )
 

@@ -1271,22 +1271,22 @@ def test_capability_matrix_notes_mention_m82h():
     )
 
 
-def test_expansion_framework_points_to_m82i():
-    """M82H fix: planned_next_stage must advance to M82I after this milestone."""
+def test_expansion_framework_points_past_m82i():
+    """M82I complete: planned_next_stage must advance to M83A (Clerk) after Datadog arc."""
     framework = get_framework()
     planned = framework["summary"].get("planned_next_stage", "")
-    assert "M82I" in planned, (
-        f"planned_next_stage should reference M82I (next milestone after M82H); got: {planned!r}"
+    assert "M83A" in planned or "Clerk" in planned, (
+        f"planned_next_stage should reference M83A/Clerk (Datadog arc complete); got: {planned!r}"
     )
 
 
-def test_expansion_framework_not_pointing_to_m82h():
-    """M82H is the current milestone; planned_next_stage must be past it."""
+def test_expansion_framework_not_pointing_to_m82_current():
+    """M82 arc is complete; planned_next_stage must be past it."""
     framework = get_framework()
     planned = framework["summary"].get("planned_next_stage", "")
-    assert "M82H" not in planned, (
-        f"planned_next_stage still points at M82H (current milestone); "
-        f"should advance to M82I: {planned!r}"
+    assert "M82H" not in planned and "M82I" not in planned, (
+        f"planned_next_stage still points at an M82 milestone (arc complete); "
+        f"should advance to M83A: {planned!r}"
     )
 
 
