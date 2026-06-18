@@ -1072,7 +1072,8 @@ class TestProviderRegistration:
         assert datadog_cap.drift.drift_risk_classification is True
         # M82B set security_rules=True
         assert datadog_cap.security.security_rules is True
-        assert datadog_cap.security.activity_ingestion is False
+        # M82D set activity_ingestion=True (Datadog config-state activity ingestion added)
+        assert datadog_cap.security.activity_ingestion is True
         assert datadog_cap.security.demo_seed_clear is False
         assert datadog_cap.maturity == "partial"
         assert "M82A" in datadog_cap.notes or "M82B" in datadog_cap.notes

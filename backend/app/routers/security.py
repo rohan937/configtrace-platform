@@ -220,6 +220,10 @@ from app.schemas.security_auth0_activity import (
     Auth0CorrelationGenerateRequest,
     Auth0CorrelationGenerateResponse,
 )
+from app.schemas.security_datadog_activity import (
+    DatadogActivitySyncRequest,
+    DatadogActivitySyncResponse,
+)
 from app.schemas.security_sendgrid_activity import (
     SendGridActivitySyncRequest,
     SendGridActivitySyncResponse,
@@ -276,6 +280,7 @@ from app.services import google_cloud_activity_signal_service
 from app.services import twilio_activity_ingestion_service
 from app.services import auth0_activity_ingestion_service
 from app.services import auth0_activity_signal_service
+from app.services import datadog_activity_ingestion_service
 from app.services import sendgrid_activity_ingestion_service
 from app.services import sendgrid_activity_signal_service
 from app.services import twilio_activity_signal_service
@@ -3359,6 +3364,60 @@ def generate_auth0_activity_signals_endpoint(
         workspace_id=workspace_id, db=db, **kwargs
     )
     return Auth0ActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/datadog-activity/sync",
+    response_model=DatadogActivitySyncResponse,
+)
+def sync_datadog_activity_events(
+    body: Optional[DatadogActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DatadogActivitySyncResponse:
+    """Sync review-safe Datadog configuration activity events (M82D).
+
+    Admin/owner only. Synthesizes configuration-state events from safe
+    Datadog API surfaces: monitors, SLOs, dashboards, webhook integrations,
+    notification integrations, API key metadata, application key metadata,
+    roles, teams, and cloud integrations.
+
+    Datadog's audit/audit-trail API is NEVER used — it contains actor email,
+    actor UUID, and IP-level request metadata in every entry. Events are
+    synthesized from the same safe configuration surfaces the drift connector
+    already reads.
+
+    Raw audit payloads, actor identities, IP addresses, user agents, raw
+    monitor queries, raw monitor messages, raw dashboard JSON, webhook URLs,
+    webhook headers, webhook payload templates, webhook secrets, notification
+    handles, Slack channel names, PagerDuty service IDs, email addresses,
+    user IDs, team member identities, logs, traces, metric values, incident
+    content, API key values, application key values, OAuth tokens, bearer
+    tokens, and raw Datadog API response dicts are NEVER stored.
+
+    Evidence is configuration-state metadata only. Does not confirm breach,
+    compromise, unauthorized access, or data exposure.
+
+    Members can read ingested events via
+    GET /security/activity/events?provider=datadog.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = datadog_activity_ingestion_service.sync_datadog_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return DatadogActivitySyncResponse(**summary)
 
 
 @router.post(

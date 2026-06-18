@@ -39,6 +39,7 @@ import {
   syncTwilioActivity,
   syncSendGridActivity,
   syncAuth0Activity,
+  syncDatadogActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -48,7 +49,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -346,9 +347,46 @@ const SENDGRID_EVENT_TYPES = [
   "sendgrid.config.event",
 ];
 
+// M82D — Datadog configuration-state events (synthesized from safe drift surfaces;
+// Datadog audit API is never ingested due to actor email/UUID and IP content).
+const DATADOG_EVENT_TYPES = [
+  "datadog.monitor.created",
+  "datadog.monitor.updated",
+  "datadog.monitor.deleted",
+  "datadog.slo.created",
+  "datadog.slo.updated",
+  "datadog.slo.deleted",
+  "datadog.dashboard.created",
+  "datadog.dashboard.updated",
+  "datadog.dashboard.deleted",
+  "datadog.webhook_integration.created",
+  "datadog.webhook_integration.updated",
+  "datadog.webhook_integration.deleted",
+  "datadog.notification_integration.created",
+  "datadog.notification_integration.updated",
+  "datadog.notification_integration.deleted",
+  "datadog.api_key_metadata.created",
+  "datadog.api_key_metadata.updated",
+  "datadog.api_key_metadata.disabled",
+  "datadog.api_key_metadata.deleted",
+  "datadog.application_key_metadata.created",
+  "datadog.application_key_metadata.updated",
+  "datadog.application_key_metadata.deleted",
+  "datadog.role.created",
+  "datadog.role.updated",
+  "datadog.role.deleted",
+  "datadog.team.created",
+  "datadog.team.updated",
+  "datadog.team.deleted",
+  "datadog.cloud_integration.created",
+  "datadog.cloud_integration.updated",
+  "datadog.cloud_integration.deleted",
+  "datadog.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -499,6 +537,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "datadog") {
+        const r = await syncDatadogActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Datadog API access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -535,7 +581,9 @@ export default function ActivityEventsPage() {
                               ? "Could not sync SendGrid activity. Please try again."
                               : provider === "auth0"
                                 ? "Could not sync Auth0 activity. Please try again."
-                                : "Could not sync GitHub activity. Please try again.",
+                                : provider === "datadog"
+                                  ? "Could not sync Datadog activity. Please try again."
+                                  : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -692,6 +740,7 @@ export default function ActivityEventsPage() {
     : provider === "twilio" ? TWILIO_EVENT_TYPES
     : provider === "sendgrid" ? SENDGRID_EVENT_TYPES
     : provider === "auth0" ? AUTH0_EVENT_TYPES
+    : provider === "datadog" ? DATADOG_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -734,7 +783,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -853,6 +902,7 @@ function SyncBar({
   const isTwilio = provider === "twilio";
   const isSendGrid = provider === "sendgrid";
   const isAuth0 = provider === "auth0";
+  const isDatadog = provider === "datadog";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -866,6 +916,7 @@ function SyncBar({
     : isTwilio ? "Sync Twilio activity"
     : isSendGrid ? "Sync SendGrid activity"
     : isAuth0 ? "Sync Auth0 activity"
+    : isDatadog ? "Sync Datadog activity"
     : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
@@ -891,7 +942,9 @@ function SyncBar({
                         ? "Sync review-safe SendGrid configuration-state activity — account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression configuration. SendGrid has no native audit API, so these are config-state observations. Email bodies, subject lines, recipient emails, template content, mail event payloads, raw webhook URLs, and API key values are never stored."
                         : isAuth0
                           ? "Sync review-safe Auth0 configuration activity — tenant settings, applications, connections, resource servers, rules, actions, MFA factors, and custom domains. Auth0 Management API logs are never ingested because they contain user IDs, emails, and IP addresses. ConfigTrace stores resource identifiers, OAuth/application posture, tenant settings, and control-plane summaries only — never user emails, login history, IP addresses, sessions, tokens, callback URLs, raw Auth0 logs, or client secrets."
-                          : "Ingests recent GitHub audit-log activity into normalized events.";
+                          : isDatadog
+                            ? "Sync review-safe Datadog configuration activity. ConfigTrace stores monitor, SLO, dashboard, webhook, key, role, team, and cloud-integration posture summaries only — never API keys, application keys, raw monitor queries, raw monitor messages, webhook URLs, headers, payloads, logs, traces, metric values, incident text, emails, destination handles, raw audit payloads, or PII."
+                            : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1001,7 +1054,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -1025,7 +1078,7 @@ function SyncBar({
             Sync GitHub secret scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && (
           <button
             onClick={onSyncGithubCodeScanning}
             disabled={!isAdmin || syncing}
@@ -1049,7 +1102,7 @@ function SyncBar({
             Sync GitHub code scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && (
           <button
             onClick={onSyncGithubDependabot}
             disabled={!isAdmin || syncing}
@@ -1263,6 +1316,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync SendGrid activity first to collect review-safe configuration-state evidence — account, API key, sender identity, domain authentication, mail/tracking settings, event webhook, inbound parse, and suppression configuration. SendGrid has no native audit API, so these are config-state observations. Email bodies, subject lines, recipient emails, template content, raw webhook URLs, and API key values are never stored."
                 : "An admin can sync SendGrid activity to collect review-safe configuration-state evidence."
+            : provider === "datadog"
+              ? isAdmin
+                ? "Sync Datadog activity first to collect review-safe configuration-state evidence — monitor, SLO, dashboard, webhook integration, notification integration, API key, application key, role, team, and cloud integration posture summaries. Datadog audit logs are never ingested. API keys, application keys, raw monitor queries, raw messages, webhook URLs, destination handles, emails, user IDs, and raw audit payloads are never stored."
+                : "An admin can sync Datadog activity to collect review-safe configuration-state evidence."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

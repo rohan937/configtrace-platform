@@ -833,7 +833,7 @@ _DATADOG = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -865,37 +865,24 @@ _DATADOG = ProviderCapability(
         "Logs, traces, metric values, incident content, and all raw Datadog "
         "API response payloads are NEVER fetched or stored. "
         "Pagination is bounded with conservative per-surface caps. "
-        "M82B adds 17 core security rules across 10 record types: "
-        "Monitor posture (disabled, unrestricted roles, no-data notification "
-        "disabled, long query); SLO posture (no monitors, low target); "
-        "Dashboard posture (public URL, unrestricted roles); Webhook posture "
-        "(missing secret headers, custom payload template); Notification "
-        "integration posture (no channels); Application key posture (broad "
-        "scopes); API key posture (disabled); Role posture (high permission "
-        "count); Team posture (no members); Cloud integration posture (broad "
-        "collection, log collection enabled). "
-        "M82C adds 14 monitor/webhook risk expansion rules. Monitor expansion: "
-        "no_notifications (notification_routing_present=false), "
-        "message_template_present, no_warning_threshold, no_recovery_threshold, "
-        "silenced_scopes_present, notify_audit_disabled, "
-        "require_full_window_disabled, query_wildcard_scope, broad_group_by, "
-        "long_no_data_timeframe. Webhook expansion: "
-        "custom_headers_without_secret_headers, large_payload_template, "
-        "auth_material_present, non_https_endpoint. M82C also expands the "
-        "monitor and webhook connector schemas with safe derived fields: "
-        "notification_routing_present, notification_count, "
-        "threshold_critical/warning/recovery_present, silenced_scope_count, "
-        "notify_audit, require_full_window, no_data_timeframe_category, "
-        "query_uses_wildcard_scope, query_group_by_count, "
-        "message_template_present, renotify_interval_category, "
-        "url_scheme_category, custom_header_count, auth_material_present, "
-        "payload_template_length_category, secret_headers_count, "
-        "encode_as_category. Raw query/message strings, webhook URLs, header "
-        "names/values, and payload template content are NEVER stored. "
+        "M82B adds 17 core security rules across 10 record types. "
+        "M82C adds 14 monitor/webhook risk expansion rules. "
         "Total Datadog rules after M82C: 31. "
-        "Activity ingestion, signals, correlations, demo seed/clear, and "
-        "case report are planned for M82D–M82G. "
-        "planned_next_stage: M82D: Datadog Activity/Event Ingestion."
+        "M82D adds Datadog configuration activity ingestion. Activity events "
+        "are synthesized from the same 10 safe drift surfaces — Datadog's "
+        "audit/audit-trail API is never used because it contains actor "
+        "email, actor UUID, and IP-level request metadata. Ingestion scope: "
+        "monitor, SLO, dashboard, webhook integration, notification "
+        "integration, API key metadata, application key metadata, role, team, "
+        "and cloud integration posture observations. Raw audit payloads, "
+        "actor identities, IP addresses, user agents, raw Datadog API "
+        "response dicts, raw monitor queries/messages, raw dashboard JSON, "
+        "webhook URLs/headers/payloads/secrets, notification handles, "
+        "emails, user IDs, team member identities, logs, traces, metric "
+        "values, and incident content are NEVER stored. "
+        "Activity signals, correlations, demo seed/clear, and case report "
+        "are planned for M82E–M82G. "
+        "planned_next_stage: M82E: Datadog Activity Signals."
     ),
 )
 

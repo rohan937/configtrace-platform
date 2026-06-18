@@ -835,11 +835,12 @@ class TestCapabilityAndFramework:
         assert cap is not None
         assert cap.drift.drift_risk_classification is True
 
-    def test_capability_matrix_datadog_activity_still_false(self):
+    def test_capability_matrix_datadog_activity_ingestion(self):
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("datadog")
         assert cap is not None
-        assert cap.security.activity_ingestion is False
+        # M82D set activity_ingestion=True (Datadog config-state activity ingestion added)
+        assert cap.security.activity_ingestion is True
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False

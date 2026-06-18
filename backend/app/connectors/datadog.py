@@ -1283,6 +1283,516 @@ class DatadogConnector(BaseConnector):
 
         return records
 
+    # ── Activity event helpers (M82D) ────────────────────────────────────────
+
+    @staticmethod
+    def _activity_event(
+        event_type: str,
+        provider_event_id: str,
+        metadata: dict,
+    ) -> dict:
+        """Build one synthesized config-state activity event envelope.
+
+        PRIVACY: metadata must contain only safe scalar fields from the
+        normalized drift record. Raw Datadog API payloads, audit actor
+        identities, IP addresses, user agents, and credential material
+        are NEVER included.
+        """
+        meta = dict(metadata)
+        meta.setdefault("event_source", "datadog_activity_event")
+        meta.setdefault("event_action", event_type)
+        return {
+            "event_type": event_type,
+            "provider": "datadog",
+            "source": "datadog_activity_event",
+            "event_source": "datadog_activity_event",
+            "provider_event_id": provider_event_id,
+            "metadata": meta,
+        }
+
+    def _collect_monitor_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per monitor found (never raw query/message)."""
+        try:
+            recs = self._fetch_monitors(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: monitors surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: monitors surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            event_type = (
+                "datadog.api_key_metadata.disabled"
+                if rec.get("record_type") == "datadog_api_key_metadata" and rec.get("disabled")
+                else "datadog.monitor.updated"
+            )
+            meta: dict = {
+                "resource_type": "monitor",
+                "monitor_id": rid,
+                "monitor_type": rec.get("monitor_type", ""),
+                "enabled": rec.get("enabled", True),
+                "status": rec.get("status", ""),
+                "priority_category": rec.get("priority_category", "none"),
+                "query_present": rec.get("query_present", False),
+                "query_complexity_category": rec.get("query_complexity_category", "absent"),
+                "query_uses_wildcard_scope": rec.get("query_uses_wildcard_scope", False),
+                "query_group_by_count": rec.get("query_group_by_count", 0),
+                "message_present": rec.get("message_present", False),
+                "message_length_category": rec.get("message_length_category", "absent"),
+                "notification_routing_present": rec.get("notification_routing_present", False),
+                "notification_count": rec.get("notification_count", 0),
+                "message_template_present": rec.get("message_template_present", False),
+                "threshold_critical_present": rec.get("threshold_critical_present", False),
+                "threshold_warning_present": rec.get("threshold_warning_present", False),
+                "threshold_recovery_present": rec.get("threshold_recovery_present", False),
+                "threshold_count": rec.get("threshold_count", 0),
+                "renotify_enabled": rec.get("renotify_enabled", False),
+                "renotify_interval_category": rec.get("renotify_interval_category", "disabled"),
+                "restricted_roles_count": rec.get("restricted_roles_count", 0),
+                "notify_audit": rec.get("notify_audit", False),
+                "require_full_window": rec.get("require_full_window", True),
+                "silenced_scope_count": rec.get("silenced_scope_count", 0),
+                "no_data_timeframe_category": rec.get("no_data_timeframe_category", "none"),
+                "tag_count": rec.get("tag_count", 0),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.monitor.observe",
+                "operation_family": "datadog.monitor",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.monitor.updated:{rid}:{day}"
+            events.append(self._activity_event("datadog.monitor.updated", eid, meta))
+
+    def _collect_slo_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per SLO found (never raw description)."""
+        try:
+            recs = self._fetch_slos(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: SLOs surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: SLOs surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "slo",
+                "slo_id": rid,
+                "slo_type": rec.get("slo_type", ""),
+                "target_category": rec.get("target_category", "none"),
+                "warning_target_category": rec.get("warning_target_category", "none"),
+                "timeframe_count": rec.get("timeframe_count", 0),
+                "monitor_count": rec.get("monitor_count", 0),
+                "group_count": rec.get("group_count", 0),
+                "tag_count": rec.get("tag_count", 0),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.slo.observe",
+                "operation_family": "datadog.slo",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.slo.updated:{rid}:{day}"
+            events.append(self._activity_event("datadog.slo.updated", eid, meta))
+
+    def _collect_dashboard_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per dashboard found (never raw JSON)."""
+        try:
+            recs = self._fetch_dashboards(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: dashboards surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: dashboards surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "dashboard",
+                "dashboard_id": rid,
+                "layout_type": rec.get("layout_type", ""),
+                "widget_count": rec.get("widget_count", 0),
+                "template_variable_count": rec.get("template_variable_count", 0),
+                "restricted_roles_count": rec.get("restricted_roles_count", 0),
+                "public_url_present": rec.get("public_url_present", False),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.dashboard.observe",
+                "operation_family": "datadog.dashboard",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.dashboard.updated:{rid}:{day}"
+            events.append(self._activity_event("datadog.dashboard.updated", eid, meta))
+
+    def _collect_webhook_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per webhook (never URL, headers, payload, secrets)."""
+        try:
+            recs = self._fetch_webhook_integrations(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: webhook integrations surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: webhook integrations surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "webhook_integration",
+                "webhook_id": rid,
+                "url_present": rec.get("url_present", False),
+                "url_scheme_category": rec.get("url_scheme_category", "absent"),
+                "custom_headers_present": rec.get("custom_headers_present", False),
+                "custom_header_count": rec.get("custom_header_count", 0),
+                "auth_material_present": rec.get("auth_material_present", False),
+                "payload_template_present": rec.get("payload_template_present", False),
+                "payload_template_length_category": rec.get("payload_template_length_category", "absent"),
+                "secret_headers_present": rec.get("secret_headers_present", False),
+                "secret_headers_count": rec.get("secret_headers_count", 0),
+                "encode_as_category": rec.get("encode_as_category", "unknown"),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.webhook_integration.observe",
+                "operation_family": "datadog.webhook_integration",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.webhook_integration.updated:{rid}:{day}"
+            events.append(
+                self._activity_event("datadog.webhook_integration.updated", eid, meta)
+            )
+
+    def _collect_notification_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per notification integration (never handles/channels)."""
+        try:
+            recs = self._fetch_notification_integrations(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: notification integrations surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: notification integrations surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "notification_integration",
+                "notification_integration_id": rid,
+                "integration_type": rec.get("integration_type", ""),
+                "enabled": rec.get("enabled", True),
+                "handle_count": rec.get("handle_count", 0),
+                "channel_count": rec.get("channel_count", 0),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.notification_integration.observe",
+                "operation_family": "datadog.notification_integration",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.notification_integration.updated:{rid}:{day}"
+            events.append(
+                self._activity_event("datadog.notification_integration.updated", eid, meta)
+            )
+
+    def _collect_api_key_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per API key metadata (never key value or last4)."""
+        try:
+            recs = self._fetch_api_keys(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: API keys surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: API keys surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            disabled = rec.get("disabled", False)
+            event_type = (
+                "datadog.api_key_metadata.disabled" if disabled
+                else "datadog.api_key_metadata.updated"
+            )
+            meta: dict = {
+                "resource_type": "api_key_metadata",
+                "api_key_id": rid,
+                "created_present": rec.get("created_present", False),
+                "modified_present": rec.get("modified_present", False),
+                "created_by_present": rec.get("created_by_present", False),
+                "enabled": not disabled,
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.api_key_metadata.observe",
+                "operation_family": "datadog.api_key_metadata",
+                "operation_action": "observe",
+            }
+            eid = f"{event_type}:{rid}:{day}"
+            events.append(self._activity_event(event_type, eid, meta))
+
+    def _collect_app_key_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per application key metadata (never key value)."""
+        try:
+            recs = self._fetch_application_keys(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: application keys surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: application keys surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "application_key_metadata",
+                "application_key_id": rid,
+                "created_present": rec.get("created_present", False),
+                "modified_present": rec.get("modified_present", False),
+                "scopes_count": rec.get("scopes_count", 0),
+                "owned_by_present": rec.get("owned_by_present", False),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.application_key_metadata.observe",
+                "operation_family": "datadog.application_key_metadata",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.application_key_metadata.updated:{rid}:{day}"
+            events.append(
+                self._activity_event("datadog.application_key_metadata.updated", eid, meta)
+            )
+
+    def _collect_role_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per role (never user identities)."""
+        try:
+            recs = self._fetch_roles(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: roles surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: roles surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "role",
+                "role_id": rid,
+                "permission_count": rec.get("permission_count", 0),
+                "user_count": rec.get("user_count", 0),
+                "team_count": rec.get("team_count", 0),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.role.observe",
+                "operation_family": "datadog.role",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.role.updated:{rid}:{day}"
+            events.append(self._activity_event("datadog.role.updated", eid, meta))
+
+    def _collect_team_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per team (never member identities or handles)."""
+        try:
+            recs = self._fetch_teams(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: teams surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: teams surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "team",
+                "team_id": rid,
+                "member_count": rec.get("member_count", 0),
+                "handle_present": rec.get("handle_present", False),
+                "link_count": rec.get("link_count", 0),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.team.observe",
+                "operation_family": "datadog.team",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.team.updated:{rid}:{day}"
+            events.append(self._activity_event("datadog.team.updated", eid, meta))
+
+    def _collect_cloud_integration_activity_events(
+        self, client: httpx.Client, events: list, day: str
+    ) -> None:
+        """Emit one config-state event per cloud integration (never account IDs)."""
+        try:
+            recs = self._fetch_cloud_integrations(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                logger.debug("datadog_activity: cloud integrations surface not accessible; skipping")
+                return
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("datadog_activity: cloud integrations surface skipped (unexpected error)")
+            return
+        for rec in recs:
+            rid = rec.get("record_id", "")
+            if not rid:
+                continue
+            meta: dict = {
+                "resource_type": "cloud_integration",
+                "cloud_integration_id": rid,
+                "cloud_provider": rec.get("cloud_provider", ""),
+                "account_id_present": rec.get("account_id_present", False),
+                "resource_collection_enabled": rec.get("resource_collection_enabled", False),
+                "metric_collection_enabled": rec.get("metric_collection_enabled", True),
+                "log_collection_enabled": rec.get("log_collection_enabled", False),
+                "account_tags_count": rec.get("account_tags_count", 0),
+                "namespace_count": rec.get("namespace_count", 0),
+                "category": "datadog_configuration",
+                "status_category": "observed",
+                "operation_name": "datadog.cloud_integration.observe",
+                "operation_family": "datadog.cloud_integration",
+                "operation_action": "observe",
+            }
+            eid = f"datadog.cloud_integration.updated:{rid}:{day}"
+            events.append(
+                self._activity_event("datadog.cloud_integration.updated", eid, meta)
+            )
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Synthesize review-safe Datadog configuration-state activity events (M82D).
+
+        Datadog's audit/audit-trail API is identity-heavy: every entry
+        includes actor email, actor UUID, and IP-level request metadata.
+        Storing these fields would violate ConfigTrace's privacy contract.
+
+        Instead, activity events are synthesized from the same 10 safe drift
+        surfaces the drift connector already reads (monitors, SLOs, dashboards,
+        webhook integrations, notification integrations, API key metadata,
+        application key metadata, roles, teams, and cloud integrations).
+
+        Each event represents configuration state observed at poll time.
+        Events are day-scoped (UTC day-level) for idempotency: re-polling on
+        the same UTC day yields the same provider_event_id and is a no-op.
+
+        SOURCES THAT ARE NEVER INGESTED:
+        - Datadog audit API (actor identity, IP, user agent, raw payload)
+        - Datadog log data, trace data, metric values, incident content
+        - Monitor raw query strings, monitor raw message text
+        - Dashboard JSON, widget queries/formulas
+        - Webhook URLs, headers, payload templates, signing secrets
+        - Notification handles (Slack channels, PagerDuty service IDs)
+        - User emails, user IDs, user names, IP addresses
+        - API key values, application key values, OAuth tokens
+
+        CLAIM DISCIPLINE: events are configuration-state evidence for review.
+        This method does NOT confirm breach, compromise, unauthorized access,
+        data exposure, or leaked credentials.
+
+        Args:
+            credentials: Dict with 'api_key', 'application_key', optional 'site'.
+            max_events:  Maximum events to return (1–1000, default 100).
+            lookback_hours: Lookback window hint (1–168, default 24).
+                           Used for parameter validation only — synthesized
+                           events are always day-scoped regardless of this value.
+
+        Returns:
+            List of safe, synthesized config-state event dicts.
+
+        Raises:
+            AuthenticationError: 401/403 from the Datadog API.
+            RateLimitError: 429 rate limit hit.
+            NetworkError: Transport-level failure.
+            ConnectorError: Unexpected API error.
+        """
+        from datetime import datetime, timezone
+
+        max_events = min(max(1, max_events), 1000)
+        lookback_hours = min(max(1, lookback_hours), 168)  # noqa: F841
+
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        events: list[dict] = []
+
+        site = _sanitize_site(credentials.get("site", "datadoghq.com"))
+        api_key = credentials.get("api_key", "")
+        application_key = credentials.get("application_key", "")
+
+        with self._make_client(site, api_key, application_key) as client:
+            self._collect_monitor_activity_events(client, events, day)
+            self._collect_slo_activity_events(client, events, day)
+            self._collect_dashboard_activity_events(client, events, day)
+            self._collect_api_key_activity_events(client, events, day)
+            self._collect_app_key_activity_events(client, events, day)
+            try:
+                self._collect_webhook_activity_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("datadog_activity: webhook surface failed; skipping")
+            try:
+                self._collect_notification_activity_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("datadog_activity: notification integration surface failed; skipping")
+            try:
+                self._collect_role_activity_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("datadog_activity: roles surface failed; skipping")
+            try:
+                self._collect_team_activity_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("datadog_activity: teams surface failed; skipping")
+            try:
+                self._collect_cloud_integration_activity_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("datadog_activity: cloud integrations surface failed; skipping")
+
+        return events[:max_events]
+
     # ── Public connector interface ─────────────────────────────────────────────
 
     def validate_credentials(self, credentials: dict) -> bool:

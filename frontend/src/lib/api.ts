@@ -866,6 +866,36 @@ export async function syncSendGridActivity(
 }
 
 /**
+ * syncDatadogActivity — POST /security/datadog-activity/sync
+ * Ingests review-safe Datadog configuration-state events synthesized from
+ * monitors, SLOs, dashboards, webhook integrations, notification integrations,
+ * API key metadata, application key metadata, roles, teams, and cloud
+ * integrations. Datadog's audit/audit-trail API is never used — it contains
+ * actor email, actor UUID, and IP-level request metadata. API key values,
+ * application key values, raw monitor queries, raw monitor messages, raw
+ * dashboard JSON, webhook URLs, headers, payload templates, secrets, notification
+ * handles, email addresses, user IDs, team member identities, IP addresses,
+ * logs, traces, metric values, incident content, and raw audit payloads are
+ * never stored.
+ */
+export async function syncDatadogActivity(
+  token?: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").DatadogActivitySyncResponse> {
+  return apiFetch<import("@/types").DatadogActivitySyncResponse>(
+    "/security/datadog-activity/sync",
+    {
+      method: "POST",
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(opts ?? {}),
+    },
+  );
+}
+
+/**
  * syncAuth0Activity — POST /security/auth0-activity/sync
  * Ingests review-safe Auth0 configuration-state events synthesized from
  * tenant settings, applications, connections, resource servers, rules, actions,

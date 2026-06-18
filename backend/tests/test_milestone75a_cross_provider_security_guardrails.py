@@ -359,9 +359,13 @@ _ACTIVITY_PROVIDERS = [
     "sendgrid",
     # M81D added Auth0 config-state activity ingestion.
     "auth0",
+    # M82D added Datadog config-state activity ingestion.
+    "datadog",
 ]
-_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
-_CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
+# Datadog activity ingestion landed in M82D; signals (M82E) and correlations
+# (M82F) are not yet shipped, so datadog is excluded from those pages.
+_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "datadog"]
+_CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "datadog"]
 
 
 def _provider_selector_array(text: str) -> list[str] | None:

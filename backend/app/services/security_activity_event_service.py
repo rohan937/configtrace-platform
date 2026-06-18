@@ -421,6 +421,99 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "scopes_count",              # int — count of scopes on a resource server
         "provider_category",         # safe MFA factor category (e.g. "totp", "webauthn")
         "tls_policy_category",       # safe TLS policy category (e.g. "recommended", "compatible")
+        # Datadog configuration activity fields (M82D) — config-state observations
+        # synthesized from 10 safe drift surfaces. NEVER stored: API key values,
+        # application key values, OAuth/bearer tokens, webhook secrets, raw monitor
+        # queries, raw monitor messages, raw dashboard JSON, widget queries, webhook
+        # URLs, custom header names/values, payload templates, notification handles,
+        # Slack channel names, PagerDuty service IDs, email addresses, user IDs,
+        # user names, team member identities, IP addresses, user agents, raw Datadog
+        # audit payloads, raw API response dicts, logs, traces, metric values,
+        # incident content, or PII.
+        "datadog_event_id",          # opaque Datadog audit event ID (never actor/IP/raw payload)
+        "monitor_id",                # Datadog monitor ID (opaque identifier, not a secret)
+        "slo_id",                    # Datadog SLO ID (opaque identifier)
+        "dashboard_id",              # Datadog dashboard ID (opaque identifier)
+        "notification_integration_id",  # Datadog notification integration record ID
+        "application_key_id",        # Datadog application key ID (identifier only; NEVER key value)
+        "role_id",                   # Datadog role ID (opaque identifier)
+        "team_id",                   # Datadog team ID (opaque identifier)
+        "cloud_integration_id",      # Datadog cloud integration record ID
+        "monitor_type",              # Datadog monitor type label (e.g. "metric alert")
+        "priority_category",         # Datadog monitor priority category (e.g. "critical")
+        "query_present",             # bool — whether monitor query is set (NEVER raw query)
+        "query_complexity_category", # safe category (e.g. "short", "medium", "long")
+        "message_present",           # bool — whether monitor message is set (NEVER raw message)
+        "message_length_category",   # safe category (e.g. "short", "medium", "long")
+        "notification_count",        # int — count of @ mentions in monitor message
+        "notification_channel_count",  # int — count of notification channels configured
+        "notification_at_mention_count",  # int — count of @-mention targets (count only)
+        "notification_routing_present",  # bool — whether monitor message contains @ mentions
+        "message_template_present",  # bool — whether monitor message uses {{ template vars
+        "query_uses_wildcard_scope", # bool — whether monitor query uses {*} wildcard
+        "query_uses_not_operator",   # bool — whether monitor query uses NOT operator
+        "query_group_by_count",      # int — count of group-by clauses in query
+        "query_metric_count_category",  # safe category for number of metrics in query
+        "query_window_category",     # safe category for query evaluation window
+        "threshold_critical_present",  # bool — critical threshold is configured
+        "threshold_warning_present",   # bool — warning threshold is configured
+        "threshold_recovery_present",  # bool — recovery threshold is configured
+        "threshold_count",           # int — total count of threshold entries
+        "renotify_enabled",          # bool — whether re-notification is enabled
+        "renotify_interval_category",  # safe category (e.g. "disabled", "short", "medium")
+        "renotify_occurrences_category",  # safe category for re-notify occurrence count
+        "silenced_scope_count",      # int — count of silenced scope entries
+        "new_group_delay_category",  # safe category for new_group_delay setting
+        "no_data_timeframe_category",  # safe category (e.g. "none", "short", "extended")
+        "require_full_window",       # bool — whether full evaluation window is required
+        "locked",                    # bool — whether monitor is locked to creator
+        "restricted_roles_count",    # int — count of roles that can edit the resource
+        "include_tags",              # bool — whether monitor includes tags in notifications
+        "notify_audit",              # bool — whether audit notifications are enabled
+        "slo_type",                  # Datadog SLO type label (e.g. "metric", "monitor")
+        "target_category",           # SLO target percentage category
+        "warning_target_category",   # SLO warning target percentage category
+        "timeframe_count",           # int — count of SLO threshold/timeframe windows
+        "monitor_count",             # int — count of monitors linked to an SLO
+        "group_count",               # int — count of groups in SLO
+        "tag_count",                 # int — count of tags on the resource
+        "layout_type",               # Datadog dashboard layout type (e.g. "ordered", "free")
+        "widget_count",              # int — count of dashboard widgets
+        "template_variable_count",   # int — count of dashboard template variables
+        "public_url_present",        # bool — whether dashboard has a public URL
+        "url_present",               # bool — whether a URL is configured (NEVER the URL)
+        "url_scheme_category",       # safe category (e.g. "https", "http", "absent")
+        "url_host_present",          # bool — whether URL host is present (NEVER hostname)
+        "custom_headers_present",    # bool — whether custom headers are configured
+        "custom_header_count",       # int — count of custom header entries (NEVER names/values)
+        "secret_headers_present",    # bool — whether secret headers are configured
+        "secret_headers_count",      # int — count of secret header entries (NEVER names/values)
+        "payload_template_present",  # bool — whether payload template is configured
+        "payload_template_length_category",  # safe category (never template content)
+        "uses_custom_payload",       # bool — whether custom payload encoding is used
+        "encode_as_category",        # safe category (e.g. "json", "form", "unknown")
+        "auth_material_present",     # bool — whether auth-like header names are present
+        "auth_material_count",       # int — count of auth-like header entries
+        "integration_type",          # notification integration type (e.g. "pagerduty")
+        "handle_count",              # int — count of handles/services configured
+        "channel_count",             # int — count of channels configured (count only)
+        "created_present",           # bool — whether a creation timestamp exists
+        "modified_present",          # bool — whether a modification timestamp exists
+        "created_by_present",        # bool — whether created_by metadata exists
+        "owned_by_present",          # bool — whether owned_by metadata exists
+        "permission_count",          # int — count of permissions assigned to a role
+        "user_count",                # int — count of users in role (NEVER identities)
+        "team_count",                # int — count of teams in role (NEVER identities)
+        "member_count",              # int — count of team members (NEVER identities)
+        "handle_present",            # bool — whether team handle is set (NEVER the handle)
+        "link_count",                # int — count of team links configured
+        "cloud_provider",            # cloud integration provider ("aws"/"gcp"/"azure")
+        "account_id_present",        # bool — whether account ID is set (NEVER the ID)
+        "resource_collection_enabled",  # bool — whether resource collection is enabled
+        "metric_collection_enabled", # bool — whether metric collection is enabled
+        "log_collection_enabled",    # bool — whether log collection is enabled
+        "account_tags_count",        # int — count of account-level tags configured
+        "namespace_count",           # int — count of metric namespaces configured
     }
 )
 
