@@ -822,9 +822,10 @@ def test_capability_matrix_clerk_drift_diff_true():
 
 
 def test_capability_matrix_clerk_security_rules_false():
+    # M83B added Clerk security rules, so security_rules is now True.
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("clerk")
-    assert cap.security.security_rules is False
+    assert cap.security.security_rules is True
 
 
 def test_capability_matrix_clerk_all_security_false():
@@ -869,11 +870,12 @@ def test_capability_matrix_clerk_in_partial_list():
 
 
 def test_expansion_framework_planned_next_stage_is_m83b():
+    # M83B has landed; planned_next_stage now references M83C (Clerk Auth/Application Risk).
     from app.services.provider_expansion_framework import get_framework
     framework = get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M83B" in planned or "Clerk Core" in planned, (
-        f"planned_next_stage should reference M83B after M83A launch; got {planned!r}"
+    assert "M83B" in planned or "M83C" in planned or "Clerk" in planned, (
+        f"planned_next_stage should reference an M83 Clerk stage; got {planned!r}"
     )
 
 
