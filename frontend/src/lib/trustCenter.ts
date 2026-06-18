@@ -379,6 +379,53 @@ export const TRUST_PROFILES: Partial<Record<ProviderId, ProviderTrustProfile>> =
     ],
     remediation_supported: false,
   },
+
+  // ── M83A — Clerk trust profile ───────────────────────────────────────────────
+  clerk: {
+    id: "clerk",
+    reads: [
+      "Instance settings: environment type, sign-up/sign-in enabled flags, MFA posture, session lifetime category, restriction posture (allowlist/blocklist enabled, sign-in mode)",
+      "Domain metadata: verified, primary, SSL enabled, DNS status category — never raw domain name strings",
+      "Redirect URL metadata: scheme category (https/http/custom), wildcard presence, localhost presence — never raw URL strings",
+      "JWT template metadata: name, claims count, audience presence, lifetime category, algorithm — never template body or claims content",
+      "Webhook endpoint metadata: enabled, URL scheme category, event count, secret presence — never webhook URL, signing secret, or event names",
+      "Authentication strategy: enabled sign-in methods, social provider count, MFA settings — never provider secrets or certificates",
+      "Organization settings: organizations enabled, membership category, admin deletion, verified domains settings",
+      "Session policy: session and inactivity lifetime categories, single-session mode",
+    ],
+    never_reads: [
+      "Clerk secret key values or publishable key values",
+      "Session tokens, JWTs, OAuth tokens, or bearer tokens of any kind",
+      "Webhook secrets or signing keys",
+      "Raw redirect URLs, callback URLs, or allowed origins",
+      "JWT template body, custom claim values, audience URIs, or issuer strings",
+      "User emails, user IDs, phone numbers, names, or profile data",
+      "Organization member identities, invitation lists, or member emails",
+      "Session history, login history, authentication events",
+      "Password data, MFA secrets, backup codes, or verification codes",
+      "IP addresses, device fingerprints, or user agents",
+      "Raw Clerk API response payloads",
+      "Customer data or PII of any kind",
+    ],
+    credential_note:
+      "Clerk secret key is stored encrypted at rest using AES-256-GCM. It is never returned in API responses, never logged, and never copied to resource metadata. No secret key values, publishable key values, or session tokens are ever stored in plaintext.",
+    permissions: [
+      "Read instance configuration settings (/v1/instance)",
+      "Read domain list and posture metadata (/v1/domains)",
+      "Read redirect URL list and posture metadata (/v1/redirect_urls)",
+      "Read JWT template list and posture metadata (/v1/jwt_templates)",
+      "Read webhook endpoint list and posture metadata (/v1/webhooks/svix)",
+      "No read_users, read_sessions, read_audit_logs, or write permissions",
+      "No access to user data, session data, or authentication events",
+    ],
+    revoke_steps: [
+      "Sign in to your Clerk Dashboard",
+      "Go to Configure → API Keys",
+      "Find the ConfigTrace secret key",
+      "Click the delete/revoke button to invalidate it immediately",
+    ],
+    remediation_supported: false,
+  },
 };
 
 // ── Global trust summary constants ────────────────────────────────────────────

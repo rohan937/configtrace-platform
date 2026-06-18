@@ -928,6 +928,56 @@ _DATADOG = ProviderCapability(
 )
 
 
+_CLERK = ProviderCapability(
+    provider="clerk",
+    label="Clerk",
+    category="identity",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Clerk identity infrastructure drift foundation (M83A). Drift snapshots "
+        "cover 10 safe configuration surfaces from the Clerk Backend API v1: "
+        "instance settings (environment type, sign-up/sign-in flags, MFA "
+        "posture, session lifetime category, restriction posture — never raw "
+        "domain names, support emails, or theme data), application metadata "
+        "(counts and posture flags — never client secrets or raw redirect URLs), "
+        "domains (verified/primary/SSL posture — never raw domain name strings), "
+        "redirect URLs (scheme category and posture booleans — never raw URL "
+        "strings), JWT templates (name, claims count, lifetime category — never "
+        "template body or claims content), webhook endpoints (scheme category "
+        "and posture booleans — never webhook URL, secret, or event names), "
+        "email/SMS settings (enabled flags, custom-sender presence), "
+        "authentication strategy (enabled auth methods, MFA posture), "
+        "organization settings (enabled flags, membership category), and "
+        "session policy (lifetime and inactivity categories). "
+        "Clerk secret key values, publishable key values, session tokens, JWTs, "
+        "OAuth tokens, bearer tokens, webhook secrets, raw redirect/callback/origin "
+        "URLs, JWT template body, custom claims, audience URIs, user emails, "
+        "user IDs, phone numbers, names, organization member identities, session "
+        "history, login history, password data, MFA secrets, IP addresses, "
+        "user agents, raw audit payloads, and customer PII are NEVER fetched "
+        "or stored. Pagination is bounded with conservative per-surface caps. "
+        "planned_next_stage: M83B: Clerk Core Security Foundation."
+    ),
+)
+
+
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
@@ -936,6 +986,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _SENDGRID,
     _AUTH0,
     _DATADOG,
+    _CLERK,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

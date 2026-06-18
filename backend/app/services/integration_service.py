@@ -228,12 +228,23 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── M83A — Clerk drift provider ────────────────────────────────────────────
+    elif provider == "clerk":
+        return _create_clerk_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
-            "'twilio', 'sendgrid', 'auth0', 'datadog'."
+            "'twilio', 'sendgrid', 'auth0', 'datadog', 'clerk'."
         )
 
 
@@ -1212,6 +1223,69 @@ def _create_datadog_integration(
             "site_category": site_category,
             "provider_family": "observability",
         },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_clerk_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Clerk integration + identity resource (M83A).
+
+    SECURITY: credentials["secret_key"] is NEVER logged, NEVER returned,
+    NEVER stored in plaintext. No secret key values, publishable key values,
+    session tokens, JWTs, OAuth tokens, webhook secrets, redirect URLs,
+    user data, or PII are stored in resource_metadata.
+
+    Live API validation is deferred to the first sync — the connector's
+    validate_credentials() is called at sync time. This prevents synchronous
+    error messages from potentially surfacing credential values and avoids
+    network dependency at create time.
+    """
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    # SECURITY: secret_key is encrypted here and NEVER stored in plaintext
+    # or returned in any response.
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="clerk",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY a safe provider_family label.
+    # secret_key, publishable_key, frontend_api_url, session tokens, JWTs,
+    # user data, and all customer-identifying data are NEVER copied here.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="clerk_instance",
+        provider_resource_id=str(integration.id),
+        display_name=display_name,
+        resource_metadata={"provider_family": "identity"},
         is_active=True,
     )
     db.add(resource)

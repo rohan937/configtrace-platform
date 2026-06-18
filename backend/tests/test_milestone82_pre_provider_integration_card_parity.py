@@ -73,7 +73,7 @@ def test_backend_post_integrations_allowlist_is_thirteen_connectable_providers()
     # annotation is Literal["cloudflare", "github", ...] — extract its args.
     import typing
     allowed = set(typing.get_args(annotation))
-    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog"}
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog", "clerk"}
     assert allowed == expected, (
         f"POST /integrations allowlist drift: expected {expected}, got {allowed}"
     )
@@ -197,7 +197,7 @@ def test_fe_providers_ts_provider_ids_array_includes_all_thirteen():
     assert m is not None, "PROVIDER_IDS array not found in providers.ts"
     arr_block = m.group(1)
     ids = re.findall(r'"([a-z0-9_]+)"', arr_block)
-    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog"}
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog", "clerk"}
     assert set(ids) == expected, (
         f"PROVIDER_IDS drift: got {ids}"
     )
@@ -232,7 +232,7 @@ def test_fe_providers_ts_connectable_subset_covers_all_thirteen():
         "CONNECTABLE_PROVIDER_IDS array not found in providers.ts"
     )
     ids = re.findall(r'"([a-z0-9_]+)"', m.group(1))
-    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog"}
+    expected = set(CONNECTABLE_PROVIDERS) | set(SECURITY_PREVIEW_PROVIDERS) | {"datadog", "clerk"}
     assert set(ids) == expected, (
         f"CONNECTABLE_PROVIDER_IDS drift: expected all 14, got {ids}"
     )
@@ -414,10 +414,11 @@ def test_expansion_framework_datadog_is_next():
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    # Datadog has shipped (M82A) — it is no longer in the recommended queue.
-    assert recs[0]["provider"] == "clerk"
+    # Datadog has shipped (M82A); Clerk has shipped (M83A) — PagerDuty is now head.
+    assert recs[0]["provider"] == "pagerduty"
     providers = [r["provider"] for r in recs]
     assert "datadog" not in providers
+    assert "clerk" not in providers
 
 
 # ════════════════════════════════════════════════════════════════════════════

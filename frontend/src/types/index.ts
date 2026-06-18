@@ -172,7 +172,9 @@ export interface IntegrationCreateRequest {
     // ── M82-pre.1 — credential-connect parity ────────────────────────────────
     | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0"
     // ── M82A — Datadog drift provider foundation ──────────────────────────────
-    | "datadog";
+    | "datadog"
+    // ── M83A — Clerk drift provider foundation ────────────────────────────────
+    | "clerk";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -314,6 +316,18 @@ export interface IntegrationCreateRequest {
   datadog_application_key?: string;
   /** Datadog site (e.g. "datadoghq.com", "datadoghq.eu"). Optional; defaults to "datadoghq.com". */
   datadog_site?: string;
+  // ── Clerk fields (M83A) ──────────────────────────────────────────────────────
+  /**
+   * Clerk Backend API secret key (sk_live_* or sk_test_*).
+   * Sent to backend once; never stored in frontend state after submission.
+   * Stored encrypted server-side — NEVER returned in API responses.
+   */
+  clerk_secret_key?: string;
+  /**
+   * Clerk Frontend API URL. Optional — not required for configuration drift snapshots.
+   * If provided, stored encrypted server-side.
+   */
+  clerk_frontend_api_url?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

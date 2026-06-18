@@ -27,6 +27,8 @@ import SendGridIntegrationForm from "@/components/integrations/SendGridIntegrati
 import Auth0IntegrationForm from "@/components/integrations/Auth0IntegrationForm";
 // ── M82A — Datadog drift provider foundation ───────────────────────────────────
 import DatadogIntegrationForm from "@/components/integrations/DatadogIntegrationForm";
+// ── M83A — Clerk drift provider foundation ─────────────────────────────────────
+import ClerkIntegrationForm from "@/components/integrations/ClerkIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -828,6 +830,44 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M83A — Clerk setup guide ───────────────────────────────────────────────
+
+  if (provider === "clerk") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Clerk instance
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Create a Backend API secret key.",
+            body: <>Clerk Dashboard → Configure → API Keys → Secret keys → Add secret key.
+              Give it a descriptive name such as &ldquo;ConfigTrace read&rdquo;. Copy the key
+              immediately — it is shown only once.</>,
+          },
+          {
+            heading: "Use a read-only key scope.",
+            body: <>Clerk secret keys with the default scope can read configuration. If your Clerk
+              plan supports scoped keys, limit permissions to configuration reads only —
+              no write access, no user data access, no session access.</>,
+          },
+          {
+            heading: "Enter the secret key below.",
+            body: <>Paste the secret key (sk_live_* or sk_test_*) in the form below.
+              The Frontend API URL is optional and not required for configuration drift snapshots.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores Clerk credentials encrypted and uses them only to read selected
+          configuration metadata. It does not store secret key values, session tokens, JWTs,
+          OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, user emails,
+          user IDs, phone numbers, names, organization member identities, session history,
+          login history, IP addresses, user agents, customer data, or PII in findings.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -973,6 +1013,10 @@ export default function IntegrationsPage() {
     // ── M82A — Datadog ─────────────────────────────────────────────────────
     if (selectedProvider === "datadog") {
       return <DatadogIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M83A — Clerk ────────────────────────────────────────────────────────
+    if (selectedProvider === "clerk") {
+      return <ClerkIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

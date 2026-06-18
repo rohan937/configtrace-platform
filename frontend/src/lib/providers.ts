@@ -28,7 +28,9 @@ export type ProviderId =
   | "sendgrid"
   | "auth0"
   // ── M82A — Datadog drift provider foundation ──────────────────────────────
-  | "datadog";
+  | "datadog"
+  // ── M83A — Clerk drift provider foundation ────────────────────────────────
+  | "clerk";
 
 export type ProviderCategory =
   | "cdn_dns"
@@ -383,6 +385,31 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     bgColor: "rgba(99,44,166,0.10)",
     borderColor: "rgba(99,44,166,0.25)",
   },
+
+  // ── M83A — Clerk drift provider foundation ────────────────────────────────
+  clerk: {
+    id: "clerk",
+    label: "Clerk",
+    shortLabel: "Clerk",
+    category: "identity",
+    description:
+      "Track Clerk authentication, domain, redirect, JWT template, webhook, organization, and session policy configuration for review-safe drift evidence.",
+    monitoredSurfaces: [
+      "Instance settings (environment type, sign-up/sign-in flags, MFA posture, restriction posture — never raw domain names or support emails)",
+      "Domains (verified/primary/SSL posture — never raw domain name strings)",
+      "Redirect URLs (scheme category and posture booleans — never raw URL strings)",
+      "JWT templates (name, claims count, lifetime category — never template body or claims)",
+      "Webhooks (scheme category and posture booleans — never URL, secret, or event names)",
+      "Auth strategy (enabled methods, MFA posture — never provider secrets or certificates)",
+      "Organization settings (enabled flags, membership category — never member identities)",
+      "Session policy (lifetime and inactivity categories — never session tokens or IDs)",
+    ],
+    trustNote:
+      "ConfigTrace stores Clerk credentials encrypted and uses them only to read selected configuration metadata. It does not store secret key values, session tokens, JWTs, OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, user emails, user IDs, phone numbers, names, organization member identities, session history, login history, IP addresses, user agents, customer data, or PII in findings.",
+    color: "#4f4fa3",
+    bgColor: "rgba(79,79,163,0.10)",
+    borderColor: "rgba(79,79,163,0.25)",
+  },
 };
 
 /** All provider IDs in display order. */
@@ -403,6 +430,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "auth0",
   // ── M82A — Datadog drift provider foundation ────────────────────────────
   "datadog",
+  // ── M83A — Clerk drift provider foundation ────────────────────────────────
+  "clerk",
 ];
 
 /**
@@ -429,6 +458,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "auth0",
   // ── M82A — Datadog drift provider foundation ────────────────────────────
   "datadog",
+  // ── M83A — Clerk drift provider foundation ────────────────────────────────
+  "clerk",
 ];
 
 /**

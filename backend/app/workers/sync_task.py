@@ -312,6 +312,12 @@ def sync_integration(
 
                 connector = DatadogConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "clerk":
+                # SECURITY: secret_key is NEVER logged.
+                from app.connectors.clerk import ClerkConnector
+
+                connector = ClerkConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

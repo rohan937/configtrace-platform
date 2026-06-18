@@ -1085,11 +1085,12 @@ class TestProviderRegistration:
         providers = [p.provider for p in PROVIDER_CAPABILITIES_PARTIAL]
         assert "datadog" in providers
 
-    def test_provider_expansion_framework_clerk_is_head(self):
+    def test_provider_expansion_framework_pagerduty_is_head(self):
+        # M83A launched Clerk; PagerDuty is now the head of the recommended queue.
         from app.services.provider_expansion_framework import RECOMMENDED_NEXT_PROVIDERS
 
         assert len(RECOMMENDED_NEXT_PROVIDERS) > 0
-        assert RECOMMENDED_NEXT_PROVIDERS[0].provider == "clerk"
+        assert RECOMMENDED_NEXT_PROVIDERS[0].provider == "pagerduty"
 
     def test_provider_expansion_framework_datadog_not_in_queue(self):
         from app.services.provider_expansion_framework import RECOMMENDED_NEXT_PROVIDERS

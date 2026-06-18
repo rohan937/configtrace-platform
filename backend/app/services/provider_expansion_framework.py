@@ -468,49 +468,10 @@ class RecommendedProvider:
 # PROVIDER_CAPABILITIES_PARTIAL. M81A launched Auth0 drift foundation;
 # Auth0 also moved into PROVIDER_CAPABILITIES_PARTIAL. M82A launched
 # Datadog drift foundation; Datadog also moved into
-# PROVIDER_CAPABILITIES_PARTIAL. Clerk is now the head of the
-# recommended queue.
+# PROVIDER_CAPABILITIES_PARTIAL. M83A launched Clerk drift foundation;
+# Clerk also moved into PROVIDER_CAPABILITIES_PARTIAL. PagerDuty is now
+# the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="clerk",
-        label="Clerk",
-        category="auth",
-        why_high_fit=(
-            "Clerk is the auth provider used by ConfigTrace itself. Configuration "
-            "drift in session settings, allowed redirect URLs, social connection "
-            "posture, and email/SMS OTP settings directly affects application security "
-            "and makes a compelling internal-dogfood + external demo story."
-        ),
-        drift_surfaces=(
-            "session_timeout_and_token_lifetime",
-            "allowed_redirect_urls",
-            "social_connection_settings",
-            "email_sms_otp_settings",
-            "password_policy_settings",
-            "mfa_enforcement_posture",
-        ),
-        security_surfaces=(
-            "overly_long_session_lifetime",
-            "overly_broad_allowed_redirect_urls",
-            "mfa_not_enforced",
-            "weak_password_policy",
-        ),
-        sensitive_data_to_avoid=(
-            "user_session_tokens",
-            "user_email_addresses",
-            "user_phone_numbers",
-            "raw_webhook_payloads",
-            "jwt_private_keys",
-            "publishable_key_value",
-        ),
-        first_milestone_name="M83A: Clerk Drift Provider Foundation",
-        notes=(
-            "Use the Clerk Backend API. Focus on instance settings: "
-            "/v1/instance (session lifetimes, allowed redirects), "
-            "/v1/instance/restrictions, and /v1/instance/organization_settings. "
-            "Never store user session tokens, user emails, or JWT private keys."
-        ),
-    ),
     RecommendedProvider(
         provider="pagerduty",
         label="PagerDuty",
@@ -689,6 +650,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M83A: Clerk Drift Provider Foundation",
+            "planned_next_stage": "M83B: Clerk Core Security Foundation",
         },
     }

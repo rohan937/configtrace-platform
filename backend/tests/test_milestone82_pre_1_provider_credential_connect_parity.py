@@ -53,9 +53,10 @@ CANONICAL_CONNECTABLE_PROVIDERS = (
     "aws", "firebase", "supabase", "shopify",
 )
 M82_PRE_1_PROVIDERS = ("azure", "google_cloud", "twilio", "sendgrid", "auth0")
-# M82A added Datadog — now 14 providers total.
+# M82A added Datadog; M83A added Clerk — now 15 providers total.
 M82A_PROVIDERS = ("datadog",)
-ALL_THIRTEEN = CANONICAL_CONNECTABLE_PROVIDERS + M82_PRE_1_PROVIDERS + M82A_PROVIDERS
+M83A_PROVIDERS = ("clerk",)
+ALL_THIRTEEN = CANONICAL_CONNECTABLE_PROVIDERS + M82_PRE_1_PROVIDERS + M82A_PROVIDERS + M83A_PROVIDERS
 
 # ── Safe placeholder credential values for tests ──────────────────────────────
 # NEVER use real-looking JWTs / Twilio SIDs / SendGrid keys / Azure secrets.
@@ -90,7 +91,7 @@ AUTH0_TEST_MANAGEMENT_TOKEN = "AUTH0_TEST_MANAGEMENT_TOKEN_PLACEHOLDER"
 
 
 def test_schema_provider_literal_includes_all_thirteen():
-    """IntegrationCreateRequest.provider Literal type covers all 13 providers."""
+    """IntegrationCreateRequest.provider Literal type covers all 15 providers (M83A)."""
     from app.schemas.integration import IntegrationCreateRequest
     import typing
     annotation = IntegrationCreateRequest.model_fields["provider"].annotation

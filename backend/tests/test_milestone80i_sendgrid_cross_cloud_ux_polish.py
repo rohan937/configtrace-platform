@@ -213,8 +213,8 @@ def test_expansion_framework_top_recommendation_is_auth0():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "clerk"
-    assert top["label"] == "Clerk"
+    assert top["provider"] == "pagerduty"
+    assert top["label"] == "PagerDuty"
 
 
 def test_expansion_framework_sendgrid_not_in_recommended_queue():
@@ -236,9 +236,9 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 def test_expansion_framework_summary_next_provider_auth0():
     """Framework summary next_provider = Clerk (Datadog launched in M82A)."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Clerk"
+    assert fw["summary"]["next_provider"] == "PagerDuty"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "Clerk" in next_ms or "M80A" in next_ms or "M82B" in next_ms
+    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

@@ -63,8 +63,7 @@ EXPECTED_NEXT_PROVIDER_ORDER = [
     # M77I added Google Cloud at the top of the queue; M78A launched it.
     # M79A launched Twilio. M80A launched SendGrid. M81A launched Auth0
     # (moved into PROVIDER_CAPABILITIES_PARTIAL). M82A launched Datadog.
-    # Clerk is now the head.
-    "clerk",
+    # M83A launched Clerk. PagerDuty is now the head.
     "pagerduty",
     "linear",
     "jira",
@@ -253,9 +252,9 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # Datadog launched M82A; Clerk is now the queue head.
-    assert summary["next_provider"] == "Clerk"
-    assert "Clerk" in (summary["next_milestone"] or "") or "M80A" in (summary["next_milestone"] or "") or "M82B" in (summary["next_milestone"] or "")
+    # M83A launched Clerk; PagerDuty is now the queue head.
+    assert summary["next_provider"] == "PagerDuty"
+    assert "PagerDuty" in (summary["next_milestone"] or "") or "M84A" in (summary["next_milestone"] or "") or "Clerk" in (summary["next_milestone"] or "")
     assert (
         "M83" in summary["planned_next_stage"]
         or "Clerk" in summary["planned_next_stage"]
@@ -270,17 +269,17 @@ def test_framework_is_static_no_db_needed():
     assert f1 == f2
 
 
-def test_get_next_provider_recommendations_first_is_twilio():
-    """Flipped in M82A: Datadog launched and moved into PROVIDER_CAPABILITIES_PARTIAL;
-    Clerk reclaims the head of the recommended-next queue."""
+def test_get_next_provider_recommendations_first_is_pagerduty():
+    """Flipped in M83A: Clerk launched; PagerDuty is now the head of the queue."""
     recs = svc.get_next_provider_recommendations()
-    assert recs[0]["provider"] == "clerk"
-    assert recs[0]["label"] == "Clerk"
+    assert recs[0]["provider"] == "pagerduty"
+    assert recs[0]["label"] == "PagerDuty"
     assert len(recs[0]["sensitive_data_to_avoid"]) >= 1
-    # google_cloud and auth0 must no longer be in this list.
+    # google_cloud, auth0, datadog, clerk must no longer be in this list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
     assert "auth0" not in providers
+    assert "clerk" not in providers
 
 
 def test_capability_matrix_planned_next_stage_references_dual_stack():
@@ -304,8 +303,8 @@ def test_endpoint_returns_framework(client):
     body = r.json()
     assert "template" in body and "recommended_next_providers" in body
     assert body["summary"]["stage_count"] == 6
-    # M82A: Datadog launched (now in PARTIAL); Clerk is now the queue head.
-    assert body["summary"]["next_provider"] == "Clerk"
+    # M83A: Clerk launched (now in PARTIAL); PagerDuty is now the queue head.
+    assert body["summary"]["next_provider"] == "PagerDuty"
 
 
 def test_endpoint_stages_in_order(client):
@@ -324,8 +323,9 @@ def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
     assert "SendGrid" not in labels
     assert "Auth0" not in labels
     assert "Datadog" not in labels
-    # Clerk is now the head.
-    assert "Clerk" in labels
+    # Clerk launched in M83A — no longer in recommended queue. PagerDuty is head.
+    assert "Clerk" not in labels
+    assert "PagerDuty" in labels
 
 
 def test_endpoint_unauthenticated_rejected():

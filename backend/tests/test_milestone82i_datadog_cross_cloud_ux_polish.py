@@ -172,12 +172,13 @@ def test_expansion_framework_not_pointing_to_m82():
     )
 
 
-def test_expansion_framework_clerk_first_recommended():
+def test_expansion_framework_pagerduty_first_recommended():
+    # M83A shipped Clerk; PagerDuty is now the head.
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
-    assert recs[0]["provider"] == "clerk"
-    assert recs[0]["label"] == "Clerk"
+    assert recs[0]["provider"] == "pagerduty"
+    assert recs[0]["label"] == "PagerDuty"
 
 
 def test_expansion_framework_datadog_not_in_recommended():
@@ -186,13 +187,13 @@ def test_expansion_framework_datadog_not_in_recommended():
     assert "datadog" not in providers
 
 
-def test_expansion_framework_clerk_milestone_is_m83a():
+def test_expansion_framework_clerk_not_in_recommended():
+    # Clerk launched in M83A — must not be in the recommended queue.
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
-    clerk = next((r for r in recs if r["provider"] == "clerk"), None)
-    assert clerk is not None
-    assert "M83A" in clerk.get("first_milestone_name", ""), (
-        f"Clerk first_milestone_name should be M83A; got: {clerk.get('first_milestone_name')!r}"
+    providers = [r["provider"] for r in recs]
+    assert "clerk" not in providers, (
+        "Clerk launched in M83A; must not remain in RECOMMENDED_NEXT_PROVIDERS"
     )
 
 

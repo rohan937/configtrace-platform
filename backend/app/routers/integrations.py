@@ -226,6 +226,13 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "application_key": body.datadog_application_key,
             "site":            body.datadog_site or "datadoghq.com",
         }
+    # ── M83A — Clerk drift provider ──────────────────────────────────────────
+    elif body.provider == "clerk":
+        # SECURITY: clerk_secret_key is NEVER logged here or in the service.
+        creds: dict = {"secret_key": body.clerk_secret_key}
+        if body.clerk_frontend_api_url:
+            creds["frontend_api_url"] = body.clerk_frontend_api_url
+        return creds
     return {}
 
 

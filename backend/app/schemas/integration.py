@@ -70,6 +70,8 @@ class IntegrationCreateRequest(BaseModel):
         "azure", "google_cloud", "twilio", "sendgrid", "auth0",
         # M82A — Datadog drift provider foundation.
         "datadog",
+        # M83A — Clerk drift provider foundation.
+        "clerk",
     ] = Field(
         ...,
         description=(
@@ -420,6 +422,29 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Clerk fields (M83A) ───────────────────────────────────────────────────
+    clerk_secret_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Clerk Backend API secret key (sk_live_* or sk_test_*). "
+            "Required when provider='clerk'. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "SECURITY: never logged, never returned to the frontend, "
+            "never stored in plaintext or resource metadata."
+        ),
+    )
+    clerk_frontend_api_url: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Clerk Frontend API URL (e.g. 'https://<instance>.clerk.accounts.dev'). "
+            "Optional when provider='clerk' — not required for Backend API drift "
+            "snapshots. If provided, stored encrypted. Not a secret but kept "
+            "encrypted alongside the secret key for consistency."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -572,6 +597,12 @@ class IntegrationCreateRequest(BaseModel):
             if not self.datadog_application_key:
                 raise ValueError(
                     "datadog_application_key is required for Datadog integrations."
+                )
+        # ── M83A — Clerk drift provider ──────────────────────────────────────
+        elif self.provider == "clerk":
+            if not self.clerk_secret_key:
+                raise ValueError(
+                    "clerk_secret_key is required for Clerk integrations."
                 )
         return self
 

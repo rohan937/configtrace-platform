@@ -1290,29 +1290,30 @@ def test_expansion_framework_not_pointing_to_m82_current():
     )
 
 
-def test_expansion_framework_clerk_at_head_of_queue():
+def test_expansion_framework_pagerduty_at_head_of_queue():
+    # M83A shipped Clerk; PagerDuty is now the head.
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
-    assert recs[0]["provider"] == "clerk", (
-        f"Clerk should be head of RECOMMENDED_NEXT_PROVIDERS; got: {recs[0]['provider']!r}"
+    assert recs[0]["provider"] == "pagerduty", (
+        f"PagerDuty should be head of RECOMMENDED_NEXT_PROVIDERS after M83A; got: {recs[0]['provider']!r}"
     )
 
 
-def test_expansion_framework_clerk_milestone_starts_at_m83a_or_later():
-    """Clerk first_milestone_name must not reuse M82A or earlier shipped milestones."""
+def test_expansion_framework_recommended_milestones_dont_reuse_shipped():
+    """All recommended-next milestone numbers must be >= 84 (past the Clerk M83 arc)."""
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
-    clerk_rec = next((r for r in recs if r["provider"] == "clerk"), None)
-    assert clerk_rec is not None, "Clerk not in RECOMMENDED_NEXT_PROVIDERS"
-    first_milestone = clerk_rec.get("first_milestone_name", "")
-    m = re.search(r"M(\d+)A", first_milestone)
-    assert m, f"Clerk first_milestone_name has no MXA pattern: {first_milestone!r}"
-    milestone_num = int(m.group(1))
-    assert milestone_num >= 83, (
-        f"Clerk first_milestone_name {first_milestone!r} reuses a shipped milestone number "
-        f"(M80=SendGrid, M81=Auth0, M82=Datadog). Should be M83A or later."
-    )
+    for rec in recs:
+        first_milestone = rec.get("first_milestone_name", "")
+        m = re.search(r"M(\d+)A", first_milestone)
+        if m:
+            milestone_num = int(m.group(1))
+            assert milestone_num >= 84, (
+                f"Recommended provider {rec['provider']!r} first_milestone_name "
+                f"{first_milestone!r} reuses milestone M{milestone_num} which was "
+                f"already shipped (M80=SendGrid, M81=Auth0, M82=Datadog, M83=Clerk)"
+            )
 
 
 def test_expansion_framework_datadog_not_in_recommended():
@@ -1322,22 +1323,6 @@ def test_expansion_framework_datadog_not_in_recommended():
     assert "datadog" not in providers, (
         "Datadog is launched; it must not appear in RECOMMENDED_NEXT_PROVIDERS"
     )
-
-
-def test_expansion_framework_recommended_milestones_dont_reuse_shipped():
-    """All recommended-next milestone numbers must be >= 83 (past the Datadog M82 arc)."""
-    framework = get_framework()
-    recs = framework.get("recommended_next_providers", [])
-    for rec in recs:
-        first_milestone = rec.get("first_milestone_name", "")
-        m = re.search(r"M(\d+)A", first_milestone)
-        if m:
-            milestone_num = int(m.group(1))
-            assert milestone_num >= 83, (
-                f"Recommended provider {rec['provider']!r} first_milestone_name "
-                f"{first_milestone!r} reuses milestone M{milestone_num} which was "
-                f"already shipped (M80=SendGrid, M81=Auth0, M82=Datadog)"
-            )
 
 
 def test_expansion_framework_arc_not_abandoned():
