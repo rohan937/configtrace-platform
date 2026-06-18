@@ -843,7 +843,8 @@ class TestCapabilityAndFramework:
         assert cap.security.activity_ingestion is True
         # M82E set activity_signals=True (Datadog activity signal generation added)
         assert cap.security.activity_signals is True
-        assert cap.security.risk_activity_correlations is False
+        # M82F set risk_activity_correlations=True (Datadog risk × activity correlations added)
+        assert cap.security.risk_activity_correlations is True
         assert cap.security.demo_seed_clear is False
 
     def test_capability_matrix_notes_mention_m82c(self):

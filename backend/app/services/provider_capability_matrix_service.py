@@ -835,7 +835,7 @@ _DATADOG = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -880,16 +880,22 @@ _DATADOG = ProviderCapability(
         "webhook URLs/headers/payloads/secrets, notification handles, "
         "emails, user IDs, team member identities, logs, traces, metric "
         "values, and incident content are NEVER stored. "
-        "M82E adds Datadog activity signals. Generates review-worthy Incident "
-        "Signals from M82D activity events. 11 signal types cover all 10 drift "
-        "surfaces plus a generic config activity type. Groups by safe resource "
-        "identity (opaque IDs only); severity is medium for monitors/SLOs/"
-        "dashboards/webhooks/notification integrations/keys/roles and low for "
-        "teams/cloud integrations/generic config. Idempotent. No API key values, "
+        "M82E adds Datadog activity signals. 11 signal types covering all 10 drift "
+        "surfaces plus a generic config activity type. Idempotent. No API key values, "
         "application key values, raw queries, raw messages, webhook URLs, headers, "
         "payloads, notification handles, emails, user IDs, or PII stored. "
-        "Correlations, demo seed/clear, and case report are planned for M82F–M82G. "
-        "planned_next_stage: M82F: Datadog Risk × Activity Correlations."
+        "M82F adds Datadog risk × activity correlations. 10 specialized correlation "
+        "families (monitor/SLO/dashboard/webhook/notification integration/API key/"
+        "application key/role/team/cloud integration) plus a generic resource_type/"
+        "resource_id fallback. Matches on safe opaque resource IDs from finding "
+        "evidence and signal metadata. Confidence: high (exact ID + same integration), "
+        "medium (exact ID, different integration), low (family aggregate or generic). "
+        "API key values, application key values, raw queries/messages, webhook URLs, "
+        "notification handles, emails, user IDs, team member identities, IP addresses, "
+        "user agents, and raw Datadog audit payloads are never used or stored. Does "
+        "not confirm compromise, unauthorized access, or data exposure. Idempotent. "
+        "Demo seed/clear and case report are planned for M82G. "
+        "planned_next_stage: M82G: Datadog Demo + QA."
     ),
 )
 

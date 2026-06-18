@@ -855,8 +855,9 @@ class TestCapabilityMatrix:
         # M82E set activity_signals=True (Datadog activity signal generation added)
         assert self.cap.security.activity_signals is True
 
-    def test_risk_activity_correlations_false(self):
-        assert self.cap.security.risk_activity_correlations is False
+    def test_risk_activity_correlations_true_after_m82f(self):
+        # M82F set risk_activity_correlations=True (Datadog risk × activity correlations added)
+        assert self.cap.security.risk_activity_correlations is True
 
     def test_demo_seed_clear_false(self):
         assert self.cap.security.demo_seed_clear is False

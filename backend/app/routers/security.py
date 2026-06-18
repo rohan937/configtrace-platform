@@ -225,6 +225,8 @@ from app.schemas.security_datadog_activity import (
     DatadogActivitySyncResponse,
     DatadogActivitySignalGenerateRequest,
     DatadogActivitySignalGenerateResponse,
+    DatadogCorrelationGenerateRequest,
+    DatadogCorrelationGenerateResponse,
 )
 from app.schemas.security_sendgrid_activity import (
     SendGridActivitySyncRequest,
@@ -3701,6 +3703,59 @@ def generate_auth0_risk_activity_correlations(
         workspace_id=workspace_id, db=db, **kwargs_auth0
     )
     return Auth0CorrelationGenerateResponse(**result)
+
+
+@router.post(
+    "/datadog-correlations/generate",
+    response_model=DatadogCorrelationGenerateResponse,
+)
+def generate_datadog_risk_activity_correlations(
+    body: Optional[DatadogCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DatadogCorrelationGenerateResponse:
+    """Generate Datadog Risk × Activity correlations (M82F).
+
+    Admin/owner only. Joins active Datadog configuration-risk findings with
+    Datadog activity signals using safe resource identifiers (monitor_id,
+    slo_id, dashboard_id, webhook_id, notification_integration_id, api_key_id,
+    application_key_id, role_id, team_id, cloud_integration_id) or resource
+    family aggregate matching when no per-resource identity is available.
+
+    Covers ten correlation families: monitor, SLO, dashboard, webhook,
+    notification integration, API key, application key, role, team, and
+    cloud integration, plus a generic resource_type/resource_id fallback.
+
+    API key values, application key values, OAuth tokens, bearer tokens,
+    webhook secrets, raw monitor queries, raw monitor messages, raw dashboard
+    JSON, webhook URLs, headers, payload templates, notification handles, Slack
+    channel names, PagerDuty service IDs, email addresses, user IDs, team
+    member identities, IP addresses, user agents, raw Datadog audit payloads,
+    and raw API response dicts are never used or stored.
+    Does not confirm compromise, unauthorized access, or data exposure.
+    Idempotent — re-running creates no duplicates.
+
+    Members can view the resulting correlations via
+    GET /security/correlations?provider=datadog.
+    """
+    from app.services.datadog_risk_activity_correlation_service import (
+        generate_datadog_correlations,
+    )
+
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs_dd: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs_dd["lookback_hours"] = body.lookback_hours
+        if body.max_correlations is not None:
+            kwargs_dd["max_correlations"] = body.max_correlations
+    result = generate_datadog_correlations(
+        workspace_id=workspace_id, db=db, **kwargs_dd
+    )
+    return DatadogCorrelationGenerateResponse(**result)
 
 
 @router.post(

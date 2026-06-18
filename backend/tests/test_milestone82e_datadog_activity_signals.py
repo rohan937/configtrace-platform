@@ -808,9 +808,10 @@ class TestDatadogCapabilityMatrixE:
         cap = self._get_cap()
         assert cap["security"]["activity_ingestion"] is True
 
-    def test_risk_activity_correlations_is_false(self):
+    def test_risk_activity_correlations_is_true_after_m82f(self):
+        # M82F set risk_activity_correlations=True (Datadog correlations added)
         cap = self._get_cap()
-        assert cap["security"]["risk_activity_correlations"] is False
+        assert cap["security"]["risk_activity_correlations"] is True
 
     def test_demo_seed_clear_is_false(self):
         cap = self._get_cap()
@@ -830,19 +831,20 @@ class TestDatadogCapabilityMatrixE:
 
 class TestDatadogExpansionFrameworkE:
 
-    def test_planned_next_stage_is_m82f(self):
+    def test_planned_next_stage_is_m82g_after_m82f(self):
+        # M82F shipped; planned_next_stage now points to M82G
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "M82F" in planned, (
-            f"planned_next_stage should reference M82F, got: {planned!r}"
+        assert "M82G" in planned, (
+            f"planned_next_stage should reference M82G, got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_correlations(self):
+    def test_planned_next_stage_mentions_demo_or_qa(self):
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "Correlations" in planned or "M82F" in planned
+        assert "Demo" in planned or "M82G" in planned
 
 
 # ── Section H: Forbidden wording and secret-shape scan ────────────────────────

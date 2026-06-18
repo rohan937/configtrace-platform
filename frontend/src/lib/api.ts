@@ -1148,6 +1148,27 @@ export async function generateAuth0Correlations(
   });
 }
 
+/**
+ * generateDatadogCorrelations — POST /security/datadog-correlations/generate
+ * Joins Datadog configuration-risk findings with Datadog activity signals using
+ * safe resource identifiers (monitor_id, slo_id, dashboard_id, webhook_id,
+ * notification_integration_id, api_key_id, application_key_id, role_id, team_id,
+ * cloud_integration_id). API key values, application key values, raw monitor
+ * queries/messages, webhook URLs, headers, payload templates, notification handles,
+ * emails, user IDs, team member identities, IP addresses, user agents, and raw
+ * Datadog audit payloads are never used. Does not confirm compromise or unauthorized access.
+ */
+export async function generateDatadogCorrelations(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").DatadogCorrelationGenerateResponse> {
+  return apiFetch(`/security/datadog-correlations/generate`, {
+    method: "POST",
+    body: JSON.stringify(opts ?? {}),
+    token,
+  });
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

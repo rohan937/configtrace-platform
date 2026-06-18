@@ -350,6 +350,27 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "factor_name",                 # MFA factor name (e.g. "otp", "webauthn-roaming")
         "custom_domain_id",            # Auth0 custom domain ID (opaque; NEVER domain string)
         "tenant_id",                   # Auth0 tenant identifier (opaque)
+        # Datadog risk × activity correlation context (M82F) — safe opaque
+        # resource identifiers and posture labels only. NEVER API key values,
+        # application key values, OAuth tokens, bearer tokens, webhook secrets,
+        # raw monitor queries/messages, raw dashboard JSON, widget queries,
+        # webhook URLs/headers/payload templates, notification handles, Slack
+        # channel names, PagerDuty service IDs, email addresses, user IDs,
+        # team member identities, IP addresses, user agents, raw Datadog
+        # audit payloads, raw API response dicts, customer data, or PII.
+        "monitor_id",                  # Datadog monitor ID (opaque identifier, not a secret)
+        "slo_id",                      # Datadog SLO ID (opaque identifier)
+        "dashboard_id",                # Datadog dashboard ID (opaque identifier)
+        "notification_integration_id", # Datadog notification integration record ID
+        "application_key_id",          # Datadog application key ID (NEVER key value)
+        "role_id",                     # Datadog role ID (opaque identifier)
+        "team_id",                     # Datadog team ID (opaque identifier)
+        "cloud_integration_id",        # Datadog cloud integration record ID
+        "record_type",                 # Datadog record type label (e.g. "datadog_monitor")
+        "signal_count",                # int — count of signals in the correlation window
+        "time_delta_minutes",          # int — time delta between finding and signal (minutes)
+        "correlation_reason",          # safe reason label for the correlation
+        "correlation_strength",        # "high" / "medium" / "low"
     }
 )
 

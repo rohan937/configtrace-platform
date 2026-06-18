@@ -20,8 +20,9 @@ import type {
   SecurityCorrelationGenerateResponse,
   TwilioCorrelationGenerateResponse,
   Auth0CorrelationGenerateResponse,
+  DatadogCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -34,7 +35,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -195,6 +196,24 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "auth0_mfa_factor_risk_activity_correlation",
     "auth0_custom_domain_risk_activity_correlation",
   ],
+  datadog: [
+    // M82F — Datadog Configuration Risk × Datadog Activity evidence.
+    // Resource-identity-scoped matching on monitor_id / slo_id / dashboard_id /
+    // webhook_id / notification_integration_id / api_key_id / application_key_id /
+    // role_id / team_id / cloud_integration_id; family aggregate fallback when
+    // specific IDs are absent; generic resource_type/resource_id fallback last.
+    "datadog_monitor_risk_activity_correlation",
+    "datadog_slo_risk_activity_correlation",
+    "datadog_dashboard_risk_activity_correlation",
+    "datadog_webhook_risk_activity_correlation",
+    "datadog_notification_integration_risk_activity_correlation",
+    "datadog_api_key_risk_activity_correlation",
+    "datadog_application_key_risk_activity_correlation",
+    "datadog_role_risk_activity_correlation",
+    "datadog_team_risk_activity_correlation",
+    "datadog_cloud_integration_risk_activity_correlation",
+    "datadog_config_activity_correlation",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 
@@ -215,7 +234,7 @@ export default function CorrelationsPage() {
   const typeOptions = TYPE_OPTIONS_BY_PROVIDER[provider] ?? [];
 
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse) | null>(null);
+  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse) | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -260,6 +279,9 @@ export default function CorrelationsPage() {
         setGenResult(res);
       } else if (provider === "auth0") {
         const res = await generateAuth0Correlations(token);
+        setGenResult(res);
+      } else if (provider === "datadog") {
+        const res = await generateDatadogCorrelations(token);
         setGenResult(res);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);
@@ -395,7 +417,7 @@ function GenerateBar({
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
-  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse) | null;
+  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse) | null;
   genError: string | null;
   onGenerate: () => void;
 }) {
@@ -424,7 +446,9 @@ function GenerateBar({
                           ? "Correlate SendGrid configuration risks with SendGrid activity signals across API keys, sender identities, domain authentication, mail settings, tracking settings, event webhook, inbound parse, and suppression settings. Matches on safe resource identifiers (api_key_id, sender_id, domain_id) or provider+family aggregate for account-level surfaces. Email bodies, subject lines, recipient emails, mail event payloads, raw webhook URLs, API key values, and customer data are never used."
                           : provider === "auth0"
                             ? "Generate Auth0 risk × activity correlations from safe configuration findings and activity signals. ConfigTrace stores resource identifiers, OAuth/application posture, tenant settings, and activity summaries only — never user emails, login history, IP addresses, sessions, tokens, callback URLs, raw Auth0 logs, or client secrets. Matches on client_id (applications), connection_id, resource_server_id, rule_id, action_id, factor_name, or custom_domain_id."
-                            : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                            : provider === "datadog"
+                              ? "Generate review-safe Datadog correlations between configuration findings and recent Datadog configuration activity. ConfigTrace stores only rule keys, signal types, opaque resource IDs, counts, categories, and timing evidence — never API keys, application keys, raw monitor queries, raw monitor messages, webhook URLs, headers, payloads, logs, traces, metric values, incident text, emails, destination handles, raw audit payloads, or PII."
+                              : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -614,7 +638,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                           ? "the same SendGrid resource (API key / sender identity / domain), or the same account + family for mail settings, tracking settings, webhook, and suppression risks. Sync SendGrid activity, generate SendGrid signals, then generate SendGrid correlations."
                           : provider === "auth0"
                             ? "the same Auth0 resource (application / connection / resource server / rule / action / MFA factor / custom domain), or the same tenant for tenant-level risks. Sync Auth0 activity, generate Auth0 signals, then generate Auth0 correlations to align configuration risks with control-plane activity evidence on the same Auth0 surface."
-                            : "the same GitHub repository";
+                            : provider === "datadog"
+                              ? "the same Datadog resource (monitor / SLO / dashboard / webhook integration / notification integration / API key / application key / role / team / cloud integration). Sync Datadog activity, generate Datadog signals, then generate Datadog correlations to align configuration risks with configuration activity evidence on the same Datadog surface. API keys, application keys, raw monitor queries, raw messages, webhook URLs, notification handles, emails, user IDs, and raw audit payloads are never stored."
+                              : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>
