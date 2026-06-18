@@ -838,8 +838,8 @@ _DATADOG = ProviderCapability(
         risk_activity_correlations=True,
         demo_seed_clear=True,
         case_report=True,
-        evidence_timeline=False,
-        evidence_graph=False,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
@@ -902,7 +902,25 @@ _DATADOG = ProviderCapability(
         "URLs, no header names/values, no payload templates, no notification "
         "handles, no email addresses, no user IDs, no IP addresses, no raw "
         "Datadog audit payloads, no customer data. Evidence for review. "
-        "planned_next_stage: M82H: Datadog Provider Depth QA."
+        "M82H adds provider-depth QA: durable guardrails covering taxonomy "
+        "parity (10 record types, 31 rule keys, 32 activity event types, 11 "
+        "signal types, 11 correlation types), privacy sanitization (allowlist "
+        "verified for activity/signal/correlation/case-report layers), claim "
+        "discipline (forbidden-phrase scan across all Datadog modules), "
+        "false-positive behavior pins (healthy-record no-fire for all 10 "
+        "surfaces, positive-fire for all risk postures), demo isolation "
+        "(seed/clear idempotency, no cross-provider contamination, demo "
+        "severity correctness), router admin guards, frontend consistency "
+        "(activity page, signals page, correlations page, rule catalog, demo "
+        "card, API unions), and regression smoke. Three code fixes applied: "
+        "(1) datadog added to sync_service._SUPPORTED_PROVIDERS so scheduled "
+        "syncs enqueue Datadog integrations; (2) evidence_timeline and "
+        "evidence_graph flipped to True per Stage-6 spec and parity with "
+        "other demo-ready providers; (3) datadog_webhook_auth_material_present "
+        "demo severity corrected from high to medium to match rule pack. "
+        "Datadog remains partial (not in the canonical dual-stack-complete "
+        "set of 8 providers). planned_next_stage: M82I: Datadog Cross-Cloud "
+        "UX Polish."
     ),
 )
 

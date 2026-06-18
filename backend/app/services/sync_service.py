@@ -263,7 +263,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
     # this tuple so its integrations are automatically included in scheduling.
     _SUPPORTED_PROVIDERS = (
         "cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase", "shopify",
-        "azure", "google_cloud", "twilio", "sendgrid", "auth0",
+        "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

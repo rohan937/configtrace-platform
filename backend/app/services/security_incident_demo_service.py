@@ -6474,7 +6474,7 @@ def seed_datadog(
         finding_key=(
             f"datadog_webhook_auth_material_present:{_DATADOG_DEMO_WEBHOOK_ID}#demo"
         ),
-        severity="high",
+        severity="medium",
         title="Demo: Datadog webhook integration has auth material in custom headers",
         resource_id=None,  # Findings use evidence.record_id; resource_id is a UUID FK we leave null for demo
         description=(

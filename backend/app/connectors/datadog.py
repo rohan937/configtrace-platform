@@ -1066,6 +1066,13 @@ class DatadogConnector(BaseConnector):
                         "custom_headers_present": False,
                         "payload_template_present": False,
                         "secret_headers_present": False,
+                        # M82C derived fields — safe defaults matching TypedDict schema
+                        "url_scheme_category": "unknown",
+                        "custom_header_count": 0,
+                        "auth_material_present": False,
+                        "payload_template_length_category": "absent",
+                        "secret_headers_count": 0,
+                        "encode_as_category": "unknown",
                     })
             return records
         except ConnectorError as exc:

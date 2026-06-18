@@ -503,7 +503,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "jwt_private_keys",
             "publishable_key_value",
         ),
-        first_milestone_name="M80A: Clerk Drift Provider Foundation",
+        first_milestone_name="M83A: Clerk Drift Provider Foundation",
         notes=(
             "Use the Clerk Backend API. Focus on instance settings: "
             "/v1/instance (session lifetimes, allowed redirects), "
@@ -540,7 +540,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "raw_webhook_payloads",
             "personally_identifiable_responder_information",
         ),
-        first_milestone_name="M81A: PagerDuty Drift Provider Foundation",
+        first_milestone_name="M84A: PagerDuty Drift Provider Foundation",
         notes=(
             "Use the PagerDuty REST API v2. Focus on /services, "
             "/webhook_subscriptions, /escalation_policies, and /api_keys "
@@ -577,7 +577,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "raw_webhook_payloads",
             "comment_content",
         ),
-        first_milestone_name="M82A: Linear Drift Provider Foundation",
+        first_milestone_name="M85A: Linear Drift Provider Foundation",
         notes=(
             "Use the Linear GraphQL API. Focus on workspace webhooks, API key "
             "metadata (name + scope, never value), and team configuration. "
@@ -612,7 +612,7 @@ RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
             "comment_content",
             "attachment_content",
         ),
-        first_milestone_name="M83A: Jira Drift Provider Foundation",
+        first_milestone_name="M86A: Jira Drift Provider Foundation",
         notes=(
             "Use the Jira REST API v3. Focus on /rest/api/3/webhook (webhook "
             "endpoint URLs and schemes), /rest/api/3/permissionscheme (scheme "
@@ -689,6 +689,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M82H: Datadog Provider Depth QA",
+            "planned_next_stage": "M82I: Datadog Cross-Cloud UX Polish",
         },
     }

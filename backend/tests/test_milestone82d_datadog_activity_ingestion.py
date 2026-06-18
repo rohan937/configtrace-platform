@@ -1194,20 +1194,20 @@ class TestDatadogCapabilityMatrix:
 
 class TestDatadogExpansionFramework:
 
-    def test_planned_next_stage_is_m82h_after_m82g(self):
-        # M82G shipped; planned_next_stage now points to M82H
+    def test_planned_next_stage_is_m82i_after_m82h(self):
+        # M82H shipped; planned_next_stage now points to M82I
         expansion_svc = _import_expansion_framework()
         framework = expansion_svc.get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "M82H" in planned, (
-            f"planned_next_stage should reference M82H, got: {planned!r}"
+        assert "M82I" in planned, (
+            f"planned_next_stage should reference M82I (post-M82H), got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_depth_qa(self):
+    def test_planned_next_stage_mentions_polish_or_m82i(self):
         expansion_svc = _import_expansion_framework()
         framework = expansion_svc.get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "QA" in planned or "M82H" in planned
+        assert "Polish" in planned or "M82I" in planned
 
 
 # ── Tests: API endpoint auth ───────────────────────────────────────────────────
