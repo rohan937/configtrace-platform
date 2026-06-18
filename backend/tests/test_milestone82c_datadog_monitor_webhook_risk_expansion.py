@@ -845,7 +845,8 @@ class TestCapabilityAndFramework:
         assert cap.security.activity_signals is True
         # M82F set risk_activity_correlations=True (Datadog risk × activity correlations added)
         assert cap.security.risk_activity_correlations is True
-        assert cap.security.demo_seed_clear is False
+        # M82G set demo_seed_clear=True (Datadog demo + QA added)
+        assert cap.security.demo_seed_clear is True
 
     def test_capability_matrix_notes_mention_m82c(self):
         from app.services.provider_capability_matrix_service import get_provider_capability

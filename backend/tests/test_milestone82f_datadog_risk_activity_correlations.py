@@ -897,13 +897,15 @@ class TestDatadogCapabilityMatrixF:
         cap = self._get_cap()
         assert cap["security"]["activity_ingestion"] is True
 
-    def test_demo_seed_clear_is_false(self):
+    def test_demo_seed_clear_is_true_after_m82g(self):
+        # M82G set demo_seed_clear=True (Datadog demo + QA added)
         cap = self._get_cap()
-        assert cap["security"]["demo_seed_clear"] is False
+        assert cap["security"]["demo_seed_clear"] is True
 
-    def test_case_report_is_false(self):
+    def test_case_report_is_true_after_m82g(self):
+        # M82G set case_report=True (Datadog demo seeds a case)
         cap = self._get_cap()
-        assert cap["security"]["case_report"] is False
+        assert cap["security"]["case_report"] is True
 
     def test_maturity_is_partial(self):
         cap = self._get_cap()
@@ -915,19 +917,20 @@ class TestDatadogCapabilityMatrixF:
 
 class TestDatadogExpansionFrameworkF:
 
-    def test_planned_next_stage_is_m82g(self):
+    def test_planned_next_stage_is_m82h_after_m82g(self):
+        # M82G shipped; planned_next_stage now points to M82H
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "M82G" in planned, (
-            f"planned_next_stage should reference M82G, got: {planned!r}"
+        assert "M82H" in planned, (
+            f"planned_next_stage should reference M82H, got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_demo(self):
+    def test_planned_next_stage_mentions_depth_qa(self):
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "Demo" in planned or "M82G" in planned
+        assert "QA" in planned or "M82H" in planned
 
 
 # ── Section H: Forbidden wording and secret-shape scan ────────────────────────

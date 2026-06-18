@@ -1074,7 +1074,8 @@ class TestProviderRegistration:
         assert datadog_cap.security.security_rules is True
         # M82D set activity_ingestion=True (Datadog config-state activity ingestion added)
         assert datadog_cap.security.activity_ingestion is True
-        assert datadog_cap.security.demo_seed_clear is False
+        # M82G set demo_seed_clear=True (Datadog demo + QA added)
+        assert datadog_cap.security.demo_seed_clear is True
         assert datadog_cap.maturity == "partial"
         assert "M82A" in datadog_cap.notes or "M82B" in datadog_cap.notes
 

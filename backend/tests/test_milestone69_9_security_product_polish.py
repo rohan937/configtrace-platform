@@ -202,4 +202,6 @@ def test_provider_labels_canonical():
         # M80I added SendGrid to the canonical case-report label map.
         "sendgrid": "SendGrid",
         # M81G added Auth0 to the canonical case-report label map.
-        "auth0": "Auth0"}
+        "auth0": "Auth0",
+        # M82G added Datadog to the canonical case-report label map.
+        "datadog": "Datadog"}

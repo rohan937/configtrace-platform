@@ -61,6 +61,8 @@ from app.services import sendgrid_activity_signal_service as sg_sig
 from app.services import sendgrid_risk_activity_correlation_service as sg_corr_svc
 from app.services import auth0_activity_signal_service as auth0_sig
 from app.services import auth0_risk_activity_correlation_service as auth0_corr_svc
+from app.services import datadog_activity_signal_service as dd_sig
+from app.services import datadog_risk_activity_correlation_service as dd_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -6229,6 +6231,479 @@ def clear_auth0(
         ).delete(synchronize_session=False)
 
     integ = get_auth0_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── Datadog incident demo (M82G) ──────────────────────────────────────────────
+#
+# Story: A Datadog webhook integration has outbound posture findings (missing
+# secret headers, non-HTTPS endpoint, auth material in custom headers).
+# Evidence chain: webhook configuration risk finding → Datadog activity event
+# (datadog.webhook_integration.updated) → Datadog activity signal
+# (datadog_webhook_integration_config_changed) → risk × activity correlation
+# (datadog_webhook_risk_activity_correlation) → case.
+#
+# PRIVACY: no API key values, application key values, OAuth tokens, bearer
+# tokens, webhook secrets, raw monitor queries, raw monitor messages, raw
+# dashboard JSON, webhook URLs, custom header names/values, payload templates,
+# notification handles, Slack channel names, PagerDuty service IDs, email
+# addresses, user IDs, team member identities, IP addresses, user agents,
+# raw Datadog audit payloads, raw API responses, customer data, or PII.
+# No strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+
+DATADOG_DEMO_INTEGRATION_NAME = "ConfigTrace Datadog incident demo (sample data)"
+DATADOG_DEMO_CASE_SOURCE = "demo_datadog_incident"
+DATADOG_DEMO_DATASET = "datadog_incident_demo_v1"
+
+# Safe placeholder — no real Datadog values, no API keys, no webhook URLs.
+_DATADOG_DEMO_WEBHOOK_ID = "demo_datadog_webhook_001"
+
+
+def get_datadog_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == DATADOG_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_datadog_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == DATADOG_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_datadog_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_datadog_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_datadog(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Datadog demo incident chain (idempotent). No real Datadog sync.
+
+    One coherent Datadog webhook integration story:
+      Webhook posture risks (missing secret headers, non-HTTPS endpoint, auth
+      material in custom headers) → Datadog config-state activity event →
+      Datadog activity signal → Datadog risk × activity correlation → case.
+
+    All objects are anchored on a hidden demo integration so ``clear_datadog``
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace).
+
+    PRIVACY: no API key values, application key values, OAuth tokens, bearer
+    tokens, webhook secrets, raw monitor queries/messages, raw dashboard JSON,
+    webhook URLs, custom header names/values, payload templates, notification
+    handles, Slack channel names, PagerDuty service IDs, email addresses, user
+    IDs, team member identities, IP addresses, user agents, raw Datadog audit
+    payloads, raw API responses, or customer data. Only safe booleans, counts,
+    opaque IDs, and category labels.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+    """
+    existing = _existing_datadog_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" → never shown / never synced).
+    integ = get_datadog_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": DATADOG_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=DATADOG_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real Datadog rule keys (M82B/M82C).
+    #    Evidence uses only safe booleans, counts, opaque IDs, and category
+    #    labels — never webhook URLs, header names/values, payload content,
+    #    secrets, raw queries, notification handles, email addresses, or PII.
+
+    webhook_finding_1 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="datadog",
+        finding_key=(
+            f"datadog_webhook_without_secret_headers:{_DATADOG_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Datadog webhook integration has no secret headers configured",
+        resource_id=None,  # Findings use evidence.record_id; resource_id is a UUID FK we leave null for demo
+        description=(
+            "Sample Datadog webhook integration posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "datadog_webhook_without_secret_headers", "demo": True,
+            "record_id": _DATADOG_DEMO_WEBHOOK_ID,
+            "record_type": "datadog_webhook_integration",
+            "resource_name": "Datadog webhook integration review",
+            "url_present": True,
+            "url_scheme_category": "http",
+            "url_host_present": True,
+            "secret_headers_present": False,
+            "secret_headers_count": 0,
+        },
+        remediation={
+            "summary": (
+                "Configure HMAC secret headers on the Datadog webhook "
+                "integration to allow receivers to verify request authenticity."
+            ),
+        },
+    )
+
+    webhook_finding_2 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="datadog",
+        finding_key=(
+            f"datadog_webhook_non_https_endpoint:{_DATADOG_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Datadog webhook integration uses a non-HTTPS endpoint",
+        resource_id=None,  # Findings use evidence.record_id; resource_id is a UUID FK we leave null for demo
+        description=(
+            "Sample Datadog webhook non-HTTPS endpoint posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "datadog_webhook_non_https_endpoint", "demo": True,
+            "record_id": _DATADOG_DEMO_WEBHOOK_ID,
+            "record_type": "datadog_webhook_integration",
+            "resource_name": "Datadog webhook integration review",
+            "url_present": True,
+            "url_scheme_category": "http",
+        },
+        remediation={
+            "summary": (
+                "Update the Datadog webhook integration to use an HTTPS endpoint "
+                "to protect data in transit."
+            ),
+        },
+    )
+
+    webhook_finding_3 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="datadog",
+        finding_key=(
+            f"datadog_webhook_auth_material_present:{_DATADOG_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Datadog webhook integration has auth material in custom headers",
+        resource_id=None,  # Findings use evidence.record_id; resource_id is a UUID FK we leave null for demo
+        description=(
+            "Sample Datadog webhook auth material posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "datadog_webhook_auth_material_present", "demo": True,
+            "record_id": _DATADOG_DEMO_WEBHOOK_ID,
+            "record_type": "datadog_webhook_integration",
+            "resource_name": "Datadog webhook integration review",
+            "custom_headers_present": True,
+            "custom_header_count": 2,
+            "auth_material_present": True,
+            "auth_material_count": 1,
+            "secret_headers_present": False,
+        },
+        remediation={
+            "summary": (
+                "Move authentication material from custom headers to Datadog's "
+                "dedicated secret_headers field, and remove auth credentials "
+                "from unprotected custom_headers."
+            ),
+        },
+    )
+
+    datadog_findings = [webhook_finding_1, webhook_finding_2, webhook_finding_3]
+
+    # 3. Activity event (provider="datadog", source="datadog_activity_event").
+    DATADOG_ACTIVITY_SOURCE = "datadog_activity_event"
+
+    def _mk_dd_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        resource_id: str, extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+            "event_source": DATADOG_ACTIVITY_SOURCE,
+            "status": "observed",
+            "category": "datadog_configuration",
+            "status_category": "observed",
+            "operation_family": f"datadog.{resource_type}",
+            "operation_action": "observe",
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="datadog", source=DATADOG_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    webhook_event = _mk_dd_event(
+        event_type="datadog.webhook_integration.updated",
+        resource_type="webhook_integration",
+        provider_event_id="DATADOG_DEMO_EVT_WEBHOOK_001",
+        resource_id=_DATADOG_DEMO_WEBHOOK_ID,
+        extra={
+            "webhook_id": _DATADOG_DEMO_WEBHOOK_ID,
+            "resource_name": "Datadog webhook integration review",
+            "url_present": True,
+            "url_scheme_category": "http",
+            "url_host_present": True,
+            "custom_headers_present": True,
+            "custom_header_count": 2,
+            "secret_headers_present": False,
+            "secret_headers_count": 0,
+            "payload_template_present": True,
+            "payload_template_length_category": "long",
+            "encode_as_category": "json",
+            "auth_material_present": True,
+            "auth_material_count": 1,
+        },
+    )
+
+    datadog_events = [webhook_event]
+
+    # 4. Activity signals via the real M82E signal builder.
+    datadog_signals: list[SecurityIncidentSignal] = []
+    for ev in datadog_events:
+        sig_dict = dd_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            datadog_signals.append(sig)
+
+    # 5. Correlation via the real M82F builder.
+    datadog_correlations: list[SecuritySignalCorrelation] = []
+    signals_by_type_dd: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in datadog_signals
+    }
+
+    def _add_dd_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+        confidence: str = "medium",
+    ) -> SecuritySignalCorrelation:
+        rule = dd_corr_svc.DATADOG_CORRELATION_RULES[correlation_type]
+        cdict = dd_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason, confidence=confidence,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        datadog_correlations.append(corr)
+        return corr
+
+    webhook_signal = signals_by_type_dd.get("datadog_webhook_integration_config_changed")
+    if webhook_signal is not None:
+        _add_dd_correlation(
+            finding=webhook_finding_1,
+            signal=webhook_signal,
+            correlation_type="datadog_webhook_risk_activity_correlation",
+            match_reason="webhook_id_id_match",
+            confidence="medium",
+        )
+
+    # 6. Case linking 3 findings, 1 event, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title=(
+            "[Demo] Datadog webhook integration review: outbound posture and "
+            "configuration activity"
+        ),
+        summary=(
+            "Review-safe Datadog demo case linking webhook configuration risks "
+            "to control-plane activity evidence. Groups Datadog webhook "
+            "integration findings (missing secret headers, non-HTTPS endpoint, "
+            "auth material in custom headers) with a Datadog configuration-state "
+            "activity event for the same webhook, plus the matching activity "
+            "signal and risk x activity correlation. "
+            "Marked demo — no real Datadog sync, no API key values, no "
+            "application key values, no webhook URLs, no header names or values, "
+            "no payload templates, no notification handles, no email addresses, "
+            "no user IDs, no IP addresses, no raw Datadog audit payloads, no "
+            "customer data. Evidence for review. Does not confirm compromise, "
+            "unauthorized access, or data exposure."
+        ),
+        severity="high",
+        provider="datadog",
+        metadata={
+            "source": DATADOG_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+
+    for f in datadog_findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=f.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for ev in datadog_events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    seen_signal_ids_dd: set = set()
+    for sig in datadog_signals:
+        seen_signal_ids_dd.add(sig.id)
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+    for corr in datadog_correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids_dd
+        ):
+            seen_signal_ids_dd.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    logger.info(
+        "datadog_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_datadog(
+    *, workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Remove exactly the Datadog demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == DATADOG_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = get_datadog_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

@@ -859,11 +859,13 @@ class TestCapabilityMatrix:
         # M82F set risk_activity_correlations=True (Datadog risk × activity correlations added)
         assert self.cap.security.risk_activity_correlations is True
 
-    def test_demo_seed_clear_false(self):
-        assert self.cap.security.demo_seed_clear is False
+    def test_demo_seed_clear_true_after_m82g(self):
+        # M82G set demo_seed_clear=True (Datadog demo + QA added)
+        assert self.cap.security.demo_seed_clear is True
 
-    def test_case_report_false(self):
-        assert self.cap.security.case_report is False
+    def test_case_report_true_after_m82g(self):
+        # M82G set case_report=True (Datadog demo seeds a case)
+        assert self.cap.security.case_report is True
 
     def test_maturity_is_partial(self):
         assert self.cap.maturity == "partial"

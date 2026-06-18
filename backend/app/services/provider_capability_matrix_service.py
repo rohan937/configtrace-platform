@@ -836,8 +836,8 @@ _DATADOG = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
+        demo_seed_clear=True,
+        case_report=True,
         evidence_timeline=False,
         evidence_graph=False,
     ),
@@ -894,8 +894,15 @@ _DATADOG = ProviderCapability(
         "notification handles, emails, user IDs, team member identities, IP addresses, "
         "user agents, and raw Datadog audit payloads are never used or stored. Does "
         "not confirm compromise, unauthorized access, or data exposure. Idempotent. "
-        "Demo seed/clear and case report are planned for M82G. "
-        "planned_next_stage: M82G: Datadog Demo + QA."
+        "M82G adds Datadog demo + QA. Demo seeds a Datadog webhook integration "
+        "review story: three webhook posture findings (missing secret headers, "
+        "non-HTTPS endpoint, auth material in custom headers) → config-state "
+        "activity event → webhook activity signal → risk × activity correlation "
+        "→ case. Marked demo — no real Datadog sync, no API keys, no webhook "
+        "URLs, no header names/values, no payload templates, no notification "
+        "handles, no email addresses, no user IDs, no IP addresses, no raw "
+        "Datadog audit payloads, no customer data. Evidence for review. "
+        "planned_next_stage: M82H: Datadog Provider Depth QA."
     ),
 )
 

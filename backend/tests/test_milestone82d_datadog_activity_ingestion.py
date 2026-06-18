@@ -1175,9 +1175,10 @@ class TestDatadogCapabilityMatrix:
         cap = self._get_cap()
         assert cap["security"]["risk_activity_correlations"] is True
 
-    def test_demo_seed_clear_is_false(self):
+    def test_demo_seed_clear_is_true_after_m82g(self):
+        # M82G set demo_seed_clear=True (Datadog demo + QA added)
         cap = self._get_cap()
-        assert cap["security"]["demo_seed_clear"] is False
+        assert cap["security"]["demo_seed_clear"] is True
 
     def test_security_rules_still_true(self):
         cap = self._get_cap()
@@ -1193,20 +1194,20 @@ class TestDatadogCapabilityMatrix:
 
 class TestDatadogExpansionFramework:
 
-    def test_planned_next_stage_is_m82g_after_m82f(self):
-        # M82F shipped; planned_next_stage now points to M82G
+    def test_planned_next_stage_is_m82h_after_m82g(self):
+        # M82G shipped; planned_next_stage now points to M82H
         expansion_svc = _import_expansion_framework()
         framework = expansion_svc.get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "M82G" in planned, (
-            f"planned_next_stage should reference M82G, got: {planned!r}"
+        assert "M82H" in planned, (
+            f"planned_next_stage should reference M82H, got: {planned!r}"
         )
 
-    def test_planned_next_stage_mentions_demo_or_qa(self):
+    def test_planned_next_stage_mentions_depth_qa(self):
         expansion_svc = _import_expansion_framework()
         framework = expansion_svc.get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "Demo" in planned or "M82G" in planned
+        assert "QA" in planned or "M82H" in planned
 
 
 # ── Tests: API endpoint auth ───────────────────────────────────────────────────

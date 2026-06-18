@@ -48,7 +48,7 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
-  | "google_cloud" | "twilio" | "sendgrid" | "auth0";
+  | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -194,6 +194,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Auth0 demo",
     seedColor: "#eb5424",
   },
+  {
+    provider: "datadog",
+    label: "Datadog",
+    intro: "Try the Datadog security demo:",
+    description:
+      "Seed a review-safe Datadog security demo with a webhook integration review story — outbound posture findings (missing secret headers, non-HTTPS endpoint, auth material in custom headers), control-plane activity evidence, activity signal, risk × activity correlation, and a case. No real Datadog sync, API key values, application key values, webhook URLs, header names or values, payload templates, notification handles, emails, user IDs, IP addresses, raw monitor queries, raw audit payloads, or customer data are stored.",
+    seedButton: "Load Datadog security demo",
+    clearButton: "Clear Datadog demo",
+    seedColor: "#632ca6",
+  },
 ];
 
 export default function CasesPage() {
@@ -252,7 +262,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -271,7 +281,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -302,7 +312,9 @@ export default function CasesPage() {
                               ? "SendGrid demo data cleared."
                               : provider === "auth0"
                                 ? "Auth0 demo data cleared."
-                                : "Demo data cleared.",
+                                : provider === "datadog"
+                                  ? "Datadog demo data cleared."
+                                  : "Demo data cleared.",
       );
       await load();
     } catch {
