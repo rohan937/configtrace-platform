@@ -150,11 +150,14 @@ class ClerkInstanceSettingsRecord(TypedDict):
 
 
 class ClerkApplicationRecord(TypedDict):
-    """Safe normalised record for a Clerk application (M83A).
+    """Safe normalised record for a Clerk application (M83A / M83C).
 
     SECURITY: client_id values, OAuth client secrets, raw redirect URLs,
     raw allowed origins, and all raw application payload are NEVER stored.
     URL counts are derived from URL lists; raw URL strings are discarded.
+
+    M83C additions: sign_up_enabled, sign_in_enabled, password_enabled,
+    saml_enabled capture auth-flow posture for risk scoring.
     """
 
     record_type: str          # always "clerk_application"
@@ -170,6 +173,10 @@ class ClerkApplicationRecord(TypedDict):
     jwt_template_count: int
     organization_enabled: bool
     mfa_required: bool
+    sign_up_enabled: bool
+    sign_in_enabled: bool
+    password_enabled: bool
+    saml_enabled: bool
 
 
 class ClerkDomainRecord(TypedDict):
@@ -231,6 +238,7 @@ class ClerkJwtTemplateRecord(TypedDict):
     audience_present: bool    # audience URI presence — NEVER the URI string
     lifetime_category: str    # "short" / "standard" / "extended" based on TTL
     algorithm: str            # "RS256" / "HS256" etc. (safe label)
+    issuer_present: bool      # issuer URI presence — NEVER the URI string
 
 
 class ClerkWebhookEndpointRecord(TypedDict):
@@ -312,6 +320,11 @@ class ClerkOrganizationSettingsRecord(TypedDict):
     admin_delete_enabled: bool
     domains_enabled: bool
     domains_enrollment_mode_category: str  # "automatic" / "manual" etc.
+    verified_domains_required: bool
+    invitation_enabled: bool
+    admin_role_present: bool
+    role_count: int
+    permission_count: int
 
 
 class ClerkSessionPolicyRecord(TypedDict):
@@ -330,3 +343,5 @@ class ClerkSessionPolicyRecord(TypedDict):
     single_session_mode: bool
     url_based_session_syncing: bool
     token_rotation_enabled: Optional[bool]
+    device_tracking_enabled: Optional[bool]
+    reverification_required: Optional[bool]

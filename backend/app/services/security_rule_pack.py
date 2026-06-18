@@ -310,6 +310,26 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "clerk_session_inactivity_timeout_extended": ("clerk", "low", "Session inactivity posture"),
     "clerk_session_single_session_disabled": ("clerk", "low", "Session policy posture"),
     "clerk_session_token_rotation_disabled": ("clerk", "medium", "Session token rotation posture"),
+    # Clerk — M83C auth/application risk expansion
+    "clerk_application_sign_up_enabled": ("clerk", "low", "Application sign-up posture"),
+    "clerk_application_password_without_mfa": ("clerk", "medium", "Application authentication posture"),
+    "clerk_application_oauth_without_mfa": ("clerk", "medium", "Application OAuth posture"),
+    "clerk_application_saml_without_mfa": ("clerk", "medium", "Application SAML posture"),
+    "clerk_application_many_redirect_urls": ("clerk", "low", "Application redirect URL posture"),
+    "clerk_application_many_allowed_origins": ("clerk", "low", "Application origin posture"),
+    "clerk_redirect_url_custom_scheme_present": ("clerk", "medium", "Redirect URL scheme posture"),
+    "clerk_jwt_template_audience_missing": ("clerk", "medium", "JWT template audience posture"),
+    "clerk_jwt_template_issuer_missing": ("clerk", "low", "JWT template issuer posture"),
+    "clerk_jwt_template_many_claims": ("clerk", "low", "JWT template claims posture"),
+    "clerk_webhook_broad_event_scope": ("clerk", "low", "Webhook event scope posture"),
+    "clerk_org_verified_domains_not_required": ("clerk", "medium", "Organization domain posture"),
+    "clerk_org_invitations_enabled": ("clerk", "low", "Organization invitation posture"),
+    "clerk_org_admin_role_missing": ("clerk", "medium", "Organization role posture"),
+    "clerk_org_high_role_count": ("clerk", "low", "Organization role posture"),
+    "clerk_org_high_permission_count": ("clerk", "medium", "Organization permission posture"),
+    "clerk_session_device_tracking_disabled": ("clerk", "low", "Session device tracking posture"),
+    "clerk_session_reverification_disabled": ("clerk", "medium", "Session reverification posture"),
+    "clerk_session_long_lifetime_without_single_session": ("clerk", "medium", "Session lifetime posture"),
 }
 
 

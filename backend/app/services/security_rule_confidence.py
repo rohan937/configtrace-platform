@@ -310,6 +310,26 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "clerk_session_inactivity_timeout_extended": (HIGH, "Only fires when inactivity_timeout_category=='extended' on a clerk_session_policy record; no session token values are stored."),
     "clerk_session_single_session_disabled": (HIGH, "Only fires when single_session_mode is explicitly false on a clerk_session_policy record; no session data is stored."),
     "clerk_session_token_rotation_disabled": (HIGH, "Only fires when token_rotation_enabled is explicitly false on a clerk_session_policy record; no token values are stored."),
+    # Clerk — M83C auth/application risk expansion
+    "clerk_application_sign_up_enabled": (HIGH, "Only fires when sign_up_enabled=true on a clerk_application record."),
+    "clerk_application_password_without_mfa": (HIGH, "Only fires when password_enabled=true AND mfa_required=false on a clerk_application record."),
+    "clerk_application_oauth_without_mfa": (HIGH, "Only fires when oauth_provider_count > 0 AND mfa_required=false on a clerk_application record; count ONLY — no provider identities stored."),
+    "clerk_application_saml_without_mfa": (HIGH, "Only fires when saml_enabled=true AND mfa_required=false on a clerk_application record; no SAML certificates or credentials stored."),
+    "clerk_application_many_redirect_urls": (HIGH, "Only fires when redirect_url_count exceeds the conservative threshold; raw redirect URLs are NEVER stored."),
+    "clerk_application_many_allowed_origins": (HIGH, "Only fires when allowed_origin_count exceeds the conservative threshold; raw origin strings are NEVER stored."),
+    "clerk_redirect_url_custom_scheme_present": (HIGH, "Only fires when custom_scheme_present=true on a clerk_redirect_url_config record; raw URL strings are NEVER stored."),
+    "clerk_jwt_template_audience_missing": (HIGH, "Only fires when audience_present is explicitly false on a clerk_jwt_template record; audience URI values are NEVER stored."),
+    "clerk_jwt_template_issuer_missing": (HIGH, "Only fires when issuer_present is explicitly false on a clerk_jwt_template record; issuer URI values are NEVER stored."),
+    "clerk_jwt_template_many_claims": (HIGH, "Only fires when claims_count exceeds the conservative threshold; claim names and values are NEVER stored."),
+    "clerk_webhook_broad_event_scope": (HIGH, "Only fires when event_count exceeds the conservative threshold; event names are NEVER stored."),
+    "clerk_org_verified_domains_not_required": (HIGH, "Only fires when organizations_enabled=true AND verified_domains_required=false on a clerk_organization_settings record."),
+    "clerk_org_invitations_enabled": (HIGH, "Only fires when organizations_enabled=true AND invitation_enabled=true; member identities and invitation content are NEVER stored."),
+    "clerk_org_admin_role_missing": (HIGH, "Only fires when organizations_enabled=true AND admin_role_present is explicitly false on a clerk_organization_settings record."),
+    "clerk_org_high_role_count": (HIGH, "Only fires when role_count exceeds the conservative threshold; role names and member identities are NEVER stored."),
+    "clerk_org_high_permission_count": (HIGH, "Only fires when permission_count exceeds the conservative threshold; permission names and member identities are NEVER stored."),
+    "clerk_session_device_tracking_disabled": (HIGH, "Only fires when device_tracking_enabled is explicitly false on a clerk_session_policy record; no session data is stored."),
+    "clerk_session_reverification_disabled": (HIGH, "Only fires when reverification_required is explicitly false on a clerk_session_policy record; no session token values are stored."),
+    "clerk_session_long_lifetime_without_single_session": (HIGH, "Only fires when session_lifetime_category is extended/very_long AND single_session_mode is explicitly false; no session token values are stored."),
 }
 
 

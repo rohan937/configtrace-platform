@@ -282,6 +282,26 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "clerk_session_inactivity_timeout_extended",
         "clerk_session_single_session_disabled",
         "clerk_session_token_rotation_disabled",
+        # Clerk — M83C auth/application risk expansion
+        "clerk_application_sign_up_enabled",
+        "clerk_application_password_without_mfa",
+        "clerk_application_oauth_without_mfa",
+        "clerk_application_saml_without_mfa",
+        "clerk_application_many_redirect_urls",
+        "clerk_application_many_allowed_origins",
+        "clerk_redirect_url_custom_scheme_present",
+        "clerk_jwt_template_audience_missing",
+        "clerk_jwt_template_issuer_missing",
+        "clerk_jwt_template_many_claims",
+        "clerk_webhook_broad_event_scope",
+        "clerk_org_verified_domains_not_required",
+        "clerk_org_invitations_enabled",
+        "clerk_org_admin_role_missing",
+        "clerk_org_high_role_count",
+        "clerk_org_high_permission_count",
+        "clerk_session_device_tracking_disabled",
+        "clerk_session_reverification_disabled",
+        "clerk_session_long_lifetime_without_single_session",
     }
 )
 

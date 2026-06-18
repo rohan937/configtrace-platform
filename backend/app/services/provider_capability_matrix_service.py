@@ -951,21 +951,24 @@ _CLERK = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Clerk identity infrastructure drift and core security foundation (M83A–M83B). "
-        "Drift snapshots cover 10 safe configuration surfaces from the Clerk Backend "
-        "API v1 (see M83A). M83B adds 21 configuration-risk security rules across "
-        "instance settings, application MFA, domains, redirect URLs, JWT templates, "
-        "webhook endpoints, email/SMS settings, authentication strategy, and session "
-        "policy. Privacy contract: Clerk secret key values, publishable key values, "
-        "session tokens, JWTs, OAuth tokens, bearer tokens, webhook secrets, raw "
-        "redirect/callback/origin URLs, JWT template body, custom claims, audience "
-        "URIs, user emails, user IDs, phone numbers, names, organization member "
-        "identities, session history, login history, password data, MFA secrets, "
+        "Clerk identity infrastructure drift, core security, and auth/application risk "
+        "expansion (M83A–M83C). Drift snapshots cover 10 safe configuration surfaces "
+        "from the Clerk Backend API v1 (see M83A). M83B adds 21 core configuration-risk "
+        "security rules. M83C adds 19 auth/application risk expansion rules across "
+        "application sign-up/auth/OAuth/SAML posture, redirect URL schemes, JWT template "
+        "audience/issuer/claims posture, webhook event scope, organization domain/role/"
+        "permission posture, and session device/reverification/lifetime posture. Schema "
+        "expanded with safe fields for application, organization settings, session policy, "
+        "and JWT template records. Privacy contract: Clerk secret key values, publishable "
+        "key values, session tokens, JWTs, OAuth tokens, bearer tokens, webhook secrets, "
+        "raw redirect/callback/origin URLs, JWT template body, custom claims, audience "
+        "URIs, issuer URIs, user emails, user IDs, phone numbers, names, organization "
+        "member identities, session history, login history, password data, MFA secrets, "
         "IP addresses, user agents, raw audit payloads, and customer PII are NEVER "
         "fetched or stored. Activity ingestion, activity signals, risk × activity "
         "correlations, demo seed/clear, case reports, evidence timelines, and "
         "evidence graphs are not yet implemented. "
-        "planned_next_stage: M83C: Clerk Auth/Application Risk Expansion."
+        "planned_next_stage: M83D: Clerk Activity/Event Ingestion."
     ),
 )
 

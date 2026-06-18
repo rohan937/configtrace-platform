@@ -220,7 +220,7 @@ def _jwt_template(**kwargs: Any) -> dict[str, Any]:
         "enabled": True,
         "claims_count": 0,
         "custom_claims_present": False,
-        "audience_present": False,
+        "audience_present": True,
         "lifetime_category": "standard",
         "algorithm": "RS256",
     }
@@ -332,8 +332,9 @@ class TestRuleKeyTaxonomy:
         assert EXPECTED_RULE_KEYS <= CLERK_RULE_KEYS
 
     def test_rule_count_is_twenty_one(self):
+        # M83B introduced 21 rules; subsequent milestones (M83C+) expand the set.
         assert len(EXPECTED_RULE_KEYS) == 21
-        assert len(CLERK_RULE_KEYS) == 21
+        assert len(CLERK_RULE_KEYS) >= 21
 
     def test_all_rule_keys_start_with_clerk(self):
         for key in CLERK_RULE_KEYS:
@@ -1206,20 +1207,24 @@ class TestCapabilityMatrix:
         assert "clerk" in all_providers
 
     def test_expansion_framework_m83c(self):
-        """get_framework()['summary']['planned_next_stage'] must reference M83C."""
+        """After M83B, planned_next_stage should reference M83C or a later Clerk stage."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert "M83C" in stage, (
-            f"After M83B, planned_next_stage should reference M83C; got {stage!r}"
+        assert ("M83C" in stage or "M83D" in stage or "M83E" in stage), (
+            f"After M83B, planned_next_stage should reference a post-M83B Clerk stage; got {stage!r}"
         )
-        assert "Clerk" in stage, (
+        assert "Clerk" in stage or "clerk" in stage.lower(), (
             f"planned_next_stage should mention Clerk; got {stage!r}"
         )
 
     def test_expansion_framework_exact_m83c_label(self):
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert stage == "M83C: Clerk Auth/Application Risk Expansion", (
+        # M83C is complete; framework now points at M83D or later.
+        assert stage in (
+            "M83C: Clerk Auth/Application Risk Expansion",
+            "M83D: Clerk Activity/Event Ingestion",
+        ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )
 

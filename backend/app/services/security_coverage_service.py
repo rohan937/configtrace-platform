@@ -324,6 +324,26 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "clerk_session_inactivity_timeout_extended": ("clerk_session_policy",),
     "clerk_session_single_session_disabled": ("clerk_session_policy",),
     "clerk_session_token_rotation_disabled": ("clerk_session_policy",),
+    # Clerk — M83C auth/application risk expansion
+    "clerk_application_sign_up_enabled": ("clerk_application",),
+    "clerk_application_password_without_mfa": ("clerk_application",),
+    "clerk_application_oauth_without_mfa": ("clerk_application",),
+    "clerk_application_saml_without_mfa": ("clerk_application",),
+    "clerk_application_many_redirect_urls": ("clerk_application",),
+    "clerk_application_many_allowed_origins": ("clerk_application",),
+    "clerk_redirect_url_custom_scheme_present": ("clerk_redirect_url_config",),
+    "clerk_jwt_template_audience_missing": ("clerk_jwt_template",),
+    "clerk_jwt_template_issuer_missing": ("clerk_jwt_template",),
+    "clerk_jwt_template_many_claims": ("clerk_jwt_template",),
+    "clerk_webhook_broad_event_scope": ("clerk_webhook_endpoint",),
+    "clerk_org_verified_domains_not_required": ("clerk_organization_settings",),
+    "clerk_org_invitations_enabled": ("clerk_organization_settings",),
+    "clerk_org_admin_role_missing": ("clerk_organization_settings",),
+    "clerk_org_high_role_count": ("clerk_organization_settings",),
+    "clerk_org_high_permission_count": ("clerk_organization_settings",),
+    "clerk_session_device_tracking_disabled": ("clerk_session_policy",),
+    "clerk_session_reverification_disabled": ("clerk_session_policy",),
+    "clerk_session_long_lifetime_without_single_session": ("clerk_session_policy",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -403,6 +423,7 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Webhook endpoints",
         "Email/SMS settings",
         "Authentication strategies",
+        "Organization settings",
         "Session policy",
     ],
 }
@@ -674,6 +695,10 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "clerk_session_policy": {
         "message": "Clerk session policy metadata was not observed.",
         "hints": ["Verify the Clerk secret key has access to session policy configuration via the Clerk Backend API."],
+    },
+    "clerk_organization_settings": {
+        "message": "Clerk organization settings metadata was not observed.",
+        "hints": ["Verify the Clerk secret key has access to organization configuration via the Clerk Backend API. This surface may be absent if organizations are not enabled."],
     },
 }
 

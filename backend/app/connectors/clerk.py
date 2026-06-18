@@ -530,6 +530,21 @@ class ClerkConnector(BaseConnector):
             "admin_delete_enabled": admin_delete,
             "domains_enabled": domains_enabled,
             "domains_enrollment_mode_category": domains_enrollment_mode,
+            "verified_domains_required": _bool_field(
+                (org.get("domains") or {}).get("verified_required")
+                if isinstance(org.get("domains"), dict)
+                else org.get("verified_domains_required", False)
+            ),
+            "invitation_enabled": _bool_field(
+                org.get("invitation_enabled", True)
+                if isinstance(org, dict) else True
+            ),
+            "admin_role_present": _bool_field(
+                org.get("admin_role_present", True)
+                if isinstance(org, dict) else True
+            ),
+            "role_count": _int_field(org.get("role_count") or org.get("roles_count") if isinstance(org, dict) else 0),
+            "permission_count": _int_field(org.get("permission_count") or org.get("permissions_count") if isinstance(org, dict) else 0),
         }
 
     def _normalize_session_policy(self, raw: dict) -> dict:
@@ -563,6 +578,14 @@ class ClerkConnector(BaseConnector):
             "single_session_mode": single_session,
             "url_based_session_syncing": url_syncing,
             "token_rotation_enabled": token_rotation,
+            "device_tracking_enabled": (
+                _bool_field(sess.get("device_tracking_enabled"))
+                if "device_tracking_enabled" in sess else None
+            ),
+            "reverification_required": (
+                _bool_field(sess.get("reverification_required"))
+                if "reverification_required" in sess else None
+            ),
         }
 
     def _normalize_application(self, raw: dict) -> dict:
@@ -585,6 +608,10 @@ class ClerkConnector(BaseConnector):
             "jwt_template_count": _int_field(raw.get("jwt_template_count") or _len_list(raw.get("jwt_templates"))),
             "organization_enabled": _bool_field(raw.get("organization_enabled") or raw.get("organizations_enabled")),
             "mfa_required": _bool_field(raw.get("mfa_required")),
+            "sign_up_enabled": _bool_field(raw.get("sign_up_enabled"), default=True),
+            "sign_in_enabled": _bool_field(raw.get("sign_in_enabled"), default=True),
+            "password_enabled": _bool_field(raw.get("password_enabled") or (raw.get("user_settings") or {}).get("password", {}).get("enabled") if isinstance((raw.get("user_settings") or {}), dict) else False),
+            "saml_enabled": _bool_field(raw.get("saml_enabled") or (raw.get("user_settings") or {}).get("saml_enabled")),
         }
 
     def _normalize_domain(self, raw: dict) -> dict:
@@ -661,6 +688,7 @@ class ClerkConnector(BaseConnector):
             "audience_present": audience_present,
             "lifetime_category": _jwt_lifetime_category(lifetime_secs),
             "algorithm": algorithm,
+            "issuer_present": bool(raw.get("issuer") or raw.get("iss")),
         }
 
     def _normalize_webhook(self, raw: dict) -> dict:
