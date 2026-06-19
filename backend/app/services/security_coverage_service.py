@@ -48,6 +48,7 @@ PROVIDERS = [
     "datadog",
     "clerk",
     "pagerduty",
+    "linear",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -387,6 +388,31 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "pagerduty_response_play_low_responder_count": ("pagerduty_response_play",),
     "pagerduty_response_play_no_team": ("pagerduty_response_play",),
     "pagerduty_response_play_manual_only": ("pagerduty_response_play",),
+    # Linear — M85B core security rules
+    "linear_workspace_missing_url_key": ("linear_workspace",),
+    "linear_workspace_missing_logo": ("linear_workspace",),
+    "linear_team_private": ("linear_team",),
+    "linear_team_low_member_count": ("linear_team",),
+    "linear_team_no_projects": ("linear_team",),
+    "linear_team_auto_archive_disabled": ("linear_team",),
+    "linear_team_cycles_disabled": ("linear_team",),
+    "linear_team_long_cycle_duration": ("linear_team",),
+    "linear_project_no_lead": ("linear_project",),
+    "linear_project_no_members": ("linear_project",),
+    "linear_project_high_issue_count": ("linear_project",),
+    "linear_project_unhealthy": ("linear_project",),
+    "linear_project_unknown_status": ("linear_project",),
+    "linear_workflow_state_unknown_type": ("linear_workflow_state",),
+    "linear_label_missing_team_scope": ("linear_label",),
+    "linear_webhook_disabled": ("linear_webhook",),
+    "linear_webhook_no_secret_indicator": ("linear_webhook",),
+    "linear_webhook_non_https": ("linear_webhook",),
+    "linear_webhook_no_events": ("linear_webhook",),
+    "linear_webhook_broad_resource_scope": ("linear_webhook",),
+    "linear_view_shared": ("linear_view",),
+    "linear_cycle_high_issue_count": ("linear_cycle",),
+    "linear_integration_disabled": ("linear_integration",),
+    "linear_integration_unknown_type": ("linear_integration",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -478,6 +504,17 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Event orchestrations",
         "Business services",
         "Response plays",
+    ],
+    "linear": [
+        "Workspace configuration",
+        "Teams",
+        "Projects",
+        "Workflow states",
+        "Issue labels",
+        "Webhook subscriptions",
+        "Custom views",
+        "Active cycles",
+        "Integrations",
     ],
 }
 
@@ -785,6 +822,43 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "pagerduty_response_play": {
         "message": "PagerDuty response play metadata was not observed.",
         "hints": ["Verify the PagerDuty API token has read access to /response_plays. This surface may be absent if no response plays are configured."],
+    },
+    # Linear — M85B
+    "linear_workspace": {
+        "message": "Linear workspace configuration metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the organization query."],
+    },
+    "linear_team": {
+        "message": "Linear team configuration metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the teams query."],
+    },
+    "linear_project": {
+        "message": "Linear project configuration metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the projects query."],
+    },
+    "linear_workflow_state": {
+        "message": "Linear workflow state metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the workflowStates query."],
+    },
+    "linear_label": {
+        "message": "Linear issue label metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the issueLabels query."],
+    },
+    "linear_webhook": {
+        "message": "Linear webhook subscription metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the webhooks query."],
+    },
+    "linear_view": {
+        "message": "Linear custom view metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the customViews query."],
+    },
+    "linear_cycle": {
+        "message": "Linear active cycle metadata was not observed.",
+        "hints": ["Verify the Linear API key has read access to the cycles query. This surface may be absent if no active cycles are configured."],
+    },
+    "linear_integration": {
+        "message": "Linear integration metadata was not observed.",
+        "hints": ["Verify the Linear API key has access to the integrations query. This surface may be plan-gated or absent if no integrations are configured."],
     },
 }
 

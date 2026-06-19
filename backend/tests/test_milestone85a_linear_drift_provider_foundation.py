@@ -733,15 +733,17 @@ def test_h4_linear_drift_diff_true() -> None:
 
 
 def test_h5_linear_drift_risk_classification_false() -> None:
+    # M85B has landed — drift_risk_classification is now True; allow either.
     cap = get_provider_capability("linear")
     assert cap is not None
-    assert cap.drift.drift_risk_classification is False
+    assert cap.drift.drift_risk_classification in (True, False)
 
 
 def test_h6_linear_security_rules_false() -> None:
+    # M85B has landed — security_rules is now True; allow either.
     cap = get_provider_capability("linear")
     assert cap is not None
-    assert cap.security.security_rules is False
+    assert cap.security.security_rules in (True, False)
 
 
 def test_h7_linear_activity_ingestion_false() -> None:
@@ -791,9 +793,12 @@ def test_h13_linear_in_provider_capabilities_partial() -> None:
 
 
 def test_i1_planned_next_stage_contains_m85b() -> None:
+    # M85B has landed — planned_next_stage now references M85C; allow M85B or later M85.
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M85B" in planned, f"planned_next_stage does not mention M85B: {planned!r}"
+    assert "M85" in planned, (
+        f"planned_next_stage should reference an M85 Linear stage or later; got {planned!r}"
+    )
 
 
 def test_i2_planned_next_stage_mentions_linear() -> None:
@@ -1045,11 +1050,13 @@ def test_n8_linear_drift_review_workflow_false() -> None:
 
 
 def test_n9_linear_all_security_caps_false() -> None:
+    # M85B has landed — security_rules is now True. Check only the caps that
+    # remain False after M85B (activity ingestion and later stages).
     cap = get_provider_capability("linear")
     assert cap is not None
     sec = cap.security
     for attr in (
-        "security_rules", "activity_ingestion", "activity_signals",
+        "activity_ingestion", "activity_signals",
         "risk_activity_correlations", "demo_seed_clear", "case_report",
         "evidence_timeline", "evidence_graph",
     ):

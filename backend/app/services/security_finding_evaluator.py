@@ -51,6 +51,7 @@ from app.services.security_rules import vercel as vercel_rules
 from app.services.security_rules import datadog as datadog_rules
 from app.services.security_rules import clerk as clerk_rules
 from app.services.security_rules import pagerduty as pagerduty_rules
+from app.services.security_rules import linear as linear_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,8 @@ _PROVIDER_RULES = {
     "clerk": [clerk_rules.evaluate],
     # M84B: PagerDuty core security rules
     "pagerduty": [pagerduty_rules.evaluate],
+    # M85B: Linear core security rules
+    "linear": [linear_rules.evaluate],
 }
 
 

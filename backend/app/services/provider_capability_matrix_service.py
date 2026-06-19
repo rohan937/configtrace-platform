@@ -1062,12 +1062,12 @@ _LINEAR = ProviderCapability(
     drift=DriftCapabilities(
         drift_snapshots=True,
         drift_diff=True,
-        drift_risk_classification=False,
+        drift_risk_classification=True,
         drift_review_workflow=False,
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1078,17 +1078,19 @@ _LINEAR = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Linear project-management configuration drift foundation (M85A). "
-        "Drift snapshots cover 9 safe configuration surfaces from the Linear "
-        "GraphQL API: workspace config, teams, projects, workflow states, issue "
-        "labels, webhook subscriptions, custom views, active cycles, and "
-        "integrations. Authentication uses a Linear API key (read-only). "
+        "Linear project-management configuration drift with core security rules "
+        "(M85A + M85B). Drift snapshots cover 9 safe configuration surfaces from "
+        "the Linear GraphQL API: workspace config, teams, projects, workflow states, "
+        "issue labels, webhook subscriptions, custom views, active cycles, and "
+        "integrations. M85B adds 24 configuration-risk security rules covering "
+        "workspace, team, project, workflow state, label, webhook, view, cycle, "
+        "and integration posture. Authentication uses a Linear API key (read-only). "
         "API key is stored encrypted and never returned in API responses, never "
         "logged, and never copied to resource metadata. "
         "Issue titles, descriptions, comments, attachments, user emails, user "
         "names, member identities, raw URLs, webhook secrets, and customer data "
         "are never fetched or stored. "
-        "planned_next_stage: M85B: Linear Core Security Foundation."
+        "planned_next_stage: M85C: Linear Workflow/Webhook Risk Expansion."
     ),
 )
 
