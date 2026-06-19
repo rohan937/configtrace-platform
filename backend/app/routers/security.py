@@ -236,6 +236,11 @@ from app.schemas.security_sendgrid_activity import (
     SendGridCorrelationGenerateRequest,
     SendGridCorrelationGenerateResponse,
 )
+from app.schemas.security_clerk_activity import (
+    ClerkActivitySyncRequest,
+    ClerkActivitySyncResponse,
+)
+from app.services import clerk_activity_ingestion_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3333,6 +3338,42 @@ def sync_auth0_activity_events(
         db=db,
     )
     return Auth0ActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/clerk-activity/sync",
+    response_model=ClerkActivitySyncResponse,
+)
+def sync_clerk_activity_events(
+    body: Optional[ClerkActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ClerkActivitySyncResponse:
+    """Sync review-safe Clerk configuration activity events (M83D).
+
+    Admin/owner only. Synthesizes config-state events from safe Clerk
+    API surfaces (instance settings, auth strategy, org settings, session
+    policy, email/SMS, domains, redirect URL configs, JWT templates,
+    webhook endpoints). Auth/session/user events are NEVER ingested.
+    PII and credentials are NEVER stored.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = clerk_activity_ingestion_service.sync_clerk_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return ClerkActivitySyncResponse(**summary)
 
 
 @router.post(

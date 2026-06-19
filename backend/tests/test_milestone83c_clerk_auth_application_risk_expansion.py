@@ -643,14 +643,15 @@ class TestCapabilityMatrixAndFramework:
         )
 
     def test_capability_matrix_clerk_security_rules_true(self):
-        """Clerk must have security_rules=True and activity_ingestion=False."""
+        """Clerk must have security_rules=True; activity_ingestion=True after M83D."""
         clerk_cap = get_provider_capability("clerk")
         assert clerk_cap is not None, "clerk not found in capability matrix (_BY_KEY lookup)"
         assert clerk_cap.security.security_rules is True, (
             f"Expected clerk security_rules=True, got {clerk_cap.security.security_rules!r}"
         )
-        assert clerk_cap.security.activity_ingestion is False, (
-            f"Expected clerk activity_ingestion=False, "
+        # M83D promoted activity_ingestion to True.
+        assert clerk_cap.security.activity_ingestion is True, (
+            f"Expected clerk activity_ingestion=True after M83D, "
             f"got {clerk_cap.security.activity_ingestion!r}"
         )
 

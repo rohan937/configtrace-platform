@@ -2130,6 +2130,18 @@ export interface DatadogActivitySyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+export interface ClerkActivitySyncResponse {
+  attempted: boolean;
+  succeeded: boolean;
+  provider: string;
+  source: string;
+  integration_id: string | null;
+  events_seen: number;
+  events_inserted: number;
+  events_skipped: number;
+  permission_limited: boolean;
+  error_message: string | null;
+}
 export interface TwilioActivitySignalGenerateResponse {
   provider: string;
   source: string;

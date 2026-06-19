@@ -361,10 +361,13 @@ _ACTIVITY_PROVIDERS = [
     "auth0",
     # M82D added Datadog config-state activity ingestion.
     "datadog",
+    # M83D added Clerk config-state activity ingestion.
+    "clerk",
 ]
 # Datadog activity signals landed in M82E; correlations landed in M82F.
-_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)  # datadog included from M82E
-_CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)  # datadog included from M82F
+# Clerk (M83D) has activity ingestion but not yet signals or correlations.
+_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "clerk"]
+_CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "clerk"]
 
 
 def _provider_selector_array(text: str) -> list[str] | None:

@@ -1194,9 +1194,10 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_risk_classification is True
 
     def test_capability_matrix_clerk_activity_ingestion_false(self):
+        # M83D promoted activity_ingestion to True; update assertion to reflect current state.
         cap = self._clerk_cap()
-        assert cap.security.activity_ingestion is False, (
-            "M83B does not add activity ingestion — activity_ingestion must remain False"
+        assert cap.security.activity_ingestion is True, (
+            "M83D adds activity ingestion — activity_ingestion must be True after M83D"
         )
 
     def test_capability_matrix_clerk_has_entry(self):
@@ -1220,10 +1221,11 @@ class TestCapabilityMatrix:
     def test_expansion_framework_exact_m83c_label(self):
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        # M83C is complete; framework now points at M83D or later.
+        # M83C and M83D are complete; framework now points at M83E or later.
         assert stage in (
             "M83C: Clerk Auth/Application Risk Expansion",
             "M83D: Clerk Activity/Event Ingestion",
+            "M83E: Clerk Activity Signals",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

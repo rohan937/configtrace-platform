@@ -896,6 +896,24 @@ export async function syncDatadogActivity(
 }
 
 /**
+ * syncClerkActivity — POST /security/clerk-activity/sync
+ * Admin only. Synthesizes review-safe Clerk configuration-state activity
+ * events from the same drift surfaces the connector reads. Clerk audit logs
+ * are never ingested. Secret keys, session tokens, JWTs, webhook secrets,
+ * raw URLs, domain names, user emails, user IDs, session history, login
+ * history, IP addresses, and raw audit payloads are never stored.
+ */
+export async function syncClerkActivity(
+  token: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").ClerkActivitySyncResponse> {
+  return apiFetch<import("@/types").ClerkActivitySyncResponse>(
+    "/security/clerk-activity/sync",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * syncAuth0Activity — POST /security/auth0-activity/sync
  * Ingests review-safe Auth0 configuration-state events synthesized from
  * tenant settings, applications, connections, resource servers, rules, actions,

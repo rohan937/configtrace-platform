@@ -40,6 +40,7 @@ import {
   syncSendGridActivity,
   syncAuth0Activity,
   syncDatadogActivity,
+  syncClerkActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -49,7 +50,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -384,9 +385,32 @@ const DATADOG_EVENT_TYPES = [
   "datadog.config.event",
 ];
 
+// M83D — Clerk configuration-state events (synthesized from safe drift surfaces;
+// Clerk audit APIs are never ingested due to actor email/ID, session, and IP content).
+const CLERK_EVENT_TYPES = [
+  "clerk.instance_settings.updated",
+  "clerk.auth_strategy.updated",
+  "clerk.organization_settings.updated",
+  "clerk.session_policy.updated",
+  "clerk.email_sms_settings.updated",
+  "clerk.domain.created",
+  "clerk.domain.updated",
+  "clerk.domain.deleted",
+  "clerk.redirect_url_config.created",
+  "clerk.redirect_url_config.updated",
+  "clerk.redirect_url_config.deleted",
+  "clerk.jwt_template.created",
+  "clerk.jwt_template.updated",
+  "clerk.jwt_template.deleted",
+  "clerk.webhook_endpoint.created",
+  "clerk.webhook_endpoint.updated",
+  "clerk.webhook_endpoint.deleted",
+  "clerk.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -545,6 +569,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "clerk") {
+        const r = await syncClerkActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "Clerk Backend API access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -583,7 +615,9 @@ export default function ActivityEventsPage() {
                                 ? "Could not sync Auth0 activity. Please try again."
                                 : provider === "datadog"
                                   ? "Could not sync Datadog activity. Please try again."
-                                  : "Could not sync GitHub activity. Please try again.",
+                                  : provider === "clerk"
+                                    ? "Could not sync Clerk activity. Please try again."
+                                    : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -741,6 +775,7 @@ export default function ActivityEventsPage() {
     : provider === "sendgrid" ? SENDGRID_EVENT_TYPES
     : provider === "auth0" ? AUTH0_EVENT_TYPES
     : provider === "datadog" ? DATADOG_EVENT_TYPES
+    : provider === "clerk" ? CLERK_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -783,7 +818,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -903,6 +938,7 @@ function SyncBar({
   const isSendGrid = provider === "sendgrid";
   const isAuth0 = provider === "auth0";
   const isDatadog = provider === "datadog";
+  const isClerk = provider === "clerk";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -917,6 +953,7 @@ function SyncBar({
     : isSendGrid ? "Sync SendGrid activity"
     : isAuth0 ? "Sync Auth0 activity"
     : isDatadog ? "Sync Datadog activity"
+    : isClerk ? "Sync Clerk activity"
     : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
@@ -944,7 +981,9 @@ function SyncBar({
                           ? "Sync review-safe Auth0 configuration activity — tenant settings, applications, connections, resource servers, rules, actions, MFA factors, and custom domains. Auth0 Management API logs are never ingested because they contain user IDs, emails, and IP addresses. ConfigTrace stores resource identifiers, OAuth/application posture, tenant settings, and control-plane summaries only — never user emails, login history, IP addresses, sessions, tokens, callback URLs, raw Auth0 logs, or client secrets."
                           : isDatadog
                             ? "Sync review-safe Datadog configuration activity. ConfigTrace stores monitor, SLO, dashboard, webhook, key, role, team, and cloud-integration posture summaries only — never API keys, application keys, raw monitor queries, raw monitor messages, webhook URLs, headers, payloads, logs, traces, metric values, incident text, emails, destination handles, raw audit payloads, or PII."
-                            : "Ingests recent GitHub audit-log activity into normalized events.";
+                            : isClerk
+                              ? "Sync review-safe Clerk configuration activity derived from authentication configuration surfaces. ConfigTrace stores posture summaries only — never Clerk secret keys, session tokens, JWTs, OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, raw webhook URLs, user emails, user IDs, phone numbers, names, session history, login history, IP addresses, user agents, raw audit payloads, customer data, or PII."
+                              : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1054,7 +1093,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -1078,7 +1117,7 @@ function SyncBar({
             Sync GitHub secret scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && (
           <button
             onClick={onSyncGithubCodeScanning}
             disabled={!isAdmin || syncing}
@@ -1102,7 +1141,7 @@ function SyncBar({
             Sync GitHub code scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && (
           <button
             onClick={onSyncGithubDependabot}
             disabled={!isAdmin || syncing}
@@ -1320,6 +1359,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync Datadog activity first to collect review-safe configuration-state evidence — monitor, SLO, dashboard, webhook integration, notification integration, API key, application key, role, team, and cloud integration posture summaries. Datadog audit logs are never ingested. API keys, application keys, raw monitor queries, raw messages, webhook URLs, destination handles, emails, user IDs, and raw audit payloads are never stored."
                 : "An admin can sync Datadog activity to collect review-safe configuration-state evidence."
+            : provider === "clerk"
+              ? isAdmin
+                ? "Sync Clerk activity first to collect review-safe configuration-state evidence — instance settings, auth strategy, organization settings, session policy, email/SMS settings, domains, redirect URLs, JWT templates, and webhook endpoints. Clerk audit logs are never ingested. Secret keys, session tokens, JWTs, webhook secrets, raw redirect URLs, raw domain names, user emails, user IDs, session history, login history, IP addresses, and raw audit payloads are never stored."
+                : "An admin can sync Clerk activity to collect review-safe configuration-state evidence."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

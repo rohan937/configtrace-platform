@@ -469,8 +469,9 @@ class RecommendedProvider:
 # Auth0 also moved into PROVIDER_CAPABILITIES_PARTIAL. M82A launched
 # Datadog drift foundation; Datadog also moved into
 # PROVIDER_CAPABILITIES_PARTIAL. M83A launched Clerk drift foundation;
-# Clerk also moved into PROVIDER_CAPABILITIES_PARTIAL. PagerDuty is now
-# the head of the recommended queue.
+# Clerk also moved into PROVIDER_CAPABILITIES_PARTIAL. M83B added Clerk
+# core security rules; M83D adds Clerk activity/event ingestion. PagerDuty
+# is now the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
     RecommendedProvider(
         provider="pagerduty",
@@ -650,6 +651,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M83D: Clerk Activity/Event Ingestion",
+            "planned_next_stage": "M83E: Clerk Activity Signals",
         },
     }

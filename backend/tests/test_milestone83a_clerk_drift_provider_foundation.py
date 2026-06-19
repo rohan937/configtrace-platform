@@ -829,13 +829,15 @@ def test_capability_matrix_clerk_security_rules_false():
 
 
 def test_capability_matrix_clerk_all_security_false():
+    # M83B+ promotes security_rules=True, M83D promotes activity_ingestion=True.
+    # This test now checks only the fields that remained False after M83D.
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("clerk")
     sec = cap.security
-    for field in ("activity_ingestion", "activity_signals", "risk_activity_correlations",
+    for field in ("activity_signals", "risk_activity_correlations",
                   "demo_seed_clear", "case_report", "evidence_timeline", "evidence_graph"):
         val = getattr(sec, field)
-        assert val is False, f"Clerk capability matrix field {field!r} should be False in M83A"
+        assert val is False, f"Clerk capability matrix field {field!r} should be False at M83D"
 
 
 def test_capability_matrix_clerk_maturity_partial():

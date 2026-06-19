@@ -96,6 +96,33 @@ _JWT_LIFETIME_CATEGORIES = [
     (86400, "standard"),      # 1h – 24h
 ]
 
+# ── M83D: Configuration-state activity event types ─────────────────────────
+# Synthesized from the same safe drift surfaces the drift connector reads.
+# Clerk's actual audit/event APIs include user emails, user IDs, session details,
+# IP addresses, and user agents — those are NEVER ingested. ConfigTrace instead
+# synthesizes config-state activity events from the same normalized drift records
+# the drift connector already fetches safely.
+_CLERK_CONFIG_EVENT_TYPES: frozenset[str] = frozenset({
+    "clerk.instance_settings.updated",
+    "clerk.auth_strategy.updated",
+    "clerk.organization_settings.updated",
+    "clerk.session_policy.updated",
+    "clerk.email_sms_settings.updated",
+    "clerk.domain.created",
+    "clerk.domain.updated",
+    "clerk.domain.deleted",
+    "clerk.redirect_url_config.created",
+    "clerk.redirect_url_config.updated",
+    "clerk.redirect_url_config.deleted",
+    "clerk.jwt_template.created",
+    "clerk.jwt_template.updated",
+    "clerk.jwt_template.deleted",
+    "clerk.webhook_endpoint.created",
+    "clerk.webhook_endpoint.updated",
+    "clerk.webhook_endpoint.deleted",
+    "clerk.config.event",
+})
+
 
 # ── Helper functions ───────────────────────────────────────────────────────────
 
@@ -866,3 +893,372 @@ class ClerkConnector(BaseConnector):
             records.extend(self._fetch_webhooks(client))
 
         return records
+
+    # ── Activity event synthesis (M83D) ───────────────────────────────────────
+
+    @staticmethod
+    def _activity_event(
+        event_type: str,
+        provider_event_id: str,
+        metadata: dict,
+    ) -> dict:
+        """Build one synthesized config-state activity event envelope.
+
+        SECURITY: NEVER include raw Clerk secret key values, publishable keys,
+        session tokens, JWTs, OAuth tokens, bearer tokens, webhook secrets,
+        raw webhook URLs, raw redirect URLs, raw callback URLs, raw domain names,
+        raw JWT template bodies, raw claims, audience URIs, issuer URIs, user
+        emails, user IDs, phone numbers, names, member identities, session history,
+        login history, IP addresses, user agents, audit payloads, or PII.
+        """
+        meta = dict(metadata)
+        meta.setdefault("event_source", "clerk_activity_event")
+        meta.setdefault("event_action", event_type)
+        return {
+            "event_type": event_type,
+            "provider": "clerk",
+            "source": "clerk_activity_event",
+            "event_source": "clerk_activity_event",
+            "provider_event_id": provider_event_id,
+            "metadata": meta,
+        }
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Synthesize review-safe Clerk configuration-state activity events.
+
+        Clerk's backend audit/event APIs include actor emails, user IDs,
+        session details, IP addresses, and user agents in every entry —
+        ingesting those would violate ConfigTrace's privacy contract. Instead,
+        activity events are synthesized from the same safe drift surfaces the
+        drift connector already reads:
+
+        Surfaces covered:
+        - Instance settings (sign-up/sign-in flags, MFA posture, session lifetime)
+        - Auth strategy (enabled authentication methods and MFA posture)
+        - Organization settings (enabled flags, membership posture)
+        - Session policy (lifetime categories, single-session mode)
+        - Email/SMS settings (enabled flags, custom-sender presence)
+        - Domains (verified/primary/SSL posture — never raw domain name strings)
+        - Redirect URL configs (scheme category, posture booleans — never raw URLs)
+        - JWT templates (name, claims count, lifetime — never template body)
+        - Webhook endpoints (scheme category, posture booleans — never URL or secret)
+
+        Each event represents configuration state observed at poll time.
+        Events are scoped to a UTC-day fingerprint for idempotency — re-polling
+        on the same UTC day yields the same provider_event_id.
+
+        PRIVACY — what is NEVER returned:
+        - Clerk secret key values, publishable key values.
+        - Session tokens, JWTs, OAuth tokens, bearer tokens.
+        - Webhook URLs, webhook secrets, webhook signing keys.
+        - Raw redirect URLs, raw callback URLs, raw allowed origins.
+        - Raw domain name strings.
+        - JWT template body, custom claims, audience URIs, issuer URIs.
+        - User emails, user IDs, user names, phone numbers.
+        - Organization names (customer-identifying), member identities.
+        - Session history, login history, login events, authentication events.
+        - IP addresses, user agents, device fingerprints.
+        - Raw Clerk API response dicts, raw audit payloads, PII of any kind.
+
+        Raises:
+            AuthenticationError: 401 from the Clerk Backend API.
+            RateLimitError: 429 rate limit hit.
+            NetworkError: Transport-level failure.
+            ConnectorError: Unexpected 4xx/5xx.
+        """
+        from datetime import datetime, timezone
+
+        max_events = min(max(1, max_events), 1000)
+        lookback_hours = min(max(1, lookback_hours), 168)  # noqa: F841 — context only
+
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        events: list[dict] = []
+
+        secret_key = _sanitize_secret_key(credentials.get("secret_key", ""))
+        with self._make_client(secret_key) as client:
+            # Instance surfaces (required) — produce instance_settings,
+            # auth_strategy, organization_settings, session_policy, email_sms.
+            self._collect_instance_events(client, events, day)
+
+            # Optional surfaces — fail-soft on 403/404.
+            try:
+                self._collect_domain_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("clerk_activity: domains surface skipped")
+            try:
+                self._collect_redirect_url_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("clerk_activity: redirect_urls surface skipped")
+            try:
+                self._collect_jwt_template_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("clerk_activity: jwt_templates surface skipped")
+            try:
+                self._collect_webhook_events(client, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("clerk_activity: webhooks surface skipped")
+
+        return events[:max_events]
+
+    # ── Activity surface collectors (M83D) ────────────────────────────────────
+    #
+    # Each collector reuses the existing safe normalizers and emits config-state
+    # activity events. Fails soft on 403/404 for permission-limited environments.
+    # Auth/rate-limit/network errors propagate.
+    #
+    # SECURITY: only safe, normalized fields from the M83A/M83C schemas are
+    # included in metadata. Raw API payloads, domain names, URLs, secrets, tokens,
+    # and all user/PII data are NEVER stored.
+
+    def _collect_instance_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        """Emit config-state events from instance settings and derived records."""
+        try:
+            recs = self._fetch_instance(client)
+        except (ConnectorError, AuthenticationError, RateLimitError, NetworkError):
+            raise
+        if not recs:
+            return
+
+        for rec in recs:
+            rtype = rec.get("record_type", "")
+            rid = rec.get("record_id", "clerk_instance_main")
+
+            if rtype == CLERK_INSTANCE_SETTINGS:
+                eid = f"clerk:instance_settings:{rid}:{day}"
+                meta: dict = {
+                    "resource_type": "clerk_instance_settings",
+                    "resource_id": rid,
+                    "instance_id": rid,
+                    "environment_type": rec.get("environment_type", "unknown"),
+                    "sign_up_enabled": rec.get("sign_up_enabled"),
+                    "sign_in_enabled": rec.get("sign_in_enabled"),
+                    "email_enabled": rec.get("email_enabled"),
+                    "phone_enabled": rec.get("phone_enabled"),
+                    "username_enabled": rec.get("username_enabled"),
+                    "password_enabled": rec.get("password_enabled"),
+                    "social_provider_count": rec.get("social_provider_count"),
+                    "mfa_enabled": rec.get("mfa_enabled"),
+                    "mfa_factor_count": rec.get("mfa_factor_count"),
+                    "session_lifetime_category": rec.get("session_lifetime_category"),
+                    "domain_count": rec.get("domain_count"),
+                    "webhook_count": rec.get("webhook_count"),
+                }
+                # Drop None values for cleanliness
+                meta = {k: v for k, v in meta.items() if v is not None}
+                events.append(self._activity_event(
+                    "clerk.instance_settings.updated", eid, meta
+                ))
+
+            elif rtype == CLERK_AUTH_STRATEGY:
+                eid = f"clerk:auth_strategy:{rid}:{day}"
+                meta = {
+                    "resource_type": "clerk_auth_strategy",
+                    "resource_id": rid,
+                    "auth_strategy_id": rid,
+                    "password_enabled": rec.get("password_enabled"),
+                    "oauth_enabled": rec.get("oauth_enabled"),
+                    "social_provider_count": rec.get("social_provider_count"),
+                    "saml_enabled": rec.get("saml_enabled"),
+                    "mfa_enabled": rec.get("mfa_enabled"),
+                    "mfa_required": rec.get("mfa_required"),
+                    "passkey_enabled": rec.get("passkey_enabled"),
+                    "magic_link_enabled": rec.get("magic_link_enabled"),
+                    "email_otp_enabled": rec.get("email_otp_enabled"),
+                    "phone_otp_enabled": rec.get("phone_otp_enabled"),
+                }
+                meta = {k: v for k, v in meta.items() if v is not None}
+                events.append(self._activity_event(
+                    "clerk.auth_strategy.updated", eid, meta
+                ))
+
+            elif rtype == CLERK_ORGANIZATION_SETTINGS:
+                eid = f"clerk:organization_settings:{rid}:{day}"
+                meta = {
+                    "resource_type": "clerk_organization_settings",
+                    "resource_id": rid,
+                    "organization_settings_id": rid,
+                    "organizations_enabled": rec.get("organizations_enabled"),
+                    "max_allowed_memberships_category": rec.get("max_allowed_memberships_category"),
+                    "admin_delete_enabled": rec.get("admin_delete_enabled"),
+                    "domains_enabled": rec.get("domains_enabled"),
+                    "verified_domains_required": rec.get("verified_domains_required"),
+                    "invitation_enabled": rec.get("invitation_enabled"),
+                    "admin_role_present": rec.get("admin_role_present"),
+                    "role_count": rec.get("role_count"),
+                    "permission_count": rec.get("permission_count"),
+                }
+                meta = {k: v for k, v in meta.items() if v is not None}
+                events.append(self._activity_event(
+                    "clerk.organization_settings.updated", eid, meta
+                ))
+
+            elif rtype == CLERK_SESSION_POLICY:
+                eid = f"clerk:session_policy:{rid}:{day}"
+                meta = {
+                    "resource_type": "clerk_session_policy",
+                    "resource_id": rid,
+                    "session_policy_id": rid,
+                    "session_lifetime_category": rec.get("session_lifetime_category"),
+                    "inactivity_timeout_category": rec.get("inactivity_timeout_category"),
+                    "single_session_enabled": rec.get("single_session_mode"),
+                    "device_tracking_enabled": rec.get("device_tracking_enabled"),
+                    "reverification_required": rec.get("reverification_required"),
+                    "token_rotation_enabled": rec.get("token_rotation_enabled"),
+                }
+                meta = {k: v for k, v in meta.items() if v is not None}
+                events.append(self._activity_event(
+                    "clerk.session_policy.updated", eid, meta
+                ))
+
+            elif rtype == CLERK_EMAIL_SMS_SETTINGS:
+                eid = f"clerk:email_sms_settings:{rid}:{day}"
+                meta = {
+                    "resource_type": "clerk_email_sms_settings",
+                    "resource_id": rid,
+                    "email_sms_settings_id": rid,
+                    "email_enabled": rec.get("email_enabled"),
+                    "sms_enabled": rec.get("sms_enabled"),
+                    "custom_sender_present": rec.get("custom_sender_present"),
+                    "template_customization_present": rec.get("template_customization_present"),
+                }
+                meta = {k: v for k, v in meta.items() if v is not None}
+                events.append(self._activity_event(
+                    "clerk.email_sms_settings.updated", eid, meta
+                ))
+
+    def _collect_domain_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        """Emit config-state events from Clerk domain records.
+
+        SECURITY: raw domain name strings are NEVER stored — only posture
+        booleans, domain_type, and opaque record_id are used.
+        """
+        try:
+            recs = self._fetch_domains(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            rid = rec.get("record_id", "unknown")
+            eid = f"clerk:domain:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "clerk_domain",
+                "resource_id": rid,
+                "domain_id": rid,
+                "domain_type": rec.get("domain_type"),
+                "verified": rec.get("verified"),
+                "primary": rec.get("primary"),
+                "ssl_enabled": rec.get("ssl_enabled"),
+                "dns_status_category": rec.get("dns_status_category"),
+                "proxy_enabled": rec.get("proxy_enabled"),
+            }
+            meta = {k: v for k, v in meta.items() if v is not None}
+            events.append(self._activity_event("clerk.domain.updated", eid, meta))
+
+    def _collect_redirect_url_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        """Emit config-state events from Clerk redirect URL records.
+
+        SECURITY: raw redirect URL strings are NEVER stored — only posture
+        booleans and scheme category derived before discarding the URL.
+        """
+        try:
+            recs = self._fetch_redirect_urls(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            rid = rec.get("record_id", "unknown")
+            eid = f"clerk:redirect_url:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "clerk_redirect_url_config",
+                "resource_id": rid,
+                "redirect_url_config_id": rid,
+                "url_scheme_category": rec.get("url_scheme_category"),
+                "wildcard_present": rec.get("wildcard_present"),
+                "localhost_present": rec.get("localhost_present"),
+                "custom_scheme_present": rec.get("custom_scheme_present"),
+            }
+            meta = {k: v for k, v in meta.items() if v is not None}
+            events.append(self._activity_event(
+                "clerk.redirect_url_config.updated", eid, meta
+            ))
+
+    def _collect_jwt_template_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        """Emit config-state events from Clerk JWT template records.
+
+        SECURITY: JWT template body, custom claims, audience URI, issuer URI,
+        and signing key material are NEVER stored.
+        """
+        try:
+            recs = self._fetch_jwt_templates(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            rid = rec.get("record_id", "unknown")
+            eid = f"clerk:jwt_template:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "clerk_jwt_template",
+                "resource_id": rid,
+                "jwt_template_id": rid,
+                "name": rec.get("name"),
+                "enabled": rec.get("enabled"),
+                "claims_count": rec.get("claims_count"),
+                "custom_claims_present": rec.get("custom_claims_present"),
+                "audience_present": rec.get("audience_present"),
+                "issuer_present": rec.get("issuer_present"),
+                "lifetime_category": rec.get("lifetime_category"),
+                "algorithm": rec.get("algorithm"),
+            }
+            meta = {k: v for k, v in meta.items() if v is not None}
+            events.append(self._activity_event(
+                "clerk.jwt_template.updated", eid, meta
+            ))
+
+    def _collect_webhook_events(
+        self, client: "httpx.Client", events: list, day: str
+    ) -> None:
+        """Emit config-state events from Clerk webhook endpoint records.
+
+        SECURITY: webhook URL, signing secret, raw event names, and all raw
+        webhook payload are NEVER stored.
+        """
+        try:
+            recs = self._fetch_webhooks(client)
+        except ConnectorError as exc:
+            if getattr(exc, "status_code", None) in (403, 404):
+                return
+            raise
+        for rec in recs:
+            rid = rec.get("record_id", "unknown")
+            eid = f"clerk:webhook_endpoint:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "clerk_webhook_endpoint",
+                "resource_id": rid,
+                "webhook_endpoint_id": rid,
+                "enabled": rec.get("enabled"),
+                "url_scheme_category": rec.get("url_scheme_category"),
+                "event_count": rec.get("event_count"),
+                "secret_present": rec.get("secret_present"),
+                "description_present": rec.get("description_present"),
+            }
+            meta = {k: v for k, v in meta.items() if v is not None}
+            events.append(self._activity_event(
+                "clerk.webhook_endpoint.updated", eid, meta
+            ))
