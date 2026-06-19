@@ -353,6 +353,25 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "pagerduty_response_play_no_responders": (HIGH, "Only fires when responder_count is exactly 0; no responder identities are stored."),
     "pagerduty_response_play_no_subscribers": (MEDIUM, "Fires when subscriber_count is exactly 0; some plays intentionally have no subscribers."),
     "pagerduty_response_play_not_runnable": (MEDIUM, "Fires when runnability is 'unknown'; some response plays may be intentionally restricted."),
+    # PagerDuty — M84C escalation/webhook risk expansion
+    "pagerduty_escalation_policy_no_targets": (HIGH, "Only fires when escalation_rule_count > 0 AND target_count is exactly 0; no target IDs or identities are stored."),
+    "pagerduty_escalation_policy_low_target_count": (HIGH, "Only fires when 0 < target_count <= 1 across all escalation rules; no target identities are stored."),
+    "pagerduty_escalation_policy_no_schedule_targets": (MEDIUM, "Fires when rule_count > 0 AND target_count > 0 AND schedule_target_count is 0; user-only targets are a common valid config for small teams."),
+    "pagerduty_escalation_policy_no_team_targets": (MEDIUM, "Fires when team_count is exactly 0 on the escalation policy; no team member identities are stored."),
+    "pagerduty_schedule_no_targets": (HIGH, "Only fires when layer_count > 0 AND user_count is exactly 0; no user identities are stored."),
+    "pagerduty_schedule_low_target_count": (HIGH, "Only fires when user_count is exactly 1; no user identities are stored."),
+    "pagerduty_schedule_single_layer": (MEDIUM, "Fires when layer_count is exactly 1; single-layer schedules may be intentional for small teams."),
+    "pagerduty_schedule_no_restrictions": (MEDIUM, "Fires when layer_count > 0 AND restriction_count is 0; 24/7 coverage without restrictions is sometimes intentional."),
+    "pagerduty_service_integration_routing_key_missing": (HIGH, "Only fires when type_category is 'generic_events_api' AND routing_key_present is explicitly false; routing key values are never stored."),
+    "pagerduty_service_integration_unknown_type": (MEDIUM, "Fires when type_category is 'other' (unrecognized type); some custom integrations may legitimately use non-standard types."),
+    "pagerduty_webhook_subscription_no_events": (HIGH, "Only fires when event_count is exactly 0; event type names are never stored."),
+    "pagerduty_webhook_subscription_secret_not_indicated": (MEDIUM, "Fires when active=True AND has_custom_headers is False; some endpoints rely on network-level security instead of header auth."),
+    "pagerduty_webhook_subscription_broad_scope_high": (HIGH, "Only fires when event_count exceeds the high threshold (>20); event type names are never stored."),
+    "pagerduty_webhook_subscription_account_scope": (MEDIUM, "Fires when filter_type is 'account'; account-scoped webhooks are sometimes intentional for observability integrations."),
+    "pagerduty_event_orchestration_low_route_count": (MEDIUM, "Fires when route_count is exactly 1; minimal routing may be intentional for simple orchestrations."),
+    "pagerduty_response_play_low_responder_count": (HIGH, "Only fires when responder_count is exactly 1; no responder identities are stored."),
+    "pagerduty_response_play_no_team": (MEDIUM, "Fires when team_present is explicitly false on a response play record."),
+    "pagerduty_response_play_manual_only": (MEDIUM, "Fires when runnability is 'owner'; owner-only runnability may be intentional for sensitive response plays."),
 }
 
 

@@ -368,6 +368,25 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "pagerduty_response_play_no_responders": ("pagerduty_response_play",),
     "pagerduty_response_play_no_subscribers": ("pagerduty_response_play",),
     "pagerduty_response_play_not_runnable": ("pagerduty_response_play",),
+    # PagerDuty — M84C escalation/webhook risk expansion
+    "pagerduty_escalation_policy_no_targets": ("pagerduty_escalation_policy",),
+    "pagerduty_escalation_policy_low_target_count": ("pagerduty_escalation_policy",),
+    "pagerduty_escalation_policy_no_schedule_targets": ("pagerduty_escalation_policy",),
+    "pagerduty_escalation_policy_no_team_targets": ("pagerduty_escalation_policy",),
+    "pagerduty_schedule_no_targets": ("pagerduty_schedule",),
+    "pagerduty_schedule_low_target_count": ("pagerduty_schedule",),
+    "pagerduty_schedule_single_layer": ("pagerduty_schedule",),
+    "pagerduty_schedule_no_restrictions": ("pagerduty_schedule",),
+    "pagerduty_service_integration_routing_key_missing": ("pagerduty_service_integration",),
+    "pagerduty_service_integration_unknown_type": ("pagerduty_service_integration",),
+    "pagerduty_webhook_subscription_no_events": ("pagerduty_webhook_subscription",),
+    "pagerduty_webhook_subscription_secret_not_indicated": ("pagerduty_webhook_subscription",),
+    "pagerduty_webhook_subscription_broad_scope_high": ("pagerduty_webhook_subscription",),
+    "pagerduty_webhook_subscription_account_scope": ("pagerduty_webhook_subscription",),
+    "pagerduty_event_orchestration_low_route_count": ("pagerduty_event_orchestration",),
+    "pagerduty_response_play_low_responder_count": ("pagerduty_response_play",),
+    "pagerduty_response_play_no_team": ("pagerduty_response_play",),
+    "pagerduty_response_play_manual_only": ("pagerduty_response_play",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).

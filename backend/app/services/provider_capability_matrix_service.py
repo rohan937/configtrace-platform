@@ -1005,22 +1005,26 @@ _PAGERDUTY = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "PagerDuty incident-management configuration drift and core security "
-        "(M84A–M84B). Drift snapshots cover 8 safe configuration surfaces from "
+        "PagerDuty incident-management configuration drift and expanded security "
+        "(M84A–M84C). Drift snapshots cover 8 safe configuration surfaces from "
         "the PagerDuty REST API v2: services, escalation policies, schedules, "
         "service integrations, webhook subscriptions, event orchestrations, "
         "business services, and response plays. M84B adds 22 core security rules "
         "covering incident-response posture: missing escalation policies, broken "
         "escalation chains, no on-call coverage, missing webhook signing/transport "
         "posture, response-play readiness, business-service ownership, and "
-        "integration-key indicators. Rules are configuration-evidence only and do "
+        "integration-key indicators. M84C adds 18 expanded rules covering "
+        "escalation target posture, schedule coverage depth, integration routing-key "
+        "gaps, webhook authentication headers, broad-scope subscription risk, and "
+        "response-play runnability. Rules are configuration-evidence only and do "
         "not assert breach, compromise, unauthorized access, or data exposure. "
         "Privacy contract: PagerDuty API tokens, routing keys, integration keys, "
-        "webhook secrets, delivery URLs, user emails, user names, phone numbers, "
-        "contact methods, on-call user identities, responder identities, subscriber "
-        "identities, incident payloads, alert payloads, conference phone numbers, "
-        "raw routing expressions, and customer PII are NEVER fetched or stored. "
-        "planned_next_stage: M84C: PagerDuty Escalation/Webhook Risk Expansion."
+        "webhook secrets, delivery URLs, custom header values, user emails, user "
+        "names, phone numbers, contact methods, on-call user identities, responder "
+        "identities, subscriber identities, incident payloads, alert payloads, "
+        "conference phone numbers, raw routing expressions, and customer PII are "
+        "NEVER fetched or stored. "
+        "planned_next_stage: M84D: PagerDuty Activity/Event Ingestion."
     ),
 )
 

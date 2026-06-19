@@ -892,9 +892,10 @@ def test_m1_expansion_framework_planned_next_stage_m84b() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    # M84B complete; framework now points to M84C or beyond.
+    # M84C complete; framework now points to M84D or beyond.
     assert ("M84B" in planned or "PagerDuty Core Security" in planned
-            or "M84C" in planned or "Escalation/Webhook" in planned), (
+            or "M84C" in planned or "Escalation/Webhook" in planned
+            or "M84D" in planned or "Activity/Event Ingestion" in planned), (
         f"planned_next_stage should point to M84B or beyond; got: {planned!r}"
     )
 

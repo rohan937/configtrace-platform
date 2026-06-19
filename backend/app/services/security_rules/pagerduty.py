@@ -1,4 +1,4 @@
-"""PagerDuty configuration-risk security rules — M84B.
+"""PagerDuty configuration-risk security rules — M84B, expanded M84C.
 
 Every rule fires only on explicit, reliable normalized fields produced by
 the PagerDuty connector (app/connectors/pagerduty.py + pagerduty_schema.py,
@@ -63,75 +63,125 @@ _RULE_SERVICE_AUTO_RESOLVE_DISABLED = "pagerduty_service_auto_resolve_disabled"
 _RULE_SERVICE_ALERT_CREATION_LIMITED = "pagerduty_service_alert_creation_limited"
 _RULE_SERVICE_NO_TEAMS = "pagerduty_service_no_teams"
 
-# Escalation policy rules
+# Escalation policy rules — M84B
 _RULE_EP_NO_RULES = "pagerduty_escalation_policy_no_rules"
 _RULE_EP_SINGLE_LEVEL = "pagerduty_escalation_policy_single_level"
+# Escalation policy rules — M84C
+_RULE_EP_NO_TARGETS = "pagerduty_escalation_policy_no_targets"
+_RULE_EP_LOW_TARGET_COUNT = "pagerduty_escalation_policy_low_target_count"
+_RULE_EP_NO_SCHEDULE_TARGETS = "pagerduty_escalation_policy_no_schedule_targets"
+_RULE_EP_NO_TEAM_TARGETS = "pagerduty_escalation_policy_no_team_targets"
 
-# Schedule rules
+# Schedule rules — M84B
 _RULE_SCHEDULE_NO_LAYERS = "pagerduty_schedule_no_layers"
 _RULE_SCHEDULE_NO_TEAMS = "pagerduty_schedule_no_teams"
+# Schedule rules — M84C
+_RULE_SCHEDULE_NO_TARGETS = "pagerduty_schedule_no_targets"
+_RULE_SCHEDULE_LOW_TARGET_COUNT = "pagerduty_schedule_low_target_count"
+_RULE_SCHEDULE_SINGLE_LAYER = "pagerduty_schedule_single_layer"
+_RULE_SCHEDULE_NO_RESTRICTIONS = "pagerduty_schedule_no_restrictions"
 
-# Service integration rules
+# Service integration rules — M84B
 _RULE_INTEGRATION_MISSING_KEY = "pagerduty_service_integration_missing_key_indicator"
 _RULE_INTEGRATION_EMAIL_TYPE = "pagerduty_service_integration_email_type"
+# Service integration rules — M84C
+_RULE_INTEGRATION_ROUTING_KEY_MISSING = "pagerduty_service_integration_routing_key_missing"
+_RULE_INTEGRATION_UNKNOWN_TYPE = "pagerduty_service_integration_unknown_type"
 
-# Webhook subscription rules
+# Webhook subscription rules — M84B
 _RULE_WEBHOOK_INACTIVE = "pagerduty_webhook_subscription_inactive"
 _RULE_WEBHOOK_NON_HTTPS = "pagerduty_webhook_subscription_non_https"
 _RULE_WEBHOOK_BROAD_SCOPE = "pagerduty_webhook_subscription_broad_event_scope"
+# Webhook subscription rules — M84C
+_RULE_WEBHOOK_NO_EVENTS = "pagerduty_webhook_subscription_no_events"
+_RULE_WEBHOOK_SECRET_NOT_INDICATED = "pagerduty_webhook_subscription_secret_not_indicated"
+_RULE_WEBHOOK_BROAD_SCOPE_HIGH = "pagerduty_webhook_subscription_broad_scope_high"
+_RULE_WEBHOOK_ACCOUNT_SCOPE = "pagerduty_webhook_subscription_account_scope"
 
-# Event orchestration rules
+# Event orchestration rules — M84B
 _RULE_ORCHESTRATION_NO_ROUTES = "pagerduty_event_orchestration_no_routes"
 _RULE_ORCHESTRATION_NO_TEAM = "pagerduty_event_orchestration_no_team"
+# Event orchestration rules — M84C
+_RULE_ORCHESTRATION_LOW_ROUTE_COUNT = "pagerduty_event_orchestration_low_route_count"
 
 # Business service rules
 _RULE_BUSINESS_SERVICE_NO_TEAM = "pagerduty_business_service_no_team"
 _RULE_BUSINESS_SERVICE_NO_CONTACT = "pagerduty_business_service_no_contact"
 
-# Response play rules
+# Response play rules — M84B
 _RULE_RESPONSE_PLAY_NO_RESPONDERS = "pagerduty_response_play_no_responders"
 _RULE_RESPONSE_PLAY_NO_SUBSCRIBERS = "pagerduty_response_play_no_subscribers"
 _RULE_RESPONSE_PLAY_NOT_RUNNABLE = "pagerduty_response_play_not_runnable"
+# Response play rules — M84C
+_RULE_RESPONSE_PLAY_LOW_RESPONDER_COUNT = "pagerduty_response_play_low_responder_count"
+_RULE_RESPONSE_PLAY_NO_TEAM = "pagerduty_response_play_no_team"
+_RULE_RESPONSE_PLAY_MANUAL_ONLY = "pagerduty_response_play_manual_only"
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
 
 # Webhook subscriptions with more than this many event types are flagged as
 # broad scope (lower specificity means more noise and harder to audit).
 _BROAD_WEBHOOK_EVENTS_THRESHOLD = 10
+# Webhook subscriptions exceeding this higher threshold are high-severity.
+_BROAD_WEBHOOK_EVENTS_HIGH_THRESHOLD = 20
 
 # ── All PagerDuty rule keys implemented in this module ────────────────────────
 
 PAGERDUTY_RULE_KEYS: frozenset[str] = frozenset({
-    # Service
+    # Service — M84B
     _RULE_SERVICE_NO_ESCALATION_POLICY,
     _RULE_SERVICE_NO_INTEGRATIONS,
     _RULE_SERVICE_ACK_TIMEOUT_DISABLED,
     _RULE_SERVICE_AUTO_RESOLVE_DISABLED,
     _RULE_SERVICE_ALERT_CREATION_LIMITED,
     _RULE_SERVICE_NO_TEAMS,
-    # Escalation policy
+    # Escalation policy — M84B
     _RULE_EP_NO_RULES,
     _RULE_EP_SINGLE_LEVEL,
-    # Schedule
+    # Escalation policy — M84C
+    _RULE_EP_NO_TARGETS,
+    _RULE_EP_LOW_TARGET_COUNT,
+    _RULE_EP_NO_SCHEDULE_TARGETS,
+    _RULE_EP_NO_TEAM_TARGETS,
+    # Schedule — M84B
     _RULE_SCHEDULE_NO_LAYERS,
     _RULE_SCHEDULE_NO_TEAMS,
-    # Service integration
+    # Schedule — M84C
+    _RULE_SCHEDULE_NO_TARGETS,
+    _RULE_SCHEDULE_LOW_TARGET_COUNT,
+    _RULE_SCHEDULE_SINGLE_LAYER,
+    _RULE_SCHEDULE_NO_RESTRICTIONS,
+    # Service integration — M84B
     _RULE_INTEGRATION_MISSING_KEY,
     _RULE_INTEGRATION_EMAIL_TYPE,
-    # Webhook subscription
+    # Service integration — M84C
+    _RULE_INTEGRATION_ROUTING_KEY_MISSING,
+    _RULE_INTEGRATION_UNKNOWN_TYPE,
+    # Webhook subscription — M84B
     _RULE_WEBHOOK_INACTIVE,
     _RULE_WEBHOOK_NON_HTTPS,
     _RULE_WEBHOOK_BROAD_SCOPE,
-    # Event orchestration
+    # Webhook subscription — M84C
+    _RULE_WEBHOOK_NO_EVENTS,
+    _RULE_WEBHOOK_SECRET_NOT_INDICATED,
+    _RULE_WEBHOOK_BROAD_SCOPE_HIGH,
+    _RULE_WEBHOOK_ACCOUNT_SCOPE,
+    # Event orchestration — M84B
     _RULE_ORCHESTRATION_NO_ROUTES,
     _RULE_ORCHESTRATION_NO_TEAM,
+    # Event orchestration — M84C
+    _RULE_ORCHESTRATION_LOW_ROUTE_COUNT,
     # Business service
     _RULE_BUSINESS_SERVICE_NO_TEAM,
     _RULE_BUSINESS_SERVICE_NO_CONTACT,
-    # Response play
+    # Response play — M84B
     _RULE_RESPONSE_PLAY_NO_RESPONDERS,
     _RULE_RESPONSE_PLAY_NO_SUBSCRIBERS,
     _RULE_RESPONSE_PLAY_NOT_RUNNABLE,
+    # Response play — M84C
+    _RULE_RESPONSE_PLAY_LOW_RESPONDER_COUNT,
+    _RULE_RESPONSE_PLAY_NO_TEAM,
+    _RULE_RESPONSE_PLAY_MANUAL_ONLY,
 })
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -431,6 +481,135 @@ def _eval_escalation_policy(record: dict[str, Any]) -> list[FindingCandidate]:
             record_id=record_id,
         ))
 
+    # ── M84C escalation policy rules ──────────────────────────────────────────
+
+    target_count = _int(record, "target_count")
+    schedule_target_count = _int(record, "schedule_target_count")
+    team_count = _int(record, "team_count")
+    has_schedule_targets = _bool(record, "has_schedule_targets")
+
+    # ── pagerduty_escalation_policy_no_targets ─────────────────────────────────
+    if rule_count > 0 and target_count == 0:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_EP_NO_TARGETS,
+            finding_key=make_finding_key(_RULE_EP_NO_TARGETS, record_id),
+            severity="high",
+            title="PagerDuty escalation policy rules have no configured targets",
+            description=(
+                "A PagerDuty escalation policy has escalation rules but none of them "
+                "include any targets. Without targets, incidents will not be paged to "
+                "any responder when they escalate. This escalation configuration evidence "
+                "may require review. No target identities are stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_EP_NO_TARGETS,
+                "record_id": record_id,
+                "escalation_rule_count": rule_count,
+                "target_count": 0,
+            },
+            remediation={
+                "summary": "Add responder targets to each escalation rule in this policy.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → Escalation Policies.",
+                    "Open this policy and add users or schedules as targets to each rule.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_escalation_policy_low_target_count ───────────────────────────
+    if 0 < target_count <= 1:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_EP_LOW_TARGET_COUNT,
+            finding_key=make_finding_key(_RULE_EP_LOW_TARGET_COUNT, record_id),
+            severity="medium",
+            title="PagerDuty escalation policy has only a single responder target",
+            description=(
+                "A PagerDuty escalation policy has only one target configured across all "
+                "escalation rules. A single target creates a single point of failure in "
+                "incident response — if that target is unavailable, incidents may go "
+                "unacknowledged. This escalation configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_EP_LOW_TARGET_COUNT,
+                "record_id": record_id,
+                "target_count": target_count,
+            },
+            remediation={
+                "summary": "Add additional targets or escalation levels to this policy.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → Escalation Policies.",
+                    "Open this policy and add backup responders or on-call schedule targets.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_escalation_policy_no_schedule_targets ────────────────────────
+    if rule_count > 0 and target_count > 0 and schedule_target_count == 0:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_EP_NO_SCHEDULE_TARGETS,
+            finding_key=make_finding_key(_RULE_EP_NO_SCHEDULE_TARGETS, record_id),
+            severity="low",
+            title="PagerDuty escalation policy has no on-call schedule targets",
+            description=(
+                "A PagerDuty escalation policy routes incidents only to direct user "
+                "targets with no on-call schedule references. Without schedule targets, "
+                "automated on-call rotation is not used, which may mean responders are "
+                "paged regardless of their shift. This routing configuration evidence "
+                "may require review."
+            ),
+            evidence={
+                "rule": _RULE_EP_NO_SCHEDULE_TARGETS,
+                "record_id": record_id,
+                "target_count": target_count,
+                "schedule_target_count": 0,
+            },
+            remediation={
+                "summary": "Consider adding on-call schedule targets to this escalation policy.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → Escalation Policies.",
+                    "Open this policy and add an on-call schedule as a target in each rule.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_escalation_policy_no_team_targets ────────────────────────────
+    if team_count == 0:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_EP_NO_TEAM_TARGETS,
+            finding_key=make_finding_key(_RULE_EP_NO_TEAM_TARGETS, record_id),
+            severity="low",
+            title="PagerDuty escalation policy has no owning team assigned",
+            description=(
+                "A PagerDuty escalation policy has no owning team assigned. Escalation "
+                "policies without team ownership may be harder to audit for accountability "
+                "and access reviews. This escalation configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_EP_NO_TEAM_TARGETS,
+                "record_id": record_id,
+                "team_count": 0,
+            },
+            remediation={
+                "summary": "Assign a team to this escalation policy.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → Escalation Policies.",
+                    "Open this policy and assign it to an appropriate team.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
     return findings
 
 
@@ -503,6 +682,133 @@ def _eval_schedule(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Sign in to your PagerDuty account.",
                     "Navigate to People → On-Call Schedules.",
                     "Open this schedule and assign it to an appropriate team.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M84C schedule rules ────────────────────────────────────────────────────
+
+    user_count = _int(record, "user_count")
+    restriction_count = _int(record, "restriction_count")
+
+    # ── pagerduty_schedule_no_targets ──────────────────────────────────────────
+    if layer_count > 0 and user_count == 0:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_SCHEDULE_NO_TARGETS,
+            finding_key=make_finding_key(_RULE_SCHEDULE_NO_TARGETS, record_id),
+            severity="high",
+            title="PagerDuty schedule layers have no users assigned",
+            description=(
+                "A PagerDuty on-call schedule has layers configured but no users assigned "
+                "to any layer. A schedule without users will not produce any on-call "
+                "coverage. This incident-response configuration evidence may require review. "
+                "User identities are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_SCHEDULE_NO_TARGETS,
+                "record_id": record_id,
+                "layer_count": layer_count,
+                "user_count": 0,
+            },
+            remediation={
+                "summary": "Add users to the schedule layers.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → On-Call Schedules.",
+                    "Open this schedule and add users to each active layer.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_schedule_low_target_count ────────────────────────────────────
+    if user_count == 1:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_SCHEDULE_LOW_TARGET_COUNT,
+            finding_key=make_finding_key(_RULE_SCHEDULE_LOW_TARGET_COUNT, record_id),
+            severity="medium",
+            title="PagerDuty schedule has only one user assigned",
+            description=(
+                "A PagerDuty on-call schedule has only one user across all layers. A "
+                "single-person schedule creates a single point of failure for on-call "
+                "coverage — if that user is unavailable, incidents may not be responded to. "
+                "This incident-response configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_SCHEDULE_LOW_TARGET_COUNT,
+                "record_id": record_id,
+                "user_count": 1,
+            },
+            remediation={
+                "summary": "Add additional users to distribute on-call coverage.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → On-Call Schedules.",
+                    "Open this schedule and add at least one more user to the rotation.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_schedule_single_layer ───────────────────────────────────────
+    if layer_count == 1:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_SCHEDULE_SINGLE_LAYER,
+            finding_key=make_finding_key(_RULE_SCHEDULE_SINGLE_LAYER, record_id),
+            severity="low",
+            title="PagerDuty schedule has only a single schedule layer",
+            description=(
+                "A PagerDuty on-call schedule has only one schedule layer. Multiple layers "
+                "allow for primary and backup rotation coverage. With a single layer, there "
+                "is no built-in fallback if the primary rotation cannot respond. This "
+                "incident-response configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_SCHEDULE_SINGLE_LAYER,
+                "record_id": record_id,
+                "layer_count": 1,
+            },
+            remediation={
+                "summary": "Consider adding a backup schedule layer.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → On-Call Schedules.",
+                    "Open this schedule and add a secondary layer for backup coverage.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_schedule_no_restrictions ────────────────────────────────────
+    if layer_count > 0 and restriction_count == 0:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_SCHEDULE_NO_RESTRICTIONS,
+            finding_key=make_finding_key(_RULE_SCHEDULE_NO_RESTRICTIONS, record_id),
+            severity="low",
+            title="PagerDuty schedule layers have no time restrictions configured",
+            description=(
+                "A PagerDuty on-call schedule has layers but no time-window restrictions "
+                "configured. Without restrictions, all users in each layer are considered "
+                "on-call at all times, which may not reflect intended rotation boundaries. "
+                "This schedule configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_SCHEDULE_NO_RESTRICTIONS,
+                "record_id": record_id,
+                "layer_count": layer_count,
+                "restriction_count": 0,
+            },
+            remediation={
+                "summary": "Review whether time-window restrictions should be configured.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to People → On-Call Schedules.",
+                    "Open this schedule and configure restrictions to define rotation windows.",
                 ],
             },
             record_id=record_id,
@@ -584,6 +890,72 @@ def _eval_service_integration(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Navigate to the parent service Integrations tab.",
                     "Add an Events API v2 or vendor integration as a replacement.",
                     "Migrate monitoring tool alerts to use the new integration endpoint.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M84C service integration rules ────────────────────────────────────────
+
+    routing_key_present = _bool(record, "routing_key_present")
+
+    # ── pagerduty_service_integration_routing_key_missing ─────────────────────
+    if type_cat == "generic_events_api" and routing_key_present is False:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_INTEGRATION_ROUTING_KEY_MISSING,
+            finding_key=make_finding_key(_RULE_INTEGRATION_ROUTING_KEY_MISSING, record_id),
+            severity="medium",
+            title="PagerDuty Events API integration has no routing key configured",
+            description=(
+                "A PagerDuty service integration using the Events API does not have a "
+                "routing key configured. Without a routing key, the Events API integration "
+                "cannot receive and route events to trigger incidents. This webhook "
+                "configuration evidence may require review. No routing key values are "
+                "stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_INTEGRATION_ROUTING_KEY_MISSING,
+                "record_id": record_id,
+                "type_category": "generic_events_api",
+                "routing_key_present": False,
+            },
+            remediation={
+                "summary": "Generate or assign a routing key for this Events API integration.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to the parent service Integrations tab.",
+                    "Open this integration and regenerate the routing/integration key.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_service_integration_unknown_type ────────────────────────────
+    if type_cat == "other":
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_INTEGRATION_UNKNOWN_TYPE,
+            finding_key=make_finding_key(_RULE_INTEGRATION_UNKNOWN_TYPE, record_id),
+            severity="low",
+            title="PagerDuty service integration has an unrecognized type",
+            description=(
+                "A PagerDuty service integration has a type that is not recognized as a "
+                "standard Events API, email, or vendor integration. Unrecognized integration "
+                "types may indicate an unsupported, legacy, or misconfigured integration. "
+                "This integration configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_INTEGRATION_UNKNOWN_TYPE,
+                "record_id": record_id,
+                "type_category": "other",
+            },
+            remediation={
+                "summary": "Review the type and configuration of this integration.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to the parent service Integrations tab.",
+                    "Inspect this integration and update or replace it if it is not actively used.",
                 ],
             },
             record_id=record_id,
@@ -701,6 +1073,135 @@ def _eval_webhook_subscription(record: dict[str, Any]) -> list[FindingCandidate]
             record_id=record_id,
         ))
 
+    # ── M84C webhook subscription rules ───────────────────────────────────────
+
+    has_custom_headers = _bool(record, "has_custom_headers")
+    filter_type = get_str(record, "filter_type")
+
+    # ── pagerduty_webhook_subscription_no_events ──────────────────────────────
+    if event_count == 0:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_WEBHOOK_NO_EVENTS,
+            finding_key=make_finding_key(_RULE_WEBHOOK_NO_EVENTS, record_id),
+            severity="medium",
+            title="PagerDuty webhook subscription has no subscribed event types",
+            description=(
+                "A PagerDuty V3 webhook subscription has no event types configured. "
+                "Without subscribed events, the webhook endpoint will not receive any "
+                "notifications from PagerDuty, making the subscription non-functional. "
+                "This webhook configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_NO_EVENTS,
+                "record_id": record_id,
+                "event_count": 0,
+            },
+            remediation={
+                "summary": "Add event type subscriptions to this webhook.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to Integrations → Webhooks.",
+                    "Open this subscription and add the relevant event types.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_webhook_subscription_secret_not_indicated ───────────────────
+    if active is True and has_custom_headers is False:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_WEBHOOK_SECRET_NOT_INDICATED,
+            finding_key=make_finding_key(_RULE_WEBHOOK_SECRET_NOT_INDICATED, record_id),
+            severity="medium",
+            title="PagerDuty webhook subscription has no custom authentication headers",
+            description=(
+                "An active PagerDuty V3 webhook subscription does not have any custom "
+                "headers configured. Without custom authentication headers, the endpoint "
+                "receiving this webhook cannot verify that events originate from PagerDuty. "
+                "This webhook configuration evidence may require review. Custom header "
+                "values are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_SECRET_NOT_INDICATED,
+                "record_id": record_id,
+                "active": True,
+                "has_custom_headers": False,
+            },
+            remediation={
+                "summary": "Configure custom authentication headers for this webhook.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to Integrations → Webhooks.",
+                    "Open this subscription and add a custom authentication header.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_webhook_subscription_broad_scope_high ───────────────────────
+    if event_count > _BROAD_WEBHOOK_EVENTS_HIGH_THRESHOLD:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_WEBHOOK_BROAD_SCOPE_HIGH,
+            finding_key=make_finding_key(_RULE_WEBHOOK_BROAD_SCOPE_HIGH, record_id),
+            severity="high",
+            title="PagerDuty webhook subscription has a very broad event scope",
+            description=(
+                "A PagerDuty V3 webhook subscription subscribes to more than "
+                f"{_BROAD_WEBHOOK_EVENTS_HIGH_THRESHOLD} event types. Subscriptions "
+                "with very broad event scopes significantly increase delivery volume and "
+                "may expose a wider range of incident data to the endpoint than intended. "
+                "This webhook configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_BROAD_SCOPE_HIGH,
+                "record_id": record_id,
+                "event_count": event_count,
+            },
+            remediation={
+                "summary": "Significantly narrow the subscribed event types.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to Integrations → Webhooks.",
+                    "Open this subscription and restrict event types to the minimum needed.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_webhook_subscription_account_scope ──────────────────────────
+    if filter_type == "account":
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_WEBHOOK_ACCOUNT_SCOPE,
+            finding_key=make_finding_key(_RULE_WEBHOOK_ACCOUNT_SCOPE, record_id),
+            severity="medium",
+            title="PagerDuty webhook subscription is scoped to the entire account",
+            description=(
+                "A PagerDuty V3 webhook subscription is filtered at the account level, "
+                "meaning it receives events from all services and teams in the account. "
+                "Account-scoped webhooks deliver a broad range of incident notifications "
+                "to a single endpoint, which may exceed the intended scope. This webhook "
+                "configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_ACCOUNT_SCOPE,
+                "record_id": record_id,
+                "filter_type": "account",
+            },
+            remediation={
+                "summary": "Consider scoping this webhook to specific services or teams.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to Integrations → Webhooks.",
+                    "Open this subscription and update the filter to a specific service or team.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
     return findings
 
 
@@ -773,6 +1274,36 @@ def _eval_event_orchestration(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Sign in to your PagerDuty account.",
                     "Navigate to AIOps → Event Orchestration.",
                     "Open this orchestration and assign it to an appropriate team.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_event_orchestration_low_route_count ─────────────────────────
+    if route_count == 1:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_ORCHESTRATION_LOW_ROUTE_COUNT,
+            finding_key=make_finding_key(_RULE_ORCHESTRATION_LOW_ROUTE_COUNT, record_id),
+            severity="low",
+            title="PagerDuty event orchestration has only a single route",
+            description=(
+                "A PagerDuty event orchestration has only one route configured. A single "
+                "route provides minimal event routing differentiation — all events that "
+                "do not match it will fall through to the default behavior. This routing "
+                "configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_ORCHESTRATION_LOW_ROUTE_COUNT,
+                "record_id": record_id,
+                "route_count": 1,
+            },
+            remediation={
+                "summary": "Review the event orchestration routing coverage.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to AIOps → Event Orchestration.",
+                    "Open this orchestration and add additional routes for better event coverage.",
                 ],
             },
             record_id=record_id,
@@ -960,6 +1491,102 @@ def _eval_response_play(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Sign in to your PagerDuty account.",
                     "Navigate to Incidents → Response Plays.",
                     "Open this play and add stakeholder subscribers.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M84C response play rules ──────────────────────────────────────────────
+
+    team_present = _bool(record, "team_present")
+
+    # ── pagerduty_response_play_low_responder_count ────────────────────────────
+    if responder_count == 1:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_RESPONSE_PLAY_LOW_RESPONDER_COUNT,
+            finding_key=make_finding_key(_RULE_RESPONSE_PLAY_LOW_RESPONDER_COUNT, record_id),
+            severity="medium",
+            title="PagerDuty response play has only a single responder configured",
+            description=(
+                "A PagerDuty response play has only one responder configured. A single "
+                "responder creates a single point of failure — if that responder is "
+                "unavailable during an incident, the play cannot engage the intended "
+                "response team. This incident-response configuration evidence may require "
+                "review. Responder identities are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_RESPONSE_PLAY_LOW_RESPONDER_COUNT,
+                "record_id": record_id,
+                "responder_count": 1,
+            },
+            remediation={
+                "summary": "Add additional responders to this response play.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to Incidents → Response Plays.",
+                    "Open this play and add at least one additional responder.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_response_play_no_team ───────────────────────────────────────
+    if team_present is False:
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_RESPONSE_PLAY_NO_TEAM,
+            finding_key=make_finding_key(_RULE_RESPONSE_PLAY_NO_TEAM, record_id),
+            severity="low",
+            title="PagerDuty response play has no team assigned",
+            description=(
+                "A PagerDuty response play has no owning team assigned. Response plays "
+                "without team ownership may be harder to audit for accountability and "
+                "access reviews. This incident-response configuration evidence may require "
+                "review."
+            ),
+            evidence={
+                "rule": _RULE_RESPONSE_PLAY_NO_TEAM,
+                "record_id": record_id,
+                "team_present": False,
+            },
+            remediation={
+                "summary": "Assign a team to this response play.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to Incidents → Response Plays.",
+                    "Open this play and assign it to an appropriate team.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── pagerduty_response_play_manual_only ───────────────────────────────────
+    if runnability == "owner":
+        findings.append(FindingCandidate(
+            provider="pagerduty",
+            rule_key=_RULE_RESPONSE_PLAY_MANUAL_ONLY,
+            finding_key=make_finding_key(_RULE_RESPONSE_PLAY_MANUAL_ONLY, record_id),
+            severity="low",
+            title="PagerDuty response play is restricted to owner-only execution",
+            description=(
+                "A PagerDuty response play has runnability set to 'owner', meaning only "
+                "the response play owner can execute it. This restriction may prevent "
+                "other responders from triggering the play during an incident when the "
+                "owner is unavailable. This incident-response configuration evidence "
+                "may require review."
+            ),
+            evidence={
+                "rule": _RULE_RESPONSE_PLAY_MANUAL_ONLY,
+                "record_id": record_id,
+                "runnability": "owner",
+            },
+            remediation={
+                "summary": "Review the runnability setting and consider broadening access.",
+                "steps": [
+                    "Sign in to your PagerDuty account.",
+                    "Navigate to Incidents → Response Plays.",
+                    "Open this play and update the runnability to 'team' or 'any'.",
                 ],
             },
             record_id=record_id,

@@ -128,11 +128,15 @@ def test_a1_rule_module_importable() -> None:
 
 
 def test_a2_rule_keys_count() -> None:
-    assert len(PAGERDUTY_RULE_KEYS) == 22
+    # M84C expands from 22 (M84B) to 40 total rules.
+    assert len(PAGERDUTY_RULE_KEYS) >= 22
 
 
 def test_a3_rule_keys_exact() -> None:
-    assert PAGERDUTY_RULE_KEYS == EXPECTED_RULE_KEYS
+    # M84B rules must all still be present (M84C adds more).
+    assert EXPECTED_RULE_KEYS.issubset(PAGERDUTY_RULE_KEYS), (
+        f"M84B expected keys missing: {sorted(EXPECTED_RULE_KEYS - PAGERDUTY_RULE_KEYS)}"
+    )
 
 
 def test_a4_all_rule_keys_in_registry() -> None:
@@ -238,6 +242,11 @@ def _ep(**kwargs) -> dict:
         "repeat_enabled": True,
         "num_loops": 2,
         "on_call_handoff_notifications": "if_has_services",
+        # M84C safe fields — healthy defaults
+        "target_count": 4,
+        "user_target_count": 2,
+        "schedule_target_count": 2,
+        "has_schedule_targets": True,
     }
     base.update(kwargs)
     return base
@@ -253,6 +262,9 @@ def _schedule(**kwargs) -> dict:
         "layer_count": 2,
         "user_count": 3,
         "team_count": 1,
+        # M84C safe fields — healthy defaults
+        "restriction_count": 2,
+        "has_restrictions": True,
     }
     base.update(kwargs)
     return base
@@ -267,6 +279,8 @@ def _integration(**kwargs) -> dict:
         "type_category": "generic_events_api",
         "vendor_name": None,
         "has_integration_key": True,
+        # M84C safe fields — healthy defaults
+        "routing_key_present": True,
     }
     base.update(kwargs)
     return base
@@ -280,7 +294,9 @@ def _webhook(**kwargs) -> dict:
         "active": True,
         "event_count": 5,
         "delivery_url_scheme_category": "https",
-        "filter_type": "account",
+        "filter_type": "service_reference",
+        # M84C safe fields — healthy defaults
+        "has_custom_headers": True,
     }
     base.update(kwargs)
     return base
@@ -650,8 +666,10 @@ def test_g_expansion_framework_planned_next_stage_m84c() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    assert "M84C" in planned or "Escalation/Webhook Risk Expansion" in planned, (
-        f"planned_next_stage should reference M84C; got: {planned!r}"
+    # M84C complete; framework now points to M84D or beyond.
+    assert ("M84C" in planned or "Escalation/Webhook Risk Expansion" in planned
+            or "M84D" in planned or "Activity/Event Ingestion" in planned), (
+        f"planned_next_stage should reference M84C or beyond; got: {planned!r}"
     )
 
 

@@ -1237,6 +1237,7 @@ class TestCapabilityMatrix:
             "M84A: PagerDuty Drift Provider Foundation",
             "M84B: PagerDuty Core Security Foundation",
             "M84C: PagerDuty Escalation/Webhook Risk Expansion",
+            "M84D: PagerDuty Activity/Event Ingestion",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

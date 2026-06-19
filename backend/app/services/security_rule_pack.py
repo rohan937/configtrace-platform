@@ -353,6 +353,25 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "pagerduty_response_play_no_responders": ("pagerduty", "high", "Response play posture"),
     "pagerduty_response_play_no_subscribers": ("pagerduty", "low", "Response play subscriber posture"),
     "pagerduty_response_play_not_runnable": ("pagerduty", "medium", "Response play runnability posture"),
+    # PagerDuty — M84C escalation/webhook risk expansion
+    "pagerduty_escalation_policy_no_targets": ("pagerduty", "high", "Escalation policy target posture"),
+    "pagerduty_escalation_policy_low_target_count": ("pagerduty", "medium", "Escalation policy target posture"),
+    "pagerduty_escalation_policy_no_schedule_targets": ("pagerduty", "low", "Escalation policy routing posture"),
+    "pagerduty_escalation_policy_no_team_targets": ("pagerduty", "low", "Escalation policy ownership posture"),
+    "pagerduty_schedule_no_targets": ("pagerduty", "high", "Schedule coverage posture"),
+    "pagerduty_schedule_low_target_count": ("pagerduty", "medium", "Schedule coverage posture"),
+    "pagerduty_schedule_single_layer": ("pagerduty", "low", "Schedule layer posture"),
+    "pagerduty_schedule_no_restrictions": ("pagerduty", "low", "Schedule restriction posture"),
+    "pagerduty_service_integration_routing_key_missing": ("pagerduty", "medium", "Service integration posture"),
+    "pagerduty_service_integration_unknown_type": ("pagerduty", "low", "Service integration posture"),
+    "pagerduty_webhook_subscription_no_events": ("pagerduty", "medium", "Webhook subscription posture"),
+    "pagerduty_webhook_subscription_secret_not_indicated": ("pagerduty", "medium", "Webhook authentication posture"),
+    "pagerduty_webhook_subscription_broad_scope_high": ("pagerduty", "high", "Webhook subscription posture"),
+    "pagerduty_webhook_subscription_account_scope": ("pagerduty", "medium", "Webhook subscription posture"),
+    "pagerduty_event_orchestration_low_route_count": ("pagerduty", "low", "Event orchestration posture"),
+    "pagerduty_response_play_low_responder_count": ("pagerduty", "medium", "Response play posture"),
+    "pagerduty_response_play_no_team": ("pagerduty", "low", "Response play ownership posture"),
+    "pagerduty_response_play_manual_only": ("pagerduty", "low", "Response play runnability posture"),
 }
 
 

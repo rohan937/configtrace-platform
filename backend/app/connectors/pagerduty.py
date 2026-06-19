@@ -277,17 +277,31 @@ class PagerDutyConnector(BaseConnector):
         """Normalise one PagerDuty escalation policy to a safe flat record.
 
         SECURITY: user targets, user emails, names, phone numbers, and
-        contact methods are never stored.
+        contact methods are never stored.  Target counts are derived from
+        the target list then discarded — only the integers are retained.
         """
         ep_id = _trunc(raw.get("id", ""), 64) or "unknown"
         teams = raw.get("teams") or []
         rules = raw.get("escalation_rules") or []
-        levels = set()
+        levels: set = set()
+        target_count = 0
+        user_target_count = 0
+        schedule_target_count = 0
         for rule in (rules if isinstance(rules, list) else []):
             if isinstance(rule, dict):
                 lvl = rule.get("escalation_delay_in_minutes")
                 if lvl is not None:
                     levels.add(lvl)
+                # Count targets by type category — never store IDs or names
+                for tgt in (rule.get("targets") or []):
+                    if not isinstance(tgt, dict):
+                        continue
+                    target_count += 1
+                    tgt_type = _trunc(tgt.get("type", ""), 64).lower()
+                    if "schedule" in tgt_type:
+                        schedule_target_count += 1
+                    elif "user" in tgt_type:
+                        user_target_count += 1
         handoff_raw = _trunc(raw.get("on_call_handoff_notifications", ""), 64)
         if handoff_raw in ("if_has_services", "always", "never"):
             handoff = handoff_raw
@@ -307,23 +321,34 @@ class PagerDutyConnector(BaseConnector):
             "repeat_enabled": repeat_enabled,
             "num_loops": num_loops,
             "on_call_handoff_notifications": handoff,
+            # M84C safe target-count fields
+            "target_count": target_count,
+            "user_target_count": user_target_count,
+            "schedule_target_count": schedule_target_count,
+            "has_schedule_targets": schedule_target_count > 0,
         }
 
     def _normalize_schedule(self, raw: dict) -> dict:
         """Normalise one PagerDuty schedule to a safe flat record.
 
         SECURITY: user identities, emails, names, phone numbers, and
-        on-call assignment data are never stored.
+        on-call assignment data are never stored.  Restriction counts are
+        derived from layer restriction lists then discarded.
         """
         sched_id = _trunc(raw.get("id", ""), 64) or "unknown"
         teams = raw.get("teams") or []
         layers = raw.get("schedule_layers") or []
         users: set = set()
+        restriction_count = 0
         for layer in (layers if isinstance(layers, list) else []):
             if isinstance(layer, dict):
                 for u in (layer.get("users") or []):
                     if isinstance(u, dict) and u.get("id"):
                         users.add(u["id"])
+                # Count restrictions — never store restriction content
+                restrictions = layer.get("restrictions") or []
+                if isinstance(restrictions, list):
+                    restriction_count += len(restrictions)
         return {
             "record_type": PAGERDUTY_SCHEDULE,
             "provider": "pagerduty",
@@ -334,6 +359,9 @@ class PagerDutyConnector(BaseConnector):
             "layer_count": _int(len(layers) if isinstance(layers, list) else 0),
             "user_count": _int(len(users)),
             "team_count": _int(len(teams) if isinstance(teams, list) else 0),
+            # M84C safe restriction fields
+            "restriction_count": restriction_count,
+            "has_restrictions": restriction_count > 0,
         }
 
     def _normalize_service_integration(self, raw: dict, service_id: str) -> dict:
@@ -357,10 +385,11 @@ class PagerDutyConnector(BaseConnector):
         vendor_name: Optional[str] = None
         if isinstance(vendor, dict) and vendor.get("summary"):
             vendor_name = _trunc(vendor["summary"], _MAX_STR_LEN)
-        # Derive key presence then discard raw key value
+        # Derive key presence then discard raw key values
         has_key = bool(
             raw.get("integration_key") or raw.get("routing_key")
         )
+        routing_key_present = bool(raw.get("routing_key"))
         return {
             "record_type": PAGERDUTY_SERVICE_INTEGRATION,
             "provider": "pagerduty",
@@ -370,6 +399,8 @@ class PagerDutyConnector(BaseConnector):
             "type_category": type_cat,
             "vendor_name": vendor_name,
             "has_integration_key": has_key,
+            # M84C safe key-type field
+            "routing_key_present": routing_key_present,
         }
 
     def _normalize_webhook_subscription(self, raw: dict) -> dict:
@@ -382,10 +413,14 @@ class PagerDutyConnector(BaseConnector):
         events = raw.get("events") or []
         delivery = raw.get("delivery_method") or {}
         delivery_url = None
+        has_custom_headers = False
         if isinstance(delivery, dict):
             delivery_url = delivery.get("url") or delivery.get("temporarily_disabled")
             if not isinstance(delivery_url, str):
                 delivery_url = None
+            # Derive custom-headers presence; discard all header names/values
+            custom_headers = delivery.get("custom_headers") or []
+            has_custom_headers = isinstance(custom_headers, list) and len(custom_headers) > 0
         url_scheme = _url_scheme_category(delivery_url)
         flt = raw.get("filter") or {}
         filter_type_raw = _trunc(flt.get("type", "unknown"), 64) if isinstance(flt, dict) else "unknown"
@@ -406,6 +441,8 @@ class PagerDutyConnector(BaseConnector):
             "event_count": _int(len(events) if isinstance(events, list) else 0),
             "delivery_url_scheme_category": url_scheme,
             "filter_type": filter_type,
+            # M84C safe auth-indicator field
+            "has_custom_headers": has_custom_headers,
         }
 
     def _normalize_event_orchestration(self, raw: dict) -> dict:
