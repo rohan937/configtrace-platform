@@ -326,10 +326,9 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 // M76 — Recommended next providers (compact display data).
 // NOTE: Twilio arc complete M79A–M79I; SendGrid arc complete M80A–M80I;
 // Auth0 arc complete M81A–M81I; Datadog arc complete M82A–M82I;
-// Clerk arc complete M83A–M83I. PagerDuty is now the head of the
-// recommended provider queue at M84A.
+// Clerk arc complete M83A–M83I; PagerDuty arc M84A–M84G complete (M84H next).
+// Linear is now the head of the recommended provider queue at M85A.
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
-  { label: "PagerDuty", category: "observability", milestone: "M84A" },
   { label: "Linear",    category: "devops",         milestone: "M85A" },
   { label: "Jira",      category: "devops",         milestone: "M86A" },
 ];
@@ -372,6 +371,7 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
     correlations: true,
     demo: true,
   },
+  { provider: "pagerduty", label: "PagerDuty", category: "incident management", drift: true, security: true, signals: true, correlations: true, demo: true },
 ];
 
 function Dot({ on }: { on: boolean }) {

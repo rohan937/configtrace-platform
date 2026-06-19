@@ -998,32 +998,45 @@ _PAGERDUTY = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
         "PagerDuty incident-management configuration drift, security rules, "
-        "activity ingestion, activity signals, and risk × activity correlations "
-        "(M84A–M84F). Drift snapshots cover 8 safe configuration surfaces from the "
-        "PagerDuty REST API v2: services, escalation policies, schedules, service "
-        "integrations, webhook subscriptions, event orchestrations, business "
-        "services, and response plays. M84B adds 22 core security rules; M84C adds "
-        "18 expanded rules. M84D adds review-safe configuration activity ingestion "
-        "from the same 8 drift surfaces. M84E promotes activity events into "
-        "review-priority Incident Signals. M84F joins findings with signals on the "
-        "same opaque resource_id, producing correlations across 8 PagerDuty resource "
-        "families. Rules, signals, and correlations are configuration-evidence only "
-        "and do not assert breach, compromise, unauthorized access, or data exposure. "
+        "activity ingestion, activity signals, risk x activity correlations, "
+        "and demo + QA (M84A-M84G). Drift snapshots cover 8 safe configuration "
+        "surfaces from the PagerDuty REST API v2: services, escalation policies, "
+        "schedules, service integrations, webhook subscriptions, event "
+        "orchestrations, business services, and response plays. M84B adds 22 core "
+        "security rules; M84C adds 18 expanded rules. M84D adds review-safe "
+        "configuration activity ingestion from the same 8 drift surfaces. M84E "
+        "promotes activity events into review-priority Incident Signals. M84F joins "
+        "findings with signals on the same opaque resource_id, producing correlations "
+        "across 8 PagerDuty resource families. M84G adds demo + QA: a review-safe "
+        "PagerDuty webhook subscription story (seed/clear/status) with three webhook "
+        "posture findings (non-HTTPS delivery, broad event scope, secret not "
+        "indicated), a configuration-state activity event for the same webhook "
+        "subscription, an activity signal, a risk x activity correlation, and a "
+        "linked case. No PagerDuty API tokens, routing keys, integration keys, "
+        "webhook secrets, delivery URLs, custom header values, user emails, user "
+        "names, phone numbers, contact methods, on-call user identities, responder "
+        "identities, subscriber identities, incident payloads, alert payloads, "
+        "conference phone numbers, raw routing expressions, IP addresses, user "
+        "agents, or customer PII are stored in the demo chain. Case report, "
+        "evidence timeline, and evidence graph are fully supported via the generic "
+        "builders (pagerduty label registered in _TIMELINE_PROVIDER_LABELS). "
+        "Rules, signals, and correlations are configuration-evidence only and do "
+        "not assert breach, compromise, unauthorized access, or data exposure. "
         "Privacy contract: PagerDuty API tokens, routing keys, integration keys, "
         "webhook secrets, delivery URLs, custom header values, user emails, user "
         "names, phone numbers, contact methods, on-call user identities, responder "
         "identities, subscriber identities, incident payloads, alert payloads, "
         "conference phone numbers, raw routing expressions, IP addresses, user "
         "agents, and customer PII are NEVER fetched or stored. "
-        "planned_next_stage: M84G: PagerDuty Demo + QA."
+        "planned_next_stage: M84H: PagerDuty Provider Depth QA."
     ),
 )
 

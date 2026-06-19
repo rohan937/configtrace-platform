@@ -65,6 +65,8 @@ from app.services import datadog_activity_signal_service as dd_sig
 from app.services import datadog_risk_activity_correlation_service as dd_corr_svc
 from app.services import clerk_activity_signal_service as clerk_sig
 from app.services import clerk_risk_activity_correlation_service as clerk_corr_svc
+from app.services import pagerduty_activity_signal_service as pd_sig
+from app.services import pagerduty_risk_activity_correlation_service as pd_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -7140,6 +7142,489 @@ def clear_clerk(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         ).delete(synchronize_session=False)
 
     integ = _get_clerk_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── PagerDuty demo ────────────────────────────────────────────────────────────
+#
+# M84G: review-safe PagerDuty webhook subscription story.
+# A PagerDuty incident-response configuration has webhook posture that may
+# require review. ConfigTrace shows related PagerDuty configuration activity
+# near the finding. Evidence for review. Does not confirm compromise,
+# unauthorized access, or data exposure.
+#
+# PRIVACY: no PagerDuty API tokens, routing keys, integration keys, webhook
+# secrets, delivery URLs, custom header names/values, user emails, user names,
+# phone numbers, contact methods, on-call user identities, responder identities,
+# subscriber identities, incident payloads, alert payloads, conference phone
+# numbers, raw routing expressions, IP addresses, user agents, raw audit
+# payloads, raw API response dicts, or customer PII are seeded.
+# Only safe opaque placeholder IDs, booleans, counts, and category labels.
+#
+# SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+
+PAGERDUTY_DEMO_INTEGRATION_NAME = "ConfigTrace PagerDuty incident demo (sample data)"
+PAGERDUTY_DEMO_CASE_SOURCE = "demo_pagerduty_incident"
+PAGERDUTY_DEMO_DATASET = "pagerduty_incident_demo_v1"
+
+# Safe placeholder -- no real PagerDuty values, no API tokens, no webhook URLs.
+_PAGERDUTY_DEMO_WEBHOOK_ID = "PAGERDUTY_TEST_WEBHOOK_SUBSCRIPTION_ID"
+
+
+def _get_pagerduty_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == PAGERDUTY_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_pagerduty_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == PAGERDUTY_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_pagerduty_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_pagerduty_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_pagerduty(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the PagerDuty demo incident chain (idempotent). No real PagerDuty sync.
+
+    One coherent PagerDuty webhook subscription story:
+      Webhook posture risks (non-HTTPS delivery, broad event scope, secret not
+      indicated) -> PagerDuty webhook config-state activity event -> PagerDuty
+      activity signal -> PagerDuty risk x activity correlation -> case.
+
+    All objects are anchored on a hidden demo integration so clear_pagerduty
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace).
+
+    PRIVACY: no PagerDuty API tokens, routing keys, integration keys, webhook
+    secrets, delivery URLs, custom header names/values, user emails, user names,
+    phone numbers, contact methods, on-call user identities, responder identities,
+    subscriber identities, incident payloads, alert payloads, conference phone
+    numbers, raw routing expressions, IP addresses, user agents, raw audit
+    payloads, raw API response dicts, or customer PII. Only safe booleans,
+    counts, opaque placeholder IDs, and category labels.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+    """
+    existing = _existing_pagerduty_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -- never shown / never synced).
+    integ = _get_pagerduty_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": PAGERDUTY_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=PAGERDUTY_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real PagerDuty rule keys (M84B/M84C).
+    #    Evidence uses only safe booleans, counts, opaque placeholder IDs, and
+    #    category labels -- never webhook URLs, delivery endpoints, routing keys,
+    #    integration keys, webhook secrets, user emails, or PII.
+
+    webhook_finding_1 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="pagerduty",
+        finding_key=(
+            f"pagerduty_webhook_subscription_non_https:{_PAGERDUTY_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: PagerDuty webhook subscription uses a non-HTTPS delivery endpoint",
+        resource_id=None,
+        description=(
+            "Sample PagerDuty webhook subscription non-HTTPS delivery posture risk "
+            f"for the incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "pagerduty_webhook_subscription_non_https", "demo": True,
+            "record_id": _PAGERDUTY_DEMO_WEBHOOK_ID,
+            "record_type": "pagerduty_webhook_subscription",
+            "resource_name": "PagerDuty webhook subscription review",
+            "active": True,
+            "enabled": True,
+            "url_present": True,
+            "url_scheme_category": "non_https",
+            "https_delivery": False,
+        },
+        remediation={
+            "summary": (
+                "Update the PagerDuty webhook subscription to deliver events "
+                "only to HTTPS endpoints to protect data in transit."
+            ),
+        },
+    )
+
+    webhook_finding_2 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="pagerduty",
+        finding_key=(
+            f"pagerduty_webhook_subscription_broad_event_scope:{_PAGERDUTY_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: PagerDuty webhook subscription has a broad event scope",
+        resource_id=None,
+        description=(
+            "Sample PagerDuty webhook subscription broad-scope posture risk "
+            f"for the incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "pagerduty_webhook_subscription_broad_event_scope", "demo": True,
+            "record_id": _PAGERDUTY_DEMO_WEBHOOK_ID,
+            "record_type": "pagerduty_webhook_subscription",
+            "resource_name": "PagerDuty webhook subscription review",
+            "active": True,
+            "event_count": 20,
+            "subscribed_event_count": 20,
+            "event_scope_category": "broad",
+        },
+        remediation={
+            "summary": (
+                "Narrow the PagerDuty webhook subscription to only the specific "
+                "event types required rather than subscribing to all events."
+            ),
+        },
+    )
+
+    webhook_finding_3 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="pagerduty",
+        finding_key=(
+            f"pagerduty_webhook_subscription_secret_not_indicated:{_PAGERDUTY_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: PagerDuty webhook subscription has no secret indicated",
+        resource_id=None,
+        description=(
+            "Sample PagerDuty webhook subscription missing-secret posture risk "
+            f"for the incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "pagerduty_webhook_subscription_secret_not_indicated", "demo": True,
+            "record_id": _PAGERDUTY_DEMO_WEBHOOK_ID,
+            "record_type": "pagerduty_webhook_subscription",
+            "resource_name": "PagerDuty webhook subscription review",
+            "active": True,
+            "secret_present": False,
+            "description_present": True,
+        },
+        remediation={
+            "summary": (
+                "Configure a shared secret for the PagerDuty webhook subscription "
+                "to allow receivers to verify event authenticity."
+            ),
+        },
+    )
+
+    pagerduty_findings = [webhook_finding_1, webhook_finding_2, webhook_finding_3]
+
+    # 3. Activity event (provider="pagerduty", source="pagerduty_activity_event").
+    PAGERDUTY_ACTIVITY_SOURCE = "pagerduty_activity_event"
+
+    def _mk_pd_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        resource_id: str, extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+            "event_source": PAGERDUTY_ACTIVITY_SOURCE,
+            "status": "observed",
+            "category": "pagerduty_configuration",
+            "status_category": "observed",
+            "operation_family": f"pagerduty.{resource_type}",
+            "operation_action": "observe",
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="pagerduty", source=PAGERDUTY_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    webhook_event = _mk_pd_event(
+        event_type="pagerduty.webhook_subscription.updated",
+        resource_type="webhook_subscription",
+        provider_event_id="PAGERDUTY_TEST_ACTIVITY_EVENT_ID",
+        resource_id=_PAGERDUTY_DEMO_WEBHOOK_ID,
+        extra={
+            "resource_id": _PAGERDUTY_DEMO_WEBHOOK_ID,
+            "resource_name": "PagerDuty webhook subscription review",
+            "active": True,
+            "enabled": True,
+            "url_present": True,
+            "url_scheme_category": "non_https",
+            "https_delivery": False,
+            "event_count": 20,
+            "subscribed_event_count": 20,
+            "event_scope_category": "broad",
+            "secret_present": False,
+            "description_present": True,
+            "has_custom_headers": False,
+        },
+    )
+
+    pagerduty_events = [webhook_event]
+
+    # 4. Activity signals via the real M84E signal builder.
+    pagerduty_signals: list[SecurityIncidentSignal] = []
+    for ev in pagerduty_events:
+        sig_dict = pd_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            pagerduty_signals.append(sig)
+
+    # 5. Correlation via the real M84F builder.
+    pagerduty_correlations: list[SecuritySignalCorrelation] = []
+    signals_by_type_pd: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in pagerduty_signals
+    }
+
+    def _add_pd_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+    ) -> SecuritySignalCorrelation:
+        rule = pd_corr_svc.PAGERDUTY_CORRELATION_RULES[correlation_type]
+        cdict = pd_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        pagerduty_correlations.append(corr)
+        return corr
+
+    webhook_signal = signals_by_type_pd.get("pagerduty_webhook_subscription_config_changed")
+    if webhook_signal is not None:
+        _add_pd_correlation(
+            finding=webhook_finding_1,
+            signal=webhook_signal,
+            correlation_type="pagerduty_webhook_subscription_risk_activity_correlation",
+            match_reason="resource_id_match",
+        )
+
+    # 6. Case linking 3 findings, 1 event, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title=(
+            "[Demo] PagerDuty incident-response configuration review: "
+            "webhook posture and configuration activity"
+        ),
+        summary=(
+            "Review-safe PagerDuty demo case linking webhook subscription "
+            "configuration risks to control-plane activity evidence. Groups "
+            "PagerDuty webhook subscription findings (non-HTTPS delivery, broad "
+            "event scope, secret not indicated) with a PagerDuty configuration-state "
+            "activity event for the same webhook subscription, plus the matching "
+            "activity signal and risk x activity correlation. "
+            "Marked demo -- no real PagerDuty sync, no API tokens, no routing keys, "
+            "no integration keys, no webhook secrets, no delivery URLs, no user "
+            "emails, no user names, no phone numbers, no contact methods, no "
+            "on-call identities, no incident payloads, no alert payloads, no "
+            "IP addresses, no user agents, no raw audit payloads, no customer data. "
+            "Evidence for review. Does not confirm compromise, unauthorized access, "
+            "or data exposure."
+        ),
+        severity="high",
+        provider="pagerduty",
+        metadata={
+            "source": PAGERDUTY_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+    db.flush()
+
+    for f in pagerduty_findings:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="finding",
+            linked_finding_id=f.id,
+            db=db,
+        )
+
+    for ev in pagerduty_events:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="activity_event",
+            linked_activity_event_id=ev.id,
+            db=db,
+        )
+
+    seen_signal_ids_pd: set = set()
+    for sig in pagerduty_signals:
+        seen_signal_ids_pd.add(sig.id)
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="signal",
+            linked_signal_id=sig.id,
+            db=db,
+        )
+
+    for corr in pagerduty_correlations:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="correlation",
+            linked_correlation_id=corr.id,
+            db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids_pd
+        ):
+            seen_signal_ids_pd.add(corr.linked_signal_id)
+            case_svc.add_link(
+                case_id=case.id,
+                link_type="signal",
+                linked_signal_id=corr.linked_signal_id,
+                db=db,
+            )
+
+    db.commit()
+    logger.info(
+        "pagerduty_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_pagerduty(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the PagerDuty demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == PAGERDUTY_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = _get_pagerduty_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

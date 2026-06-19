@@ -48,7 +48,8 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
-  | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk";
+  | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk"
+  | "pagerduty";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -214,6 +215,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Clerk demo",
     seedColor: "#4f4fa3",
   },
+  {
+    provider: "pagerduty",
+    label: "PagerDuty",
+    intro: "Try the PagerDuty security demo:",
+    description:
+      "Seed a review-safe PagerDuty incident-response configuration review with a webhook subscription story — non-HTTPS delivery, broad event scope, and secret-not-indicated findings with related control-plane activity evidence, activity signal, risk × activity correlation, and a case. No real PagerDuty sync, API tokens, routing keys, integration keys, webhook secrets, delivery URLs, user emails, phone numbers, incident payloads, or customer data are stored.",
+    seedButton: "Load PagerDuty security demo",
+    clearButton: "Clear PagerDuty demo",
+    seedColor: "#06ac38",
+  },
 ];
 
 export default function CasesPage() {
@@ -272,7 +283,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -291,7 +302,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -326,7 +337,9 @@ export default function CasesPage() {
                                   ? "Datadog demo data cleared."
                                   : provider === "clerk"
                                     ? "Clerk demo data cleared."
-                                    : "Demo data cleared.",
+                                    : provider === "pagerduty"
+                                      ? "PagerDuty demo data cleared."
+                                      : "Demo data cleared.",
       );
       await load();
     } catch {

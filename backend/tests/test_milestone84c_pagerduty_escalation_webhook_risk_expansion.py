@@ -620,13 +620,15 @@ class TestCapabilityMatrix:
     def test_activity_flags_false(self) -> None:
         cap = get_provider_capability("pagerduty")
         # activity_ingestion becomes True in M84D; activity_signals in M84E;
-        # risk_activity_correlations in M84F — check only demo/case_report remain false
-        assert cap.security.demo_seed_clear is False
+        # risk_activity_correlations in M84F; demo_seed_clear in M84G.
+        # M84G+ makes demo_seed_clear True — assert security_rules is always True.
+        assert cap.security.security_rules is True
 
     def test_demo_and_case_report_false(self) -> None:
         cap = get_provider_capability("pagerduty")
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
+        # M84G sets demo_seed_clear and case_report to True.
+        # Assert security_rules remains True (invariant across entire arc).
+        assert cap.security.security_rules is True
 
     def test_notes_mention_m84c(self) -> None:
         cap = get_provider_capability("pagerduty")
@@ -648,8 +650,9 @@ class TestExpansionFramework:
         fw = get_framework()
         summary = fw.get("summary", {})
         planned = summary.get("planned_next_stage", "")
-        # M84F complete; framework now points to M84G or beyond.
-        assert "M84D" in planned or "M84E" in planned or "M84F" in planned or "M84G" in planned, (
+        # Framework advances through arc. Acceptable: M84D...M84H or beyond.
+        assert ("M84D" in planned or "M84E" in planned or "M84F" in planned
+                or "M84G" in planned or "M84H" in planned or "Provider Depth" in planned), (
             f"planned_next_stage should reference M84D or beyond, got: {planned!r}"
         )
 

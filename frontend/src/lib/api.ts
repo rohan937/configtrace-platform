@@ -1309,14 +1309,14 @@ export async function getIncidentDemoStatus(
 
 export async function seedIncidentDemo(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" = "github",
 ): Promise<import("@/types").IncidentDemoSeedResponse> {
   return apiFetch(`/security/incident-demo/seed?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }
 
 export async function clearIncidentDemo(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" = "github",
 ): Promise<{ cleared: boolean }> {
   return apiFetch(`/security/incident-demo/clear?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }

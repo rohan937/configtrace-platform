@@ -530,8 +530,10 @@ def test_d15_pagerduty_in_next_providers_brief() -> None:
     if block_start == -1 or block_end == -1:
         return
     brief_block = text[block_start:block_end]
-    assert "PagerDuty" in brief_block, (
-        "PagerDuty should be in NEXT_PROVIDERS_BRIEF as the next recommended provider"
+    # PagerDuty arc completes in M84G; it is then removed from NEXT_PROVIDERS_BRIEF.
+    # Accept either PagerDuty still present (pre-M84G) or Linear at head (post-M84G).
+    assert "PagerDuty" in brief_block or "Linear" in brief_block, (
+        "NEXT_PROVIDERS_BRIEF should contain PagerDuty or Linear (next recommended provider)"
     )
 
 

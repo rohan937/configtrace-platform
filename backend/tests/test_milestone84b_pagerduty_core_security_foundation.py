@@ -637,17 +637,14 @@ def test_g_capability_matrix_security_rules_true() -> None:
 
 
 def test_g_capability_matrix_other_security_false() -> None:
-    """M84D promotes activity_ingestion to True; signals/correlations/demo remain False."""
+    """M84D promotes activity_ingestion to True; signals/correlations/demo remain False
+    through M84B. M84G sets demo_seed_clear, case_report, evidence_timeline, and
+    evidence_graph to True, so those are no longer asserted False once the arc completes."""
     cap = get_provider_capability("pagerduty")
     assert cap is not None
     sec = cap.security
-    # activity_ingestion becomes True in M84D; activity_signals in M84E;
-    # risk_activity_correlations in M84F — check only demo/case_report
-    assert sec.demo_seed_clear is False
-    assert sec.demo_seed_clear is False
-    assert sec.case_report is False
-    assert sec.evidence_timeline is False
-    assert sec.evidence_graph is False
+    # security_rules is True from M84B onward (always true after arc).
+    assert sec.security_rules is True
 
 
 def test_g_capability_matrix_maturity_partial() -> None:
@@ -666,12 +663,13 @@ def test_g_expansion_framework_planned_next_stage_m84c() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    # M84C complete; framework now points to M84D or beyond.
+    # Framework advances through arc. Acceptable: M84C...M84H or beyond.
     assert ("M84C" in planned or "Escalation/Webhook Risk Expansion" in planned
             or "M84D" in planned or "Activity/Event Ingestion" in planned
             or "M84E" in planned or "Activity Signals" in planned
             or "M84F" in planned or "Activity Correlations" in planned
-            or "M84G" in planned or "Demo" in planned), (
+            or "M84G" in planned or "Demo" in planned
+            or "M84H" in planned or "Provider Depth" in planned), (
         f"planned_next_stage should reference M84C or beyond; got: {planned!r}"
     )
 

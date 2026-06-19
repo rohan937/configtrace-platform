@@ -1241,6 +1241,8 @@ class TestCapabilityMatrix:
             "M84E: PagerDuty Activity Signals",
             "M84F: PagerDuty Risk × Activity Correlations",
             "M84G: PagerDuty Demo + QA",
+            "M84H: PagerDuty Provider Depth QA",
+            "M84I: PagerDuty Cross-Cloud UX Polish",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )
