@@ -662,11 +662,12 @@ class TestCapabilityMatrix:
         assert cap.security.activity_ingestion is True
 
     def test_risk_activity_correlations_false(self) -> None:
+        # M85F advanced this to True; assert current state.
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("linear")
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True
 
     def test_demo_seed_clear_false(self) -> None:
         from app.services.provider_capability_matrix_service import (
@@ -687,11 +688,12 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m85f(self) -> None:
+        # M85F is complete; framework now points to M85G.
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M85F" in planned, (
-            f"planned_next_stage should reference M85F; got: {planned!r}"
+        assert "M85G" in planned, (
+            f"planned_next_stage should reference M85G; got: {planned!r}"
         )
 
     def test_planned_next_stage_not_m85e(self) -> None:

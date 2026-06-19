@@ -23,8 +23,9 @@ import type {
   DatadogCorrelationGenerateResponse,
   ClerkCorrelationGenerateResponse,
   PagerDutyCorrelationGenerateResponse,
+  LinearCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations, generatePagerDutyCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations, generatePagerDutyCorrelations, generateLinearCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -37,7 +38,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -239,6 +240,19 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "pagerduty_business_service_risk_activity_correlation",
     "pagerduty_response_play_risk_activity_correlation",
   ],
+  // M85F — Linear risk x activity correlation types.
+  linear: [
+    "linear_workspace_risk_activity_correlation",
+    "linear_team_risk_activity_correlation",
+    "linear_project_risk_activity_correlation",
+    "linear_workflow_state_risk_activity_correlation",
+    "linear_label_risk_activity_correlation",
+    "linear_webhook_risk_activity_correlation",
+    "linear_view_risk_activity_correlation",
+    "linear_cycle_risk_activity_correlation",
+    "linear_integration_risk_activity_correlation",
+    "linear_config_activity_correlation",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 
@@ -259,7 +273,7 @@ export default function CorrelationsPage() {
   const typeOptions = TYPE_OPTIONS_BY_PROVIDER[provider] ?? [];
 
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse) | null>(null);
+  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse | LinearCorrelationGenerateResponse) | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -314,6 +328,9 @@ export default function CorrelationsPage() {
       } else if (provider === "pagerduty") {
         const res = await generatePagerDutyCorrelations(token);
         setGenResult(res);
+      } else if (provider === "linear") {
+        const r = await generateLinearCorrelations(token);
+        setGenResult(r);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);
         setGenResult(res);
@@ -448,7 +465,7 @@ function GenerateBar({
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
-  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse) | null;
+  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse | LinearCorrelationGenerateResponse) | null;
   genError: string | null;
   onGenerate: () => void;
 }) {
@@ -483,7 +500,9 @@ function GenerateBar({
                                 ? "Generate review-safe Clerk correlations between configuration findings and recent Clerk configuration activity. Stores rule keys, signal types, opaque resource IDs, counts, and timing evidence only — never Clerk secret keys, session tokens, JWTs, OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, raw webhook URLs, raw domain names, user emails, user IDs, phone numbers, names, session history, login history, IP addresses, user agents, raw audit payloads, customer data, or PII."
                                 : provider === "pagerduty"
                                   ? "Generate review-safe PagerDuty correlations between configuration findings and recent PagerDuty configuration activity. ConfigTrace stores only rule keys, signal types, opaque resource IDs, counts, categories, and timing evidence — never API tokens, routing keys, integration keys, webhook secrets, raw URLs, user contact data, incident payloads, alert payloads, IP addresses, user agents, or PII."
-                                  : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                                  : provider === "linear"
+                                    ? "Generate review-safe Linear correlations between configuration findings and recent Linear configuration activity. Stores rule keys, signal types, opaque resource IDs, counts, and timing evidence only — never Linear API keys, OAuth tokens, webhook secrets, issue content, comment bodies, user emails, user IDs, team member identities, raw webhook payloads, or PII."
+                                    : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -679,7 +698,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                                 ? "the same Clerk resource (instance / application / domain / redirect URL / JWT template / webhook endpoint / email-SMS settings / auth strategy / organization settings / session policy). Sync Clerk activity, generate Clerk signals, then generate Clerk correlations to align configuration risks with Clerk configuration activity evidence on the same Clerk surface."
                                 : provider === "pagerduty"
                                   ? "the same PagerDuty resource (service / escalation policy / schedule / service integration / webhook subscription / event orchestration / business service / response play). Sync PagerDuty activity, generate PagerDuty signals, then generate PagerDuty correlations to align incident-response configuration risks with activity evidence on the same PagerDuty surface."
-                                  : "the same GitHub repository";
+                                  : provider === "linear"
+                                    ? "the same Linear resource (workspace / team / project / workflow state / label / webhook / view / cycle / integration). Sync Linear activity, generate Linear signals, then generate Linear correlations to align project-management configuration risks with activity evidence on the same Linear surface."
+                                    : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

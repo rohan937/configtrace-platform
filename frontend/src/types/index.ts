@@ -2194,6 +2194,14 @@ export interface LinearActivitySignalGenerateResponse {
   signals_created: number;
   signals_skipped: number;
 }
+export interface LinearCorrelationGenerateResponse {
+  provider: string;
+  findings_scanned: number;
+  signals_scanned: number;
+  candidate_pairs: number;
+  correlations_created: number;
+  correlations_skipped: number;
+}
 export interface PagerDutyActivitySignalGenerateResponse {
   provider: string;
   source: string;

@@ -882,9 +882,10 @@ class TestCapabilityMatrixAndFramework:
         assert cap.security.activity_signals is True
 
     def test_linear_risk_activity_correlations_false(self):
+        # M85F advanced this to True; assert current state.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True
 
     def test_linear_maturity_partial(self):
         cap = get_provider_capability("linear")

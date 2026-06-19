@@ -257,6 +257,8 @@ from app.schemas.security_linear_activity import (
     LinearActivitySyncResponse,
     LinearActivitySignalGenerateRequest,
     LinearActivitySignalGenerateResponse,
+    LinearCorrelationGenerateRequest,
+    LinearCorrelationGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
@@ -264,6 +266,7 @@ from app.services import pagerduty_activity_ingestion_service
 from app.services import pagerduty_activity_signal_service
 from app.services import linear_activity_ingestion_service
 from app.services import linear_activity_signal_service
+from app.services import linear_risk_activity_correlation_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -1394,6 +1397,10 @@ def generate_security_correlations(
         )
     elif provider == "google_cloud":
         summary = security_signal_correlation_service.generate_google_cloud_correlations(
+            workspace_id=workspace_id, db=db
+        )
+    elif provider == "linear":
+        summary = linear_risk_activity_correlation_service.generate_linear_correlations(
             workspace_id=workspace_id, db=db
         )
     else:
@@ -3540,6 +3547,37 @@ def generate_linear_activity_signals_endpoint(
         max_signals=max_signals,
     )
     return LinearActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/linear-correlations/generate",
+    response_model=LinearCorrelationGenerateResponse,
+)
+def generate_linear_risk_activity_correlations(
+    body: Optional[LinearCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LinearCorrelationGenerateResponse:
+    """Generate Linear Risk x Activity correlations for a workspace.
+
+    Admin/owner only. Joins active Linear configuration-risk findings with
+    Linear activity signals on the same resource. Idempotent. Never confirms
+    breach, compromise, or unauthorized access. Members can read correlations
+    via GET /security/correlations?provider=linear.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_correlations = min(body.max_correlations, 1000) if body and body.max_correlations else 100
+    summary = linear_risk_activity_correlation_service.generate_linear_correlations(
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_correlations=max_correlations,
+    )
+    return LinearCorrelationGenerateResponse(**summary)
 
 
 @router.post(

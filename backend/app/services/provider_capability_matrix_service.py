@@ -1070,7 +1070,7 @@ _LINEAR = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -1087,13 +1087,14 @@ _LINEAR = ProviderCapability(
         "rules (39 total). M85D adds review-safe activity ingestion synthesized from the "
         "same 9 safe drift surfaces — Linear's audit API is never used because it "
         "contains actor emails, user IDs, and IP addresses. M85E adds Linear activity "
-        "signals derived from ingested activity events. "
+        "signals derived from ingested activity events. M85F adds Linear Risk x Activity "
+        "Correlations, linking security rule violations to proximate activity events. "
         "Authentication uses a Linear API key (read-only). API key is stored encrypted "
         "and never returned in API responses, never logged, and never copied to resource "
         "metadata. Issue titles, descriptions, comments, attachments, user emails, user "
         "names, member identities, raw URLs, webhook secrets, and customer data are "
         "never fetched or stored. "
-        "planned_next_stage: M85F: Linear Risk-Activity Correlations."
+        "planned_next_stage: M85G: Linear Demo + QA."
     ),
 )
 

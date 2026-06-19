@@ -2512,6 +2512,18 @@ export async function generatePagerDutyCorrelations(
 }
 
 /**
+ * generateLinearCorrelations — POST /security/linear-correlations/generate
+ */
+export async function generateLinearCorrelations(
+  token: string | null | undefined,
+): Promise<import("@/types").LinearCorrelationGenerateResponse> {
+  return apiFetch<import("@/types").LinearCorrelationGenerateResponse>(
+    "/security/linear-correlations/generate",
+    { method: "POST", token },
+  );
+}
+
+/**
  * generatePagerDutyActivitySignals — POST /security/pagerduty-activity/generate-signals
  * Admin only. Generates review-priority Incident Signals from safe PagerDuty
  * configuration-state activity events. Promotes service, escalation policy,
