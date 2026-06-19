@@ -1087,6 +1087,24 @@ export async function generateDatadogActivitySignals(
 }
 
 /**
+ * generateClerkActivitySignals — POST /security/clerk-activity/generate-signals
+ * Admin only. Generates review signals from safe Clerk configuration-state
+ * activity events. Signals summarize instance, auth strategy, session policy,
+ * organization settings, domain, JWT template, and webhook endpoint changes.
+ * Secret keys, tokens, raw URLs, domain names, user emails, session data,
+ * and PII are never stored.
+ */
+export async function generateClerkActivitySignals(
+  token: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").ClerkActivitySignalGenerateResponse> {
+  return apiFetch<import("@/types").ClerkActivitySignalGenerateResponse>(
+    "/security/clerk-activity/generate-signals",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * generateAuth0ActivitySignals — POST /security/auth0-activity/generate-signals
  * Generates review-priority Incident Signals from safe Auth0 configuration activity.
  * Promotes tenant settings, application, connection, resource server, rule, action,
@@ -1267,21 +1285,21 @@ export async function getSecurityCaseGraph(
 
 export async function getIncidentDemoStatus(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" = "github",
 ): Promise<import("@/types").IncidentDemoStatus> {
   return apiFetch(`/security/incident-demo/status?provider=${provider}`, { token });
 }
 
 export async function seedIncidentDemo(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" = "github",
 ): Promise<import("@/types").IncidentDemoSeedResponse> {
   return apiFetch(`/security/incident-demo/seed?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }
 
 export async function clearIncidentDemo(
   token?: string | null,
-  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" = "github",
+  provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" = "github",
 ): Promise<{ cleared: boolean }> {
   return apiFetch(`/security/incident-demo/clear?provider=${provider}`, { method: "POST", body: JSON.stringify({}), token });
 }

@@ -49,3 +49,21 @@ class ClerkActivitySyncResponse(BaseModel):
     events_skipped: int = 0
     permission_limited: bool = False
     error_message: Optional[str] = None
+
+
+class ClerkActivitySignalGenerateRequest(BaseModel):
+    """POST /security/clerk-activity/generate-signals request body (all optional)."""
+
+    lookback_hours: int = Field(default=24, ge=1, le=168)
+    max_signals: int = Field(default=100, ge=1, le=1000)
+
+
+class ClerkActivitySignalGenerateResponse(BaseModel):
+    """Clerk configuration activity signal generation summary."""
+
+    provider: str = "clerk"
+    source: str = "clerk_activity_event"
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0

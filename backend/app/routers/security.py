@@ -239,8 +239,11 @@ from app.schemas.security_sendgrid_activity import (
 from app.schemas.security_clerk_activity import (
     ClerkActivitySyncRequest,
     ClerkActivitySyncResponse,
+    ClerkActivitySignalGenerateRequest,
+    ClerkActivitySignalGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
+from app.services import clerk_activity_signal_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3374,6 +3377,40 @@ def sync_clerk_activity_events(
         db=db,
     )
     return ClerkActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/clerk-activity/generate-signals",
+    response_model=ClerkActivitySignalGenerateResponse,
+)
+def generate_clerk_activity_signals_endpoint(
+    body: Optional[ClerkActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ClerkActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe Clerk configuration activity events (M83E).
+
+    Admin/owner only. Promotes ingested Clerk config-state events into
+    review-priority Incident Signals grouped by resource identity.
+    Idempotent — re-running creates no duplicates. Review signals only;
+    does not confirm compromise, unauthorized access, or data exposure.
+    No secrets, tokens, PII, or raw URLs are stored.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 100
+
+    summary = clerk_activity_signal_service.generate_clerk_activity_signals(
+        workspace_id=workspace_id,
+        lookback_hours=lookback_hours,
+        max_signals=max_signals,
+        db=db,
+    )
+    return ClerkActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

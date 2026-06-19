@@ -942,7 +942,7 @@ _CLERK = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -952,20 +952,22 @@ _CLERK = ProviderCapability(
     maturity="partial",
     notes=(
         "Clerk identity infrastructure drift, core security, auth/application risk "
-        "expansion, and activity ingestion (M83A–M83D). Drift snapshots cover 10 safe "
-        "configuration surfaces from the Clerk Backend API v1. M83B adds 21 core security "
-        "rules. M83C adds 19 auth/application risk expansion rules. M83D adds "
+        "expansion, activity ingestion, and activity signals (M83A–M83E). Drift snapshots "
+        "cover 10 safe configuration surfaces from the Clerk Backend API v1. M83B adds 21 "
+        "core security rules. M83C adds 19 auth/application risk expansion rules. M83D adds "
         "configuration-state activity ingestion synthesized from the same 10 safe drift "
         "surfaces — never Clerk audit logs which contain user emails, user IDs, IP "
-        "addresses, and session data. Privacy contract: Clerk secret key values, "
+        "addresses, and session data. M83E adds activity signals: ingested Clerk "
+        "configuration-state events are promoted into review-priority Incident Signals. "
+        "Privacy contract: Clerk secret key values, "
         "publishable key values, session tokens, JWTs, OAuth tokens, bearer tokens, "
         "webhook secrets, raw webhook/redirect URLs, raw domain names, JWT template "
         "bodies, custom claims, audience URIs, user emails, user IDs, phone numbers, "
         "names, member identities, session history, login history, IP addresses, user "
         "agents, raw audit payloads, and customer PII are NEVER fetched or stored. "
-        "Activity signals, risk × activity correlations, demo seed/clear, case reports, "
+        "Risk × activity correlations, demo seed/clear, case reports, "
         "evidence timelines, and evidence graphs are not yet implemented. "
-        "planned_next_stage: M83E: Clerk Activity Signals."
+        "planned_next_stage: M83F: Clerk Risk × Activity Correlations."
     ),
 )
 

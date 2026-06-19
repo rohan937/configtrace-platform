@@ -365,8 +365,8 @@ _ACTIVITY_PROVIDERS = [
     "clerk",
 ]
 # Datadog activity signals landed in M82E; correlations landed in M82F.
-# Clerk (M83D) has activity ingestion but not yet signals or correlations.
-_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "clerk"]
+# Clerk activity signals landed in M83E; correlations not yet implemented.
+_SIGNALS_PROVIDERS = _ACTIVITY_PROVIDERS[:]
 _CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "clerk"]
 
 
