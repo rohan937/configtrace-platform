@@ -249,6 +249,8 @@ from app.schemas.security_pagerduty_activity import (
     PagerDutyActivitySyncResponse,
     PagerDutyActivitySignalGenerateRequest,
     PagerDutyActivitySignalGenerateResponse,
+    PagerDutyCorrelationGenerateRequest,
+    PagerDutyCorrelationGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
@@ -3486,6 +3488,54 @@ def generate_pagerduty_activity_signals_endpoint(
         db=db,
     )
     return PagerDutyActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/pagerduty-correlations/generate",
+    response_model=PagerDutyCorrelationGenerateResponse,
+)
+def generate_pagerduty_risk_activity_correlations(
+    body: Optional[PagerDutyCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PagerDutyCorrelationGenerateResponse:
+    """Generate PagerDuty Risk × Activity correlations (M84F).
+
+    Admin/owner only. Joins active PagerDuty configuration-risk findings with
+    PagerDuty activity signals on the same safe opaque resource_id within a
+    review window. Covers eight correlation families: service, escalation_policy,
+    schedule, service_integration, webhook_subscription, event_orchestration,
+    business_service, and response_play.
+
+    PagerDuty API tokens, routing keys, integration keys, webhook secrets,
+    delivery URLs, user emails, user names, phone numbers, contact methods,
+    on-call user identities, responder identities, subscriber identities,
+    incident payloads, alert payloads, IP addresses, user agents, raw audit
+    payloads, and PII are never used or stored.
+    Does not confirm compromise, unauthorized access, or data exposure.
+    Idempotent — re-running creates no duplicates.
+
+    Members can view the resulting correlations via
+    GET /security/correlations?provider=pagerduty.
+    """
+    from app.services.pagerduty_risk_activity_correlation_service import (
+        generate_pagerduty_correlations,
+    )
+
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_correlations is not None:
+            kwargs["max_correlations"] = body.max_correlations
+    result = generate_pagerduty_correlations(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return PagerDutyCorrelationGenerateResponse(**result)
 
 
 @router.post(

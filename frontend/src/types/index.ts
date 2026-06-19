@@ -2248,6 +2248,14 @@ export interface ClerkCorrelationGenerateResponse {
   correlations_created: number;
   correlations_skipped: number;
 }
+export interface PagerDutyCorrelationGenerateResponse {
+  provider: string;
+  findings_scanned: number;
+  signals_scanned: number;
+  candidate_pairs: number;
+  correlations_created: number;
+  correlations_skipped: number;
+}
 export interface GoogleCloudActivitySignalGenerateResponse {
   provider: string;
   source: string;

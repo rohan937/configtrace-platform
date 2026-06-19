@@ -388,6 +388,23 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "session_policy_id",
         "window_start",
         "window_end",
+        # PagerDuty Risk × Activity Correlation metadata (M84F) — safe opaque
+        # resource identifiers, counts, and category labels only. NEVER stored:
+        # PagerDuty API tokens, routing keys, integration keys, webhook secrets,
+        # delivery URLs, custom header values, user emails, user names, phone
+        # numbers, contact methods, on-call user identities, responder identities,
+        # subscriber identities, incident payloads, alert payloads, conference
+        # phone numbers, raw routing expressions, IP addresses, user agents,
+        # raw audit payloads, or customer PII.
+        "pagerduty_event_id",         # stable synthetic event identifier (day-scoped)
+        "escalation_policy_id",       # PagerDuty escalation policy opaque ID
+        "schedule_id",                # PagerDuty schedule opaque ID
+        "integration_id",             # PagerDuty integration opaque ID (not a secret)
+        "webhook_subscription_id",    # PagerDuty webhook subscription opaque ID
+        "event_orchestration_id",     # PagerDuty event orchestration opaque ID
+        "business_service_id",        # PagerDuty business service opaque ID
+        "response_play_id",           # PagerDuty response play opaque ID
+        "service_id",                 # PagerDuty service opaque ID (not a secret)
     }
 )
 

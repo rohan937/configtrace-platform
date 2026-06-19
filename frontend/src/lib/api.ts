@@ -2493,6 +2493,25 @@ export async function getChangeGitHubPrDraft(
 }
 
 /**
+ * generatePagerDutyCorrelations — POST /security/pagerduty-correlations/generate
+ * Admin only. Joins active PagerDuty configuration-risk findings with PagerDuty
+ * activity signals on the same safe opaque resource_id. Stores rule keys, signal
+ * types, opaque resource IDs, and timing evidence only — never API tokens, routing
+ * keys, integration keys, webhook secrets, delivery URLs, user identities, incident
+ * payloads, alert payloads, IP addresses, user agents, or PII. Does not confirm
+ * compromise or unauthorized access.
+ */
+export async function generatePagerDutyCorrelations(
+  token: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").PagerDutyCorrelationGenerateResponse> {
+  return apiFetch<import("@/types").PagerDutyCorrelationGenerateResponse>(
+    "/security/pagerduty-correlations/generate",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * generatePagerDutyActivitySignals — POST /security/pagerduty-activity/generate-signals
  * Admin only. Generates review-priority Incident Signals from safe PagerDuty
  * configuration-state activity events. Promotes service, escalation policy,

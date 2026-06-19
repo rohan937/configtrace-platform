@@ -1240,6 +1240,7 @@ class TestCapabilityMatrix:
             "M84D: PagerDuty Activity/Event Ingestion",
             "M84E: PagerDuty Activity Signals",
             "M84F: PagerDuty Risk × Activity Correlations",
+            "M84G: PagerDuty Demo + QA",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

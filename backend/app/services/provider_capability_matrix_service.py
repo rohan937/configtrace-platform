@@ -997,7 +997,7 @@ _PAGERDUTY = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -1006,22 +1006,24 @@ _PAGERDUTY = ProviderCapability(
     maturity="partial",
     notes=(
         "PagerDuty incident-management configuration drift, security rules, "
-        "activity ingestion, and activity signals (M84A–M84E). Drift snapshots "
-        "cover 8 safe configuration surfaces from the PagerDuty REST API v2: "
-        "services, escalation policies, schedules, service integrations, webhook "
-        "subscriptions, event orchestrations, business services, and response plays. "
-        "M84B adds 22 core security rules; M84C adds 18 expanded rules. M84D adds "
-        "review-safe configuration activity ingestion from the same 8 drift surfaces. "
-        "M84E promotes activity events into review-priority Incident Signals. "
-        "Rules and signals are configuration-evidence only and do not assert breach, "
-        "compromise, unauthorized access, or data exposure. "
+        "activity ingestion, activity signals, and risk × activity correlations "
+        "(M84A–M84F). Drift snapshots cover 8 safe configuration surfaces from the "
+        "PagerDuty REST API v2: services, escalation policies, schedules, service "
+        "integrations, webhook subscriptions, event orchestrations, business "
+        "services, and response plays. M84B adds 22 core security rules; M84C adds "
+        "18 expanded rules. M84D adds review-safe configuration activity ingestion "
+        "from the same 8 drift surfaces. M84E promotes activity events into "
+        "review-priority Incident Signals. M84F joins findings with signals on the "
+        "same opaque resource_id, producing correlations across 8 PagerDuty resource "
+        "families. Rules, signals, and correlations are configuration-evidence only "
+        "and do not assert breach, compromise, unauthorized access, or data exposure. "
         "Privacy contract: PagerDuty API tokens, routing keys, integration keys, "
         "webhook secrets, delivery URLs, custom header values, user emails, user "
         "names, phone numbers, contact methods, on-call user identities, responder "
         "identities, subscriber identities, incident payloads, alert payloads, "
         "conference phone numbers, raw routing expressions, IP addresses, user "
         "agents, and customer PII are NEVER fetched or stored. "
-        "planned_next_stage: M84F: PagerDuty Risk × Activity Correlations."
+        "planned_next_stage: M84G: PagerDuty Demo + QA."
     ),
 )
 

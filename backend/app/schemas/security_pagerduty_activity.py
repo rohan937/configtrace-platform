@@ -66,3 +66,21 @@ class PagerDutyActivitySignalGenerateResponse(BaseModel):
     groups_scanned: int = 0
     signals_created: int = 0
     signals_skipped: int = 0
+
+
+class PagerDutyCorrelationGenerateRequest(BaseModel):
+    """POST /security/pagerduty-correlations/generate request body (all optional)."""
+
+    lookback_hours: Optional[int] = Field(default=None, ge=1, le=168)
+    max_correlations: Optional[int] = Field(default=None, ge=1, le=1000)
+
+
+class PagerDutyCorrelationGenerateResponse(BaseModel):
+    """PagerDuty Risk × Activity correlation generation summary."""
+
+    provider: str = "pagerduty"
+    findings_scanned: int = 0
+    signals_scanned: int = 0
+    candidate_pairs: int = 0
+    correlations_created: int = 0
+    correlations_skipped: int = 0

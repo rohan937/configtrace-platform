@@ -496,11 +496,13 @@ class TestCapabilityMatrix:
         assert cap.security.activity_ingestion is True
 
     def test_risk_activity_correlations_still_false(self) -> None:
+        # risk_activity_correlations becomes True in M84F — invariant here is
+        # that demo_seed_clear remains false through M84F.
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("pagerduty")
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.demo_seed_clear is False
 
     def test_demo_seed_clear_still_false(self) -> None:
         from app.services.provider_capability_matrix_service import (
@@ -531,8 +533,9 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M84F" in planned, (
-            f"planned_next_stage should reference M84F; got: {planned!r}"
+        # M84F complete; framework now points to M84G or beyond.
+        assert "M84F" in planned or "M84G" in planned, (
+            f"planned_next_stage should reference M84F or beyond; got: {planned!r}"
         )
 
     def test_linear_is_head_of_recommended_queue(self) -> None:

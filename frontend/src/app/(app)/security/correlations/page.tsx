@@ -22,8 +22,9 @@ import type {
   Auth0CorrelationGenerateResponse,
   DatadogCorrelationGenerateResponse,
   ClerkCorrelationGenerateResponse,
+  PagerDutyCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations, generatePagerDutyCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -36,7 +37,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -227,6 +228,18 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "clerk_organization_settings_risk_activity_correlation",
     "clerk_session_policy_risk_activity_correlation",
   ],
+  // M84F — PagerDuty Risk × PagerDuty Activity evidence.
+  pagerduty: [
+    "pagerduty_service_risk_activity_correlation",
+    "pagerduty_escalation_policy_risk_activity_correlation",
+    "pagerduty_schedule_risk_activity_correlation",
+    "pagerduty_service_integration_risk_activity_correlation",
+    "pagerduty_webhook_subscription_risk_activity_correlation",
+    "pagerduty_event_orchestration_risk_activity_correlation",
+    "pagerduty_business_service_risk_activity_correlation",
+    "pagerduty_response_play_risk_activity_correlation",
+    "pagerduty_config_activity_correlation",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 
@@ -247,7 +260,7 @@ export default function CorrelationsPage() {
   const typeOptions = TYPE_OPTIONS_BY_PROVIDER[provider] ?? [];
 
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse) | null>(null);
+  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse) | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -298,6 +311,9 @@ export default function CorrelationsPage() {
         setGenResult(res);
       } else if (provider === "clerk") {
         const res = await generateClerkCorrelations(token);
+        setGenResult(res);
+      } else if (provider === "pagerduty") {
+        const res = await generatePagerDutyCorrelations(token);
         setGenResult(res);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);
@@ -433,7 +449,7 @@ function GenerateBar({
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
-  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse) | null;
+  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse) | null;
   genError: string | null;
   onGenerate: () => void;
 }) {
@@ -466,7 +482,9 @@ function GenerateBar({
                               ? "Generate review-safe Datadog correlations between configuration findings and recent Datadog configuration activity. ConfigTrace stores only rule keys, signal types, opaque resource IDs, counts, categories, and timing evidence — never API keys, application keys, raw monitor queries, raw monitor messages, webhook URLs, headers, payloads, logs, traces, metric values, incident text, emails, destination handles, raw audit payloads, or PII."
                               : provider === "clerk"
                                 ? "Generate review-safe Clerk correlations between configuration findings and recent Clerk configuration activity. Stores rule keys, signal types, opaque resource IDs, counts, and timing evidence only — never Clerk secret keys, session tokens, JWTs, OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, raw webhook URLs, raw domain names, user emails, user IDs, phone numbers, names, session history, login history, IP addresses, user agents, raw audit payloads, customer data, or PII."
-                                : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                                : provider === "pagerduty"
+                                  ? "Generate review-safe PagerDuty correlations between configuration findings and recent PagerDuty configuration activity. ConfigTrace stores only rule keys, signal types, opaque resource IDs, counts, categories, and timing evidence — never API tokens, routing keys, integration keys, webhook secrets, raw URLs, user contact data, incident payloads, alert payloads, IP addresses, user agents, or PII."
+                                  : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -660,7 +678,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                               ? "the same Datadog resource (monitor / SLO / dashboard / webhook integration / notification integration / API key / application key / role / team / cloud integration). Sync Datadog activity, generate Datadog signals, then generate Datadog correlations to align configuration risks with configuration activity evidence on the same Datadog surface. API keys, application keys, raw monitor queries, raw messages, webhook URLs, notification handles, emails, user IDs, and raw audit payloads are never stored."
                               : provider === "clerk"
                                 ? "the same Clerk resource (instance / application / domain / redirect URL / JWT template / webhook endpoint / email-SMS settings / auth strategy / organization settings / session policy). Sync Clerk activity, generate Clerk signals, then generate Clerk correlations to align configuration risks with Clerk configuration activity evidence on the same Clerk surface."
-                                : "the same GitHub repository";
+                                : provider === "pagerduty"
+                                  ? "the same PagerDuty resource (service / escalation policy / schedule / service integration / webhook subscription / event orchestration / business service / response play). Sync PagerDuty activity, generate PagerDuty signals, then generate PagerDuty correlations to align incident-response configuration risks with activity evidence on the same PagerDuty surface."
+                                  : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

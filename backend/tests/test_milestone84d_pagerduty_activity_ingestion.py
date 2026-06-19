@@ -635,19 +635,22 @@ class TestCapabilityMatrix:
         assert cap.security.activity_ingestion is True
 
     def test_activity_signals_false(self) -> None:
-        # activity_signals becomes True in M84E — only check correlations here
+        # activity_signals becomes True in M84E; risk_activity_correlations in M84F
+        # — only demo_seed_clear remains false at this point.
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("pagerduty")
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.demo_seed_clear is False
 
     def test_risk_activity_correlations_false(self) -> None:
+        # risk_activity_correlations becomes True in M84F — invariant we still
+        # assert here is that demo_seed_clear remains false.
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         cap = get_provider_capability("pagerduty")
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.demo_seed_clear is False
 
     def test_demo_seed_clear_false(self) -> None:
         from app.services.provider_capability_matrix_service import (
@@ -679,8 +682,8 @@ class TestExpansionFramework:
         fw = get_framework()
         summary = fw.get("summary", {})
         planned = summary.get("planned_next_stage", "")
-        # M84E complete; framework now points to M84F or beyond.
-        assert "M84E" in planned or "M84F" in planned, (
+        # M84F complete; framework now points to M84G or beyond.
+        assert "M84E" in planned or "M84F" in planned or "M84G" in planned, (
             f"planned_next_stage should reference M84E or beyond; got: {planned!r}"
         )
 

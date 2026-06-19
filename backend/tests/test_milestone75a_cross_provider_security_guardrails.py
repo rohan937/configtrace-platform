@@ -368,9 +368,9 @@ _ACTIVITY_PROVIDERS = [
 ]
 # Datadog activity signals landed in M82E; correlations landed in M82F.
 # Clerk activity signals landed in M83E; correlations landed in M83F.
-# PagerDuty signals landed in M84E; correlations in M84F — include signals now.
+# PagerDuty signals landed in M84E; correlations landed in M84F.
 _SIGNALS_PROVIDERS = _ACTIVITY_PROVIDERS[:]
-_CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "pagerduty"]
+_CORRELATIONS_PROVIDERS = _ACTIVITY_PROVIDERS[:]
 
 
 def _provider_selector_array(text: str) -> list[str] | None:
