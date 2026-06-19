@@ -117,7 +117,8 @@ def test_expansion_framework_next_stage_is_beyond_m79d():
     stage = fw["summary"]["planned_next_stage"]
     assert ("M81B" in stage or "Auth0" in stage or "Datadog" in stage
             or "M82" in stage or "M83" in stage or "Clerk" in stage
-            or "M84" in stage or "PagerDuty" in stage)
+            or "M84" in stage or "PagerDuty" in stage
+                or "M85A" in stage or "Linear" in stage)
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():

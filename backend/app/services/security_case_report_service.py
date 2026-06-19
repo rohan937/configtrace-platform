@@ -182,6 +182,24 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "activity_family",            # Clerk correlation activity family label
     "match_reason",               # Clerk correlation match reason label
     "match_strength",             # Clerk correlation match strength label
+    # PagerDuty-safe resource identifiers (M84I) — opaque IDs, category labels,
+    # and safe posture booleans only. NEVER PagerDuty API tokens, routing keys,
+    # integration keys, webhook secrets, delivery URLs, custom header values,
+    # user emails, user names, phone numbers, contact methods, on-call user
+    # identities, responder identities, subscriber identities, incident payloads,
+    # alert payloads, conference phone numbers, raw routing expressions,
+    # IP addresses, user agents, raw PagerDuty audit payloads, or customer PII.
+    "webhook_subscription_id",    # PagerDuty webhook subscription opaque ID
+    "service_id",                 # PagerDuty service opaque ID (not an integration key)
+    "escalation_policy_id",       # PagerDuty escalation policy opaque ID
+    "schedule_id",                # PagerDuty schedule opaque ID (never on-call identities)
+    "event_orchestration_id",     # PagerDuty event orchestration opaque ID
+    "business_service_id",        # PagerDuty business service opaque ID
+    "response_play_id",           # PagerDuty response play opaque ID
+    "pagerduty_event_id",         # PagerDuty synthetic activity event opaque ID
+    "https_delivery",             # bool — webhook HTTPS delivery posture
+    "url_scheme_category",        # safe webhook URL scheme category (never the URL)
+    "event_scope_category",       # safe webhook event scope category label
 })
 
 

@@ -158,7 +158,8 @@ def test_expansion_framework_planned_next_stage_is_m83a():
     """M82I complete: planned_next_stage must point to M83A Clerk."""
     framework = get_framework()
     stage = framework["summary"]["planned_next_stage"]
-    assert "M83A" in stage or "Clerk" in stage or "M84A" in stage or "PagerDuty" in stage, (
+    assert ("M83A" in stage or "Clerk" in stage or "M84A" in stage or "PagerDuty" in stage
+            or "M85A" in stage or "Linear" in stage), (
         f"planned_next_stage should reference M83A/Clerk or later; got {stage!r}"
     )
 

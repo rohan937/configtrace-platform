@@ -890,7 +890,8 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         assert isinstance(planned, str)
         assert any(
             term in planned
-            for term in ("M83E", "Activity Signals", "Clerk", "M84A", "PagerDuty")
+            for term in ("M83E", "Activity Signals", "Clerk", "M84A", "PagerDuty",
+                         "M85A", "Linear")
         ), (
             f"planned_next_stage must reference M83E/Activity Signals/Clerk or later, got: {planned!r}"
         )

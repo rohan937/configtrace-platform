@@ -890,7 +890,7 @@ def test_m1_expansion_framework_planned_next_stage_m84b() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    # Framework advances through arc. Acceptable: M84B...M84I or beyond.
+    # Framework advances through arc. Acceptable: M84B...M85A or beyond.
     assert ("M84B" in planned or "PagerDuty Core Security" in planned
             or "M84C" in planned or "Escalation/Webhook" in planned
             or "M84D" in planned or "Activity/Event Ingestion" in planned
@@ -898,7 +898,8 @@ def test_m1_expansion_framework_planned_next_stage_m84b() -> None:
             or "M84F" in planned or "Activity Correlations" in planned
             or "M84G" in planned or "Demo" in planned
             or "M84H" in planned or "Provider Depth" in planned
-            or "M84I" in planned or "Cross-Cloud" in planned), (
+            or "M84I" in planned or "Cross-Cloud" in planned
+            or "M85A" in planned or "Linear" in planned), (
         f"planned_next_stage should point to M84B or beyond; got: {planned!r}"
     )
 

@@ -650,10 +650,11 @@ class TestExpansionFramework:
         fw = get_framework()
         summary = fw.get("summary", {})
         planned = summary.get("planned_next_stage", "")
-        # Framework advances through arc. Acceptable: M84D...M84I or beyond.
+        # Framework advances through arc. Acceptable: M84D...M85A or beyond.
         assert ("M84D" in planned or "M84E" in planned or "M84F" in planned
                 or "M84G" in planned or "M84H" in planned or "Provider Depth" in planned
-                or "M84I" in planned or "Cross-Cloud" in planned), (
+                or "M84I" in planned or "Cross-Cloud" in planned
+                or "M85A" in planned or "Linear" in planned), (
             f"planned_next_stage should reference M84D or beyond, got: {planned!r}"
         )
 

@@ -326,7 +326,7 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 // M76 — Recommended next providers (compact display data).
 // NOTE: Twilio arc complete M79A–M79I; SendGrid arc complete M80A–M80I;
 // Auth0 arc complete M81A–M81I; Datadog arc complete M82A–M82I;
-// Clerk arc complete M83A–M83I; PagerDuty arc M84A–M84G complete (M84H next).
+// Clerk arc complete M83A–M83I; PagerDuty arc complete M84A–M84I.
 // Linear is now the head of the recommended provider queue at M85A.
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
   { label: "Linear",    category: "devops",         milestone: "M85A" },

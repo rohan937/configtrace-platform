@@ -1215,10 +1215,12 @@ class TestCapabilityMatrix:
             "M83C" in stage or "M83D" in stage or "M83E" in stage
             or "M83F" in stage or "M83G" in stage or "M83H" in stage
             or "M83I" in stage or "M84A" in stage or "PagerDuty" in stage
+            or "M85A" in stage or "Linear" in stage
         ), (
             f"After M83B, planned_next_stage should reference a post-M83B Clerk stage; got {stage!r}"
         )
-        assert "Clerk" in stage or "clerk" in stage.lower() or "PagerDuty" in stage or "M84" in stage, (
+        assert ("Clerk" in stage or "clerk" in stage.lower() or "PagerDuty" in stage or "M84" in stage
+                or "M85A" in stage or "Linear" in stage), (
             f"planned_next_stage should mention Clerk or the next arc; got {stage!r}"
         )
 
@@ -1243,6 +1245,7 @@ class TestCapabilityMatrix:
             "M84G: PagerDuty Demo + QA",
             "M84H: PagerDuty Provider Depth QA",
             "M84I: PagerDuty Cross-Cloud UX Polish",
+            "M85A: Linear Drift Provider Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

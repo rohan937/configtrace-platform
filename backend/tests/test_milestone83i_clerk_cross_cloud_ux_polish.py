@@ -229,8 +229,10 @@ def test_b1_expansion_framework_planned_next_stage_m84a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    assert "M84A" in planned or "PagerDuty" in planned, (
-        f"After M83I, planned_next_stage should point to M84A PagerDuty; got: {planned!r}"
+    # PagerDuty arc completes in M84I; framework then advances to M85A: Linear.
+    assert ("M84A" in planned or "PagerDuty" in planned
+            or "M85A" in planned or "Linear" in planned), (
+        f"After M83I, planned_next_stage should point to M84A PagerDuty or M85A Linear; got: {planned!r}"
     )
 
 

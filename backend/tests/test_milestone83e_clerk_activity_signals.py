@@ -841,7 +841,8 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         planned = summary.get("planned_next_stage", "")
         assert isinstance(planned, str)
         assert ("M83F" in planned or "Correlations" in planned or "Clerk" in planned
-                or "M84A" in planned or "PagerDuty" in planned), (
+                or "M84A" in planned or "PagerDuty" in planned
+                or "M85A" in planned or "Linear" in planned), (
             f"planned_next_stage must reference M83F, Correlations, or Clerk or later, got: {planned!r}"
         )
 

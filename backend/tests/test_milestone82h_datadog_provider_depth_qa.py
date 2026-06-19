@@ -1275,7 +1275,8 @@ def test_expansion_framework_points_past_m82i():
     """M82I complete: planned_next_stage must advance to M83A (Clerk) after Datadog arc."""
     framework = get_framework()
     planned = framework["summary"].get("planned_next_stage", "")
-    assert "M83A" in planned or "Clerk" in planned or "M84A" in planned or "PagerDuty" in planned, (
+    assert ("M83A" in planned or "Clerk" in planned or "M84A" in planned or "PagerDuty" in planned
+            or "M85A" in planned or "Linear" in planned), (
         f"planned_next_stage should reference M83A/Clerk or later; got: {planned!r}"
     )
 
@@ -1329,6 +1330,7 @@ def test_expansion_framework_datadog_not_in_recommended():
 def test_expansion_framework_arc_not_abandoned():
     framework = get_framework()
     planned = framework["summary"].get("planned_next_stage", "")
-    assert "M82" in planned or "M83" in planned or "M84" in planned, (
+    assert ("M82" in planned or "M83" in planned or "M84" in planned
+            or "M85A" in planned or "Linear" in planned), (
         f"Datadog arc appears abandoned in expansion framework: {planned!r}"
     )

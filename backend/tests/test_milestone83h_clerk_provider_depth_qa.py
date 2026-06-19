@@ -1288,8 +1288,9 @@ def test_i6_expansion_framework_planned_next_stage_is_m83i() -> None:
     assert (
         "M83I" in planned or "Cross-Cloud UX Polish" in planned or "m83i" in planned.lower()
         or "M84A" in planned or "PagerDuty" in planned
+        or "M85A" in planned or "Linear" in planned
     ), (
-        f"planned_next_stage should point to M83I or beyond (M84A) after M83H QA, got: {planned!r}"
+        f"planned_next_stage should point to M83I or beyond (M84A/M85A) after M83H QA, got: {planned!r}"
     )
 
 
@@ -1342,6 +1343,7 @@ def test_i9_capability_matrix_notes_no_stale_planned_next_stage_m83h() -> None:
     assert (
         "M83I" in planned or "m83i" in planned.lower() or "Cross-Cloud" in planned
         or "M84A" in planned or "PagerDuty" in planned
+        or "M85A" in planned or "Linear" in planned
     ), (
         f"Expansion framework planned_next_stage still points to M83H: {planned!r}"
     )

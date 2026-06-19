@@ -734,8 +734,9 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M84I" in planned, (
-            f"planned_next_stage should reference M84I; got: {planned!r}"
+        # M84I completes the PagerDuty arc; framework then advances to M85A: Linear.
+        assert "M84I" in planned or "M85A" in planned or "Linear" in planned, (
+            f"planned_next_stage should reference M84I or M85A/Linear; got: {planned!r}"
         )
 
     def test_pagerduty_not_in_recommended_queue(self) -> None:

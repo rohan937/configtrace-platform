@@ -222,7 +222,8 @@ def test_expansion_framework_planned_next_stage_is_m82_pre():
         f"planned_next_stage still points to M81I after arc closed: {stage!r}"
     )
     assert ("M82" in stage or "Integration Card" in stage or "M83" in stage
-            or "Clerk" in stage or "M84" in stage or "PagerDuty" in stage), (
+            or "Clerk" in stage or "M84" in stage or "PagerDuty" in stage
+            or "M85A" in stage or "Linear" in stage), (
         f"planned_next_stage should point to M82/M83/Clerk or later; got: {stage!r}"
     )
 
