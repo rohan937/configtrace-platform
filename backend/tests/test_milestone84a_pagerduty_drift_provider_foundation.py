@@ -859,7 +859,6 @@ def test_l5_pagerduty_capability_matrix_security_all_false() -> None:
     assert cap is not None
     sec = cap.security
     for attr in (
-        "activity_signals",
         "risk_activity_correlations", "demo_seed_clear", "case_report",
         "evidence_timeline", "evidence_graph",
     ):
@@ -896,7 +895,8 @@ def test_m1_expansion_framework_planned_next_stage_m84b() -> None:
     assert ("M84B" in planned or "PagerDuty Core Security" in planned
             or "M84C" in planned or "Escalation/Webhook" in planned
             or "M84D" in planned or "Activity/Event Ingestion" in planned
-            or "M84E" in planned or "Activity Signals" in planned), (
+            or "M84E" in planned or "Activity Signals" in planned
+            or "M84F" in planned or "Activity Correlations" in planned), (
         f"planned_next_stage should point to M84B or beyond; got: {planned!r}"
     )
 

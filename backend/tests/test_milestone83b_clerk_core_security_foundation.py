@@ -1239,6 +1239,7 @@ class TestCapabilityMatrix:
             "M84C: PagerDuty Escalation/Webhook Risk Expansion",
             "M84D: PagerDuty Activity/Event Ingestion",
             "M84E: PagerDuty Activity Signals",
+            "M84F: PagerDuty Risk × Activity Correlations",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

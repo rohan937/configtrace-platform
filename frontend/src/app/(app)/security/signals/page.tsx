@@ -45,6 +45,7 @@ import {
   generateAuth0ActivitySignals,
   generateDatadogActivitySignals,
   generateClerkActivitySignals,
+  generatePagerDutyActivitySignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -59,7 +60,7 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty";
 
 const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity", "cloudflare_waf_activity_signal"];
 const VERCEL_SIGNAL_TYPES = ["vercel_activity_signal"];
@@ -135,6 +136,18 @@ const CLERK_SIGNAL_TYPES = [
   "clerk_session_policy_config_changed",
   "clerk_config_activity",
 ];
+// M84E — PagerDuty configuration-state activity signals.
+const PAGERDUTY_SIGNAL_TYPES = [
+  "pagerduty_service_config_changed",
+  "pagerduty_escalation_policy_config_changed",
+  "pagerduty_schedule_config_changed",
+  "pagerduty_service_integration_config_changed",
+  "pagerduty_webhook_subscription_config_changed",
+  "pagerduty_event_orchestration_config_changed",
+  "pagerduty_business_service_config_changed",
+  "pagerduty_response_play_config_changed",
+  "pagerduty_config_activity",
+];
 // M81E — Auth0 configuration activity signal types.
 const AUTH0_SIGNAL_TYPES = [
   "auth0_tenant_config_changed",
@@ -148,7 +161,7 @@ const AUTH0_SIGNAL_TYPES = [
   "auth0_config_activity",
 ];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
@@ -344,6 +357,14 @@ export default function IncidentSignalsPage() {
         };
       } else if (provider === "clerk") {
         const v = await generateClerkActivitySignals(token);
+        res = {
+          provider: v.provider,
+          activity_events_scanned: v.events_scanned,
+          signals_created: v.signals_created,
+          signals_skipped: v.signals_skipped,
+        };
+      } else if (provider === "pagerduty") {
+        const v = await generatePagerDutyActivitySignals(token);
         res = {
           provider: v.provider,
           activity_events_scanned: v.events_scanned,
@@ -596,14 +617,14 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
         <Select
           label="Signal type"
           value={signalType}
           onChange={setSignalType}
-          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : provider === "azure" ? AZURE_SIGNAL_TYPES : provider === "google_cloud" ? GOOGLE_CLOUD_SIGNAL_TYPES : provider === "twilio" ? TWILIO_SIGNAL_TYPES : provider === "sendgrid" ? SENDGRID_SIGNAL_TYPES : provider === "auth0" ? AUTH0_SIGNAL_TYPES : provider === "datadog" ? DATADOG_SIGNAL_TYPES : provider === "clerk" ? CLERK_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : provider === "azure" ? AZURE_SIGNAL_TYPES : provider === "google_cloud" ? GOOGLE_CLOUD_SIGNAL_TYPES : provider === "twilio" ? TWILIO_SIGNAL_TYPES : provider === "sendgrid" ? SENDGRID_SIGNAL_TYPES : provider === "auth0" ? AUTH0_SIGNAL_TYPES : provider === "datadog" ? DATADOG_SIGNAL_TYPES : provider === "clerk" ? CLERK_SIGNAL_TYPES : provider === "pagerduty" ? PAGERDUTY_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
         />
       </div>
 
@@ -734,6 +755,7 @@ function GenerateBar({
   const isAuth0 = provider === "auth0";
   const isDatadog = provider === "datadog";
   const isClerk = provider === "clerk";
+  const isPagerDuty = provider === "pagerduty";
   const label = isCloudflare ? "Generate Cloudflare signals"
     : isAws ? "Generate AWS signals"
     : isVercel ? "Generate Vercel activity signals"
@@ -748,6 +770,7 @@ function GenerateBar({
     : isAuth0 ? "Generate Auth0 signals"
     : isDatadog ? "Generate Datadog signals"
     : isClerk ? "Generate Clerk signals"
+    : isPagerDuty ? "Generate PagerDuty signals"
     : "Generate signals";
   const desc = isCloudflare
     ? "Generate review signals from Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity)."
@@ -777,7 +800,9 @@ function GenerateBar({
                             ? "Generate review signals from safe Datadog configuration activity. ConfigTrace stores monitor, SLO, dashboard, webhook, key, role, team, and cloud-integration posture summaries only — never API keys, application keys, raw monitor queries, raw monitor messages, webhook URLs, headers, payloads, logs, traces, metric values, incident text, emails, destination handles, raw audit payloads, or PII."
                             : isClerk
                               ? "Generate review signals from safe Clerk configuration activity. ConfigTrace stores instance, application, domain, redirect URL, JWT template, webhook, email/SMS, auth strategy, organization, and session-policy posture summaries only — never Clerk secret keys, session tokens, JWTs, OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, raw webhook URLs, user emails, user IDs, phone numbers, names, session history, login history, IP addresses, user agents, raw audit payloads, customer data, or PII."
-                              : "Scans recent GitHub audit activity events and creates review signals.";
+                              : isPagerDuty
+                                ? "Generate review signals from safe PagerDuty configuration activity derived from service, escalation policy, schedule, integration, webhook, orchestration, business service, and response play configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API tokens, routing keys, integration keys, webhook secrets, raw URLs, user contact data, incident payloads, alert payloads, IP addresses, user agents, or PII."
+                                : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"

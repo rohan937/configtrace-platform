@@ -247,10 +247,13 @@ from app.schemas.security_clerk_activity import (
 from app.schemas.security_pagerduty_activity import (
     PagerDutyActivitySyncRequest,
     PagerDutyActivitySyncResponse,
+    PagerDutyActivitySignalGenerateRequest,
+    PagerDutyActivitySignalGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
 from app.services import pagerduty_activity_ingestion_service
+from app.services import pagerduty_activity_signal_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3441,6 +3444,48 @@ def sync_pagerduty_activity_events(
         db=db,
     )
     return PagerDutyActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/pagerduty-activity/generate-signals",
+    response_model=PagerDutyActivitySignalGenerateResponse,
+)
+def generate_pagerduty_activity_signals_endpoint(
+    body: Optional[PagerDutyActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PagerDutyActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe PagerDuty configuration activity events (M84E).
+
+    Admin/owner only. Promotes ingested PagerDuty config-state events into
+    review-priority Incident Signals grouped by resource identity.
+    Idempotent — re-running creates no duplicates. Review signals only;
+    does not confirm compromise, unauthorized access, or data exposure.
+
+    PagerDuty API tokens, routing keys, integration keys, webhook secrets,
+    delivery URLs, custom header values, user emails, user names, phone numbers,
+    contact methods, on-call user identities, responder identities, subscriber
+    identities, incident payloads, alert payloads, conference phone numbers,
+    raw routing expressions, IP addresses, user agents, raw audit payloads,
+    and customer PII are NEVER stored.
+
+    Members can read signals via GET /security/signals?provider=pagerduty.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 100
+
+    summary = pagerduty_activity_signal_service.generate_pagerduty_activity_signals(
+        workspace_id=workspace_id,
+        lookback_hours=lookback_hours,
+        max_signals=max_signals,
+        db=db,
+    )
+    return PagerDutyActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

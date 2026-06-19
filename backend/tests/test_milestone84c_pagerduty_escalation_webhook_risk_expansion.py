@@ -619,8 +619,7 @@ class TestCapabilityMatrix:
 
     def test_activity_flags_false(self) -> None:
         cap = get_provider_capability("pagerduty")
-        # activity_ingestion becomes True in M84D — check only signals/correlations here
-        assert cap.security.activity_signals is False
+        # activity_ingestion becomes True in M84D; activity_signals in M84E — check correlations
         assert cap.security.risk_activity_correlations is False
 
     def test_demo_and_case_report_false(self) -> None:
@@ -648,8 +647,8 @@ class TestExpansionFramework:
         fw = get_framework()
         summary = fw.get("summary", {})
         planned = summary.get("planned_next_stage", "")
-        # M84D complete; framework now points to M84E or beyond.
-        assert "M84D" in planned or "M84E" in planned, (
+        # M84E complete; framework now points to M84F or beyond.
+        assert "M84D" in planned or "M84E" in planned or "M84F" in planned, (
             f"planned_next_stage should reference M84D or beyond, got: {planned!r}"
         )
 

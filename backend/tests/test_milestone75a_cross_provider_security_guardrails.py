@@ -368,8 +368,8 @@ _ACTIVITY_PROVIDERS = [
 ]
 # Datadog activity signals landed in M82E; correlations landed in M82F.
 # Clerk activity signals landed in M83E; correlations landed in M83F.
-# PagerDuty signals will land in M84E; correlations in M84F — exclude for now.
-_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "pagerduty"]
+# PagerDuty signals landed in M84E; correlations in M84F — include signals now.
+_SIGNALS_PROVIDERS = _ACTIVITY_PROVIDERS[:]
 _CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "pagerduty"]
 
 

@@ -493,6 +493,40 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "custom_sender_present",
         "template_customization_present",
         "proxy_enabled",
+        # PagerDuty configuration activity signal fields (M84E) — synthesized
+        # from safe M84A–M84C drift surfaces. NEVER stored: PagerDuty API tokens,
+        # routing keys, integration keys, webhook secrets, delivery URLs, custom
+        # header values, user emails, user names, phone numbers, contact methods,
+        # on-call user identities, responder identities, subscriber identities,
+        # incident payloads, alert payloads, conference phone numbers, raw routing
+        # expressions, IP addresses, user agents, raw audit payloads, or customer PII.
+        "status_category",           # safe service status category (e.g. "active", "warning")
+        "alert_creation_category",   # safe alert creation category
+        "acknowledgement_timeout_category",  # safe timeout category label
+        "auto_resolve_timeout_category",     # safe timeout category label
+        "support_hours_enabled",     # bool — whether support hours are configured
+        "scheduled_actions_count",   # int — count of scheduled actions (NEVER content)
+        "escalation_rule_count",     # int — count of escalation rules (NEVER rule content)
+        "escalation_level_count",    # int — count of distinct escalation levels
+        "target_count",              # int — total targets across all rules (NEVER identities)
+        "schedule_target_count",     # int — schedule-reference targets (NEVER identities)
+        "has_schedule_targets",      # bool — whether any schedule targets are configured
+        "repeat_enabled",            # bool — whether escalation policy loops
+        "restriction_count",         # int — layer restriction count (NEVER restriction content)
+        "has_restrictions",          # bool — whether any layer has time-window restrictions
+        "time_zone_present",         # bool — whether a timezone is configured
+        "integration_type_category", # safe integration type category label
+        "key_present",               # bool — whether an integration key is present (NEVER the key)
+        "routing_key_present",       # bool — whether a routing key is present (NEVER the key)
+        "active",                    # bool — whether the subscription is active
+        "event_scope_category",      # safe filter scope category label
+        "route_count",               # int — count of routes in an orchestration
+        "team_present",              # bool — whether a team is assigned
+        "responder_count",           # int — count of responders (NEVER identities)
+        "subscriber_count",          # int — count of subscribers (NEVER identities)
+        "runnable",                  # safe runnability label ("owner"/"team"/"any"/"unknown")
+        "conference_present",        # bool — whether conference number is configured (NEVER the number)
+        "description_present",       # bool — whether a point-of-contact / description is set
     }
 )
 

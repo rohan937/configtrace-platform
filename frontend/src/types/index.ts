@@ -2163,6 +2163,14 @@ export interface PagerDutyActivitySyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+export interface PagerDutyActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface ClerkActivitySignalGenerateResponse {
   provider: string;
   source: string;

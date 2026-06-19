@@ -2493,6 +2493,27 @@ export async function getChangeGitHubPrDraft(
 }
 
 /**
+ * generatePagerDutyActivitySignals — POST /security/pagerduty-activity/generate-signals
+ * Admin only. Generates review-priority Incident Signals from safe PagerDuty
+ * configuration-state activity events. Promotes service, escalation policy,
+ * schedule, integration, webhook subscription, event orchestration, business
+ * service, and response play config-state events into signals grouped by safe
+ * resource identity. API tokens, routing keys, integration keys, webhook secrets,
+ * delivery URLs, user identities, incident payloads, alert payloads, IP addresses,
+ * user agents, and raw audit payloads are never stored. Does not confirm compromise
+ * or unauthorized access.
+ */
+export async function generatePagerDutyActivitySignals(
+  token: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").PagerDutyActivitySignalGenerateResponse> {
+  return apiFetch<import("@/types").PagerDutyActivitySignalGenerateResponse>(
+    "/security/pagerduty-activity/generate-signals",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * syncPagerDutyActivity — POST /security/pagerduty-activity/sync
  * Admin only. Synthesizes review-safe PagerDuty configuration-state activity
  * events from the same drift surfaces the connector reads: services, escalation
