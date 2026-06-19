@@ -268,7 +268,9 @@ def test_capability_matrix_previous_flags() -> None:
 def test_expansion_framework_m84h() -> None:
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M84H" in planned or "Provider Depth" in planned
+    # M84H ships depth QA; framework then points to M84I or beyond.
+    assert ("M84H" in planned or "Provider Depth" in planned
+            or "M84I" in planned or "Cross-Cloud" in planned)
 
 
 # ── Section I: Frontend ───────────────────────────────────────────────────────

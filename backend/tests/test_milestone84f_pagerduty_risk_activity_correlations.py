@@ -603,8 +603,9 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        # M84G ships demo + QA; framework now points to M84H or beyond.
-        assert "M84G" in planned or "M84H" in planned or "Provider Depth" in planned, (
+        # M84G ships demo + QA; M84H ships depth QA; framework now points to M84I or beyond.
+        assert ("M84G" in planned or "M84H" in planned or "Provider Depth" in planned
+                or "M84I" in planned or "Cross-Cloud" in planned), (
             f"planned_next_stage should reference M84G or beyond; got: {planned!r}"
         )
 

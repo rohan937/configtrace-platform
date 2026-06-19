@@ -534,9 +534,10 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        # Framework advances through arc. Acceptable: M84F...M84H or beyond.
+        # Framework advances through arc. Acceptable: M84F...M84I or beyond.
         assert ("M84F" in planned or "M84G" in planned
-                or "M84H" in planned or "Provider Depth" in planned), (
+                or "M84H" in planned or "Provider Depth" in planned
+                or "M84I" in planned or "Cross-Cloud" in planned), (
             f"planned_next_stage should reference M84F or beyond; got: {planned!r}"
         )
 

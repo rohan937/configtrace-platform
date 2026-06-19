@@ -238,7 +238,6 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "pagerduty_event_orchestration_risk_activity_correlation",
     "pagerduty_business_service_risk_activity_correlation",
     "pagerduty_response_play_risk_activity_correlation",
-    "pagerduty_config_activity_correlation",
   ],
 };
 const HIGH = new Set(["critical", "high"]);
