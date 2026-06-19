@@ -1068,7 +1068,7 @@ _LINEAR = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -1079,22 +1079,20 @@ _LINEAR = ProviderCapability(
     maturity="partial",
     notes=(
         "Linear project-management configuration drift with core and expanded security "
-        "rules (M85A + M85B + M85C). Drift snapshots cover 9 safe configuration "
-        "surfaces from the Linear GraphQL API: workspace config, teams, projects, "
-        "workflow states, issue labels, webhook subscriptions, custom views, active "
-        "cycles, and integrations. M85B added 24 core configuration-risk security rules; "
-        "M85C adds 15 workflow/webhook risk expansion rules covering team workflow state "
-        "coverage, workspace webhook/integration posture, project team scope, webhook "
-        "resource type posture, view sharing scope, and integration workspace scoping "
-        "(39 total Linear rules). Connector expanded in M85C to capture workflow state "
-        "type coverage per team, comment/attachment type booleans for webhooks, project "
-        "team count, and workspace aggregate counts — all as safe integers/booleans. "
+        "rules plus activity ingestion (M85A + M85B + M85C + M85D). Drift snapshots "
+        "cover 9 safe configuration surfaces from the Linear GraphQL API: workspace "
+        "config, teams, projects, workflow states, issue labels, webhook subscriptions, "
+        "custom views, active cycles, and integrations. M85B added 24 core "
+        "configuration-risk security rules; M85C adds 15 workflow/webhook risk expansion "
+        "rules (39 total). M85D adds review-safe activity ingestion synthesized from the "
+        "same 9 safe drift surfaces — Linear's audit API is never used because it "
+        "contains actor emails, user IDs, and IP addresses. "
         "Authentication uses a Linear API key (read-only). API key is stored encrypted "
         "and never returned in API responses, never logged, and never copied to resource "
         "metadata. Issue titles, descriptions, comments, attachments, user emails, user "
         "names, member identities, raw URLs, webhook secrets, and customer data are "
         "never fetched or stored. "
-        "planned_next_stage: M85D: Linear Activity/Event Ingestion."
+        "planned_next_stage: M85E: Linear Activity Signals."
     ),
 )
 

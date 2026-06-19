@@ -2173,6 +2173,18 @@ export interface PagerDutyActivitySyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+export interface LinearActivitySyncResponse {
+  attempted: boolean;
+  succeeded: boolean;
+  provider: string;
+  source: string;
+  integration_id: string | null;
+  events_seen: number;
+  events_inserted: number;
+  events_skipped: number;
+  permission_limited: boolean;
+  error_message: string | null;
+}
 export interface PagerDutyActivitySignalGenerateResponse {
   provider: string;
   source: string;

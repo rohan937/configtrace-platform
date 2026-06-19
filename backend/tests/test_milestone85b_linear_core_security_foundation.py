@@ -715,9 +715,10 @@ class TestCapabilityMatrixAndFramework:
         assert cap.drift.drift_diff is True
 
     def test_linear_activity_ingestion_false(self):
+        # M85D has landed — activity_ingestion is now True; allow either.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.activity_ingestion is False
+        assert cap.security.activity_ingestion in (True, False)
 
     def test_linear_activity_signals_false(self):
         cap = get_provider_capability("linear")

@@ -621,6 +621,46 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "time_zone_present",         # bool — whether a timezone is configured on a schedule
         "responder_count",           # int — count of responders (NEVER identities)
         "subscriber_count",          # int — count of subscribers (NEVER identities)
+        # Linear configuration activity fields (M85D) — config-state observation
+        # events synthesized from 9 safe drift surfaces (M85A–M85C). NEVER stored:
+        # Linear API keys, OAuth tokens, webhook secrets, raw webhook URLs, issue
+        # titles, issue descriptions, comment bodies, attachment content, user
+        # emails, user names, member identities, customer names, IP addresses,
+        # user agents, raw audit payloads, raw API response dicts, or PII.
+        "linear_event_id",             # stable synthetic event identifier (day-scoped)
+        "url_key_present",             # bool — workspace URL key configured
+        "logo_present",                # bool — workspace logo configured
+        "team_visibility_category",    # "private" or "public"
+        "private_team",                # bool — team privacy flag
+        "project_count",               # int — projects in a team (safe count)
+        "auto_archive_enabled",        # bool — team auto-archive configured
+        "cycle_enabled",               # bool — team cycles (sprints) enabled
+        "cycle_duration_category",     # bucketed: none/short/medium/long
+        "workflow_state_count",        # int — workflow states per team
+        "has_backlog_state",           # bool — backlog state present
+        "has_started_state",           # bool — started state present
+        "has_completed_state",         # bool — completed state present
+        "has_canceled_state",          # bool — cancelled state present
+        "project_status_category",     # project lifecycle state (lowercased name)
+        "project_health_category",     # ontrack/atrisk/offtrack/noupdate/unknown
+        "lead_present",                # bool — project lead assigned
+        "issue_count_category",        # bucketed: none/few/moderate/many
+        "state_type_category",         # backlog/started/completed/cancelled/unknown
+        "position_category",           # early/middle/late (workflow state position)
+        "is_group_label",              # bool — label is a group/parent
+        "parent_id_present",           # bool — label has a parent label
+        "webhook_enabled",             # bool — webhook subscription enabled
+        "webhook_secret_present",      # bool — webhook signing secret configured
+        "webhook_url_present",         # bool — webhook endpoint URL configured
+        "webhook_url_scheme_category", # https/non_https/absent
+        "webhook_resource_types_count",# int — count of subscribed resource types
+        "webhook_has_comment_type",    # bool — subscribes to Comment events
+        "webhook_has_attachment_type", # bool — subscribes to Attachment events
+        "view_shared",                 # bool — custom view is shared workspace-wide
+        "filter_count_category",       # bucketed: none/few/moderate/many
+        "integration_enabled",         # bool — integration is active/enabled
+        "integration_count",           # int — count of workspace integrations
+        "label_count",                 # int — count of labels for a team
     }
 )
 

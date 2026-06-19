@@ -722,3 +722,326 @@ class LinearConnector(BaseConnector):
             return False
         except Exception:
             return False
+
+    # ── Activity ingestion (M85D) ─────────────────────────────────────────────
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Synthesize review-safe Linear configuration-state activity events.
+
+        Linear's audit API includes actor emails, user IDs, IP addresses,
+        and user agents in every entry — ingesting those would violate
+        ConfigTrace's privacy contract.  Instead, activity events are
+        synthesized from the same safe drift surfaces the connector already
+        reads (M85A–M85C):
+
+        Surfaces covered:
+        - Workspace (URL key, logo, team/webhook/integration aggregate counts)
+        - Teams (visibility, membership category, project/cycle/workflow/label posture)
+        - Projects (status, health, lead, member, issue, team counts)
+        - Workflow states (type category, position category)
+        - Labels (group flag, parent presence, team scope)
+        - Webhooks (enabled, secret, URL scheme, resource types, comment/attachment)
+        - Custom views (shared flag, filter count, team scope)
+        - Active cycles (issue count category)
+        - Integrations (type category, enabled flag, team scope)
+
+        Each event represents configuration state observed at poll time.
+        Events are scoped to a UTC-day fingerprint for idempotency — re-polling
+        on the same UTC day yields the same provider_event_id for the same record.
+
+        PRIVACY — what is NEVER returned:
+        - Linear API keys, OAuth tokens, webhook secrets.
+        - Raw webhook URLs, raw redirect URLs.
+        - Issue titles, issue descriptions, comment bodies, attachment content.
+        - User emails, user names, member identities, customer names.
+        - IP addresses, user agents.
+        - Raw audit payloads, raw API response dicts, or PII.
+
+        Raises:
+            AuthenticationError: 401 from the Linear API.
+            RateLimitError:      429 rate limit hit.
+            NetworkError:        Transport-level failure.
+            ConnectorError:      Unexpected 4xx/5xx or GraphQL error.
+        """
+        from datetime import datetime, timezone
+
+        max_events = min(max(1, max_events), 1000)
+        lookback_hours = min(max(1, lookback_hours), 168)  # noqa: F841
+
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        api_key = _sanitize_api_key(credentials.get("api_key", ""))
+        events: list[dict] = []
+
+        # Required surfaces — propagate auth/rate-limit errors.
+        workspace_records = self._fetch_workspace(api_key)
+        team_records = self._fetch_teams(api_key)
+        project_records = self._fetch_projects(api_key)
+
+        # Enrich workspace record with aggregate counts before emitting events.
+        if workspace_records:
+            webhooks_for_ws = self._fetch_webhooks(api_key)
+            integrations_for_ws = self._fetch_integrations(api_key)
+            workspace_records[0]["webhook_count"] = len(webhooks_for_ws)
+            workspace_records[0]["integration_count"] = len(integrations_for_ws)
+            self._collect_workspace_events(workspace_records, events, day)
+            self._collect_team_events(team_records, events, day)
+            self._collect_project_events(project_records, events, day)
+
+            # Optional surfaces — fail-soft on plan-gated or API-unavailable.
+            try:
+                wf_records = self._fetch_workflow_states(api_key)
+                self._collect_workflow_state_events(wf_records, events, day)
+            except Exception:
+                logger.debug("linear_activity: workflow_states surface skipped")
+
+            try:
+                label_records = self._fetch_labels(api_key)
+                self._collect_label_events(label_records, events, day)
+            except Exception:
+                logger.debug("linear_activity: labels surface skipped")
+
+            self._collect_webhook_events(webhooks_for_ws, events, day)
+
+            try:
+                view_records = self._fetch_views(api_key)
+                self._collect_view_events(view_records, events, day)
+            except Exception:
+                logger.debug("linear_activity: views surface skipped")
+
+            try:
+                cycle_records = self._fetch_cycles(api_key)
+                self._collect_cycle_events(cycle_records, events, day)
+            except Exception:
+                logger.debug("linear_activity: cycles surface skipped")
+
+            self._collect_integration_events(integrations_for_ws, events, day)
+
+        else:
+            # Workspace fetch returned nothing — still try teams and projects.
+            self._collect_team_events(team_records, events, day)
+            self._collect_project_events(project_records, events, day)
+
+        return events[:max_events]
+
+    # ── Activity surface collectors (M85D) ────────────────────────────────────
+    #
+    # Each collector emits one config-state activity event per normalized record.
+    # Only safe allowlisted fields from the M85A–M85C schema are included.
+    # Raw API payloads, URLs, secrets, tokens, and all user/PII data are NEVER
+    # stored.
+
+    @staticmethod
+    def _activity_event(
+        event_type: str,
+        eid: str,
+        meta: dict,
+    ) -> dict:
+        """Build a standard activity event dict."""
+        return {
+            "event_type": event_type,
+            "provider": "linear",
+            "source": "linear_activity_event",
+            "event_source": "linear_activity_event",
+            "provider_event_id": eid,
+            "metadata": meta,
+        }
+
+    def _collect_workspace_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:workspace:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_workspace",
+                "resource_id": rid,
+                "record_type": "linear_workspace",
+                "operation_family": "linear.workspace",
+                "operation_action": "updated",
+                "category": "Workspace configuration",
+                "url_key_present": rec.get("url_key_present"),
+                "logo_present": rec.get("logo_present"),
+                "team_count": rec.get("team_count"),
+                "webhook_count": rec.get("webhook_count"),
+                "integration_count": rec.get("integration_count"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.workspace.updated", eid, meta))
+
+    def _collect_team_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:team:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_team",
+                "resource_id": rid,
+                "record_type": "linear_team",
+                "operation_family": "linear.team",
+                "operation_action": "updated",
+                "category": "Team configuration",
+                "private_team": rec.get("private_team"),
+                "team_visibility_category": rec.get("team_visibility_category"),
+                "member_count_category": rec.get("member_count_category"),
+                "project_count": rec.get("project_count"),
+                "auto_archive_enabled": rec.get("auto_archive_enabled"),
+                "cycle_enabled": rec.get("cycle_enabled"),
+                "cycle_duration_category": rec.get("cycle_duration_category"),
+                "workflow_state_count": rec.get("workflow_state_count"),
+                "has_backlog_state": rec.get("has_backlog_state"),
+                "has_started_state": rec.get("has_started_state"),
+                "has_completed_state": rec.get("has_completed_state"),
+                "has_canceled_state": rec.get("has_canceled_state"),
+                "label_count": rec.get("label_count"),
+                "webhook_count": rec.get("webhook_count"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.team.updated", eid, meta))
+
+    def _collect_project_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:project:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_project",
+                "resource_id": rid,
+                "record_type": "linear_project",
+                "operation_family": "linear.project",
+                "operation_action": "updated",
+                "category": "Project configuration",
+                "project_status_category": rec.get("project_status_category"),
+                "project_health_category": rec.get("project_health_category"),
+                "lead_present": rec.get("lead_present"),
+                "member_count_category": rec.get("member_count_category"),
+                "issue_count_category": rec.get("issue_count_category"),
+                "team_count": rec.get("team_count"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.project.updated", eid, meta))
+
+    def _collect_workflow_state_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:workflow_state:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_workflow_state",
+                "resource_id": rid,
+                "record_type": "linear_workflow_state",
+                "operation_family": "linear.workflow_state",
+                "operation_action": "updated",
+                "category": "Workflow state configuration",
+                "state_type_category": rec.get("state_type_category"),
+                "position_category": rec.get("position_category"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.workflow_state.updated", eid, meta))
+
+    def _collect_label_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:label:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_label",
+                "resource_id": rid,
+                "record_type": "linear_label",
+                "operation_family": "linear.label",
+                "operation_action": "updated",
+                "category": "Label configuration",
+                "is_group_label": rec.get("is_group_label"),
+                "parent_id_present": rec.get("parent_id_present"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.label.updated", eid, meta))
+
+    def _collect_webhook_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:webhook:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_webhook",
+                "resource_id": rid,
+                "record_type": "linear_webhook",
+                "operation_family": "linear.webhook",
+                "operation_action": "updated",
+                "category": "Webhook configuration",
+                "webhook_enabled": rec.get("webhook_enabled"),
+                "webhook_secret_present": rec.get("webhook_secret_present"),
+                "webhook_url_present": rec.get("webhook_url_present"),
+                "webhook_url_scheme_category": rec.get("webhook_url_scheme_category"),
+                "webhook_resource_types_count": rec.get("webhook_resource_types_count"),
+                "webhook_has_comment_type": rec.get("webhook_has_comment_type"),
+                "webhook_has_attachment_type": rec.get("webhook_has_attachment_type"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.webhook.updated", eid, meta))
+
+    def _collect_view_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:view:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_view",
+                "resource_id": rid,
+                "record_type": "linear_view",
+                "operation_family": "linear.view",
+                "operation_action": "updated",
+                "category": "View configuration",
+                "view_shared": rec.get("view_shared"),
+                "filter_count_category": rec.get("filter_count_category"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.view.updated", eid, meta))
+
+    def _collect_cycle_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:cycle:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_cycle",
+                "resource_id": rid,
+                "record_type": "linear_cycle",
+                "operation_family": "linear.cycle",
+                "operation_action": "updated",
+                "category": "Cycle configuration",
+                "issue_count_category": rec.get("issue_count_category"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.cycle.updated", eid, meta))
+
+    def _collect_integration_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"linear:integration:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "linear_integration",
+                "resource_id": rid,
+                "record_type": "linear_integration",
+                "operation_family": "linear.integration",
+                "operation_action": "updated",
+                "category": "Integration configuration",
+                "integration_type_category": rec.get("integration_type_category"),
+                "integration_enabled": rec.get("integration_enabled"),
+                "linear_event_id": eid,
+            }
+            events.append(self._activity_event("linear.integration.updated", eid, meta))

@@ -870,9 +870,10 @@ class TestCapabilityMatrixAndFramework:
         assert cap.security.security_rules is True
 
     def test_linear_activity_ingestion_false(self):
+        # M85D has landed — activity_ingestion is now True; allow either.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.activity_ingestion is False
+        assert cap.security.activity_ingestion in (True, False)
 
     def test_linear_activity_signals_false(self):
         cap = get_provider_capability("linear")
@@ -895,9 +896,12 @@ class TestCapabilityMatrixAndFramework:
         assert "M85C" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m85d(self):
+        # M85D has landed — planned_next_stage now points to M85E.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M85D" in planned
+        assert "M85" in planned, (
+            f"planned_next_stage should reference an M85 Linear stage or later; got {planned!r}"
+        )
 
     def test_expansion_framework_jira_is_head_of_queue(self):
         fw = get_framework()

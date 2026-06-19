@@ -252,10 +252,15 @@ from app.schemas.security_pagerduty_activity import (
     PagerDutyCorrelationGenerateRequest,
     PagerDutyCorrelationGenerateResponse,
 )
+from app.schemas.security_linear_activity import (
+    LinearActivitySyncRequest,
+    LinearActivitySyncResponse,
+)
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
 from app.services import pagerduty_activity_ingestion_service
 from app.services import pagerduty_activity_signal_service
+from app.services import linear_activity_ingestion_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3454,6 +3459,53 @@ def sync_pagerduty_activity_events(
         db=db,
     )
     return PagerDutyActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/linear-activity/sync",
+    response_model=LinearActivitySyncResponse,
+)
+def sync_linear_activity_events(
+    body: Optional[LinearActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LinearActivitySyncResponse:
+    """Sync review-safe Linear configuration activity events (M85D).
+
+    Admin/owner only. Synthesizes config-state events from safe Linear
+    API surfaces (workspace, teams, projects, workflow states, labels,
+    webhook subscriptions, custom views, active cycles, and integrations).
+    Linear's audit API is NEVER used — it contains actor emails, user IDs,
+    IP addresses, and user agents in every entry.
+
+    Linear API keys, OAuth tokens, webhook secrets, raw webhook URLs, issue
+    titles, issue descriptions, comment bodies, attachment content, user
+    emails, user names, member identities, customer names, IP addresses,
+    user agents, raw audit payloads, and PII are NEVER stored.
+
+    Evidence is configuration-state metadata only. Does not confirm breach,
+    compromise, unauthorized access, or data exposure.
+
+    Members can read ingested events via
+    GET /security/activity/events?provider=linear.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = linear_activity_ingestion_service.sync_linear_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return LinearActivitySyncResponse(**summary)
 
 
 @router.post(

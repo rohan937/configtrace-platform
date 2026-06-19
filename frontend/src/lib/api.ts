@@ -2554,6 +2554,27 @@ export async function syncPagerDutyActivity(
   );
 }
 
+/**
+ * syncLinearActivity — POST /security/linear-activity/sync
+ * Admin only. Synthesizes review-safe Linear configuration-state activity
+ * events from the same drift surfaces the connector reads: workspace, teams,
+ * projects, workflow states, labels, webhook subscriptions, custom views,
+ * active cycles, and integrations. Linear's audit API is never ingested
+ * because it contains actor emails, user IDs, and IP addresses. API keys,
+ * OAuth tokens, webhook secrets, raw URLs, issue titles, issue descriptions,
+ * comment bodies, attachment content, user identities, customer names,
+ * IP addresses, user agents, and raw audit payloads are never stored.
+ */
+export async function syncLinearActivity(
+  token: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").LinearActivitySyncResponse> {
+  return apiFetch<import("@/types").LinearActivitySyncResponse>(
+    "/security/linear-activity/sync",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
 // ── M58.21: GitHub PR Creation ────────────────────────────────────────────────
 
 export async function createChangeGitHubPr(
