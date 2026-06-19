@@ -484,9 +484,10 @@ class TestCapabilityMatrixAndFramework:
         assert cap.security.security_rules is True
 
     def test_linear_activity_signals_false(self):
+        # M85E advanced this to True; assert current state.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
 
     def test_linear_risk_activity_correlations_false(self):
         cap = get_provider_capability("linear")
@@ -509,9 +510,10 @@ class TestCapabilityMatrixAndFramework:
         assert "M85D" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m85e(self):
+        # M85E is complete; framework now points to M85F.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M85E" in planned
+        assert "M85F" in planned
 
     def test_expansion_framework_jira_is_head_of_queue(self):
         fw = get_framework()

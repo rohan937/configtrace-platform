@@ -876,9 +876,10 @@ class TestCapabilityMatrixAndFramework:
         assert cap.security.activity_ingestion in (True, False)
 
     def test_linear_activity_signals_false(self):
+        # M85E advanced this to True; assert current state.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
 
     def test_linear_risk_activity_correlations_false(self):
         cap = get_provider_capability("linear")

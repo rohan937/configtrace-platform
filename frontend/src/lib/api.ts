@@ -2533,6 +2533,20 @@ export async function generatePagerDutyActivitySignals(
 }
 
 /**
+ * generateLinearActivitySignals — POST /security/linear-activity/generate-signals
+ *
+ * Admin/owner only. Generate review-safe Linear configuration activity signals.
+ */
+export async function generateLinearActivitySignals(
+  token: string | null | undefined,
+): Promise<import("@/types").LinearActivitySignalGenerateResponse> {
+  return apiFetch<import("@/types").LinearActivitySignalGenerateResponse>(
+    "/security/linear-activity/generate-signals",
+    { method: "POST", token },
+  );
+}
+
+/**
  * syncPagerDutyActivity — POST /security/pagerduty-activity/sync
  * Admin only. Synthesizes review-safe PagerDuty configuration-state activity
  * events from the same drift surfaces the connector reads: services, escalation

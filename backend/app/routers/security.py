@@ -255,12 +255,15 @@ from app.schemas.security_pagerduty_activity import (
 from app.schemas.security_linear_activity import (
     LinearActivitySyncRequest,
     LinearActivitySyncResponse,
+    LinearActivitySignalGenerateRequest,
+    LinearActivitySignalGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
 from app.services import pagerduty_activity_ingestion_service
 from app.services import pagerduty_activity_signal_service
 from app.services import linear_activity_ingestion_service
+from app.services import linear_activity_signal_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3506,6 +3509,37 @@ def sync_linear_activity_events(
         db=db,
     )
     return LinearActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/linear-activity/generate-signals",
+    response_model=LinearActivitySignalGenerateResponse,
+)
+def generate_linear_activity_signals_endpoint(
+    body: Optional[LinearActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LinearActivitySignalGenerateResponse:
+    """Generate Linear configuration review signals from M85D activity events.
+
+    Admin/owner only. Reads linear/linear_activity_event events and promotes
+    config-state activity into Incident Signals. Idempotent — re-running creates
+    no duplicates. Never confirms breach, compromise, or unauthorized access.
+    Members can read signals via GET /security/signals?provider=linear.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 100
+    summary = linear_activity_signal_service.generate_linear_activity_signals(
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_signals=max_signals,
+    )
+    return LinearActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

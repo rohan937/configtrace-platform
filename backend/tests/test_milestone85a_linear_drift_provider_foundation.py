@@ -754,9 +754,10 @@ def test_h7_linear_activity_ingestion_false() -> None:
 
 
 def test_h8_linear_activity_signals_false() -> None:
+    # M85E advanced this to True; keep the test but assert current state.
     cap = get_provider_capability("linear")
     assert cap is not None
-    assert cap.security.activity_signals is False
+    assert cap.security.activity_signals is True
 
 
 def test_h9_linear_risk_activity_correlations_false() -> None:
@@ -1051,13 +1052,12 @@ def test_n8_linear_drift_review_workflow_false() -> None:
 
 
 def test_n9_linear_all_security_caps_false() -> None:
-    # M85B: security_rules=True. M85D: activity_ingestion=True.
-    # Check only the caps that remain False after M85D.
+    # M85B: security_rules=True. M85D: activity_ingestion=True. M85E: activity_signals=True.
+    # Check only the caps that remain False after M85E.
     cap = get_provider_capability("linear")
     assert cap is not None
     sec = cap.security
     for attr in (
-        "activity_signals",
         "risk_activity_correlations", "demo_seed_clear", "case_report",
         "evidence_timeline", "evidence_graph",
     ):

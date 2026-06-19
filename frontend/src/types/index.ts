@@ -2185,6 +2185,15 @@ export interface LinearActivitySyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+
+export interface LinearActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+}
 export interface PagerDutyActivitySignalGenerateResponse {
   provider: string;
   source: string;
