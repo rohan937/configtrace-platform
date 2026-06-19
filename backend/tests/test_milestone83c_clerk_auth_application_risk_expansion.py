@@ -662,7 +662,7 @@ class TestCapabilityMatrixAndFramework:
         assert (
             "M83D" in planned or "Activity" in planned or
             "M83E" in planned or "M83F" in planned or
-            "M83G" in planned or "M83H" in planned
+            "M83G" in planned or "M83H" in planned or "M83I" in planned
         ), (
             f"Expected planned_next_stage to contain 'M83D' or a later Clerk stage, got: {planned!r}"
         )

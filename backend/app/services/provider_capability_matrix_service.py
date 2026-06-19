@@ -966,13 +966,16 @@ _CLERK = ProviderCapability(
         "M83G adds demo + QA: a review-safe Clerk demo incident chain (seed/clear/status) "
         "with configuration findings, activity events, signals, correlations, and a linked "
         "case. Case report, evidence timeline, and evidence graph are fully supported. "
+        "M83H provider-depth QA complete: taxonomy parity, privacy guardrails, claim "
+        "discipline, false-positive behavior, demo isolation, router admin guards, and "
+        "frontend consistency verified. Signal-type map orphan entries removed. "
         "Privacy contract: Clerk secret key values, "
         "publishable key values, session tokens, JWTs, OAuth tokens, bearer tokens, "
         "webhook secrets, raw webhook/redirect URLs, raw domain names, JWT template "
         "bodies, custom claims, audience URIs, user emails, user IDs, phone numbers, "
         "names, member identities, session history, login history, IP addresses, user "
         "agents, raw audit payloads, and customer PII are NEVER fetched or stored. "
-        "planned_next_stage: M83H: Clerk Provider Depth QA."
+        "planned_next_stage: M83I: Clerk Cross-Cloud UX Polish."
     ),
 )
 

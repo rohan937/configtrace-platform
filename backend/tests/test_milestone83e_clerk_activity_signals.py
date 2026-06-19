@@ -57,8 +57,10 @@ CLERK_TEST_EVENT_ID = "CLERK_TEST_EVENT_ID"
 CLERK_TEST_SIGNAL_ID = "CLERK_TEST_SIGNAL_ID"
 
 EXPECTED_SIGNAL_TYPES = {
+    # 10 producible signal types after M83H removed the orphaned
+    # clerk.application.created/updated → clerk_application_config_changed
+    # map entries (application events are not synthesized by the connector).
     "clerk_instance_settings_config_changed",
-    "clerk_application_config_changed",
     "clerk_domain_config_changed",
     "clerk_redirect_url_config_changed",
     "clerk_jwt_template_config_changed",

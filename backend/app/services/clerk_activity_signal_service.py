@@ -55,8 +55,6 @@ _REVIEW_NOTE = (
 # ── Event type → signal_type ──────────────────────────────────────────────────
 CLERK_EVENT_TYPE_TO_SIGNAL_TYPE: dict[str, str] = {
     "clerk.instance_settings.updated": "clerk_instance_settings_config_changed",
-    "clerk.application.created": "clerk_application_config_changed",
-    "clerk.application.updated": "clerk_application_config_changed",
     "clerk.domain.created": "clerk_domain_config_changed",
     "clerk.domain.updated": "clerk_domain_config_changed",
     "clerk.domain.deleted": "clerk_domain_config_changed",

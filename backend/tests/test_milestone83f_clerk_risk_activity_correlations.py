@@ -603,7 +603,9 @@ def test_frontend_api_has_generate_clerk_correlations():
 def test_m83_earlier_milestones_still_wired():
     """M83A-E artefacts (signal types, event types) must still be present."""
     from app.services.clerk_activity_signal_service import CLERK_SIGNAL_TYPES
-    assert len(CLERK_SIGNAL_TYPES) >= 11
+    # M83H removed 2 orphaned application event entries from the signal map,
+    # reducing CLERK_SIGNAL_TYPES from 11 to 10 producible types.
+    assert len(CLERK_SIGNAL_TYPES) >= 10
     from app.connectors.clerk import _CLERK_CONFIG_EVENT_TYPES
     assert len(_CLERK_CONFIG_EVENT_TYPES) >= 18
 
