@@ -1205,6 +1205,23 @@ export async function generateDatadogCorrelations(
   });
 }
 
+/**
+ * generateClerkCorrelations — POST /security/clerk-correlations/generate
+ * Admin only. Joins active Clerk configuration-risk findings with Clerk
+ * activity signals. Stores rule keys, signal types, opaque resource IDs,
+ * counts, and timing evidence — never Clerk secret keys, tokens, raw URLs,
+ * domain names, user emails, session data, or PII.
+ */
+export async function generateClerkCorrelations(
+  token: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").ClerkCorrelationGenerateResponse> {
+  return apiFetch<import("@/types").ClerkCorrelationGenerateResponse>(
+    "/security/clerk-correlations/generate",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
 export async function generateGitHubSecretScanningSignals(
   token?: string | null,
 ): Promise<import("@/types").GitHubSecretScanningSignalGenerateResponse> {

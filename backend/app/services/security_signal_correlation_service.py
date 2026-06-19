@@ -371,6 +371,23 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "time_delta_minutes",          # int — time delta between finding and signal (minutes)
         "correlation_reason",          # safe reason label for the correlation
         "correlation_strength",        # "high" / "medium" / "low"
+        # Clerk Risk × Activity Correlation metadata (M83F) — safe opaque
+        # identifiers, counts, and category labels only. NEVER stored:
+        # Clerk secret key values, publishable key values, session tokens,
+        # JWTs, OAuth tokens, webhook secrets, raw URLs, domain names, JWT
+        # template bodies, custom claims, audience URIs, issuer URIs, user
+        # emails, user IDs, phone numbers, member identities, IP addresses,
+        # user agents, raw audit payloads, or PII.
+        "instance_id",
+        "application_id",
+        "redirect_url_config_id",
+        "jwt_template_id",
+        "email_sms_settings_id",
+        "auth_strategy_id",
+        "organization_settings_id",
+        "session_policy_id",
+        "window_start",
+        "window_end",
     }
 )
 

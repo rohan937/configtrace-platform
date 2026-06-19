@@ -67,3 +67,21 @@ class ClerkActivitySignalGenerateResponse(BaseModel):
     groups_scanned: int = 0
     signals_created: int = 0
     signals_skipped: int = 0
+
+
+class ClerkCorrelationGenerateRequest(BaseModel):
+    """POST /security/clerk-correlations/generate request body (all optional)."""
+
+    lookback_hours: int = Field(default=24, ge=1, le=168)
+    max_correlations: int = Field(default=100, ge=1, le=1000)
+
+
+class ClerkCorrelationGenerateResponse(BaseModel):
+    """Clerk Risk × Activity correlation generation summary."""
+
+    provider: str = "clerk"
+    findings_scanned: int = 0
+    signals_scanned: int = 0
+    candidate_pairs: int = 0
+    correlations_created: int = 0
+    correlations_skipped: int = 0

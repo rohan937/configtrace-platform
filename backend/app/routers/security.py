@@ -241,6 +241,8 @@ from app.schemas.security_clerk_activity import (
     ClerkActivitySyncResponse,
     ClerkActivitySignalGenerateRequest,
     ClerkActivitySignalGenerateResponse,
+    ClerkCorrelationGenerateRequest,
+    ClerkCorrelationGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
@@ -3842,6 +3844,54 @@ def generate_datadog_risk_activity_correlations(
         workspace_id=workspace_id, db=db, **kwargs_dd
     )
     return DatadogCorrelationGenerateResponse(**result)
+
+
+@router.post(
+    "/clerk-correlations/generate",
+    response_model=ClerkCorrelationGenerateResponse,
+)
+def generate_clerk_risk_activity_correlations(
+    body: Optional[ClerkCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ClerkCorrelationGenerateResponse:
+    """Generate Clerk Risk × Activity correlations (M83F).
+
+    Admin/owner only. Joins active Clerk configuration-risk findings with
+    Clerk activity signals using safe resource identifiers (instance_id,
+    application_id, domain_id, redirect_url_config_id, jwt_template_id,
+    webhook_endpoint_id, auth_strategy_id, organization_settings_id,
+    session_policy_id) or family aggregate matching for singleton resources.
+
+    Clerk secret key values, publishable key values, session tokens, JWTs,
+    OAuth tokens, webhook secrets, raw redirect URLs, raw domain names,
+    JWT template bodies, user emails, user IDs, phone numbers, member
+    identities, session history, IP addresses, user agents, raw audit
+    payloads, and PII are never used or stored.
+    Does not confirm compromise, unauthorized access, or data exposure.
+    Idempotent — re-running creates no duplicates.
+
+    Members can view the resulting correlations via
+    GET /security/correlations?provider=clerk.
+    """
+    from app.services.clerk_risk_activity_correlation_service import (
+        generate_clerk_correlations,
+    )
+
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    kwargs: dict[str, Any] = {}
+    if body:
+        if body.lookback_hours is not None:
+            kwargs["lookback_hours"] = body.lookback_hours
+        if body.max_correlations is not None:
+            kwargs["max_correlations"] = body.max_correlations
+    result = generate_clerk_correlations(
+        workspace_id=workspace_id, db=db, **kwargs
+    )
+    return ClerkCorrelationGenerateResponse(**result)
 
 
 @router.post(

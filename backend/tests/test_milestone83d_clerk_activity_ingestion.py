@@ -858,8 +858,8 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         )
 
     def test_capability_matrix_clerk_signals_false(self):
-        """Capability matrix must show activity_signals=True (M83E), risk_activity_correlations=False,
-        demo_seed_clear=False for clerk at this milestone."""
+        """Capability matrix must show activity_signals=True (M83E),
+        risk_activity_correlations=True (M83F), demo_seed_clear=False for clerk."""
         from app.services.provider_capability_matrix_service import get_provider_capability
         clerk_cap = get_provider_capability("clerk")
         assert clerk_cap is not None, "Clerk entry must exist in capability matrix"
@@ -868,8 +868,9 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
             f"activity_signals must be True for clerk after M83E. "
             f"Got: {clerk_cap.security.activity_signals!r}"
         )
-        assert clerk_cap.security.risk_activity_correlations is False, (
-            f"risk_activity_correlations must be False for clerk at M83D. "
+        # M83F promoted risk_activity_correlations to True.
+        assert clerk_cap.security.risk_activity_correlations is True, (
+            f"risk_activity_correlations must be True for clerk after M83F. "
             f"Got: {clerk_cap.security.risk_activity_correlations!r}"
         )
         assert clerk_cap.security.demo_seed_clear is False, (

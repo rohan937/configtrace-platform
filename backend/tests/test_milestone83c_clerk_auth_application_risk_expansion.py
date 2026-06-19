@@ -656,11 +656,12 @@ class TestCapabilityMatrixAndFramework:
         )
 
     def test_expansion_framework_m83d(self):
-        """The expansion framework planned_next_stage must reference 'M83D' or 'Activity'."""
+        """The expansion framework planned_next_stage must reference 'M83D' or later Clerk stage."""
         framework = get_framework()
         planned = framework.get("summary", {}).get("planned_next_stage", "")
-        assert "M83D" in planned or "Activity" in planned, (
-            f"Expected planned_next_stage to contain 'M83D' or 'Activity', got: {planned!r}"
+        assert ("M83D" in planned or "Activity" in planned or
+                "M83E" in planned or "M83F" in planned or "M83G" in planned), (
+            f"Expected planned_next_stage to contain 'M83D' or a later Clerk stage, got: {planned!r}"
         )
 
 

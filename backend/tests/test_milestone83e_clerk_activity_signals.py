@@ -816,12 +816,13 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         )
 
     def test_capability_matrix_clerk_correlations_false(self):
-        """Capability matrix must show risk_activity_correlations=False and
-        demo_seed_clear=False for clerk at M83E (those are future milestones)."""
+        """Capability matrix must show risk_activity_correlations=True (M83F promoted it) and
+        demo_seed_clear=False for clerk."""
         cap = get_provider_capability("clerk")
         assert cap is not None, "Clerk entry must exist in capability matrix"
-        assert cap.security.risk_activity_correlations is False, (
-            f"risk_activity_correlations must be False for clerk at M83E. "
+        # M83F promoted risk_activity_correlations to True.
+        assert cap.security.risk_activity_correlations is True, (
+            f"risk_activity_correlations must be True for clerk after M83F. "
             f"Got: {cap.security.risk_activity_correlations!r}"
         )
         assert cap.security.demo_seed_clear is False, (

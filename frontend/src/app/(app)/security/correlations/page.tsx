@@ -21,8 +21,9 @@ import type {
   TwilioCorrelationGenerateResponse,
   Auth0CorrelationGenerateResponse,
   DatadogCorrelationGenerateResponse,
+  ClerkCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -35,7 +36,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -214,6 +215,18 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "datadog_cloud_integration_risk_activity_correlation",
     "datadog_config_activity_correlation",
   ],
+  clerk: [
+    "clerk_instance_settings_risk_activity_correlation",
+    "clerk_application_risk_activity_correlation",
+    "clerk_domain_risk_activity_correlation",
+    "clerk_redirect_url_risk_activity_correlation",
+    "clerk_jwt_template_risk_activity_correlation",
+    "clerk_webhook_endpoint_risk_activity_correlation",
+    "clerk_email_sms_settings_risk_activity_correlation",
+    "clerk_auth_strategy_risk_activity_correlation",
+    "clerk_organization_settings_risk_activity_correlation",
+    "clerk_session_policy_risk_activity_correlation",
+  ],
 };
 const HIGH = new Set(["critical", "high"]);
 
@@ -234,7 +247,7 @@ export default function CorrelationsPage() {
   const typeOptions = TYPE_OPTIONS_BY_PROVIDER[provider] ?? [];
 
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse) | null>(null);
+  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse) | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -282,6 +295,9 @@ export default function CorrelationsPage() {
         setGenResult(res);
       } else if (provider === "datadog") {
         const res = await generateDatadogCorrelations(token);
+        setGenResult(res);
+      } else if (provider === "clerk") {
+        const res = await generateClerkCorrelations(token);
         setGenResult(res);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);
@@ -417,7 +433,7 @@ function GenerateBar({
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
-  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse) | null;
+  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse) | null;
   genError: string | null;
   onGenerate: () => void;
 }) {
@@ -448,7 +464,9 @@ function GenerateBar({
                             ? "Generate Auth0 risk × activity correlations from safe configuration findings and activity signals. ConfigTrace stores resource identifiers, OAuth/application posture, tenant settings, and activity summaries only — never user emails, login history, IP addresses, sessions, tokens, callback URLs, raw Auth0 logs, or client secrets. Matches on client_id (applications), connection_id, resource_server_id, rule_id, action_id, factor_name, or custom_domain_id."
                             : provider === "datadog"
                               ? "Generate review-safe Datadog correlations between configuration findings and recent Datadog configuration activity. ConfigTrace stores only rule keys, signal types, opaque resource IDs, counts, categories, and timing evidence — never API keys, application keys, raw monitor queries, raw monitor messages, webhook URLs, headers, payloads, logs, traces, metric values, incident text, emails, destination handles, raw audit payloads, or PII."
-                              : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
+                              : provider === "clerk"
+                                ? "Generate review-safe Clerk correlations between configuration findings and recent Clerk configuration activity. Stores rule keys, signal types, opaque resource IDs, counts, and timing evidence only — never Clerk secret keys, session tokens, JWTs, OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, raw webhook URLs, raw domain names, user emails, user IDs, phone numbers, names, session history, login history, IP addresses, user agents, raw audit payloads, customer data, or PII."
+                                : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -640,7 +658,9 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                             ? "the same Auth0 resource (application / connection / resource server / rule / action / MFA factor / custom domain), or the same tenant for tenant-level risks. Sync Auth0 activity, generate Auth0 signals, then generate Auth0 correlations to align configuration risks with control-plane activity evidence on the same Auth0 surface."
                             : provider === "datadog"
                               ? "the same Datadog resource (monitor / SLO / dashboard / webhook integration / notification integration / API key / application key / role / team / cloud integration). Sync Datadog activity, generate Datadog signals, then generate Datadog correlations to align configuration risks with configuration activity evidence on the same Datadog surface. API keys, application keys, raw monitor queries, raw messages, webhook URLs, notification handles, emails, user IDs, and raw audit payloads are never stored."
-                              : "the same GitHub repository";
+                              : provider === "clerk"
+                                ? "the same Clerk resource (instance / application / domain / redirect URL / JWT template / webhook endpoint / email-SMS settings / auth strategy / organization settings / session policy). Sync Clerk activity, generate Clerk signals, then generate Clerk correlations to align configuration risks with Clerk configuration activity evidence on the same Clerk surface."
+                                : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>
       <div style={{ fontSize: "15px", fontWeight: 600, color: "#e8eaf0" }}>No correlations yet.</div>

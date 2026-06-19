@@ -943,7 +943,7 @@ _CLERK = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -952,22 +952,26 @@ _CLERK = ProviderCapability(
     maturity="partial",
     notes=(
         "Clerk identity infrastructure drift, core security, auth/application risk "
-        "expansion, activity ingestion, and activity signals (M83A–M83E). Drift snapshots "
+        "expansion, activity ingestion, activity signals, and risk × activity correlations "
+        "(M83A–M83F). Drift snapshots "
         "cover 10 safe configuration surfaces from the Clerk Backend API v1. M83B adds 21 "
         "core security rules. M83C adds 19 auth/application risk expansion rules. M83D adds "
         "configuration-state activity ingestion synthesized from the same 10 safe drift "
         "surfaces — never Clerk audit logs which contain user emails, user IDs, IP "
         "addresses, and session data. M83E adds activity signals: ingested Clerk "
         "configuration-state events are promoted into review-priority Incident Signals. "
+        "M83F adds risk × activity correlations: active Clerk configuration-risk findings "
+        "are joined with Clerk activity signals across correlation families keyed by safe "
+        "resource identity. "
         "Privacy contract: Clerk secret key values, "
         "publishable key values, session tokens, JWTs, OAuth tokens, bearer tokens, "
         "webhook secrets, raw webhook/redirect URLs, raw domain names, JWT template "
         "bodies, custom claims, audience URIs, user emails, user IDs, phone numbers, "
         "names, member identities, session history, login history, IP addresses, user "
         "agents, raw audit payloads, and customer PII are NEVER fetched or stored. "
-        "Risk × activity correlations, demo seed/clear, case reports, "
+        "Demo seed/clear, case reports, "
         "evidence timelines, and evidence graphs are not yet implemented. "
-        "planned_next_stage: M83F: Clerk Risk × Activity Correlations."
+        "planned_next_stage: M83G: Clerk Demo + QA."
     ),
 )
 
