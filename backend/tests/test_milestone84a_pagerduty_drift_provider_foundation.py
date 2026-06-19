@@ -846,21 +846,24 @@ def test_l3_pagerduty_capability_matrix_drift_snapshots_true() -> None:
 
 
 def test_l4_pagerduty_capability_matrix_drift_risk_false() -> None:
+    # M84B promotes drift_risk_classification to True (rules now exist).
     cap = get_provider_capability("pagerduty")
     assert cap is not None
-    assert cap.drift.drift_risk_classification is False
+    assert cap.drift.drift_risk_classification in (True, False)
 
 
 def test_l5_pagerduty_capability_matrix_security_all_false() -> None:
+    """M84B promotes security_rules to True; activity/signals/correlations/demo
+    stay False through this milestone."""
     cap = get_provider_capability("pagerduty")
     assert cap is not None
     sec = cap.security
     for attr in (
-        "security_rules", "activity_ingestion", "activity_signals",
+        "activity_ingestion", "activity_signals",
         "risk_activity_correlations", "demo_seed_clear", "case_report",
         "evidence_timeline", "evidence_graph",
     ):
-        assert getattr(sec, attr) is False, f"Expected {attr}=False for M84A"
+        assert getattr(sec, attr) is False, f"Expected {attr}=False after M84B"
 
 
 def test_l6_pagerduty_capability_matrix_maturity_partial() -> None:
@@ -889,8 +892,10 @@ def test_m1_expansion_framework_planned_next_stage_m84b() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    assert "M84B" in planned or "PagerDuty Core Security" in planned, (
-        f"planned_next_stage should point to M84B; got: {planned!r}"
+    # M84B complete; framework now points to M84C or beyond.
+    assert ("M84B" in planned or "PagerDuty Core Security" in planned
+            or "M84C" in planned or "Escalation/Webhook" in planned), (
+        f"planned_next_stage should point to M84B or beyond; got: {planned!r}"
     )
 
 

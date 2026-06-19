@@ -615,6 +615,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M84B: PagerDuty Core Security Foundation",
+            "planned_next_stage": "M84C: PagerDuty Escalation/Webhook Risk Expansion",
         },
     }

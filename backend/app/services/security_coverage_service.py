@@ -47,6 +47,7 @@ PROVIDERS = [
     "auth0",
     "datadog",
     "clerk",
+    "pagerduty",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -344,6 +345,29 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "clerk_session_device_tracking_disabled": ("clerk_session_policy",),
     "clerk_session_reverification_disabled": ("clerk_session_policy",),
     "clerk_session_long_lifetime_without_single_session": ("clerk_session_policy",),
+    # PagerDuty — M84B core security rules
+    "pagerduty_service_no_escalation_policy": ("pagerduty_service",),
+    "pagerduty_service_no_integrations": ("pagerduty_service",),
+    "pagerduty_service_ack_timeout_disabled": ("pagerduty_service",),
+    "pagerduty_service_auto_resolve_disabled": ("pagerduty_service",),
+    "pagerduty_service_alert_creation_limited": ("pagerduty_service",),
+    "pagerduty_service_no_teams": ("pagerduty_service",),
+    "pagerduty_escalation_policy_no_rules": ("pagerduty_escalation_policy",),
+    "pagerduty_escalation_policy_single_level": ("pagerduty_escalation_policy",),
+    "pagerduty_schedule_no_layers": ("pagerduty_schedule",),
+    "pagerduty_schedule_no_teams": ("pagerduty_schedule",),
+    "pagerduty_service_integration_missing_key_indicator": ("pagerduty_service_integration",),
+    "pagerduty_service_integration_email_type": ("pagerduty_service_integration",),
+    "pagerduty_webhook_subscription_inactive": ("pagerduty_webhook_subscription",),
+    "pagerduty_webhook_subscription_non_https": ("pagerduty_webhook_subscription",),
+    "pagerduty_webhook_subscription_broad_event_scope": ("pagerduty_webhook_subscription",),
+    "pagerduty_event_orchestration_no_routes": ("pagerduty_event_orchestration",),
+    "pagerduty_event_orchestration_no_team": ("pagerduty_event_orchestration",),
+    "pagerduty_business_service_no_team": ("pagerduty_business_service",),
+    "pagerduty_business_service_no_contact": ("pagerduty_business_service",),
+    "pagerduty_response_play_no_responders": ("pagerduty_response_play",),
+    "pagerduty_response_play_no_subscribers": ("pagerduty_response_play",),
+    "pagerduty_response_play_not_runnable": ("pagerduty_response_play",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -425,6 +449,16 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Authentication strategies",
         "Organization settings",
         "Session policy",
+    ],
+    "pagerduty": [
+        "Services",
+        "Escalation policies",
+        "Schedules",
+        "Service integrations",
+        "Webhook subscriptions",
+        "Event orchestrations",
+        "Business services",
+        "Response plays",
     ],
 }
 
@@ -699,6 +733,39 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "clerk_organization_settings": {
         "message": "Clerk organization settings metadata was not observed.",
         "hints": ["Verify the Clerk secret key has access to organization configuration via the Clerk Backend API. This surface may be absent if organizations are not enabled."],
+    },
+    # PagerDuty — M84B core security rules diagnostics
+    "pagerduty_service": {
+        "message": "PagerDuty service metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /services."],
+    },
+    "pagerduty_escalation_policy": {
+        "message": "PagerDuty escalation policy metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /escalation_policies."],
+    },
+    "pagerduty_schedule": {
+        "message": "PagerDuty schedule metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /schedules. This surface may be absent if no on-call schedules are configured."],
+    },
+    "pagerduty_service_integration": {
+        "message": "PagerDuty service integration metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /services/{id}/integrations. This surface may be absent if no services have integrations configured."],
+    },
+    "pagerduty_webhook_subscription": {
+        "message": "PagerDuty V3 webhook subscription metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /webhook_subscriptions. This surface may be plan-gated or absent if no V3 webhooks are configured."],
+    },
+    "pagerduty_event_orchestration": {
+        "message": "PagerDuty event orchestration metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /event_orchestrations. This surface is plan-gated (AIOps) and may be absent on plans without Event Orchestration."],
+    },
+    "pagerduty_business_service": {
+        "message": "PagerDuty business service metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /business_services. This surface may be plan-gated or absent if no business services are configured."],
+    },
+    "pagerduty_response_play": {
+        "message": "PagerDuty response play metadata was not observed.",
+        "hints": ["Verify the PagerDuty API token has read access to /response_plays. This surface may be absent if no response plays are configured."],
     },
 }
 

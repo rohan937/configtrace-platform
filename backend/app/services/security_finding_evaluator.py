@@ -50,6 +50,7 @@ from app.services.security_rules import supabase as supabase_rules
 from app.services.security_rules import vercel as vercel_rules
 from app.services.security_rules import datadog as datadog_rules
 from app.services.security_rules import clerk as clerk_rules
+from app.services.security_rules import pagerduty as pagerduty_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,8 @@ _PROVIDER_RULES = {
     "datadog": [datadog_rules.evaluate],
     # M83B: Clerk core security rules
     "clerk": [clerk_rules.evaluate],
+    # M84B: PagerDuty core security rules
+    "pagerduty": [pagerduty_rules.evaluate],
 }
 
 
