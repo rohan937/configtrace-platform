@@ -41,6 +41,10 @@ class LinearWorkspaceRecord(TypedDict):
     resource_name: str
     url_key_present: bool
     logo_present: bool
+    # M85C: aggregate counts (Optional — None when not available)
+    team_count: Optional[int]
+    webhook_count: Optional[int]
+    integration_count: Optional[int]
 
 
 class LinearTeamRecord(TypedDict):
@@ -56,6 +60,14 @@ class LinearTeamRecord(TypedDict):
     auto_archive_enabled: bool
     cycle_enabled: bool
     cycle_duration_category: str
+    # M85C: workflow state coverage flags (Optional — None when not queried)
+    workflow_state_count: Optional[int]
+    has_backlog_state: Optional[bool]
+    has_started_state: Optional[bool]
+    has_completed_state: Optional[bool]
+    has_canceled_state: Optional[bool]
+    label_count: Optional[int]
+    webhook_count: Optional[int]
 
 
 class LinearProjectRecord(TypedDict):
@@ -69,6 +81,8 @@ class LinearProjectRecord(TypedDict):
     lead_present: bool
     member_count_category: str
     issue_count_category: str
+    # M85C: team association count
+    team_count: int
 
 
 class LinearWorkflowStateRecord(TypedDict):
@@ -104,6 +118,9 @@ class LinearWebhookRecord(TypedDict):
     webhook_url_present: bool
     webhook_url_scheme_category: str
     team_id: Optional[str]
+    # M85C: sensitive resource-type presence booleans (derived, raw names discarded)
+    webhook_has_comment_type: bool
+    webhook_has_attachment_type: bool
 
 
 class LinearViewRecord(TypedDict):

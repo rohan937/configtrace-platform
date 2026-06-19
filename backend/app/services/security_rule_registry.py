@@ -369,6 +369,22 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "linear_cycle_high_issue_count",
         "linear_integration_disabled",
         "linear_integration_unknown_type",
+        # Linear — M85C workflow/webhook risk expansion
+        "linear_workspace_low_team_count",
+        "linear_workspace_no_webhooks",
+        "linear_workspace_no_integrations",
+        "linear_team_no_backlog_state",
+        "linear_team_no_started_state",
+        "linear_team_no_completed_state",
+        "linear_team_no_canceled_state",
+        "linear_team_low_workflow_state_count",
+        "linear_team_no_labels",
+        "linear_team_no_webhooks",
+        "linear_project_no_team_scope",
+        "linear_webhook_issue_comment_scope",
+        "linear_webhook_attachment_scope",
+        "linear_view_shared_without_team_scope",
+        "linear_integration_workspace_scoped",
     }
 )
 

@@ -242,6 +242,7 @@ class LinearConnector(BaseConnector):
             name
             urlKey
             logoUrl
+            teams(first: 1) { totalCount }
           }
         }
         """
@@ -254,6 +255,13 @@ class LinearConnector(BaseConnector):
     def _normalize_workspace(self, raw: dict) -> dict:
         rid = _trunc(raw.get("id", ""), 64) or "unknown"
         name = _trunc(raw.get("name", ""), _MAX_STR_LEN)
+        # M85C: team count from organization (safe integer only — never store names/IDs)
+        teams_data = raw.get("teams")
+        team_count: Optional[int] = (
+            _int((teams_data or {}).get("totalCount", 0))
+            if teams_data is not None
+            else None
+        )
         return {
             "record_type": LINEAR_WORKSPACE,
             "provider": "linear",
@@ -262,6 +270,10 @@ class LinearConnector(BaseConnector):
             "resource_name": name,
             "url_key_present": _bool(raw.get("urlKey")),
             "logo_present": _bool(raw.get("logoUrl")),
+            # M85C: webhook_count/integration_count enriched in fetch()
+            "team_count": team_count,
+            "webhook_count": None,
+            "integration_count": None,
         }
 
     def _fetch_teams(self, api_key: str) -> list[dict]:
@@ -278,6 +290,9 @@ class LinearConnector(BaseConnector):
               autoArchivePeriod
               cyclesEnabled
               cycleDuration
+              states(first: 50) { nodes { type } }
+              labels(first: 1) { totalCount }
+              webhooks(first: 1) { totalCount }
             }
           }
         }
@@ -295,6 +310,44 @@ class LinearConnector(BaseConnector):
         auto_archive = raw.get("autoArchivePeriod")
         cycles_enabled = _bool(raw.get("cyclesEnabled"))
         cycle_duration = raw.get("cycleDuration")
+
+        # M85C: workflow state coverage from team.states sub-query.
+        # SECURITY: only state type strings (enum labels) are used — never state names/descriptions.
+        states_data = raw.get("states")
+        if states_data is not None:
+            states_nodes = states_data.get("nodes", [])
+            state_types = {
+                (s.get("type") or "").lower()
+                for s in states_nodes
+                if isinstance(s, dict)
+            }
+            workflow_state_count: Optional[int] = len(states_nodes)
+            has_backlog_state: Optional[bool] = "backlog" in state_types
+            has_started_state: Optional[bool] = "started" in state_types
+            has_completed_state: Optional[bool] = "completed" in state_types
+            # Linear uses British "cancelled" in the enum
+            has_canceled_state: Optional[bool] = "cancelled" in state_types
+        else:
+            workflow_state_count = None
+            has_backlog_state = None
+            has_started_state = None
+            has_completed_state = None
+            has_canceled_state = None
+
+        # M85C: label and webhook counts (safe integers only)
+        labels_data = raw.get("labels")
+        label_count: Optional[int] = (
+            _int((labels_data or {}).get("totalCount", 0))
+            if labels_data is not None
+            else None
+        )
+        webhooks_data = raw.get("webhooks")
+        team_webhook_count: Optional[int] = (
+            _int((webhooks_data or {}).get("totalCount", 0))
+            if webhooks_data is not None
+            else None
+        )
+
         return {
             "record_type": LINEAR_TEAM,
             "provider": "linear",
@@ -308,6 +361,14 @@ class LinearConnector(BaseConnector):
             "auto_archive_enabled": auto_archive is not None,
             "cycle_enabled": cycles_enabled,
             "cycle_duration_category": _cycle_duration_category(cycle_duration),
+            # M85C workflow state coverage
+            "workflow_state_count": workflow_state_count,
+            "has_backlog_state": has_backlog_state,
+            "has_started_state": has_started_state,
+            "has_completed_state": has_completed_state,
+            "has_canceled_state": has_canceled_state,
+            "label_count": label_count,
+            "webhook_count": team_webhook_count,
         }
 
     def _fetch_projects(self, api_key: str) -> list[dict]:
@@ -340,6 +401,9 @@ class LinearConnector(BaseConnector):
         lead_present = _bool(raw.get("lead"))
         member_count = _int((raw.get("members") or {}).get("totalCount", 0))
         issue_count = _int((raw.get("issues") or {}).get("totalCount", 0))
+        # M85C: team association count (integer only — team IDs and names never stored)
+        team_nodes = (raw.get("teams") or {}).get("nodes", [])
+        team_count = len(team_nodes) if isinstance(team_nodes, list) else 0
         return {
             "record_type": LINEAR_PROJECT,
             "provider": "linear",
@@ -351,6 +415,7 @@ class LinearConnector(BaseConnector):
             "lead_present": lead_present,
             "member_count_category": _member_count_category(member_count),
             "issue_count_category": _issue_count_category(issue_count),
+            "team_count": team_count,
         }
 
     def _fetch_workflow_states(self, api_key: str) -> list[dict]:
@@ -468,19 +533,30 @@ class LinearConnector(BaseConnector):
         secret_present = bool(secret)
         del secret
         del url
+        # M85C: derive sensitive resource-type presence booleans before discarding the list.
+        # SECURITY: only boolean presence indicators are stored — the raw type name strings
+        # are never written to any record or log.
+        if isinstance(resource_types, (list, tuple)):
+            types_lower = {rt.lower() for rt in resource_types if isinstance(rt, str)}
+            rt_count = len(resource_types)
+        else:
+            types_lower = set()
+            rt_count = 0
+        has_comment_type = "comment" in types_lower
+        has_attachment_type = "attachment" in types_lower
         return {
             "record_type": LINEAR_WEBHOOK,
             "provider": "linear",
             "record_id": rid,
             "resource_id": rid,
-            "webhook_resource_types_count": len(resource_types)
-            if isinstance(resource_types, (list, tuple))
-            else 0,
+            "webhook_resource_types_count": rt_count,
             "webhook_enabled": enabled,
             "webhook_secret_present": secret_present,
             "webhook_url_present": url_present,
             "webhook_url_scheme_category": url_scheme_cat,
             "team_id": team_id,
+            "webhook_has_comment_type": has_comment_type,
+            "webhook_has_attachment_type": has_attachment_type,
         }
 
     def _fetch_views(self, api_key: str) -> list[dict]:
@@ -607,15 +683,29 @@ class LinearConnector(BaseConnector):
         api_key = _sanitize_api_key(credentials.get("api_key", ""))
 
         records: list[dict] = []
-        records.extend(self._fetch_workspace(api_key))
+        workspace_records = self._fetch_workspace(api_key)
+        records.extend(workspace_records)
         records.extend(self._fetch_teams(api_key))
         records.extend(self._fetch_projects(api_key))
         records.extend(self._fetch_workflow_states(api_key))
         records.extend(self._fetch_labels(api_key))
-        records.extend(self._fetch_webhooks(api_key))
+
+        webhooks = self._fetch_webhooks(api_key)
+        records.extend(webhooks)
         records.extend(self._fetch_views(api_key))
         records.extend(self._fetch_cycles(api_key))
-        records.extend(self._fetch_integrations(api_key))
+
+        integrations = self._fetch_integrations(api_key)
+        records.extend(integrations)
+
+        # M85C: Enrich workspace record with aggregate surface counts.
+        # webhook_count = total workspace-level webhooks fetched.
+        # integration_count = total integrations visible to this API key.
+        if workspace_records:
+            ws = workspace_records[0]
+            ws["webhook_count"] = len(webhooks)
+            ws["integration_count"] = len(integrations)
+
         return records
 
     def validate_credentials(self, credentials: dict) -> bool:

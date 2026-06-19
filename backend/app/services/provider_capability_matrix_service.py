@@ -1078,19 +1078,23 @@ _LINEAR = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Linear project-management configuration drift with core security rules "
-        "(M85A + M85B). Drift snapshots cover 9 safe configuration surfaces from "
-        "the Linear GraphQL API: workspace config, teams, projects, workflow states, "
-        "issue labels, webhook subscriptions, custom views, active cycles, and "
-        "integrations. M85B adds 24 configuration-risk security rules covering "
-        "workspace, team, project, workflow state, label, webhook, view, cycle, "
-        "and integration posture. Authentication uses a Linear API key (read-only). "
-        "API key is stored encrypted and never returned in API responses, never "
-        "logged, and never copied to resource metadata. "
-        "Issue titles, descriptions, comments, attachments, user emails, user "
-        "names, member identities, raw URLs, webhook secrets, and customer data "
-        "are never fetched or stored. "
-        "planned_next_stage: M85C: Linear Workflow/Webhook Risk Expansion."
+        "Linear project-management configuration drift with core and expanded security "
+        "rules (M85A + M85B + M85C). Drift snapshots cover 9 safe configuration "
+        "surfaces from the Linear GraphQL API: workspace config, teams, projects, "
+        "workflow states, issue labels, webhook subscriptions, custom views, active "
+        "cycles, and integrations. M85B added 24 core configuration-risk security rules; "
+        "M85C adds 15 workflow/webhook risk expansion rules covering team workflow state "
+        "coverage, workspace webhook/integration posture, project team scope, webhook "
+        "resource type posture, view sharing scope, and integration workspace scoping "
+        "(39 total Linear rules). Connector expanded in M85C to capture workflow state "
+        "type coverage per team, comment/attachment type booleans for webhooks, project "
+        "team count, and workspace aggregate counts — all as safe integers/booleans. "
+        "Authentication uses a Linear API key (read-only). API key is stored encrypted "
+        "and never returned in API responses, never logged, and never copied to resource "
+        "metadata. Issue titles, descriptions, comments, attachments, user emails, user "
+        "names, member identities, raw URLs, webhook secrets, and customer data are "
+        "never fetched or stored. "
+        "planned_next_stage: M85D: Linear Activity/Event Ingestion."
     ),
 )
 

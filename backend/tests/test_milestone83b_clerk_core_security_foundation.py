@@ -1248,6 +1248,7 @@ class TestCapabilityMatrix:
             "M85A: Linear Drift Provider Foundation",
             "M85B: Linear Core Security Foundation",
             "M85C: Linear Workflow/Webhook Risk Expansion",
+            "M85D: Linear Activity/Event Ingestion",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

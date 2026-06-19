@@ -1,4 +1,4 @@
-"""Linear configuration-risk security rules — M85B.
+"""Linear configuration-risk security rules — M85B, expanded M85C.
 
 Every rule fires only on explicit, reliable normalized fields produced by
 the Linear connector (app/connectors/linear.py + linear_schema.py, M85A).
@@ -76,24 +76,38 @@ from app.services.security_rules.base import (
 
 # ── Rule key constants ─────────────────────────────────────────────────────────
 
-# Workspace rules
+# Workspace rules — M85B
 _RULE_WORKSPACE_MISSING_URL_KEY = "linear_workspace_missing_url_key"
 _RULE_WORKSPACE_MISSING_LOGO = "linear_workspace_missing_logo"
+# Workspace rules — M85C
+_RULE_WORKSPACE_LOW_TEAM_COUNT = "linear_workspace_low_team_count"
+_RULE_WORKSPACE_NO_WEBHOOKS = "linear_workspace_no_webhooks"
+_RULE_WORKSPACE_NO_INTEGRATIONS = "linear_workspace_no_integrations"
 
-# Team rules
+# Team rules — M85B
 _RULE_TEAM_PRIVATE = "linear_team_private"
 _RULE_TEAM_LOW_MEMBER_COUNT = "linear_team_low_member_count"
 _RULE_TEAM_NO_PROJECTS = "linear_team_no_projects"
 _RULE_TEAM_AUTO_ARCHIVE_DISABLED = "linear_team_auto_archive_disabled"
 _RULE_TEAM_CYCLES_DISABLED = "linear_team_cycles_disabled"
 _RULE_TEAM_LONG_CYCLE_DURATION = "linear_team_long_cycle_duration"
+# Team rules — M85C
+_RULE_TEAM_NO_BACKLOG_STATE = "linear_team_no_backlog_state"
+_RULE_TEAM_NO_STARTED_STATE = "linear_team_no_started_state"
+_RULE_TEAM_NO_COMPLETED_STATE = "linear_team_no_completed_state"
+_RULE_TEAM_NO_CANCELED_STATE = "linear_team_no_canceled_state"
+_RULE_TEAM_LOW_WORKFLOW_STATE_COUNT = "linear_team_low_workflow_state_count"
+_RULE_TEAM_NO_LABELS = "linear_team_no_labels"
+_RULE_TEAM_NO_WEBHOOKS = "linear_team_no_webhooks"
 
-# Project rules
+# Project rules — M85B
 _RULE_PROJECT_NO_LEAD = "linear_project_no_lead"
 _RULE_PROJECT_NO_MEMBERS = "linear_project_no_members"
 _RULE_PROJECT_HIGH_ISSUE_COUNT = "linear_project_high_issue_count"
 _RULE_PROJECT_UNHEALTHY = "linear_project_unhealthy"
 _RULE_PROJECT_UNKNOWN_STATUS = "linear_project_unknown_status"
+# Project rules — M85C
+_RULE_PROJECT_NO_TEAM_SCOPE = "linear_project_no_team_scope"
 
 # Workflow state rules
 _RULE_WORKFLOW_STATE_UNKNOWN_TYPE = "linear_workflow_state_unknown_type"
@@ -101,22 +115,29 @@ _RULE_WORKFLOW_STATE_UNKNOWN_TYPE = "linear_workflow_state_unknown_type"
 # Label rules
 _RULE_LABEL_MISSING_TEAM_SCOPE = "linear_label_missing_team_scope"
 
-# Webhook rules
+# Webhook rules — M85B
 _RULE_WEBHOOK_DISABLED = "linear_webhook_disabled"
 _RULE_WEBHOOK_NO_SECRET_INDICATOR = "linear_webhook_no_secret_indicator"
 _RULE_WEBHOOK_NON_HTTPS = "linear_webhook_non_https"
 _RULE_WEBHOOK_NO_EVENTS = "linear_webhook_no_events"
 _RULE_WEBHOOK_BROAD_RESOURCE_SCOPE = "linear_webhook_broad_resource_scope"
+# Webhook rules — M85C
+_RULE_WEBHOOK_ISSUE_COMMENT_SCOPE = "linear_webhook_issue_comment_scope"
+_RULE_WEBHOOK_ATTACHMENT_SCOPE = "linear_webhook_attachment_scope"
 
-# View rules
+# View rules — M85B
 _RULE_VIEW_SHARED = "linear_view_shared"
+# View rules — M85C
+_RULE_VIEW_SHARED_WITHOUT_TEAM_SCOPE = "linear_view_shared_without_team_scope"
 
 # Cycle rules
 _RULE_CYCLE_HIGH_ISSUE_COUNT = "linear_cycle_high_issue_count"
 
-# Integration rules
+# Integration rules — M85B
 _RULE_INTEGRATION_DISABLED = "linear_integration_disabled"
 _RULE_INTEGRATION_UNKNOWN_TYPE = "linear_integration_unknown_type"
+# Integration rules — M85C
+_RULE_INTEGRATION_WORKSPACE_SCOPED = "linear_integration_workspace_scoped"
 
 # ── Thresholds ─────────────────────────────────────────────────────────────────
 
@@ -127,39 +148,60 @@ _BROAD_RESOURCE_TYPES_THRESHOLD = 5
 # ── All Linear rule keys implemented in this module ───────────────────────────
 
 LINEAR_RULE_KEYS: frozenset[str] = frozenset({
-    # Workspace
+    # Workspace — M85B
     _RULE_WORKSPACE_MISSING_URL_KEY,
     _RULE_WORKSPACE_MISSING_LOGO,
-    # Team
+    # Workspace — M85C
+    _RULE_WORKSPACE_LOW_TEAM_COUNT,
+    _RULE_WORKSPACE_NO_WEBHOOKS,
+    _RULE_WORKSPACE_NO_INTEGRATIONS,
+    # Team — M85B
     _RULE_TEAM_PRIVATE,
     _RULE_TEAM_LOW_MEMBER_COUNT,
     _RULE_TEAM_NO_PROJECTS,
     _RULE_TEAM_AUTO_ARCHIVE_DISABLED,
     _RULE_TEAM_CYCLES_DISABLED,
     _RULE_TEAM_LONG_CYCLE_DURATION,
-    # Project
+    # Team — M85C
+    _RULE_TEAM_NO_BACKLOG_STATE,
+    _RULE_TEAM_NO_STARTED_STATE,
+    _RULE_TEAM_NO_COMPLETED_STATE,
+    _RULE_TEAM_NO_CANCELED_STATE,
+    _RULE_TEAM_LOW_WORKFLOW_STATE_COUNT,
+    _RULE_TEAM_NO_LABELS,
+    _RULE_TEAM_NO_WEBHOOKS,
+    # Project — M85B
     _RULE_PROJECT_NO_LEAD,
     _RULE_PROJECT_NO_MEMBERS,
     _RULE_PROJECT_HIGH_ISSUE_COUNT,
     _RULE_PROJECT_UNHEALTHY,
     _RULE_PROJECT_UNKNOWN_STATUS,
+    # Project — M85C
+    _RULE_PROJECT_NO_TEAM_SCOPE,
     # Workflow state
     _RULE_WORKFLOW_STATE_UNKNOWN_TYPE,
     # Label
     _RULE_LABEL_MISSING_TEAM_SCOPE,
-    # Webhook
+    # Webhook — M85B
     _RULE_WEBHOOK_DISABLED,
     _RULE_WEBHOOK_NO_SECRET_INDICATOR,
     _RULE_WEBHOOK_NON_HTTPS,
     _RULE_WEBHOOK_NO_EVENTS,
     _RULE_WEBHOOK_BROAD_RESOURCE_SCOPE,
-    # View
+    # Webhook — M85C
+    _RULE_WEBHOOK_ISSUE_COMMENT_SCOPE,
+    _RULE_WEBHOOK_ATTACHMENT_SCOPE,
+    # View — M85B
     _RULE_VIEW_SHARED,
+    # View — M85C
+    _RULE_VIEW_SHARED_WITHOUT_TEAM_SCOPE,
     # Cycle
     _RULE_CYCLE_HIGH_ISSUE_COUNT,
-    # Integration
+    # Integration — M85B
     _RULE_INTEGRATION_DISABLED,
     _RULE_INTEGRATION_UNKNOWN_TYPE,
+    # Integration — M85C
+    _RULE_INTEGRATION_WORKSPACE_SCOPED,
 })
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -176,6 +218,22 @@ def _int(record: dict[str, Any], key: str, default: int = 0) -> int:
     if isinstance(val, int) and not isinstance(val, bool):
         return max(0, val)
     return default
+
+
+def _int_opt(record: dict[str, Any], key: str) -> int | None:
+    """Return int field, or None if absent/wrong type.
+
+    Used for M85C Optional[int] fields — a None return means the field was
+    not present in the record (e.g. old M85A/M85B records).  Rules that use
+    this helper MUST check for None before applying thresholds so they do not
+    fire on records that simply lack the field.
+    """
+    val = record.get(key)
+    if val is None:
+        return None
+    if isinstance(val, int) and not isinstance(val, bool):
+        return max(0, val)
+    return None
 
 
 # ── Workspace evaluator ───────────────────────────────────────────────────────
@@ -247,6 +305,104 @@ def _eval_workspace(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Sign in to your Linear workspace.",
                     "Navigate to Settings → Workspace.",
                     "Upload a workspace logo.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M85C workspace rules ──────────────────────────────────────────────────
+
+    team_count = _int_opt(record, "team_count")
+    webhook_count = _int_opt(record, "webhook_count")
+    integration_count = _int_opt(record, "integration_count")
+
+    # ── linear_workspace_low_team_count ───────────────────────────────────────
+    if team_count is not None and team_count <= 1:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_WORKSPACE_LOW_TEAM_COUNT,
+            finding_key=make_finding_key(_RULE_WORKSPACE_LOW_TEAM_COUNT, record_id),
+            severity="low",
+            title="Linear workspace has very few teams configured",
+            description=(
+                "A Linear workspace has one or fewer teams configured. Workspaces "
+                "with very few teams may indicate an incomplete setup or an "
+                "organization that has not adopted team-based project management. "
+                "This workspace configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_WORKSPACE_LOW_TEAM_COUNT,
+                "record_id": record_id,
+                "team_count": team_count,
+            },
+            remediation={
+                "summary": "Review the team structure for this workspace.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Teams.",
+                    "Create teams to reflect your organizational structure.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_workspace_no_webhooks ──────────────────────────────────────────
+    if webhook_count is not None and webhook_count == 0:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_WORKSPACE_NO_WEBHOOKS,
+            finding_key=make_finding_key(_RULE_WORKSPACE_NO_WEBHOOKS, record_id),
+            severity="medium",
+            title="Linear workspace has no webhook subscriptions configured",
+            description=(
+                "A Linear workspace has no webhook subscriptions configured. "
+                "Without webhooks, external systems cannot receive real-time "
+                "notifications of Linear configuration changes, which may reduce "
+                "visibility and auditability. This workspace configuration evidence "
+                "may require review. Webhook URLs are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_WORKSPACE_NO_WEBHOOKS,
+                "record_id": record_id,
+                "webhook_count": 0,
+            },
+            remediation={
+                "summary": "Configure webhook subscriptions for this workspace.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → API → Webhooks.",
+                    "Add webhook subscriptions for the events your integrations require.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_workspace_no_integrations ─────────────────────────────────────
+    if integration_count is not None and integration_count == 0:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_WORKSPACE_NO_INTEGRATIONS,
+            finding_key=make_finding_key(_RULE_WORKSPACE_NO_INTEGRATIONS, record_id),
+            severity="low",
+            title="Linear workspace has no external service integrations",
+            description=(
+                "A Linear workspace has no external service integrations configured. "
+                "Integrations connect Linear with tools such as GitHub, Slack, and "
+                "CI/CD systems, enabling cross-tool traceability. An absence of "
+                "integrations may indicate the workspace is operating in isolation. "
+                "This workspace configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_WORKSPACE_NO_INTEGRATIONS,
+                "record_id": record_id,
+                "integration_count": 0,
+            },
+            remediation={
+                "summary": "Review whether integrations should be configured for this workspace.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Integrations.",
+                    "Connect the relevant external services.",
                 ],
             },
             record_id=record_id,
@@ -457,6 +613,228 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             record_id=record_id,
         ))
 
+    # ── M85C team workflow rules ──────────────────────────────────────────────
+
+    has_backlog = _bool(record, "has_backlog_state")
+    has_started = _bool(record, "has_started_state")
+    has_completed = _bool(record, "has_completed_state")
+    has_canceled = _bool(record, "has_canceled_state")
+    wf_count = _int_opt(record, "workflow_state_count")
+    label_count = _int_opt(record, "label_count")
+    team_wh_count = _int_opt(record, "webhook_count")
+
+    # ── linear_team_no_backlog_state ──────────────────────────────────────────
+    if has_backlog is False:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_TEAM_NO_BACKLOG_STATE,
+            finding_key=make_finding_key(_RULE_TEAM_NO_BACKLOG_STATE, record_id),
+            severity="medium",
+            title="Linear team workflow has no backlog state",
+            description=(
+                "A Linear team's workflow does not include a state of type 'backlog'. "
+                "Without a backlog state, new issues cannot be placed into an initial "
+                "pre-planning queue, which may make it harder to track and audit "
+                "incoming work. This workflow configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_TEAM_NO_BACKLOG_STATE,
+                "record_id": record_id,
+                "has_backlog_state": False,
+            },
+            remediation={
+                "summary": "Add a backlog workflow state to this team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Workflows.",
+                    "Open the team's workflow and add a state of type 'backlog'.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_team_no_started_state ──────────────────────────────────────────
+    if has_started is False:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_TEAM_NO_STARTED_STATE,
+            finding_key=make_finding_key(_RULE_TEAM_NO_STARTED_STATE, record_id),
+            severity="medium",
+            title="Linear team workflow has no started/in-progress state",
+            description=(
+                "A Linear team's workflow does not include a state of type 'started'. "
+                "Without an in-progress state, there is no clear indicator that work "
+                "is actively being worked on, which may reduce visibility into "
+                "ongoing delivery. This workflow configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_TEAM_NO_STARTED_STATE,
+                "record_id": record_id,
+                "has_started_state": False,
+            },
+            remediation={
+                "summary": "Add a started/in-progress workflow state to this team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Workflows.",
+                    "Open the team's workflow and add a state of type 'started'.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_team_no_completed_state ────────────────────────────────────────
+    if has_completed is False:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_TEAM_NO_COMPLETED_STATE,
+            finding_key=make_finding_key(_RULE_TEAM_NO_COMPLETED_STATE, record_id),
+            severity="high",
+            title="Linear team workflow has no completed state",
+            description=(
+                "A Linear team's workflow does not include a state of type 'completed'. "
+                "Without a completed state, issues can never be marked as done, which "
+                "means all work remains perpetually open. This may prevent accurate "
+                "reporting of delivered work and is a high-priority workflow configuration "
+                "finding that may require review."
+            ),
+            evidence={
+                "rule": _RULE_TEAM_NO_COMPLETED_STATE,
+                "record_id": record_id,
+                "has_completed_state": False,
+            },
+            remediation={
+                "summary": "Add a completed workflow state to this team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Workflows.",
+                    "Open the team's workflow and add a state of type 'completed'.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_team_no_canceled_state ─────────────────────────────────────────
+    if has_canceled is False:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_TEAM_NO_CANCELED_STATE,
+            finding_key=make_finding_key(_RULE_TEAM_NO_CANCELED_STATE, record_id),
+            severity="low",
+            title="Linear team workflow has no canceled state",
+            description=(
+                "A Linear team's workflow does not include a state of type 'cancelled'. "
+                "Without a cancelled state, there is no way to formally close out work "
+                "that is no longer being pursued, which may lead to issue accumulation. "
+                "This workflow configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_TEAM_NO_CANCELED_STATE,
+                "record_id": record_id,
+                "has_canceled_state": False,
+            },
+            remediation={
+                "summary": "Add a cancelled workflow state to this team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Workflows.",
+                    "Open the team's workflow and add a state of type 'cancelled'.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_team_low_workflow_state_count ───────────────────────────────────
+    if wf_count is not None and wf_count <= 2:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_TEAM_LOW_WORKFLOW_STATE_COUNT,
+            finding_key=make_finding_key(_RULE_TEAM_LOW_WORKFLOW_STATE_COUNT, record_id),
+            severity="medium",
+            title="Linear team has very few workflow states",
+            description=(
+                "A Linear team has two or fewer workflow states configured. A minimal "
+                "workflow may not support the full issue lifecycle (backlog → in-progress "
+                "→ completed → cancelled) and may reduce visibility into delivery status. "
+                "This workflow configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_TEAM_LOW_WORKFLOW_STATE_COUNT,
+                "record_id": record_id,
+                "workflow_state_count": wf_count,
+            },
+            remediation={
+                "summary": "Expand the workflow state configuration for this team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Workflows.",
+                    "Open the team's workflow and add states for each phase of your process.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_team_no_labels ─────────────────────────────────────────────────
+    if label_count is not None and label_count == 0:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_TEAM_NO_LABELS,
+            finding_key=make_finding_key(_RULE_TEAM_NO_LABELS, record_id),
+            severity="low",
+            title="Linear team has no issue labels configured",
+            description=(
+                "A Linear team has no issue labels configured. Without labels, "
+                "issues cannot be categorized, filtered, or audited by type (e.g. "
+                "bug, feature, security). This team configuration evidence may require "
+                "review."
+            ),
+            evidence={
+                "rule": _RULE_TEAM_NO_LABELS,
+                "record_id": record_id,
+                "label_count": 0,
+            },
+            remediation={
+                "summary": "Add issue labels to this team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Labels.",
+                    "Create labels scoped to this team for categorizing issues.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_team_no_webhooks ───────────────────────────────────────────────
+    if team_wh_count is not None and team_wh_count == 0:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_TEAM_NO_WEBHOOKS,
+            finding_key=make_finding_key(_RULE_TEAM_NO_WEBHOOKS, record_id),
+            severity="medium",
+            title="Linear team has no webhook subscriptions",
+            description=(
+                "A Linear team has no webhook subscriptions configured. Without "
+                "team-level webhooks, external systems cannot receive notifications "
+                "of team-scoped events, reducing integration coverage and auditability "
+                "for this team's activity. This team configuration evidence may require "
+                "review. Webhook URLs are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_TEAM_NO_WEBHOOKS,
+                "record_id": record_id,
+                "webhook_count": 0,
+            },
+            remediation={
+                "summary": "Configure webhook subscriptions for this team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → API → Webhooks.",
+                    "Add a webhook subscription scoped to this team.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
     return findings
 
 
@@ -626,6 +1004,41 @@ def _eval_project(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Sign in to your Linear workspace.",
                     "Open the project and review its current status.",
                     "Set an appropriate lifecycle status.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M85C project rules ────────────────────────────────────────────────────
+
+    project_team_count = _int_opt(record, "team_count")
+
+    # ── linear_project_no_team_scope ──────────────────────────────────────────
+    if project_team_count is not None and project_team_count == 0:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_PROJECT_NO_TEAM_SCOPE,
+            finding_key=make_finding_key(_RULE_PROJECT_NO_TEAM_SCOPE, record_id),
+            severity="medium",
+            title="Linear project is not associated with any team",
+            description=(
+                "A Linear project is not associated with any team. Projects without "
+                "a team scope lack clear ownership and may not appear in team-level "
+                "views and filters. This may indicate an orphaned project or an "
+                "incomplete setup. This project configuration evidence may require "
+                "review."
+            ),
+            evidence={
+                "rule": _RULE_PROJECT_NO_TEAM_SCOPE,
+                "record_id": record_id,
+                "team_count": 0,
+            },
+            remediation={
+                "summary": "Associate this project with at least one team.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Open the project.",
+                    "In the project settings, associate it with one or more teams.",
                 ],
             },
             record_id=record_id,
@@ -909,6 +1322,78 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
             record_id=record_id,
         ))
 
+    # ── M85C webhook rules ────────────────────────────────────────────────────
+
+    has_comment_type = _bool(record, "webhook_has_comment_type")
+    has_attachment_type = _bool(record, "webhook_has_attachment_type")
+
+    # ── linear_webhook_issue_comment_scope ────────────────────────────────────
+    if has_comment_type is True:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_WEBHOOK_ISSUE_COMMENT_SCOPE,
+            finding_key=make_finding_key(_RULE_WEBHOOK_ISSUE_COMMENT_SCOPE, record_id),
+            severity="medium",
+            title="Linear webhook subscription receives issue comment events",
+            description=(
+                "A Linear webhook subscription is configured to receive issue comment "
+                "events. Comment payloads may contain user-authored text that could "
+                "include sensitive information, customer names, or other content. "
+                "Ensure the receiving endpoint handles comment data according to your "
+                "data governance requirements. This webhook configuration evidence "
+                "may require review. Only the resource-type category is recorded — "
+                "comment content is never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_ISSUE_COMMENT_SCOPE,
+                "record_id": record_id,
+                "webhook_has_comment_type": True,
+            },
+            remediation={
+                "summary": "Review whether comment event delivery to this endpoint is appropriate.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → API → Webhooks.",
+                    "Open this webhook and review the subscribed resource types.",
+                    "Remove the Comment resource type if the endpoint does not require it.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── linear_webhook_attachment_scope ───────────────────────────────────────
+    if has_attachment_type is True:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_WEBHOOK_ATTACHMENT_SCOPE,
+            finding_key=make_finding_key(_RULE_WEBHOOK_ATTACHMENT_SCOPE, record_id),
+            severity="low",
+            title="Linear webhook subscription receives attachment events",
+            description=(
+                "A Linear webhook subscription is configured to receive attachment "
+                "events. Attachment payloads may reference file URLs or metadata "
+                "associated with issue attachments. Ensure the receiving endpoint "
+                "handles this data appropriately. This webhook configuration evidence "
+                "may require review. Only the resource-type category is recorded — "
+                "attachment content is never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_WEBHOOK_ATTACHMENT_SCOPE,
+                "record_id": record_id,
+                "webhook_has_attachment_type": True,
+            },
+            remediation={
+                "summary": "Review whether attachment event delivery to this endpoint is appropriate.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → API → Webhooks.",
+                    "Open this webhook and review the subscribed resource types.",
+                    "Remove the Attachment resource type if the endpoint does not require it.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
     return findings
 
 
@@ -952,6 +1437,44 @@ def _eval_view(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Sign in to your Linear workspace.",
                     "Open the custom view.",
                     "Update the sharing settings to restrict visibility if appropriate.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M85C view rules ───────────────────────────────────────────────────────
+
+    view_team_id = record.get("team_id")
+    view_team_scoped = view_team_id is not None and view_team_id != ""
+
+    # ── linear_view_shared_without_team_scope ─────────────────────────────────
+    if view_shared is True and not view_team_scoped:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_VIEW_SHARED_WITHOUT_TEAM_SCOPE,
+            finding_key=make_finding_key(_RULE_VIEW_SHARED_WITHOUT_TEAM_SCOPE, record_id),
+            severity="medium",
+            title="Linear custom view is shared workspace-wide without team scope",
+            description=(
+                "A Linear custom view is shared with the entire workspace and is not "
+                "scoped to a specific team. Workspace-wide shared views are visible to "
+                "all members across all teams, which may expose issue filters or project "
+                "scopes more broadly than intended. This view configuration evidence "
+                "may require review. Filter expressions are never stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_VIEW_SHARED_WITHOUT_TEAM_SCOPE,
+                "record_id": record_id,
+                "view_shared": True,
+                "team_id_present": False,
+            },
+            remediation={
+                "summary": "Scope this shared view to a specific team or make it private.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Open the custom view.",
+                    "Update the sharing settings to restrict to a specific team, "
+                    "or set the view to private.",
                 ],
             },
             record_id=record_id,
@@ -1081,6 +1604,45 @@ def _eval_integration(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Sign in to your Linear workspace.",
                     "Navigate to Settings → Integrations.",
                     "Inspect this integration and update or disconnect it if not actively used.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── M85C integration rules ────────────────────────────────────────────────
+
+    integration_team_id = record.get("team_id")
+    is_workspace_scoped = integration_team_id is None or integration_team_id == ""
+
+    # ── linear_integration_workspace_scoped ───────────────────────────────────
+    if is_workspace_scoped and integration_enabled is True:
+        findings.append(FindingCandidate(
+            provider="linear",
+            rule_key=_RULE_INTEGRATION_WORKSPACE_SCOPED,
+            finding_key=make_finding_key(_RULE_INTEGRATION_WORKSPACE_SCOPED, record_id),
+            severity="low",
+            title="Linear integration is scoped to the entire workspace",
+            description=(
+                "A Linear external service integration is active and is not scoped "
+                "to a specific team, meaning it applies to the entire workspace. "
+                "Workspace-scoped integrations may receive events from all teams "
+                "and projects, which may exceed the intended integration scope. "
+                "This integration configuration evidence may require review."
+            ),
+            evidence={
+                "rule": _RULE_INTEGRATION_WORKSPACE_SCOPED,
+                "record_id": record_id,
+                "integration_type_category": type_cat or "unknown",
+                "integration_enabled": True,
+                "team_id_present": False,
+            },
+            remediation={
+                "summary": "Review whether workspace-scoped integration access is appropriate.",
+                "steps": [
+                    "Sign in to your Linear workspace.",
+                    "Navigate to Settings → Integrations.",
+                    "Review this integration and consider scoping it to specific teams "
+                    "if the integration supports team-level scoping.",
                 ],
             },
             record_id=record_id,

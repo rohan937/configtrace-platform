@@ -413,6 +413,22 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "linear_cycle_high_issue_count": ("linear_cycle",),
     "linear_integration_disabled": ("linear_integration",),
     "linear_integration_unknown_type": ("linear_integration",),
+    # Linear — M85C workflow/webhook risk expansion
+    "linear_workspace_low_team_count": ("linear_workspace",),
+    "linear_workspace_no_webhooks": ("linear_workspace",),
+    "linear_workspace_no_integrations": ("linear_workspace",),
+    "linear_team_no_backlog_state": ("linear_team",),
+    "linear_team_no_started_state": ("linear_team",),
+    "linear_team_no_completed_state": ("linear_team",),
+    "linear_team_no_canceled_state": ("linear_team",),
+    "linear_team_low_workflow_state_count": ("linear_team",),
+    "linear_team_no_labels": ("linear_team",),
+    "linear_team_no_webhooks": ("linear_team",),
+    "linear_project_no_team_scope": ("linear_project",),
+    "linear_webhook_issue_comment_scope": ("linear_webhook",),
+    "linear_webhook_attachment_scope": ("linear_webhook",),
+    "linear_view_shared_without_team_scope": ("linear_view",),
+    "linear_integration_workspace_scoped": ("linear_integration",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).

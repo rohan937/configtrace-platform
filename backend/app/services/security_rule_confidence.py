@@ -397,6 +397,22 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "linear_cycle_high_issue_count": (MEDIUM, "Fires when issue_count_category is 'many' (>50 issues); large cycles may be intentional for some teams. Issue content is never stored."),
     "linear_integration_disabled": (HIGH, "Only fires when integration_enabled is explicitly false on a linear_integration record; integration credentials are never stored."),
     "linear_integration_unknown_type": (MEDIUM, "Fires when integration_type_category is 'unknown'; some custom or newer integration types may not be recognized, so medium confidence is used."),
+    # Linear — M85C workflow/webhook risk expansion
+    "linear_workspace_low_team_count": (HIGH, "Only fires when team_count is an explicit integer <= 1 on a linear_workspace record; count is derived from organization query, never from team names/IDs."),
+    "linear_workspace_no_webhooks": (HIGH, "Only fires when webhook_count is an explicit integer equal to 0, derived from the count of webhooks fetched for this workspace."),
+    "linear_workspace_no_integrations": (MEDIUM, "Fires when integration_count is exactly 0; may under-report if integrations are plan-gated or inaccessible to the API key. Integration credentials are never stored."),
+    "linear_team_no_backlog_state": (HIGH, "Only fires when has_backlog_state is explicitly false on a linear_team record; state names are never stored — only the type enum value is used."),
+    "linear_team_no_started_state": (HIGH, "Only fires when has_started_state is explicitly false on a linear_team record; state names are never stored."),
+    "linear_team_no_completed_state": (HIGH, "Only fires when has_completed_state is explicitly false on a linear_team record; state names are never stored."),
+    "linear_team_no_canceled_state": (MEDIUM, "Fires when has_canceled_state is explicitly false; some teams intentionally omit a cancelled state — medium confidence."),
+    "linear_team_low_workflow_state_count": (HIGH, "Only fires when workflow_state_count is an explicit integer <= 2; raw state names are never stored."),
+    "linear_team_no_labels": (HIGH, "Only fires when label_count is an explicit integer equal to 0 on a linear_team record; label names are never stored."),
+    "linear_team_no_webhooks": (HIGH, "Only fires when webhook_count is an explicit integer equal to 0 on a linear_team record; webhook URL values are never stored."),
+    "linear_project_no_team_scope": (HIGH, "Only fires when team_count is an explicit integer equal to 0 on a linear_project record; team IDs and names are never stored."),
+    "linear_webhook_issue_comment_scope": (HIGH, "Only fires when webhook_has_comment_type is explicitly true — a boolean derived from the resourceTypes list before discarding; raw resource type names are never stored."),
+    "linear_webhook_attachment_scope": (HIGH, "Only fires when webhook_has_attachment_type is explicitly true — a boolean derived from the resourceTypes list before discarding; raw resource type names are never stored."),
+    "linear_view_shared_without_team_scope": (HIGH, "Only fires when view_shared is explicitly true AND team_id is absent/None on a linear_view record."),
+    "linear_integration_workspace_scoped": (MEDIUM, "Fires when integration_enabled=True AND team_id is absent/None; workspace-scoped integrations may be intentional for some service types."),
 }
 
 
