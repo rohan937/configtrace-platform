@@ -837,8 +837,8 @@ class TestDatadogExpansionFrameworkE:
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         planned = framework["summary"].get("planned_next_stage", "")
-        assert "M83A" in planned or "Clerk" in planned, (
-            f"planned_next_stage should reference M83A/Clerk (post-M82I), got: {planned!r}"
+        assert "M83A" in planned or "Clerk" in planned or "M84A" in planned or "PagerDuty" in planned, (
+            f"planned_next_stage should reference M83A/Clerk or later, got: {planned!r}"
         )
 
     def test_planned_next_stage_is_past_m82(self):

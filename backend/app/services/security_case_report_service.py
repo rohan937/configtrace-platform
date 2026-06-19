@@ -155,6 +155,33 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "code_length_category",       # "large" / "medium" / "small" category label
     "secrets_count",              # int — action secrets count (never the values)
     "status_category",            # "not_ready" / "ready" etc. category label
+    # Clerk-safe resource identifiers (M83I) — opaque IDs, category labels,
+    # and safe posture booleans only. NEVER Clerk secret key values, publishable
+    # key values, session tokens, JWTs, OAuth tokens, bearer tokens, webhook
+    # secrets, raw webhook/redirect/callback URLs, raw domain name strings,
+    # JWT template bodies, custom claim values, audience URIs, issuer URIs,
+    # user emails, user IDs, phone numbers, member identities, session history,
+    # login history, IP addresses, user agents, raw Clerk API response payloads,
+    # or customer PII.
+    "session_policy_id",          # Clerk session policy opaque ID
+    "instance_id",                # Clerk instance opaque ID
+    "application_id",             # Clerk application opaque ID
+    "redirect_url_config_id",     # Clerk redirect URL config opaque ID
+    "jwt_template_id",            # Clerk JWT template opaque ID
+    "webhook_endpoint_id",        # Clerk webhook endpoint opaque ID
+    "email_sms_settings_id",      # Clerk email/SMS settings opaque ID
+    "auth_strategy_id",           # Clerk auth strategy opaque ID
+    "organization_settings_id",   # Clerk organization settings opaque ID
+    "session_lifetime_category",  # "extended" / "normal" category label
+    "inactivity_timeout_category",  # "extended" / "normal" category label
+    "token_rotation_enabled",     # bool — token rotation posture
+    "single_session_enabled",     # bool — single-session posture
+    "device_tracking_enabled",    # bool — device tracking posture
+    "reverification_required",    # bool — reverification posture
+    "risk_family",                # Clerk correlation risk family label
+    "activity_family",            # Clerk correlation activity family label
+    "match_reason",               # Clerk correlation match reason label
+    "match_strength",             # Clerk correlation match strength label
 })
 
 

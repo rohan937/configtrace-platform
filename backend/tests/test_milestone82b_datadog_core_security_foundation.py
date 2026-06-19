@@ -883,7 +883,8 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M82C" in stage or "Datadog" in stage or "M83" in stage or "Clerk" in stage
+        assert ("M82C" in stage or "Datadog" in stage or "M83" in stage
+                or "Clerk" in stage or "M84" in stage or "PagerDuty" in stage)
 
     def test_datadog_not_in_recommended_queue(self):
         from app.services.provider_expansion_framework import RECOMMENDED_NEXT_PROVIDERS

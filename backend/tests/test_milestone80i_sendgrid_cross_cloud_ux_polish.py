@@ -202,8 +202,9 @@ def test_expansion_framework_planned_next_stage_is_m81a():
     assert "M81A" not in stage, (
         f"planned_next_stage still points to M81A after it launched: {stage!r}"
     )
-    assert "M81B" in stage or "Auth0" in stage or "M82" in stage or "Datadog" in stage or "M83" in stage or "Clerk" in stage, (
-        f"planned_next_stage should point to M81B/Auth0/M82/Datadog/M83/Clerk after M81A; got: {stage!r}"
+    assert ("M81B" in stage or "Auth0" in stage or "M82" in stage or "Datadog" in stage
+            or "M83" in stage or "Clerk" in stage or "M84" in stage or "PagerDuty" in stage), (
+        f"planned_next_stage should point to M81B/Auth0/M82/M83/Clerk or later; got: {stage!r}"
     )
 
 

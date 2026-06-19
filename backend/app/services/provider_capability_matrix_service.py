@@ -969,13 +969,16 @@ _CLERK = ProviderCapability(
         "M83H provider-depth QA complete: taxonomy parity, privacy guardrails, claim "
         "discipline, false-positive behavior, demo isolation, router admin guards, and "
         "frontend consistency verified. Signal-type map orphan entries removed. "
+        "M83I cross-cloud UX polish complete: Clerk is a first-class completed provider "
+        "across all internal security UX surfaces, demo script, provider capability "
+        "table, case report / timeline labels, and roadmap handoff. Clerk arc "
+        "(M83A–M83I) complete. "
         "Privacy contract: Clerk secret key values, "
         "publishable key values, session tokens, JWTs, OAuth tokens, bearer tokens, "
         "webhook secrets, raw webhook/redirect URLs, raw domain names, JWT template "
         "bodies, custom claims, audience URIs, user emails, user IDs, phone numbers, "
         "names, member identities, session history, login history, IP addresses, user "
-        "agents, raw audit payloads, and customer PII are NEVER fetched or stored. "
-        "planned_next_stage: M83I: Clerk Cross-Cloud UX Polish."
+        "agents, raw audit payloads, and customer PII are NEVER fetched or stored."
     ),
 )
 

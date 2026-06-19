@@ -571,7 +571,7 @@ def test_expansion_framework_m83g():
     """Expansion framework planned_next_stage must reference M83G, Demo, or Clerk."""
     framework = get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M83G" in planned or "Demo" in planned or "Clerk" in planned
+    assert "M83G" in planned or "Demo" in planned or "Clerk" in planned or "M84A" in planned or "PagerDuty" in planned
 
 
 # ── Section L: Frontend + API checks ─────────────────────────────────────────

@@ -1281,11 +1281,15 @@ def test_i5_clerk_capability_matrix_notes_mention_m83h() -> None:
 
 def test_i6_expansion_framework_planned_next_stage_is_m83i() -> None:
     fw = get_framework()
-    # planned_next_stage lives in fw["summary"]["planned_next_stage"]
+    # planned_next_stage lives in fw["summary"]["planned_next_stage"].
+    # After M83I completes, this advances to M84A (PagerDuty).
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    assert "M83I" in planned or "Cross-Cloud UX Polish" in planned or "m83i" in planned.lower(), (
-        f"planned_next_stage should point to M83I after M83H QA, got: {planned!r}"
+    assert (
+        "M83I" in planned or "Cross-Cloud UX Polish" in planned or "m83i" in planned.lower()
+        or "M84A" in planned or "PagerDuty" in planned
+    ), (
+        f"planned_next_stage should point to M83I or beyond (M84A) after M83H QA, got: {planned!r}"
     )
 
 
@@ -1329,10 +1333,13 @@ def test_i9_capability_matrix_notes_no_stale_planned_next_stage_m83h() -> None:
         assert "m83h" not in snippet, (
             f"Notes still say planned_next_stage points to M83H (stale): {snippet!r}"
         )
-    # And the expansion framework should also point to M83I
+    # The expansion framework should point to M83I or beyond (M84A after M83I completes)
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    assert "M83I" in planned or "m83i" in planned.lower() or "Cross-Cloud" in planned, (
+    assert (
+        "M83I" in planned or "m83i" in planned.lower() or "Cross-Cloud" in planned
+        or "M84A" in planned or "PagerDuty" in planned
+    ), (
         f"Expansion framework planned_next_stage still points to M83H: {planned!r}"
     )

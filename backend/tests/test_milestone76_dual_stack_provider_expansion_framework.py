@@ -260,6 +260,8 @@ def test_get_framework_structure():
         or "Clerk" in summary["planned_next_stage"]
         or "M82" in summary["planned_next_stage"]
         or "Datadog" in summary["planned_next_stage"]
+        or "M84" in summary["planned_next_stage"]
+        or "PagerDuty" in summary["planned_next_stage"]
     )
 
 

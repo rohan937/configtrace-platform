@@ -896,8 +896,8 @@ def test_i6_expansion_framework_points_to_m83a():
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M83A" in stage or "Clerk" in stage, (
-        f"expected planned_next_stage to reference M83A/Clerk (post-M82I); got {stage!r}"
+    assert "M83A" in stage or "Clerk" in stage or "M84A" in stage or "PagerDuty" in stage, (
+        f"expected planned_next_stage to reference M83A/Clerk or later; got {stage!r}"
     )
 
 

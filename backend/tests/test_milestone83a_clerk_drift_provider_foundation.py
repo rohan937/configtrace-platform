@@ -878,8 +878,9 @@ def test_expansion_framework_planned_next_stage_is_m83b():
     from app.services.provider_expansion_framework import get_framework
     framework = get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M83B" in planned or "M83C" in planned or "Clerk" in planned, (
-        f"planned_next_stage should reference an M83 Clerk stage; got {planned!r}"
+    assert ("M83B" in planned or "M83C" in planned or "Clerk" in planned
+            or "M84A" in planned or "PagerDuty" in planned), (
+        f"planned_next_stage should reference an M83 Clerk stage or later; got {planned!r}"
     )
 
 

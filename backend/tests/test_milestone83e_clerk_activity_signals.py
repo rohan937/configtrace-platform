@@ -840,8 +840,9 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         summary = framework.get("summary", {})
         planned = summary.get("planned_next_stage", "")
         assert isinstance(planned, str)
-        assert "M83F" in planned or "Correlations" in planned or "Clerk" in planned, (
-            f"planned_next_stage must reference M83F, Correlations, or Clerk, got: {planned!r}"
+        assert ("M83F" in planned or "Correlations" in planned or "Clerk" in planned
+                or "M84A" in planned or "PagerDuty" in planned), (
+            f"planned_next_stage must reference M83F, Correlations, or Clerk or later, got: {planned!r}"
         )
 
     def test_capability_matrix_clerk_activity_ingestion_still_true(self):
