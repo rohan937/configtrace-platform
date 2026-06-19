@@ -277,8 +277,8 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Load a provider demo",
     talkTrack:
-      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, or PagerDuty (with Datadog covering an outbound webhook integration review — missing secret headers, non-HTTPS endpoint, and auth material in custom headers; Clerk covering a session policy review — extended lifetime, disabled token rotation, and disabled reverification; PagerDuty covering an incident-response webhook subscription review — non-HTTPS delivery, broad event scope, and secret not indicated; no API keys, raw URLs, webhook secrets, routing keys, integration keys, emails, user IDs, or IP addresses in any demo). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
-    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, or PagerDuty incident demo.",
+      "Start by loading a sample incident from the Cases page — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, PagerDuty, or Linear (with Datadog covering an outbound webhook integration review — missing secret headers, non-HTTPS endpoint, and auth material in custom headers; Clerk covering a session policy review — extended lifetime, disabled token rotation, and disabled reverification; PagerDuty covering an incident-response webhook subscription review — non-HTTPS delivery, broad event scope, and secret not indicated; Linear covering a webhook configuration review — no signing secret, non-HTTPS delivery, and broad resource scope; no API keys, raw URLs, webhook secrets, routing keys, integration keys, emails, user IDs, or IP addresses in any demo). Each demo seeds one coherent, clearly-marked evidence chain (a configuration risk, related activity, signals, correlations, and a case) on a hidden demo integration. Nothing connects to a real provider.",
+    whatToClick: "On Cases, use the demo banner to load the GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, PagerDuty, or Linear incident demo.",
     emphasize: "One click seeds a full, clearly-marked evidence chain — no real provider sync.",
     avoid: "Don't present demo data as a live finding from the customer's environment.",
   },
@@ -343,7 +343,7 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Open a case",
     talkTrack:
-      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, or PagerDuty — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
+      "Inside any case — GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, PagerDuty, or Linear — two computed views make it an investigation map. The chronological evidence timeline orders the linked findings, activity, signals, and correlations in time. The evidence relationship map shows how they connect through explicit links — a correlation to its finding and activity, a signal to its finding. Both are metadata-only and present evidence for review; neither confirms compromise or unauthorized access.",
     whatToClick: "Open a case and scroll to the chronological timeline and the evidence relationship map.",
     emphasize: "Timeline + relationship map turn linked evidence into a reviewable investigation, across providers.",
     avoid: "Don't describe the map as an attack path or call any relationship a confirmed compromise.",
@@ -365,7 +365,7 @@ export const DEMO_SCRIPT_INCIDENT: DemoStep[] = [
     href: "/security/cases",
     cta: "Clear the demo",
     talkTrack:
-      "When you're done, clear the demo from the same banner that seeded it — for GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, or PagerDuty. Clearing removes only the clearly-marked demo case and its seeded evidence; any real connected-provider evidence is untouched.",
+      "When you're done, clear the demo from the same banner that seeded it — for GitHub, AWS, Cloudflare, Vercel, Supabase, Firebase, Stripe, Shopify, Azure, Google Cloud, Twilio, SendGrid, Auth0, Datadog, Clerk, PagerDuty, or Linear. Clearing removes only the clearly-marked demo case and its seeded evidence; any real connected-provider evidence is untouched.",
     whatToClick: "Use the demo banner's Clear action for the provider you seeded.",
     emphasize: "Demo data is isolated and reversible; clearing preserves real evidence.",
     avoid: "Don't imply clearing affects real provider data — it only removes the seeded demo.",
@@ -538,6 +538,75 @@ export const DEMO_SCRIPT_CLOUDFLARE_INCIDENT: DemoStep[] = [
     talkTrack:
       "Finally, export the Cloudflare case as a metadata-only evidence packet — Markdown or JSON. It summarizes the configuration risk, the audit_log and waf_security_event activity, the review signals, and the correlations. This is evidence for review, not automatic proof of compromise, unauthorized access, an attack, or an exploit. No raw IPs, URLs, paths, query strings, secrets, or tokens.",
     whatToClick: "On the Cloudflare case, use Export Markdown / Export JSON.",
+    emphasize: "Defensible, metadata-only evidence for review.",
+    avoid: "Don't promise it certifies compliance or proves a breach.",
+  },
+];
+
+export const DEMO_SCRIPT_LINEAR_INCIDENT: DemoStep[] = [
+  {
+    id: "linear-config-risk",
+    title: "Start with Linear webhook configuration risk",
+    href: "/security/risks?provider=linear",
+    cta: "Open Configuration Risk (Linear)",
+    talkTrack:
+      "ConfigTrace starts with Linear webhook configuration risk — here, a webhook with no signing secret, non-HTTPS delivery URL, and a broad resource scope. This is a risky current state read from Linear metadata, not an alert that something happened.",
+    whatToClick: "Open the Linear 'webhook posture risk' configuration finding.",
+    emphasize: "Configuration risk first — webhook posture, metadata only.",
+    avoid: "Don't say the webhook was exploited, intercepted, or that data was exposed.",
+  },
+  {
+    id: "linear-activity",
+    title: "Add Linear webhook configuration activity",
+    href: "/security/activity?provider=linear",
+    cta: "Open Activity Events (Linear)",
+    talkTrack:
+      "Then ConfigTrace adds a Linear webhook configuration activity event — a control-plane change recorded when the webhook was created or modified. This shows what changed and when, as evidence for review.",
+    whatToClick: "On Activity Events choose Linear; open a linear_webhook_config_changed activity event.",
+    emphasize: "Control-plane activity — webhook configuration change, metadata only.",
+    avoid: "Don't say the change proves compromise or unauthorized webhook delivery.",
+  },
+  {
+    id: "linear-incident-signals",
+    title: "Turn review-worthy activity into an Incident Signal",
+    href: "/security/signals?provider=linear",
+    cta: "Open Incident Signals (Linear)",
+    talkTrack:
+      "ConfigTrace turns the review-worthy webhook configuration change into a Linear activity signal (linear_webhook_config_changed). Severity reflects review priority — it never asserts that a webhook was abused or that an attacker received payloads.",
+    whatToClick: "Open the Linear webhook configuration signal and read the evidence level.",
+    emphasize: "Review signal — evidence for review, not a confirmed incident.",
+    avoid: "Avoid 'breach detected' / 'attacker found' — this is a review signal.",
+  },
+  {
+    id: "linear-incident-correlations",
+    title: "Correlate configuration risk with activity",
+    href: "/security/correlations?provider=linear",
+    cta: "Open Correlations (Linear)",
+    talkTrack:
+      "Here's the differentiator: ConfigTrace connects the configuration risk — the insecure webhook — to the related Linear configuration activity for the same webhook. A risky setting aligned with a related configuration change is stronger evidence for review.",
+    whatToClick: "Open the Linear risk × activity correlation and read the timeline.",
+    emphasize: "Configuration risk aligned with webhook configuration activity.",
+    avoid: "Don't call a correlation a confirmed compromise or unauthorized access.",
+  },
+  {
+    id: "linear-incident-cases",
+    title: "Group into a human-reviewed case",
+    href: "/security/cases",
+    cta: "Load Linear security demo",
+    talkTrack:
+      "A person groups the evidence into one human-reviewed case. Admins can load a sample Linear evidence chain here spanning webhook configuration risk, configuration activity, an Incident Signal, and a correlation. Confirm or dismiss is a human action, never an automatic 'confirmed breach'.",
+    whatToClick: "Use 'Load Linear security demo' (admin-only) to seed and open the grouped case.",
+    emphasize: "Human-reviewed investigation; confirmation is a human decision.",
+    avoid: "Don't say ConfigTrace auto-confirms anything or identifies attackers.",
+  },
+  {
+    id: "linear-incident-report",
+    title: "Export the evidence report",
+    href: "/security/cases",
+    cta: "Export from the Linear case",
+    talkTrack:
+      "Finally, export the Linear case as a metadata-only evidence packet — Markdown or JSON. It summarizes the webhook configuration risk, the configuration activity, the review signal, and the correlation. This is evidence for review, not automatic proof of compromise, unauthorized access, or data exposure. No webhook secrets, delivery URLs, payload contents, team IDs, or API tokens.",
+    whatToClick: "On the Linear case, use Export Markdown / Export JSON.",
     emphasize: "Defensible, metadata-only evidence for review.",
     avoid: "Don't promise it certifies compliance or proves a breach.",
   },

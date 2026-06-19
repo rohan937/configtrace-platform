@@ -1800,6 +1800,8 @@ def incident_demo_status(
         status = security_incident_demo_service.get_clerk_status(workspace_id, db)
     elif prov == "pagerduty":
         status = security_incident_demo_service.get_pagerduty_status(workspace_id, db)
+    elif prov == "linear":
+        status = security_incident_demo_service.get_linear_status(workspace_id, db)
     else:
         status = security_incident_demo_service.get_status(workspace_id, db)
     return IncidentDemoStatusResponse(**status)
@@ -1883,6 +1885,10 @@ def incident_demo_seed(
         summary = security_incident_demo_service.seed_pagerduty(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
         )
+    elif prov == "linear":
+        summary = security_incident_demo_service.seed_linear(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
     else:
         summary = security_incident_demo_service.seed(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
@@ -1936,6 +1942,8 @@ def incident_demo_clear(
         result = security_incident_demo_service.clear_clerk(workspace_id=workspace_id, db=db)
     elif prov == "pagerduty":
         result = security_incident_demo_service.clear_pagerduty(workspace_id=workspace_id, db=db)
+    elif prov == "linear":
+        result = security_incident_demo_service.clear_linear(workspace_id=workspace_id, db=db)
     else:
         result = security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
     return IncidentDemoClearResponse(**result)

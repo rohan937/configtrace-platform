@@ -67,6 +67,8 @@ from app.services import clerk_activity_signal_service as clerk_sig
 from app.services import clerk_risk_activity_correlation_service as clerk_corr_svc
 from app.services import pagerduty_activity_signal_service as pd_sig
 from app.services import pagerduty_risk_activity_correlation_service as pd_corr_svc
+from app.services import linear_activity_signal_service as linear_sig
+from app.services import linear_risk_activity_correlation_service as linear_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -7674,3 +7676,476 @@ def clear_pagerduty(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
 
     db.commit()
     return {"cleared": True}
+
+
+# ─ Linear incident demo (M85G) ─────────────────────────────────────────────
+# A separate hidden demo integration + case source so "Clear Linear demo"
+# removes only Linear demo objects. Same safety rules: clearly marked demo,
+# no real sync, no notifications, never touches a real Linear integration,
+# idempotent. Evidence chain: webhook posture risk -> activity event -> signal
+# -> risk x activity correlation -> case.
+#
+# PRIVACY: no Linear API keys, OAuth tokens, webhook secrets, raw webhook URLs,
+# issue titles, issue descriptions, comment bodies, attachment content, user
+# emails, user names, member identities, customer names, IP addresses, user
+# agents, raw audit payloads, raw API response dicts, or PII.
+# Only safe opaque placeholder IDs, booleans, counts, and category labels.
+#
+# SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+
+LINEAR_DEMO_INTEGRATION_NAME = "ConfigTrace Linear incident demo (sample data)"
+LINEAR_DEMO_CASE_SOURCE = "demo_linear_incident"
+LINEAR_DEMO_DATASET = "linear_incident_demo_v1"
+
+# Safe placeholder -- no real Linear values, no API keys, no webhook URLs.
+_LINEAR_DEMO_WEBHOOK_ID = "LINEAR_DEMO_WEBHOOK_ID"
+
+
+def _get_linear_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == LINEAR_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_linear_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == LINEAR_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_linear_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_linear_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_linear(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Linear demo incident chain (idempotent). No real Linear sync.
+
+    One coherent Linear webhook story:
+      Webhook posture risks (secret not indicated, non-HTTPS delivery, broad
+      resource scope) -> Linear webhook config-state activity event -> Linear
+      activity signal -> Linear risk x activity correlation -> case.
+
+    All objects are anchored on a hidden demo integration so clear_linear
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace).
+
+    PRIVACY: no Linear API keys, OAuth tokens, webhook secrets, raw webhook
+    URLs, issue titles, issue descriptions, comment bodies, attachment content,
+    user emails, user names, member identities, customer names, IP addresses,
+    user agents, raw audit payloads, raw API response dicts, or PII. Only safe
+    booleans, counts, opaque placeholder IDs, and category labels.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+    """
+    existing = _existing_linear_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -- never shown / never synced).
+    integ = _get_linear_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": LINEAR_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=LINEAR_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real Linear webhook rule keys (M85B).
+    #    Evidence uses only safe booleans, counts, opaque placeholder IDs, and
+    #    category labels -- never webhook URLs, delivery endpoints, webhook
+    #    secrets, signing keys, user emails, issue content, or PII.
+
+    webhook_finding_1 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="linear",
+        finding_key=(
+            f"linear_webhook_no_secret_indicator:{_LINEAR_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Linear webhook has no secret indicated",
+        resource_id=None,
+        description=(
+            "Sample Linear webhook missing-secret posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "linear_webhook_no_secret_indicator", "demo": True,
+            "record_id": _LINEAR_DEMO_WEBHOOK_ID,
+            "record_type": "linear_webhook",
+            "resource_name": "Linear webhook review",
+            "active": True,
+            "webhook_secret_present": False,
+            "webhook_enabled": True,
+            "webhook_url_present": True,
+            "webhook_url_scheme_category": "non_https",
+            "webhook_resource_types_count": 6,
+        },
+        remediation={
+            "summary": (
+                "Configure a signing secret for the Linear webhook so receivers "
+                "can verify event authenticity."
+            ),
+        },
+    )
+
+    webhook_finding_2 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="linear",
+        finding_key=(
+            f"linear_webhook_non_https:{_LINEAR_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Linear webhook uses a non-HTTPS delivery endpoint",
+        resource_id=None,
+        description=(
+            "Sample Linear webhook non-HTTPS delivery posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "linear_webhook_non_https", "demo": True,
+            "record_id": _LINEAR_DEMO_WEBHOOK_ID,
+            "record_type": "linear_webhook",
+            "resource_name": "Linear webhook review",
+            "active": True,
+            "webhook_secret_present": False,
+            "webhook_enabled": True,
+            "webhook_url_present": True,
+            "webhook_url_scheme_category": "non_https",
+            "webhook_resource_types_count": 6,
+        },
+        remediation={
+            "summary": (
+                "Update the Linear webhook to deliver events only to HTTPS "
+                "endpoints to protect data in transit."
+            ),
+        },
+    )
+
+    webhook_finding_3 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="linear",
+        finding_key=(
+            f"linear_webhook_broad_resource_scope:{_LINEAR_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: Linear webhook has a broad resource scope",
+        resource_id=None,
+        description=(
+            "Sample Linear webhook broad-scope posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "linear_webhook_broad_resource_scope", "demo": True,
+            "record_id": _LINEAR_DEMO_WEBHOOK_ID,
+            "record_type": "linear_webhook",
+            "resource_name": "Linear webhook review",
+            "active": True,
+            "webhook_secret_present": False,
+            "webhook_enabled": True,
+            "webhook_url_present": True,
+            "webhook_url_scheme_category": "non_https",
+            "webhook_resource_types_count": 6,
+        },
+        remediation={
+            "summary": (
+                "Narrow the Linear webhook to only the specific resource types "
+                "required rather than subscribing to all resource types."
+            ),
+        },
+    )
+
+    linear_findings = [webhook_finding_1, webhook_finding_2, webhook_finding_3]
+
+    # 3. Activity event (provider="linear", source="linear_activity_event").
+    LINEAR_ACTIVITY_SOURCE = "linear_activity_event"
+
+    def _mk_linear_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        resource_id: str, extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+            "event_source": LINEAR_ACTIVITY_SOURCE,
+            "status": "observed",
+            "category": "linear_configuration",
+            "status_category": "observed",
+            "operation_family": "linear.webhook",
+            "operation_action": "updated",
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="linear", source=LINEAR_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    webhook_event = _mk_linear_event(
+        event_type="linear.webhook.updated",
+        resource_type="linear_webhook",
+        provider_event_id="LINEAR_DEMO_ACTIVITY_EVENT_ID",
+        resource_id=_LINEAR_DEMO_WEBHOOK_ID,
+        extra={
+            "resource_id": _LINEAR_DEMO_WEBHOOK_ID,
+            "resource_name": "Linear webhook review",
+            "webhook_enabled": True,
+            "webhook_secret_present": False,
+            "webhook_url_present": True,
+            "webhook_url_scheme_category": "non_https",
+            "webhook_resource_types_count": 6,
+            "webhook_has_comment_type": True,
+            "webhook_has_attachment_type": True,
+            "operation_family": "linear.webhook",
+            "operation_action": "updated",
+        },
+    )
+
+    linear_events = [webhook_event]
+
+    # 4. Activity signals via the real M85E signal builder.
+    linear_signals: list[SecurityIncidentSignal] = []
+    for ev in linear_events:
+        sig_dict = linear_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            linear_signals.append(sig)
+
+    # 5. Correlation via the real M85F builder.
+    linear_correlations: list[SecuritySignalCorrelation] = []
+    signals_by_type_linear: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in linear_signals
+    }
+
+    def _add_linear_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+    ) -> SecuritySignalCorrelation:
+        rule = linear_corr_svc.LINEAR_CORRELATION_RULES[correlation_type]
+        cdict = linear_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        linear_correlations.append(corr)
+        return corr
+
+    webhook_signal = signals_by_type_linear.get("linear_webhook_config_changed")
+    if webhook_signal is not None:
+        _add_linear_correlation(
+            finding=webhook_finding_1,
+            signal=webhook_signal,
+            correlation_type="linear_webhook_risk_activity_correlation",
+            match_reason="resource_id_match",
+        )
+
+    # 6. Case linking 3 findings, 1 event, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="[Demo] Linear webhook configuration review",
+        summary=(
+            "Linear webhook configuration review shows webhook posture findings "
+            "with related Linear configuration activity, signal, and correlation. "
+            "Evidence for review. Does not confirm compromise, unauthorized access, "
+            "or data exposure. No Linear API keys, OAuth tokens, webhook secrets, "
+            "raw URLs, issue content, user identities, or PII."
+        ),
+        severity="high",
+        provider="linear",
+        metadata={
+            "source": LINEAR_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+    db.flush()
+
+    for f in linear_findings:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="finding",
+            linked_finding_id=f.id,
+            db=db,
+        )
+
+    for ev in linear_events:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="activity_event",
+            linked_activity_event_id=ev.id,
+            db=db,
+        )
+
+    seen_signal_ids_linear: set = set()
+    for sig in linear_signals:
+        seen_signal_ids_linear.add(sig.id)
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="signal",
+            linked_signal_id=sig.id,
+            db=db,
+        )
+
+    for corr in linear_correlations:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="correlation",
+            linked_correlation_id=corr.id,
+            db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids_linear
+        ):
+            seen_signal_ids_linear.add(corr.linked_signal_id)
+            case_svc.add_link(
+                case_id=case.id,
+                link_type="signal",
+                linked_signal_id=corr.linked_signal_id,
+                db=db,
+            )
+
+    db.commit()
+    logger.info(
+        "linear_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_linear(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Linear demo incident objects (and nothing else)."""
+    objects_removed = 0
+
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == LINEAR_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        objects_removed += db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = _get_linear_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            objects_removed += db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        objects_removed += db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True, "objects_removed": objects_removed}

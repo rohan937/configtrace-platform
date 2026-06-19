@@ -768,9 +768,10 @@ def test_h9_linear_risk_activity_correlations_false() -> None:
 
 
 def test_h10_linear_demo_seed_clear_false() -> None:
+    # M85G advanced this to True; assert current state.
     cap = get_provider_capability("linear")
     assert cap is not None
-    assert cap.security.demo_seed_clear is False
+    assert cap.security.demo_seed_clear is True
 
 
 def test_h11_linear_maturity_partial() -> None:
@@ -1054,14 +1055,13 @@ def test_n8_linear_drift_review_workflow_false() -> None:
 
 def test_n9_linear_all_security_caps_false() -> None:
     # M85B: security_rules=True. M85D: activity_ingestion=True. M85E: activity_signals=True.
-    # M85F: risk_activity_correlations=True. Check only the caps that remain False after M85F.
+    # M85F: risk_activity_correlations=True. M85G: demo_seed_clear/case_report/timeline/graph=True.
+    # All security caps are now True for Linear — nothing remains False after M85G.
+    # This test is a no-op now but kept as a regression guard for future caps.
     cap = get_provider_capability("linear")
     assert cap is not None
     sec = cap.security
-    for attr in (
-        "demo_seed_clear", "case_report",
-        "evidence_timeline", "evidence_graph",
-    ):
+    for attr in ():  # No caps remain False after M85G
         assert getattr(sec, attr) is False, (
             f"Linear security capability {attr!r} should be False"
         )

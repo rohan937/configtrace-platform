@@ -733,24 +733,28 @@ class TestCapabilityMatrixAndFramework:
         assert cap.security.risk_activity_correlations is True
 
     def test_linear_demo_seed_clear_false(self):
+        # M85G advanced this to True; assert current state.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.demo_seed_clear is False
+        assert cap.security.demo_seed_clear is True
 
     def test_linear_case_report_false(self):
+        # M85G advanced this to True; assert current state.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.case_report is False
+        assert cap.security.case_report is True
 
     def test_linear_evidence_timeline_false(self):
+        # M85G advanced this to True; assert current state.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.evidence_timeline is False
+        assert cap.security.evidence_timeline is True
 
     def test_linear_evidence_graph_false(self):
+        # M85G advanced this to True; assert current state.
         cap = get_provider_capability("linear")
         assert cap is not None
-        assert cap.security.evidence_graph is False
+        assert cap.security.evidence_graph is True
 
     def test_linear_maturity_partial(self):
         cap = get_provider_capability("linear")

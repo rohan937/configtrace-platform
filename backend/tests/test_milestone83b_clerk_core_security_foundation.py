@@ -1252,6 +1252,7 @@ class TestCapabilityMatrix:
             "M85E: Linear Activity Signals",
             "M85F: Linear Risk × Activity Correlations",
             "M85G: Linear Demo + QA",
+            "M85H: Linear Provider Depth QA",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

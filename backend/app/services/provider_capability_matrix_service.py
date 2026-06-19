@@ -1071,10 +1071,10 @@ _LINEAR = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
@@ -1089,12 +1089,13 @@ _LINEAR = ProviderCapability(
         "contains actor emails, user IDs, and IP addresses. M85E adds Linear activity "
         "signals derived from ingested activity events. M85F adds Linear Risk x Activity "
         "Correlations, linking security rule violations to proximate activity events. "
+        "M85G adds Linear demo and QA. "
         "Authentication uses a Linear API key (read-only). API key is stored encrypted "
         "and never returned in API responses, never logged, and never copied to resource "
         "metadata. Issue titles, descriptions, comments, attachments, user emails, user "
         "names, member identities, raw URLs, webhook secrets, and customer data are "
         "never fetched or stored. "
-        "planned_next_stage: M85G: Linear Demo + QA."
+        "planned_next_stage: M85H: Linear Provider Depth QA."
     ),
 )
 

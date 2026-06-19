@@ -49,7 +49,7 @@ type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
   | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk"
-  | "pagerduty";
+  | "pagerduty" | "linear";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -225,6 +225,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear PagerDuty demo",
     seedColor: "#06ac38",
   },
+  {
+    provider: "linear",
+    label: "Linear",
+    intro: "Try the Linear security demo:",
+    description:
+      "Seed a review-safe Linear webhook configuration review with a webhook posture finding — no signing secret, non-HTTPS delivery, and broad resource scope — with related control-plane activity evidence, activity signal, risk × activity correlation, and a case. No real Linear sync, API keys, webhook secrets, delivery URLs, team IDs, payload contents, or customer data are stored.",
+    seedButton: "Load Linear security demo",
+    clearButton: "Clear Linear demo",
+    seedColor: "#5e6ad2",
+  },
 ];
 
 export default function CasesPage() {
@@ -283,7 +293,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -302,7 +312,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -339,7 +349,9 @@ export default function CasesPage() {
                                     ? "Clerk demo data cleared."
                                     : provider === "pagerduty"
                                       ? "PagerDuty demo data cleared."
-                                      : "Demo data cleared.",
+                                      : provider === "linear"
+                                        ? "Linear demo data cleared."
+                                        : "Demo data cleared.",
       );
       await load();
     } catch {
