@@ -32,7 +32,9 @@ export type ProviderId =
   // ── M83A — Clerk drift provider foundation ────────────────────────────────
   | "clerk"
   // ── M84A — PagerDuty drift provider foundation ────────────────────────────
-  | "pagerduty";
+  | "pagerduty"
+  // ── M85A — Linear drift provider foundation ───────────────────────────────
+  | "linear";
 
 export type ProviderCategory =
   | "cdn_dns"
@@ -48,7 +50,9 @@ export type ProviderCategory =
   // ── M82A: observability category for Datadog ──────────────────────────────
   | "observability"
   // ── M84A: incident_management category for PagerDuty ─────────────────────
-  | "incident_management";
+  | "incident_management"
+  // ── M85A: devops category for Linear ──────────────────────────────────────
+  | "devops";
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -439,6 +443,32 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     bgColor: "rgba(6,172,56,0.10)",
     borderColor: "rgba(6,172,56,0.25)",
   },
+
+  // ── M85A — Linear drift provider foundation ───────────────────────────────
+  linear: {
+    id: "linear",
+    label: "Linear",
+    shortLabel: "Linear",
+    category: "devops",
+    description:
+      "Track Linear workspace configuration, teams, projects, workflow states, webhook subscriptions, and integration posture. Snapshot-only — no issue titles, descriptions, comments, or member identities are ever stored.",
+    monitoredSurfaces: [
+      "Workspace configuration (name, URL key presence — no member emails or PII)",
+      "Teams (visibility, member count category, project count, cycle settings — no member identities)",
+      "Projects (status, health, lead presence, issue count category — no issue content)",
+      "Workflow states (type, position category — no issue assignments)",
+      "Issue labels (type, group structure — no label assignments or issue content)",
+      "Webhook subscriptions (enabled status, resource types, URL scheme, secret presence — never the URL or secret value)",
+      "Custom views (shared status, filter count category — no filter content)",
+      "Active cycles (duration, issue count category — no issue content)",
+      "Integrations (type, enabled status — no credentials or API keys)",
+    ],
+    trustNote:
+      "ConfigTrace stores Linear credentials encrypted and uses them only to read selected configuration metadata. It does not store Linear API key values, OAuth tokens, webhook secrets, delivery URLs, issue titles, issue descriptions, comments, attachments, user emails, user names, phone numbers, member identities, customer data, or PII in configuration records.",
+    color: "#5E6AD2",
+    bgColor: "rgba(94,106,210,0.10)",
+    borderColor: "rgba(94,106,210,0.25)",
+  },
 };
 
 /** All provider IDs in display order. */
@@ -463,6 +493,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "clerk",
   // ── M84A — PagerDuty drift provider foundation ────────────────────────────
   "pagerduty",
+  // ── M85A — Linear drift provider foundation ───────────────────────────────
+  "linear",
 ];
 
 /**
@@ -493,6 +525,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "clerk",
   // ── M84A — PagerDuty drift provider foundation ────────────────────────────
   "pagerduty",
+  // ── M85A — Linear drift provider foundation ───────────────────────────────
+  "linear",
 ];
 
 /**

@@ -176,7 +176,9 @@ export interface IntegrationCreateRequest {
     // ── M83A — Clerk drift provider foundation ────────────────────────────────
     | "clerk"
     // ── M84A — PagerDuty drift provider foundation ────────────────────────────
-    | "pagerduty";
+    | "pagerduty"
+    // ── M85A — Linear drift provider foundation ───────────────────────────────
+    | "linear";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -337,6 +339,14 @@ export interface IntegrationCreateRequest {
    * Stored encrypted server-side — NEVER returned in API responses.
    */
   pagerduty_api_token?: string;
+  // ── Linear fields (M85A) ─────────────────────────────────────────────────
+  /**
+   * Linear API key (lin_api_...).
+   * Required for the linear provider. Sent to backend once; never stored in
+   * frontend state after submission.
+   * Stored encrypted server-side — NEVER returned in API responses.
+   */
+  linear_api_key?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

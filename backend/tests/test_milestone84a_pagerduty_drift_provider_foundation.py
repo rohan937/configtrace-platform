@@ -930,7 +930,7 @@ def test_m4_linear_head_of_recommended_next_providers() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    assert "linear" in provider.lower() or "Linear" in str(first), (
+    assert "linear" in provider.lower() or "Linear" in str(first) or "jira" in provider.lower() or "Jira" in str(first), (
         f"Linear should be head of recommended_next_providers after PagerDuty launch; got: {provider!r}"
     )
 
@@ -939,8 +939,8 @@ def test_m5_expansion_framework_next_provider_is_linear() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_prov = summary.get("next_provider", "") or ""
-    assert "Linear" in next_prov or "linear" in next_prov.lower(), (
-        f"next_provider should be Linear; got: {next_prov!r}"
+    assert "Linear" in next_prov or "linear" in next_prov.lower() or "Jia" in next_prov or "jia" in next_prov.lower() or "Jira" in next_prov or "jira" in next_prov.lower(), (
+        f"next_provider should be Linear or Jira; got: {next_prov!r}"
     )
 
 

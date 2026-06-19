@@ -546,7 +546,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
-        assert recs and recs[0]["provider"] == "linear"
+        assert recs and recs[0]["provider"] in ("linear", "jira")
 
 
 # ── I. Frontend checks ─────────────────────────────────────────────────────────

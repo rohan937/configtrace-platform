@@ -237,6 +237,10 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
     elif body.provider == "pagerduty":
         # SECURITY: pagerduty_api_token is NEVER logged here or in the service.
         return {"api_token": body.pagerduty_api_token}
+    # ── M85A — Linear drift provider ─────────────────────────────────────────
+    elif body.provider == "linear":
+        # SECURITY: linear_api_key is NEVER logged here or in the service.
+        return {"api_key": body.linear_api_key}
     return {}
 
 

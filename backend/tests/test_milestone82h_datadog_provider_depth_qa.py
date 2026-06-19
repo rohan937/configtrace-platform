@@ -1297,7 +1297,7 @@ def test_expansion_framework_pagerduty_at_head_of_queue():
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
     # After M84A, PagerDuty launched; Linear is now at head.
-    assert recs[0]["provider"] in ("pagerduty", "linear"), (
+    assert recs[0]["provider"] in ("pagerduty", "linear", "jira"), (
         f"PagerDuty or Linear should be head of RECOMMENDED_NEXT_PROVIDERS; got: {recs[0]['provider']!r}"
     )
 

@@ -265,6 +265,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "cloudflare", "github", "vercel", "stripe", "aws", "firebase", "supabase", "shopify",
         "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk",
         "pagerduty",
+        "linear",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

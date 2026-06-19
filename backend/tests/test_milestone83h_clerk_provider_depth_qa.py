@@ -1317,10 +1317,11 @@ def test_i8_pagerduty_head_of_recommended_next_providers() -> None:
         provider = first.get("provider", "")
     else:
         provider = str(first)
-    # After M84A, PagerDuty launched; Linear is now head.
+    # After M84A PagerDuty launched; after M85A Linear launched; Jira is now head.
     assert ("pagerduty" in provider.lower() or "PagerDuty" in provider
-            or "linear" in provider.lower() or "Linear" in provider), (
-        f"PagerDuty or Linear should be head of recommended_next_providers after Clerk arc, got: {provider!r}"
+            or "linear" in provider.lower() or "Linear" in provider
+            or "jira" in provider.lower() or "Jira" in provider), (
+        f"PagerDuty, Linear, or Jira should be head of recommended_next_providers after Clerk arc, got: {provider!r}"
     )
 
 

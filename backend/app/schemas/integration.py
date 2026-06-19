@@ -74,6 +74,8 @@ class IntegrationCreateRequest(BaseModel):
         "clerk",
         # M84A — PagerDuty drift provider foundation.
         "pagerduty",
+        # M85A — Linear drift provider foundation.
+        "linear",
     ] = Field(
         ...,
         description=(
@@ -460,6 +462,19 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Linear fields (M85A) ─────────────────────────────────────────────────
+    linear_api_key: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "Linear API key (read-only). "
+            "Required when provider='linear'. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "SECURITY: never logged, never returned to the frontend, "
+            "never stored in plaintext or resource metadata."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -624,6 +639,12 @@ class IntegrationCreateRequest(BaseModel):
             if not self.pagerduty_api_token:
                 raise ValueError(
                     "pagerduty_api_token is required for PagerDuty integrations."
+                )
+        # ── M85A — Linear drift provider ─────────────────────────────────────
+        elif self.provider == "linear":
+            if not self.linear_api_key:
+                raise ValueError(
+                    "linear_api_key is required for Linear integrations."
                 )
         return self
 

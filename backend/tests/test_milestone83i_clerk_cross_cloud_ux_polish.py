@@ -262,10 +262,11 @@ def test_b4_pagerduty_head_of_recommended_next_providers() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    # After M84A, PagerDuty launched; Linear is now at head.
+    # After M84A, PagerDuty launched; Linear was head. After M85A, Linear launched; Jira is now head.
     assert ("pagerduty" in provider.lower() or "PagerDuty" in str(first)
-            or "linear" in provider.lower() or "Linear" in str(first)), (
-        f"PagerDuty or Linear should be head of recommended_next_providers; got: {provider!r}"
+            or "linear" in provider.lower() or "Linear" in str(first)
+            or "jira" in provider.lower() or "Jira" in str(first)), (
+        f"PagerDuty, Linear, or Jira should be head of recommended_next_providers; got: {provider!r}"
     )
 
 
@@ -273,9 +274,10 @@ def test_b5_expansion_framework_next_milestone_m84a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_ms = summary.get("next_milestone", "") or ""
-    # After M84A, next milestone is M85A (Linear) or similar
-    assert "M84A" in next_ms or "PagerDuty" in next_ms or "Linear" in next_ms or "M85A" in next_ms, (
-        f"next_milestone should reference M84A/PagerDuty or Linear/M85A; got: {next_ms!r}"
+    # After M84A PagerDuty launched (M85A Linear) and M85A launched Linear (M86A Jira follows)
+    assert ("M84A" in next_ms or "PagerDuty" in next_ms or "Linear" in next_ms
+            or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms), (
+        f"next_milestone should reference M84A/PagerDuty, Linear/M85A, or Jira/M86A; got: {next_ms!r}"
     )
 
 
@@ -283,10 +285,11 @@ def test_b6_expansion_framework_next_provider_pagerduty() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_prov = summary.get("next_provider", "") or ""
-    # After M84A, PagerDuty launched; Linear is now head.
+    # After M84A PagerDuty launched (Linear was head); after M85A Linear launched (Jira is now head).
     assert ("PagerDuty" in next_prov or "pagerduty" in next_prov.lower()
-            or "Linear" in next_prov or "linear" in next_prov.lower()), (
-        f"next_provider should be PagerDuty or Linear; got: {next_prov!r}"
+            or "Linear" in next_prov or "linear" in next_prov.lower()
+            or "Jira" in next_prov or "jira" in next_prov.lower()), (
+        f"next_provider should be PagerDuty, Linear, or Jira; got: {next_prov!r}"
     )
 
 

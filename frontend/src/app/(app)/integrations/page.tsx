@@ -31,6 +31,8 @@ import DatadogIntegrationForm from "@/components/integrations/DatadogIntegration
 import ClerkIntegrationForm from "@/components/integrations/ClerkIntegrationForm";
 // ── M84A — PagerDuty drift provider foundation ───────────────────────────────
 import PagerDutyIntegrationForm from "@/components/integrations/PagerDutyIntegrationForm";
+// ── M85A — Linear drift provider foundation ──────────────────────────────────
+import LinearIntegrationForm from "@/components/integrations/LinearIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -59,6 +61,10 @@ const CATEGORY_LABELS: Record<string, string> = {
   identity:       "Identity",
   // M82A — Datadog observability category.
   observability:  "Observability",
+  // M84A — PagerDuty incident_management category.
+  incident_management: "Incident management",
+  // M85A — Linear devops category.
+  devops: "Developer tools · Project management",
 };
 
 // M82-pre — fast lookup for security-preview providers.
@@ -908,6 +914,44 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M85A — Linear setup guide ─────────────────────────────────────────────
+
+  if (provider === "linear") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Linear workspace
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Sign in to your Linear account.",
+            body: <>Go to <strong style={{ color: "#e8eaf0" }}>linear.app</strong> and sign in
+              to the workspace you want to connect.</>,
+          },
+          {
+            heading: "Navigate to Settings → API.",
+            body: <>Click your profile picture in the top-left corner and select
+              &ldquo;API&rdquo;, or go to <strong style={{ color: "#e8eaf0" }}>Settings → API</strong>.</>,
+          },
+          {
+            heading: "Click Create new API key.",
+            body: <>Give it a descriptive label such as &ldquo;ConfigTrace read&rdquo;.
+              Copy the API key — it will only be shown once.</>,
+          },
+          {
+            heading: "Paste it in the field below.",
+            body: <>The key is stored encrypted and never returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace uses a read-only API key to snapshot configuration metadata only. It does
+          not read issue content, comments, attachments, user emails, member identities, or
+          customer data.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -1061,6 +1105,10 @@ export default function IntegrationsPage() {
     // ── M84A — PagerDuty ─────────────────────────────────────────────────────
     if (selectedProvider === "pagerduty") {
       return <PagerDutyIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M85A — Linear ─────────────────────────────────────────────────────────
+    if (selectedProvider === "linear") {
+      return <LinearIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

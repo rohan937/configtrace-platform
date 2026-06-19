@@ -1091,7 +1091,7 @@ class TestProviderRegistration:
 
         assert len(RECOMMENDED_NEXT_PROVIDERS) > 0
         # After M84A, PagerDuty launched; Linear is now at head.
-        assert RECOMMENDED_NEXT_PROVIDERS[0].provider in ("pagerduty", "linear")
+        assert RECOMMENDED_NEXT_PROVIDERS[0].provider in ("pagerduty", "linear", "jira")
 
     def test_provider_expansion_framework_datadog_not_in_queue(self):
         from app.services.provider_expansion_framework import RECOMMENDED_NEXT_PROVIDERS

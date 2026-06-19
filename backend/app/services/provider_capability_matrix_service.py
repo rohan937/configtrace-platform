@@ -1055,6 +1055,44 @@ _PAGERDUTY = ProviderCapability(
 )
 
 
+_LINEAR = ProviderCapability(
+    provider="linear",
+    label="Linear",
+    category="devops",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Linear project-management configuration drift foundation (M85A). "
+        "Drift snapshots cover 9 safe configuration surfaces from the Linear "
+        "GraphQL API: workspace config, teams, projects, workflow states, issue "
+        "labels, webhook subscriptions, custom views, active cycles, and "
+        "integrations. Authentication uses a Linear API key (read-only). "
+        "API key is stored encrypted and never returned in API responses, never "
+        "logged, and never copied to resource metadata. "
+        "Issue titles, descriptions, comments, attachments, user emails, user "
+        "names, member identities, raw URLs, webhook secrets, and customer data "
+        "are never fetched or stored. "
+        "planned_next_stage: M85B: Linear Core Security Foundation."
+    ),
+)
+
+
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
@@ -1065,6 +1103,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _DATADOG,
     _CLERK,
     _PAGERDUTY,
+    _LINEAR,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

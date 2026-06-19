@@ -476,6 +476,56 @@ export const TRUST_PROFILES: Partial<Record<ProviderId, ProviderTrustProfile>> =
     ],
     remediation_supported: false,
   },
+
+  // ── M85A — Linear trust profile ───────────────────────────────────────────
+  linear: {
+    id: "linear",
+    reads: [
+      "Workspace configuration: name, URL key presence — never member emails or PII",
+      "Team metadata: name, visibility, member count category, project count, cycle settings — never member identities or user details",
+      "Project metadata: name, status, health, lead presence, issue count category — never issue content or assignees",
+      "Workflow state metadata: name, type, position category — never issue assignments or issue data",
+      "Issue label metadata: name, type, group structure — never label assignments or issue content",
+      "Webhook subscription metadata: enabled status, resource types, URL scheme category, secret presence boolean — never delivery URL or secret value",
+      "Custom view metadata: name, shared status, filter count category — never filter content or view results",
+      "Active cycle metadata: name, duration, issue count category — never issue content or member assignments",
+      "Integration metadata: type, enabled status — never credentials, API keys, or integration secrets",
+    ],
+    never_reads: [
+      "Linear API key values or OAuth tokens",
+      "Webhook delivery URLs or webhook secrets",
+      "Issue titles, descriptions, or body content",
+      "Comments, attachments, or issue activity",
+      "User emails, user names, or phone numbers",
+      "Member identities, invitation lists, or member emails",
+      "Issue assignments, due dates, or priority content",
+      "Filter content or custom view query logic",
+      "Raw routing expressions or condition logic",
+      "Authorization headers or raw API response payloads",
+      "Audit logs, activity feeds, or notification history",
+      "Customer data or PII of any kind",
+    ],
+    credential_note:
+      "Linear API key is stored encrypted at rest using AES-256-GCM. It is never returned in API responses, never logged, and never copied to resource metadata.",
+    permissions: [
+      "Linear GraphQL API: organization (workspace metadata)",
+      "Linear GraphQL API: teams (configuration metadata)",
+      "Linear GraphQL API: projects (status and metadata only)",
+      "Linear GraphQL API: workflowStates (type and position metadata)",
+      "Linear GraphQL API: issueLabels (label structure metadata)",
+      "Linear GraphQL API: webhooks (configuration metadata — not payloads)",
+      "Linear GraphQL API: customViews (shared status and filter count)",
+      "Linear GraphQL API: cycles (active cycles metadata)",
+      "Linear GraphQL API: integrations (type and enabled status)",
+    ],
+    revoke_steps: [
+      "Sign in to Linear",
+      "Go to Settings → API (or click your profile picture → API keys)",
+      "Find the API key created for ConfigTrace",
+      "Delete or revoke it",
+    ],
+    remediation_supported: false,
+  },
 };
 
 // ── Global trust summary constants ────────────────────────────────────────────

@@ -471,45 +471,10 @@ class RecommendedProvider:
 # PROVIDER_CAPABILITIES_PARTIAL. M83A launched Clerk drift foundation;
 # Clerk also moved into PROVIDER_CAPABILITIES_PARTIAL. M83B added Clerk
 # core security rules; M83D adds Clerk activity/event ingestion. PagerDuty
-# launched in M84A and is no longer in the recommended queue. Linear is
+# launched in M84A and is no longer in the recommended queue. Linear
+# launched in M85A and is no longer in the recommended queue. Jira is
 # now the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="linear",
-        label="Linear",
-        category="devops",
-        why_high_fit=(
-            "Linear project-management configuration (workspace settings, webhook "
-            "endpoints, API key posture, team membership changes) is increasingly "
-            "part of the DevSecOps surface for engineering teams. "
-            "Drift in webhook URLs or overly permissive team access is reviewable."
-        ),
-        drift_surfaces=(
-            "workspace_settings",
-            "webhook_endpoints",
-            "api_key_scopes",
-            "team_membership_and_permissions",
-            "integration_connections",
-        ),
-        security_surfaces=(
-            "webhook_http_endpoint",
-            "overly_broad_api_key",
-            "team_membership_change",
-        ),
-        sensitive_data_to_avoid=(
-            "issue_titles_or_descriptions",
-            "user_emails_unless_safe",
-            "auth_tokens",
-            "raw_webhook_payloads",
-            "comment_content",
-        ),
-        first_milestone_name="M85A: Linear Drift Provider Foundation",
-        notes=(
-            "Use the Linear GraphQL API. Focus on workspace webhooks, API key "
-            "metadata (name + scope, never value), and team configuration. "
-            "Never store issue content, user emails, or comment bodies."
-        ),
-    ),
     RecommendedProvider(
         provider="jira",
         label="Jira",
@@ -615,6 +580,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M85A: Linear Drift Provider Foundation",
+            "planned_next_stage": "M85B: Linear Core Security Foundation",
         },
     }

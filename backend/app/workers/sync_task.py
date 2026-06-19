@@ -324,6 +324,12 @@ def sync_integration(
 
                 connector = PagerDutyConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "linear":
+                # SECURITY: api_key is NEVER logged.
+                from app.connectors.linear import LinearConnector
+
+                connector = LinearConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

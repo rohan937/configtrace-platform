@@ -691,8 +691,8 @@ def test_g_linear_head_of_recommended_next_providers() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    assert "linear" in provider.lower(), (
-        f"Linear should remain head of recommended_next_providers; got: {provider!r}"
+    assert "linear" in provider.lower() or "jira" in provider.lower(), (
+        f"Linear or Jira should be head of recommended_next_providers; got: {provider!r}"
     )
 
 

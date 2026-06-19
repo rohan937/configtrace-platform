@@ -259,8 +259,10 @@ def test_b4_linear_head_of_recommended_next_providers() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    assert "linear" in provider.lower() or "Linear" in str(first), (
-        f"Linear should be head of recommended_next_providers after PagerDuty arc; got: {provider!r}"
+    # After M84I, Linear was head. After M85A launched Linear, Jira became head.
+    assert ("linear" in provider.lower() or "Linear" in str(first)
+            or "jira" in provider.lower() or "Jira" in str(first)), (
+        f"Linear or Jira should be head of recommended_next_providers; got: {provider!r}"
     )
 
 
@@ -268,8 +270,10 @@ def test_b5_expansion_framework_next_milestone_m85a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_ms = summary.get("next_milestone", "") or ""
-    assert "M85A" in next_ms or "Linear" in next_ms, (
-        f"next_milestone should reference M85A/Linear; got: {next_ms!r}"
+    # After M84I, M85A/Linear was next. After M85A launched, M86A/Jira is next.
+    assert ("M85A" in next_ms or "Linear" in next_ms
+            or "M86A" in next_ms or "Jira" in next_ms), (
+        f"next_milestone should reference M85A/Linear or M86A/Jira; got: {next_ms!r}"
     )
 
 
@@ -277,8 +281,10 @@ def test_b6_expansion_framework_next_provider_linear() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_prov = summary.get("next_provider", "") or ""
-    assert "Linear" in next_prov or "linear" in next_prov.lower(), (
-        f"next_provider should be Linear after PagerDuty arc complete; got: {next_prov!r}"
+    # After M84I, Linear was next_provider. After M85A launched Linear, Jira is next.
+    assert ("Linear" in next_prov or "linear" in next_prov.lower()
+            or "Jira" in next_prov or "jira" in next_prov.lower()), (
+        f"next_provider should be Linear or Jira; got: {next_prov!r}"
     )
 
 

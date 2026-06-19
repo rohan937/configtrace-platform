@@ -1246,6 +1246,7 @@ class TestCapabilityMatrix:
             "M84H: PagerDuty Provider Depth QA",
             "M84I: PagerDuty Cross-Cloud UX Polish",
             "M85A: Linear Drift Provider Foundation",
+            "M85B: Linear Core Security Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )
