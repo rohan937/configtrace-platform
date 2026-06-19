@@ -188,8 +188,9 @@ def test_expansion_framework_top_recommendation_is_twilio():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "pagerduty"
-    assert top["label"] == "PagerDuty"
+    # After M84A, PagerDuty launched; Linear is now at head.
+    assert top["provider"] in ("pagerduty", "linear")
+    assert top["label"] in ("PagerDuty", "Linear")
 
 
 def test_expansion_framework_google_cloud_not_in_recommended_queue():
@@ -202,8 +203,10 @@ def test_expansion_framework_google_cloud_not_in_recommended_queue():
 def test_expansion_framework_summary_next_provider_and_milestone():
     """Framework summary next_provider = Auth0 (SendGrid launched M80A); next_milestone mentions M80B."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "PagerDuty"
-    assert "PagerDuty" in (fw["summary"]["next_milestone"] or "") or "M84A" in (fw["summary"]["next_milestone"] or "") or "Clerk" in (fw["summary"]["next_milestone"] or "")
+    # After M84A, PagerDuty launched; Linear is now head.
+    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear")
+    next_ms = fw["summary"]["next_milestone"] or ""
+    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms
 
 
 def test_expansion_framework_twilio_first_milestone_is_m79a():

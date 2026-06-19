@@ -1235,6 +1235,7 @@ class TestCapabilityMatrix:
             "M83H: Clerk Provider Depth QA",
             "M83I: Clerk Cross-Cloud UX Polish",
             "M84A: PagerDuty Drift Provider Foundation",
+            "M84B: PagerDuty Core Security Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

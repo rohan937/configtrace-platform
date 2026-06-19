@@ -426,6 +426,56 @@ export const TRUST_PROFILES: Partial<Record<ProviderId, ProviderTrustProfile>> =
     ],
     remediation_supported: false,
   },
+
+  // ── M84A — PagerDuty trust profile ────────────────────────────────────────
+  pagerduty: {
+    id: "pagerduty",
+    reads: [
+      "Service metadata: name, status category, escalation policy reference, timeout categories, team/integration counts — never integration keys or incident data",
+      "Escalation policy metadata: name, rule/level structure, loop settings — never user targets, emails, or phone numbers",
+      "Schedule metadata: name, layer/user/team counts — never user identities, emails, or on-call assignments",
+      "Service integration metadata: type category, vendor name, key presence boolean — never integration key or routing key values",
+      "Webhook subscription metadata: active status, event count, URL scheme category — never delivery URL or webhook secret",
+      "Event orchestration metadata: name, route count, team presence — never routing expressions or conditions",
+      "Business service metadata: name, team/contact presence — never subscriber lists or contact details",
+      "Response play metadata: name, responder/subscriber counts, runnability — never responder identities or conference numbers",
+    ],
+    never_reads: [
+      "PagerDuty API token values",
+      "Integration keys or routing keys of any kind",
+      "Webhook delivery URLs or webhook secrets",
+      "User emails, user names, phone numbers, or SMS numbers",
+      "Contact methods, notification rules with personal details, or push tokens",
+      "On-call user identities or schedule assignments",
+      "Responder identities, subscriber identities, or conference phone numbers",
+      "Incident payloads, alert payloads, or incident content",
+      "Raw routing expressions, condition logic, or action details",
+      "Authorization headers or raw API responses",
+      "IP addresses, user agents, or audit logs",
+      "Customer data or PII of any kind",
+    ],
+    credential_note:
+      "PagerDuty API token is stored encrypted at rest using AES-256-GCM. It is never returned in API responses, never logged, and never copied to resource metadata. No token values, routing keys, or integration keys are ever stored in plaintext.",
+    permissions: [
+      "Read services list and configuration metadata (/services)",
+      "Read escalation policies (/escalation_policies)",
+      "Read schedules (/schedules)",
+      "Read service integrations per service (/services/{id}/integrations)",
+      "Read webhook subscriptions (/webhook_subscriptions)",
+      "Read event orchestrations (/event_orchestrations)",
+      "Read business services (/business_services)",
+      "Read response plays (/response_plays)",
+      "No write permissions of any kind",
+      "No access to incidents, alerts, logs, or user data",
+    ],
+    revoke_steps: [
+      "Sign in to your PagerDuty account",
+      "Go to My Profile → User Settings → API Access Keys (or use the REST API endpoint)",
+      "Find the ConfigTrace API token",
+      "Delete or revoke the token to invalidate it immediately",
+    ],
+    remediation_supported: false,
+  },
 };
 
 // ── Global trust summary constants ────────────────────────────────────────────

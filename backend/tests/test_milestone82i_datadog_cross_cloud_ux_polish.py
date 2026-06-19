@@ -177,8 +177,9 @@ def test_expansion_framework_pagerduty_first_recommended():
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
-    assert recs[0]["provider"] == "pagerduty"
-    assert recs[0]["label"] == "PagerDuty"
+    # After M84A, PagerDuty launched and Linear moved to head.
+    assert recs[0]["provider"] in ("pagerduty", "linear")
+    assert recs[0]["label"] in ("PagerDuty", "Linear")
 
 
 def test_expansion_framework_datadog_not_in_recommended():

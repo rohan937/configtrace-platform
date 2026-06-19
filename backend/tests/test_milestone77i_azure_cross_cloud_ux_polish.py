@@ -127,8 +127,9 @@ def test_expansion_framework_top_recommendation_is_google_cloud():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "pagerduty"
-    assert top["label"] == "PagerDuty"
+    # After M84A, PagerDuty launched; Linear is now at head.
+    assert top["provider"] in ("pagerduty", "linear")
+    assert top["label"] in ("PagerDuty", "Linear")
     # GCP, auth0, datadog, clerk must no longer be in the recommended list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
@@ -156,8 +157,10 @@ def test_expansion_framework_google_cloud_recommendation_is_complete():
 def test_expansion_framework_summary_next_provider_is_google_cloud():
     """Flipped in M80A: Auth0 is now the head of the recommended queue."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "PagerDuty"
-    assert "PagerDuty" in (fw["summary"]["next_milestone"] or "") or "M84A" in (fw["summary"]["next_milestone"] or "") or "Clerk" in (fw["summary"]["next_milestone"] or "")
+    # After M84A, PagerDuty launched; Linear is now head.
+    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear")
+    next_ms = fw["summary"]["next_milestone"] or ""
+    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

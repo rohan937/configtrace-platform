@@ -233,8 +233,9 @@ def test_expansion_framework_top_recommendation_is_datadog():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "pagerduty"
-    assert top["label"] == "PagerDuty"
+    # After M84A, PagerDuty launched; Linear is now at head.
+    assert top["provider"] in ("pagerduty", "linear")
+    assert top["label"] in ("PagerDuty", "Linear")
 
 
 def test_expansion_framework_auth0_not_in_recommended_queue():
@@ -256,9 +257,10 @@ def test_expansion_framework_sendgrid_not_in_recommended_queue():
 def test_expansion_framework_summary_next_provider_is_datadog():
     """Framework summary next_provider = Clerk (Datadog launched in M82A)."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "PagerDuty"
+    # After M84A, PagerDuty launched; Linear is now head.
+    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear")
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms
+    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

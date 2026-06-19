@@ -982,6 +982,43 @@ _CLERK = ProviderCapability(
     ),
 )
 
+_PAGERDUTY = ProviderCapability(
+    provider="pagerduty",
+    label="PagerDuty",
+    category="incident_management",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "PagerDuty incident-management configuration drift (M84A). Drift snapshots "
+        "cover 8 safe configuration surfaces from the PagerDuty REST API v2: services, "
+        "escalation policies, schedules, service integrations, webhook subscriptions, "
+        "event orchestrations, business services, and response plays. "
+        "M84B will add core security rules. "
+        "Privacy contract: PagerDuty API tokens, routing keys, integration keys, "
+        "webhook secrets, delivery URLs, user emails, user names, phone numbers, "
+        "contact methods, on-call user identities, responder identities, subscriber "
+        "identities, incident payloads, alert payloads, conference phone numbers, "
+        "raw routing expressions, and customer PII are NEVER fetched or stored. "
+        "planned_next_stage: M84B: PagerDuty Core Security Foundation."
+    ),
+)
+
 
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
@@ -992,6 +1029,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AUTH0,
     _DATADOG,
     _CLERK,
+    _PAGERDUTY,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

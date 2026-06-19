@@ -72,6 +72,8 @@ class IntegrationCreateRequest(BaseModel):
         "datadog",
         # M83A — Clerk drift provider foundation.
         "clerk",
+        # M84A — PagerDuty drift provider foundation.
+        "pagerduty",
     ] = Field(
         ...,
         description=(
@@ -445,6 +447,19 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── PagerDuty fields (M84A) ───────────────────────────────────────────────
+    pagerduty_api_token: Optional[str] = Field(
+        None,
+        min_length=1,
+        description=(
+            "PagerDuty API token (read-only). "
+            "Required when provider='pagerduty'. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "SECURITY: never logged, never returned to the frontend, "
+            "never stored in plaintext or resource metadata."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -603,6 +618,12 @@ class IntegrationCreateRequest(BaseModel):
             if not self.clerk_secret_key:
                 raise ValueError(
                     "clerk_secret_key is required for Clerk integrations."
+                )
+        # ── M84A — PagerDuty drift provider ──────────────────────────────────
+        elif self.provider == "pagerduty":
+            if not self.pagerduty_api_token:
+                raise ValueError(
+                    "pagerduty_api_token is required for PagerDuty integrations."
                 )
         return self
 

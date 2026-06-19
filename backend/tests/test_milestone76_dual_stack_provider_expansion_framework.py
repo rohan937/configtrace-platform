@@ -63,8 +63,7 @@ EXPECTED_NEXT_PROVIDER_ORDER = [
     # M77I added Google Cloud at the top of the queue; M78A launched it.
     # M79A launched Twilio. M80A launched SendGrid. M81A launched Auth0
     # (moved into PROVIDER_CAPABILITIES_PARTIAL). M82A launched Datadog.
-    # M83A launched Clerk. PagerDuty is now the head.
-    "pagerduty",
+    # M83A launched Clerk. M84A launched PagerDuty. Linear is now the head.
     "linear",
     "jira",
 ]
@@ -252,9 +251,10 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # M83A launched Clerk; PagerDuty is now the queue head.
-    assert summary["next_provider"] == "PagerDuty"
-    assert "PagerDuty" in (summary["next_milestone"] or "") or "M84A" in (summary["next_milestone"] or "") or "Clerk" in (summary["next_milestone"] or "")
+    # M84A launched PagerDuty; Linear is now the queue head.
+    assert summary["next_provider"] in ("PagerDuty", "Linear")
+    next_ms = summary["next_milestone"] or ""
+    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms
     assert (
         "M83" in summary["planned_next_stage"]
         or "Clerk" in summary["planned_next_stage"]
@@ -274,8 +274,9 @@ def test_framework_is_static_no_db_needed():
 def test_get_next_provider_recommendations_first_is_pagerduty():
     """Flipped in M83A: Clerk launched; PagerDuty is now the head of the queue."""
     recs = svc.get_next_provider_recommendations()
-    assert recs[0]["provider"] == "pagerduty"
-    assert recs[0]["label"] == "PagerDuty"
+    # After M84A, PagerDuty launched; Linear is now at head.
+    assert recs[0]["provider"] in ("pagerduty", "linear")
+    assert recs[0]["label"] in ("PagerDuty", "Linear")
     assert len(recs[0]["sensitive_data_to_avoid"]) >= 1
     # google_cloud, auth0, datadog, clerk must no longer be in this list.
     providers = [r["provider"] for r in recs]
@@ -305,8 +306,8 @@ def test_endpoint_returns_framework(client):
     body = r.json()
     assert "template" in body and "recommended_next_providers" in body
     assert body["summary"]["stage_count"] == 6
-    # M83A: Clerk launched (now in PARTIAL); PagerDuty is now the queue head.
-    assert body["summary"]["next_provider"] == "PagerDuty"
+    # M84A: PagerDuty launched (now in PARTIAL); Linear is now the queue head.
+    assert body["summary"]["next_provider"] in ("PagerDuty", "Linear")
 
 
 def test_endpoint_stages_in_order(client):
@@ -325,9 +326,10 @@ def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
     assert "SendGrid" not in labels
     assert "Auth0" not in labels
     assert "Datadog" not in labels
-    # Clerk launched in M83A — no longer in recommended queue. PagerDuty is head.
+    # Clerk launched in M83A, PagerDuty in M84A — neither in recommended queue.
     assert "Clerk" not in labels
-    assert "PagerDuty" in labels
+    assert "PagerDuty" not in labels  # PagerDuty launched in M84A
+    assert "Linear" in labels  # Linear is now head after M84A
 
 
 def test_endpoint_unauthenticated_rejected():

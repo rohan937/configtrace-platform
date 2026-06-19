@@ -471,45 +471,9 @@ class RecommendedProvider:
 # PROVIDER_CAPABILITIES_PARTIAL. M83A launched Clerk drift foundation;
 # Clerk also moved into PROVIDER_CAPABILITIES_PARTIAL. M83B added Clerk
 # core security rules; M83D adds Clerk activity/event ingestion. PagerDuty
-# is now the head of the recommended queue.
+# launched in M84A and is no longer in the recommended queue. Linear is
+# now the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="pagerduty",
-        label="PagerDuty",
-        category="observability",
-        why_high_fit=(
-            "PagerDuty webhook endpoints and escalation-policy configurations are "
-            "critical incident-response infrastructure. Drift in these (HTTP endpoints, "
-            "missing acknowledgement timeouts, overly broad API key scopes) can "
-            "silently break on-call workflows."
-        ),
-        drift_surfaces=(
-            "webhook_subscriptions",
-            "escalation_policy_configuration",
-            "service_configuration",
-            "api_key_scopes",
-            "notification_rules",
-        ),
-        security_surfaces=(
-            "webhook_http_endpoint",
-            "escalation_policy_gap",
-            "overly_broad_api_key_scope",
-        ),
-        sensitive_data_to_avoid=(
-            "incident_bodies_or_details",
-            "user_contact_methods",
-            "auth_tokens",
-            "raw_webhook_payloads",
-            "personally_identifiable_responder_information",
-        ),
-        first_milestone_name="M84A: PagerDuty Drift Provider Foundation",
-        notes=(
-            "Use the PagerDuty REST API v2. Focus on /services, "
-            "/webhook_subscriptions, /escalation_policies, and /api_keys "
-            "(key description + scope only, never value). "
-            "Never store incident details, responder identities, or raw alert payloads."
-        ),
-    ),
     RecommendedProvider(
         provider="linear",
         label="Linear",
@@ -651,6 +615,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M84A: PagerDuty Drift Provider Foundation",
+            "planned_next_stage": "M84B: PagerDuty Core Security Foundation",
         },
     }

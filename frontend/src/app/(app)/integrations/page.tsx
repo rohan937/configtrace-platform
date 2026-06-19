@@ -29,6 +29,8 @@ import Auth0IntegrationForm from "@/components/integrations/Auth0IntegrationForm
 import DatadogIntegrationForm from "@/components/integrations/DatadogIntegrationForm";
 // ── M83A — Clerk drift provider foundation ─────────────────────────────────────
 import ClerkIntegrationForm from "@/components/integrations/ClerkIntegrationForm";
+// ── M84A — PagerDuty drift provider foundation ───────────────────────────────
+import PagerDutyIntegrationForm from "@/components/integrations/PagerDutyIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -868,6 +870,44 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M84A — PagerDuty setup guide ──────────────────────────────────────────
+
+  if (provider === "pagerduty") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a PagerDuty account
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Create a read-only API token.",
+            body: <>PagerDuty → Integrations → API Access Keys → Create New API Key.
+              Give it a descriptive name such as &ldquo;ConfigTrace read&rdquo;. Copy the token
+              immediately — it is shown only once.</>,
+          },
+          {
+            heading: "Use read-only access.",
+            body: <>The token only needs read access to services, escalation policies, schedules,
+              and related configuration surfaces. No write permissions are required. ConfigTrace
+              never triggers incidents or modifies on-call schedules.</>,
+          },
+          {
+            heading: "Enter the API token below.",
+            body: <>Paste the API token in the form below. It is stored encrypted and never
+              returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace stores PagerDuty credentials encrypted and uses them only to read selected
+          configuration metadata. It does not store API token values, routing keys, integration
+          keys, webhook secrets, delivery URLs, user emails, user names, phone numbers, contact
+          methods, on-call user identities, responder identities, incident payloads, alert
+          payloads, or customer PII in findings.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -1017,6 +1057,10 @@ export default function IntegrationsPage() {
     // ── M83A — Clerk ────────────────────────────────────────────────────────
     if (selectedProvider === "clerk") {
       return <ClerkIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M84A — PagerDuty ─────────────────────────────────────────────────────
+    if (selectedProvider === "pagerduty") {
+      return <PagerDutyIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

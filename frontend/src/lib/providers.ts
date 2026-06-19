@@ -30,7 +30,9 @@ export type ProviderId =
   // ── M82A — Datadog drift provider foundation ──────────────────────────────
   | "datadog"
   // ── M83A — Clerk drift provider foundation ────────────────────────────────
-  | "clerk";
+  | "clerk"
+  // ── M84A — PagerDuty drift provider foundation ────────────────────────────
+  | "pagerduty";
 
 export type ProviderCategory =
   | "cdn_dns"
@@ -44,7 +46,9 @@ export type ProviderCategory =
   | "communications"
   | "identity"
   // ── M82A: observability category for Datadog ──────────────────────────────
-  | "observability";
+  | "observability"
+  // ── M84A: incident_management category for PagerDuty ─────────────────────
+  | "incident_management";
 
 export interface ProviderMeta {
   id: ProviderId;
@@ -410,6 +414,31 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     bgColor: "rgba(79,79,163,0.10)",
     borderColor: "rgba(79,79,163,0.25)",
   },
+
+  // ── M84A — PagerDuty drift provider foundation ────────────────────────────
+  pagerduty: {
+    id: "pagerduty",
+    label: "PagerDuty",
+    shortLabel: "PagerDuty",
+    category: "incident_management",
+    description:
+      "Track PagerDuty service configuration, escalation policies, schedules, webhook subscriptions, and event orchestration posture for review-safe drift evidence.",
+    monitoredSurfaces: [
+      "Services (status, escalation policy ref, timeout categories — never integration keys or incident data)",
+      "Escalation policies (rule/level structure, loop settings — never user targets or contact methods)",
+      "Schedules (layer/user/team counts — never user identities or on-call data)",
+      "Service integrations (type category, vendor name, key presence — never integration keys or routing keys)",
+      "Webhook subscriptions (active, event count, URL scheme category — never delivery URL or secret)",
+      "Event orchestrations (route count, team presence — never routing expressions)",
+      "Business services (team/contact presence — never subscriber lists)",
+      "Response plays (responder/subscriber counts, runnability — never responder identities)",
+    ],
+    trustNote:
+      "ConfigTrace stores PagerDuty credentials encrypted and uses them only to read selected configuration metadata. It does not store API token values, routing keys, integration keys, webhook secrets, delivery URLs, user emails, user names, phone numbers, contact methods, on-call user identities, responder identities, subscriber identities, incident payloads, alert payloads, or customer PII in findings.",
+    color: "#06ac38",
+    bgColor: "rgba(6,172,56,0.10)",
+    borderColor: "rgba(6,172,56,0.25)",
+  },
 };
 
 /** All provider IDs in display order. */
@@ -432,6 +461,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "datadog",
   // ── M83A — Clerk drift provider foundation ────────────────────────────────
   "clerk",
+  // ── M84A — PagerDuty drift provider foundation ────────────────────────────
+  "pagerduty",
 ];
 
 /**
@@ -460,6 +491,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "datadog",
   // ── M83A — Clerk drift provider foundation ────────────────────────────────
   "clerk",
+  // ── M84A — PagerDuty drift provider foundation ────────────────────────────
+  "pagerduty",
 ];
 
 /**

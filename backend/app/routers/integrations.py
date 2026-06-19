@@ -233,6 +233,10 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
         if body.clerk_frontend_api_url:
             creds["frontend_api_url"] = body.clerk_frontend_api_url
         return creds
+    # ── M84A — PagerDuty drift provider ──────────────────────────────────────
+    elif body.provider == "pagerduty":
+        # SECURITY: pagerduty_api_token is NEVER logged here or in the service.
+        return {"api_token": body.pagerduty_api_token}
     return {}
 
 

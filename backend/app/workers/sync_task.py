@@ -318,6 +318,12 @@ def sync_integration(
 
                 connector = ClerkConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "pagerduty":
+                # SECURITY: api_token is NEVER logged.
+                from app.connectors.pagerduty import PagerDutyConnector
+
+                connector = PagerDutyConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",
