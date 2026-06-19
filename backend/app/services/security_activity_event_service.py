@@ -598,6 +598,29 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "domains_enrollment_mode_category",
         "algorithm",
         "name",
+        # PagerDuty configuration activity fields (M84D) — config-state observation
+        # events synthesized from 8 safe drift surfaces (M84A–M84C). NEVER stored:
+        # PagerDuty API tokens, routing keys, integration keys, webhook secrets,
+        # delivery URLs, custom header values, user emails, user names, phone numbers,
+        # contact methods, on-call user identities, responder identities, subscriber
+        # identities, incident payloads, alert payloads, conference phone numbers,
+        # raw routing expressions, IP addresses, user agents, raw audit payloads,
+        # raw API response dicts, or customer PII.
+        "pagerduty_event_id",        # stable synthetic event identifier (day-scoped)
+        "integration_type_category", # safe integration type ("email"/"generic_events_api"/"vendor"/"other")
+        "key_present",               # bool — whether an integration key is present (NEVER the key)
+        "routing_key_present",       # bool — whether a routing key is present (NEVER the key)
+        "event_scope_category",      # safe category for webhook filter scope
+        "runnable",                  # safe runnability label ("owner"/"team"/"any"/"unknown")
+        "conference_present",        # bool — whether conference number is configured (NEVER the number)
+        "schedule_target_count",     # int — count of schedule targets (never identities)
+        "has_schedule_targets",      # bool — whether any schedule targets are configured
+        "repeat_enabled",            # bool — whether escalation policy loops are enabled
+        "restriction_count",         # int — count of layer restrictions (never restriction content)
+        "has_restrictions",          # bool — whether any layer has time-window restrictions
+        "time_zone_present",         # bool — whether a timezone is configured on a schedule
+        "responder_count",           # int — count of responders (NEVER identities)
+        "subscriber_count",          # int — count of subscribers (NEVER identities)
     }
 )
 

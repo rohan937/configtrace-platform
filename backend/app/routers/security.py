@@ -244,8 +244,13 @@ from app.schemas.security_clerk_activity import (
     ClerkCorrelationGenerateRequest,
     ClerkCorrelationGenerateResponse,
 )
+from app.schemas.security_pagerduty_activity import (
+    PagerDutyActivitySyncRequest,
+    PagerDutyActivitySyncResponse,
+)
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
+from app.services import pagerduty_activity_ingestion_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3387,6 +3392,55 @@ def sync_clerk_activity_events(
         db=db,
     )
     return ClerkActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/pagerduty-activity/sync",
+    response_model=PagerDutyActivitySyncResponse,
+)
+def sync_pagerduty_activity_events(
+    body: Optional[PagerDutyActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> PagerDutyActivitySyncResponse:
+    """Sync review-safe PagerDuty configuration activity events (M84D).
+
+    Admin/owner only. Synthesizes config-state events from safe PagerDuty
+    API surfaces (services, escalation policies, schedules, service
+    integrations, webhook subscriptions, event orchestrations, business
+    services, response plays). Raw PagerDuty audit logs, actor identities,
+    incident content, alert data, and operational payloads are NEVER ingested.
+
+    PagerDuty API tokens, routing keys, integration keys, webhook secrets,
+    delivery URLs, custom header values, user emails, user names, phone numbers,
+    contact methods, on-call user identities, responder identities, subscriber
+    identities, incident payloads, alert payloads, conference phone numbers,
+    raw routing expressions, IP addresses, user agents, raw audit payloads,
+    and customer PII are NEVER stored.
+
+    Evidence is configuration-state metadata only. Does not confirm breach,
+    compromise, unauthorized access, or data exposure.
+
+    Members can read ingested events via
+    GET /security/activity/events?provider=pagerduty.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = pagerduty_activity_ingestion_service.sync_pagerduty_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return PagerDutyActivitySyncResponse(**summary)
 
 
 @router.post(

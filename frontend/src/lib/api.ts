@@ -2492,6 +2492,28 @@ export async function getChangeGitHubPrDraft(
   return apiFetch(`/changes/${changeId}/github-pr-draft`, { token });
 }
 
+/**
+ * syncPagerDutyActivity — POST /security/pagerduty-activity/sync
+ * Admin only. Synthesizes review-safe PagerDuty configuration-state activity
+ * events from the same drift surfaces the connector reads: services, escalation
+ * policies, schedules, service integrations, webhook subscriptions, event
+ * orchestrations, business services, and response plays. PagerDuty audit logs
+ * are never ingested. API tokens, routing keys, integration keys, webhook
+ * secrets, delivery URLs, custom header values, user emails, user names, phone
+ * numbers, contact methods, on-call user identities, responder identities,
+ * subscriber identities, incident payloads, alert payloads, IP addresses, user
+ * agents, and raw audit payloads are never stored.
+ */
+export async function syncPagerDutyActivity(
+  token: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").PagerDutyActivitySyncResponse> {
+  return apiFetch<import("@/types").PagerDutyActivitySyncResponse>(
+    "/security/pagerduty-activity/sync",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
 // ── M58.21: GitHub PR Creation ────────────────────────────────────────────────
 
 export async function createChangeGitHubPr(

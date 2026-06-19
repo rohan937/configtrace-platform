@@ -637,11 +637,11 @@ def test_g_capability_matrix_security_rules_true() -> None:
 
 
 def test_g_capability_matrix_other_security_false() -> None:
-    """M84B: only security_rules flips to True; the rest stay False."""
+    """M84D promotes activity_ingestion to True; signals/correlations/demo remain False."""
     cap = get_provider_capability("pagerduty")
     assert cap is not None
     sec = cap.security
-    assert sec.activity_ingestion is False
+    # activity_ingestion becomes True in M84D — skip that check here
     assert sec.activity_signals is False
     assert sec.risk_activity_correlations is False
     assert sec.demo_seed_clear is False
@@ -668,7 +668,8 @@ def test_g_expansion_framework_planned_next_stage_m84c() -> None:
     planned = summary.get("planned_next_stage", "") or ""
     # M84C complete; framework now points to M84D or beyond.
     assert ("M84C" in planned or "Escalation/Webhook Risk Expansion" in planned
-            or "M84D" in planned or "Activity/Event Ingestion" in planned), (
+            or "M84D" in planned or "Activity/Event Ingestion" in planned
+            or "M84E" in planned or "Activity Signals" in planned), (
         f"planned_next_stage should reference M84C or beyond; got: {planned!r}"
     )
 

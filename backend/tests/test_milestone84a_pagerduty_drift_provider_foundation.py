@@ -853,13 +853,13 @@ def test_l4_pagerduty_capability_matrix_drift_risk_false() -> None:
 
 
 def test_l5_pagerduty_capability_matrix_security_all_false() -> None:
-    """M84B promotes security_rules to True; activity/signals/correlations/demo
-    stay False through this milestone."""
+    """M84B promotes security_rules to True; M84D promotes activity_ingestion.
+    Signals, correlations, demo remain False through this milestone."""
     cap = get_provider_capability("pagerduty")
     assert cap is not None
     sec = cap.security
     for attr in (
-        "activity_ingestion", "activity_signals",
+        "activity_signals",
         "risk_activity_correlations", "demo_seed_clear", "case_report",
         "evidence_timeline", "evidence_graph",
     ):
@@ -895,7 +895,8 @@ def test_m1_expansion_framework_planned_next_stage_m84b() -> None:
     # M84C complete; framework now points to M84D or beyond.
     assert ("M84B" in planned or "PagerDuty Core Security" in planned
             or "M84C" in planned or "Escalation/Webhook" in planned
-            or "M84D" in planned or "Activity/Event Ingestion" in planned), (
+            or "M84D" in planned or "Activity/Event Ingestion" in planned
+            or "M84E" in planned or "Activity Signals" in planned), (
         f"planned_next_stage should point to M84B or beyond; got: {planned!r}"
     )
 

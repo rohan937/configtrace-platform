@@ -41,6 +41,7 @@ import {
   syncAuth0Activity,
   syncDatadogActivity,
   syncClerkActivity,
+  syncPagerDutyActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -50,7 +51,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -408,9 +409,23 @@ const CLERK_EVENT_TYPES = [
   "clerk.config.event",
 ];
 
+// M84D — PagerDuty configuration-state events (synthesized from safe drift surfaces;
+// PagerDuty audit API is never ingested due to actor email/ID, IP, and payload content).
+const PAGERDUTY_EVENT_TYPES = [
+  "pagerduty.service.updated",
+  "pagerduty.escalation_policy.updated",
+  "pagerduty.schedule.updated",
+  "pagerduty.service_integration.updated",
+  "pagerduty.webhook_subscription.updated",
+  "pagerduty.event_orchestration.updated",
+  "pagerduty.business_service.updated",
+  "pagerduty.response_play.updated",
+  "pagerduty.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -577,6 +592,14 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "pagerduty") {
+        const r = await syncPagerDutyActivity(token);
+        setSyncWarn(r.permission_limited);
+        setSyncNote(
+          `${r.permission_limited ? "PagerDuty API access is limited for these credentials. " : ""}` +
+            `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
+            `${r.error_message ? ` (${r.error_message})` : ""}`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -617,7 +640,9 @@ export default function ActivityEventsPage() {
                                   ? "Could not sync Datadog activity. Please try again."
                                   : provider === "clerk"
                                     ? "Could not sync Clerk activity. Please try again."
-                                    : "Could not sync GitHub activity. Please try again.",
+                                    : provider === "pagerduty"
+                                      ? "Could not sync PagerDuty activity. Please try again."
+                                      : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -776,6 +801,7 @@ export default function ActivityEventsPage() {
     : provider === "auth0" ? AUTH0_EVENT_TYPES
     : provider === "datadog" ? DATADOG_EVENT_TYPES
     : provider === "clerk" ? CLERK_EVENT_TYPES
+    : provider === "pagerduty" ? PAGERDUTY_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -818,7 +844,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -939,6 +965,7 @@ function SyncBar({
   const isAuth0 = provider === "auth0";
   const isDatadog = provider === "datadog";
   const isClerk = provider === "clerk";
+  const isPagerDuty = provider === "pagerduty";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -954,6 +981,7 @@ function SyncBar({
     : isAuth0 ? "Sync Auth0 activity"
     : isDatadog ? "Sync Datadog activity"
     : isClerk ? "Sync Clerk activity"
+    : isPagerDuty ? "Sync PagerDuty activity"
     : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
@@ -983,7 +1011,9 @@ function SyncBar({
                             ? "Sync review-safe Datadog configuration activity. ConfigTrace stores monitor, SLO, dashboard, webhook, key, role, team, and cloud-integration posture summaries only — never API keys, application keys, raw monitor queries, raw monitor messages, webhook URLs, headers, payloads, logs, traces, metric values, incident text, emails, destination handles, raw audit payloads, or PII."
                             : isClerk
                               ? "Sync review-safe Clerk configuration activity derived from authentication configuration surfaces. ConfigTrace stores posture summaries only — never Clerk secret keys, session tokens, JWTs, OAuth tokens, webhook secrets, raw redirect URLs, raw callback URLs, raw webhook URLs, user emails, user IDs, phone numbers, names, session history, login history, IP addresses, user agents, raw audit payloads, customer data, or PII."
-                              : "Ingests recent GitHub audit-log activity into normalized events.";
+                              : isPagerDuty
+                                ? "Sync review-safe PagerDuty configuration activity from service, escalation policy, schedule, integration, webhook, orchestration, business service, and response play configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API tokens, routing keys, integration keys, webhook secrets, raw URLs, user contact data, incident payloads, alert payloads, IP addresses, user agents, or PII."
+                                : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1363,6 +1393,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync Clerk activity first to collect review-safe configuration-state evidence — instance settings, auth strategy, organization settings, session policy, email/SMS settings, domains, redirect URLs, JWT templates, and webhook endpoints. Clerk audit logs are never ingested. Secret keys, session tokens, JWTs, webhook secrets, raw redirect URLs, raw domain names, user emails, user IDs, session history, login history, IP addresses, and raw audit payloads are never stored."
                 : "An admin can sync Clerk activity to collect review-safe configuration-state evidence."
+            : provider === "pagerduty"
+              ? isAdmin
+                ? "Sync PagerDuty activity first to collect review-safe configuration-state evidence — service, escalation policy, schedule, service integration, webhook subscription, event orchestration, business service, and response play posture summaries. PagerDuty audit logs are never ingested. API tokens, routing keys, integration keys, webhook secrets, delivery URLs, user identities, incident payloads, alert payloads, IP addresses, and raw audit payloads are never stored."
+                : "An admin can sync PagerDuty activity to collect review-safe configuration-state evidence."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

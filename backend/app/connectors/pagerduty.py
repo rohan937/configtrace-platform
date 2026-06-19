@@ -1,4 +1,4 @@
-"""PagerDuty configuration drift connector (M84A).
+"""PagerDuty configuration drift connector (M84A, M84D activity ingestion).
 
 Connects to the PagerDuty REST API v2 using an API token and snapshots
 eight safe configuration surfaces.  All raw secrets, URLs, user identities,
@@ -642,6 +642,339 @@ class PagerDutyConnector(BaseConnector):
             records.extend(self._fetch_response_plays(client))
 
         return records
+
+    def list_activity_events(
+        self,
+        credentials: dict,
+        *,
+        max_events: int = 100,
+        lookback_hours: int = 24,
+    ) -> list[dict]:
+        """Synthesize review-safe PagerDuty configuration-state activity events.
+
+        PagerDuty's audit trail API includes actor emails, user IDs, IP
+        addresses, and user agents in every entry — ingesting those would
+        violate ConfigTrace's privacy contract. Instead, activity events are
+        synthesized from the same safe drift surfaces the drift connector
+        already reads (M84A–M84C):
+
+        Surfaces covered:
+        - Services (status, escalation policy, team/integration posture)
+        - Escalation policies (rule/level/target count, loop structure)
+        - Schedules (layer/user/team/restriction posture)
+        - Service integrations (type category, key presence)
+        - Webhook subscriptions (active, event count, delivery scheme)
+        - Event orchestrations (route count, team presence)
+        - Business services (team/contact presence)
+        - Response plays (responder/subscriber counts, runnability)
+
+        Each event represents configuration state observed at poll time.
+        Events are scoped to a UTC-day fingerprint for idempotency — re-polling
+        on the same UTC day yields the same provider_event_id.
+
+        PRIVACY — what is NEVER returned:
+        - PagerDuty API tokens, routing keys, integration keys.
+        - Webhook secrets, delivery URLs, custom header names/values.
+        - User emails, user names, phone numbers, contact methods.
+        - On-call user identities, responder identities, subscriber identities.
+        - Incident payloads, alert payloads, conference phone numbers.
+        - Raw routing expressions, IP addresses, user agents.
+        - Raw PagerDuty audit payloads, raw API response dicts.
+        - Customer PII of any kind.
+
+        Raises:
+            AuthenticationError: 401 from the PagerDuty API.
+            RateLimitError: 429 rate limit hit.
+            NetworkError: Transport-level failure.
+            ConnectorError: Unexpected 4xx/5xx.
+        """
+        from datetime import datetime, timezone
+
+        max_events = min(max(1, max_events), 1000)
+        lookback_hours = min(max(1, lookback_hours), 168)  # noqa: F841 — context only
+
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        events: list[dict] = []
+
+        api_token = _sanitize_token(credentials.get("api_token", ""))
+        with self._make_client(api_token) as client:
+            # Required surfaces — propagate auth/rate-limit errors.
+            services = self._fetch_services(client)
+            self._collect_service_events(services, events, day)
+
+            eps = self._fetch_escalation_policies(client)
+            self._collect_escalation_policy_events(eps, events, day)
+
+            scheds = self._fetch_schedules(client)
+            self._collect_schedule_events(scheds, events, day)
+
+            intgs = self._fetch_service_integrations(client, services)
+            self._collect_service_integration_events(intgs, events, day)
+
+            # Optional plan-gated surfaces — fail-soft on 403/404.
+            try:
+                whs = self._fetch_webhook_subscriptions(client)
+                self._collect_webhook_events(whs, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("pagerduty_activity: webhook_subscriptions surface skipped")
+
+            try:
+                eos = self._fetch_event_orchestrations(client)
+                self._collect_orchestration_events(eos, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("pagerduty_activity: event_orchestrations surface skipped")
+
+            try:
+                bss = self._fetch_business_services(client)
+                self._collect_business_service_events(bss, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("pagerduty_activity: business_services surface skipped")
+
+            try:
+                rps = self._fetch_response_plays(client)
+                self._collect_response_play_events(rps, events, day)
+            except Exception:  # noqa: BLE001
+                logger.debug("pagerduty_activity: response_plays surface skipped")
+
+        return events[:max_events]
+
+    # ── Activity surface collectors (M84D) ────────────────────────────────────
+    #
+    # Each collector emits one config-state activity event per normalized record.
+    # Only safe allowlisted fields from the M84A–M84C schema are included.
+    # Raw API payloads, URLs, secrets, tokens, and all user/PII data are NEVER
+    # stored.
+
+    def _collect_service_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:service:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_service",
+                "resource_id": rid,
+                "record_type": "pagerduty_service",
+                "operation_family": "pagerduty.service",
+                "operation_action": "updated",
+                "category": "Service configuration",
+                "status_category": rec.get("status_category"),
+                "escalation_policy_id": rec.get("escalation_policy_id") or None,
+                "team_count": rec.get("team_count"),
+                "integration_count": rec.get("integration_count"),
+                "alert_creation_category": rec.get("alert_creation_category"),
+                "acknowledgement_timeout_category": rec.get("acknowledgement_timeout_category"),
+                "auto_resolve_timeout_category": rec.get("auto_resolve_timeout_category"),
+                "support_hours_enabled": rec.get("support_hours_enabled"),
+                "scheduled_actions_count": rec.get("scheduled_actions_count"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.service.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
+
+    def _collect_escalation_policy_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:escalation_policy:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_escalation_policy",
+                "resource_id": rid,
+                "record_type": "pagerduty_escalation_policy",
+                "operation_family": "pagerduty.escalation_policy",
+                "operation_action": "updated",
+                "category": "Escalation policy configuration",
+                "team_count": rec.get("team_count"),
+                "escalation_rule_count": rec.get("escalation_rule_count"),
+                "escalation_level_count": rec.get("escalation_level_count"),
+                "target_count": rec.get("target_count"),
+                "schedule_target_count": rec.get("schedule_target_count"),
+                "has_schedule_targets": rec.get("has_schedule_targets"),
+                "repeat_enabled": rec.get("repeat_enabled"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.escalation_policy.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
+
+    def _collect_schedule_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:schedule:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_schedule",
+                "resource_id": rid,
+                "record_type": "pagerduty_schedule",
+                "operation_family": "pagerduty.schedule",
+                "operation_action": "updated",
+                "category": "Schedule configuration",
+                "layer_count": rec.get("layer_count"),
+                "user_count": rec.get("user_count"),
+                "team_count": rec.get("team_count"),
+                "restriction_count": rec.get("restriction_count"),
+                "has_restrictions": rec.get("has_restrictions"),
+                "time_zone_present": rec.get("time_zone_present"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.schedule.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
+
+    def _collect_service_integration_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:service_integration:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_service_integration",
+                "resource_id": rid,
+                "record_type": "pagerduty_service_integration",
+                "operation_family": "pagerduty.service_integration",
+                "operation_action": "updated",
+                "category": "Service integration configuration",
+                "integration_type_category": rec.get("type_category"),
+                "key_present": rec.get("has_integration_key"),
+                "routing_key_present": rec.get("routing_key_present"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.service_integration.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
+
+    def _collect_webhook_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:webhook_subscription:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_webhook_subscription",
+                "resource_id": rid,
+                "record_type": "pagerduty_webhook_subscription",
+                "operation_family": "pagerduty.webhook_subscription",
+                "operation_action": "updated",
+                "category": "Webhook subscription configuration",
+                "active": rec.get("active"),
+                "event_count": rec.get("event_count"),
+                "url_scheme_category": rec.get("delivery_url_scheme_category"),
+                "event_scope_category": rec.get("filter_type"),
+                "secret_present": rec.get("has_custom_headers"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.webhook_subscription.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
+
+    def _collect_orchestration_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:event_orchestration:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_event_orchestration",
+                "resource_id": rid,
+                "record_type": "pagerduty_event_orchestration",
+                "operation_family": "pagerduty.event_orchestration",
+                "operation_action": "updated",
+                "category": "Event orchestration configuration",
+                "route_count": rec.get("route_count"),
+                "team_present": rec.get("team_present"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.event_orchestration.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
+
+    def _collect_business_service_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:business_service:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_business_service",
+                "resource_id": rid,
+                "record_type": "pagerduty_business_service",
+                "operation_family": "pagerduty.business_service",
+                "operation_action": "updated",
+                "category": "Business service configuration",
+                "team_present": rec.get("team_present"),
+                "description_present": rec.get("point_of_contact_present"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.business_service.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
+
+    def _collect_response_play_events(
+        self, records: list[dict], events: list, day: str
+    ) -> None:
+        for rec in records:
+            rid = rec.get("record_id") or "unknown"
+            eid = f"pagerduty:response_play:{rid}:{day}"
+            meta: dict = {
+                "resource_type": "pagerduty_response_play",
+                "resource_id": rid,
+                "record_type": "pagerduty_response_play",
+                "operation_family": "pagerduty.response_play",
+                "operation_action": "updated",
+                "category": "Response play configuration",
+                "responder_count": rec.get("responder_count"),
+                "subscriber_count": rec.get("subscriber_count"),
+                "team_present": rec.get("team_present"),
+                "runnable": rec.get("runnability"),
+                "conference_present": rec.get("conference_number_present"),
+                "pagerduty_event_id": eid,
+            }
+            events.append({
+                "event_type": "pagerduty.response_play.updated",
+                "provider": "pagerduty",
+                "source": "pagerduty_activity_event",
+                "event_source": "pagerduty_activity_event",
+                "provider_event_id": eid,
+                "metadata": {k: v for k, v in meta.items() if v is not None},
+            })
 
     def validate_credentials(self, credentials: dict) -> bool:
         """Validate PagerDuty credentials by making a minimal API call.

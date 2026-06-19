@@ -995,7 +995,7 @@ _PAGERDUTY = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -1005,26 +1005,25 @@ _PAGERDUTY = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "PagerDuty incident-management configuration drift and expanded security "
-        "(M84A–M84C). Drift snapshots cover 8 safe configuration surfaces from "
-        "the PagerDuty REST API v2: services, escalation policies, schedules, "
-        "service integrations, webhook subscriptions, event orchestrations, "
-        "business services, and response plays. M84B adds 22 core security rules "
-        "covering incident-response posture: missing escalation policies, broken "
-        "escalation chains, no on-call coverage, missing webhook signing/transport "
-        "posture, response-play readiness, business-service ownership, and "
-        "integration-key indicators. M84C adds 18 expanded rules covering "
-        "escalation target posture, schedule coverage depth, integration routing-key "
-        "gaps, webhook authentication headers, broad-scope subscription risk, and "
-        "response-play runnability. Rules are configuration-evidence only and do "
-        "not assert breach, compromise, unauthorized access, or data exposure. "
+        "PagerDuty incident-management configuration drift, security rules, and "
+        "activity ingestion (M84A–M84D). Drift snapshots cover 8 safe configuration "
+        "surfaces from the PagerDuty REST API v2: services, escalation policies, "
+        "schedules, service integrations, webhook subscriptions, event orchestrations, "
+        "business services, and response plays. M84B adds 22 core security rules; "
+        "M84C adds 18 expanded rules covering escalation target posture, schedule "
+        "coverage depth, integration routing-key gaps, webhook authentication headers, "
+        "broad-scope subscription risk, and response-play runnability. M84D adds "
+        "review-safe configuration activity ingestion synthesized from the same 8 "
+        "drift surfaces — never from raw PagerDuty audit logs. Rules and events are "
+        "configuration-evidence only and do not assert breach, compromise, "
+        "unauthorized access, or data exposure. "
         "Privacy contract: PagerDuty API tokens, routing keys, integration keys, "
         "webhook secrets, delivery URLs, custom header values, user emails, user "
         "names, phone numbers, contact methods, on-call user identities, responder "
         "identities, subscriber identities, incident payloads, alert payloads, "
-        "conference phone numbers, raw routing expressions, and customer PII are "
-        "NEVER fetched or stored. "
-        "planned_next_stage: M84D: PagerDuty Activity/Event Ingestion."
+        "conference phone numbers, raw routing expressions, IP addresses, user "
+        "agents, and customer PII are NEVER fetched or stored. "
+        "planned_next_stage: M84E: PagerDuty Activity Signals."
     ),
 )
 

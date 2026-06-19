@@ -615,6 +615,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M84D: PagerDuty Activity/Event Ingestion",
+            "planned_next_stage": "M84E: PagerDuty Activity Signals",
         },
     }
