@@ -1771,6 +1771,8 @@ def incident_demo_status(
         status = security_incident_demo_service.get_auth0_status(workspace_id, db)
     elif prov == "datadog":
         status = security_incident_demo_service.get_datadog_status(workspace_id, db)
+    elif prov == "clerk":
+        status = security_incident_demo_service.get_clerk_status(workspace_id, db)
     else:
         status = security_incident_demo_service.get_status(workspace_id, db)
     return IncidentDemoStatusResponse(**status)
@@ -1846,6 +1848,10 @@ def incident_demo_seed(
         summary = security_incident_demo_service.seed_datadog(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
         )
+    elif prov == "clerk":
+        summary = security_incident_demo_service.seed_clerk(
+            workspace_id=workspace_id, actor_user_id=current_user.id, db=db
+        )
     else:
         summary = security_incident_demo_service.seed(
             workspace_id=workspace_id, actor_user_id=current_user.id, db=db
@@ -1895,6 +1901,8 @@ def incident_demo_clear(
         result = security_incident_demo_service.clear_auth0(workspace_id=workspace_id, db=db)
     elif prov == "datadog":
         result = security_incident_demo_service.clear_datadog(workspace_id=workspace_id, db=db)
+    elif prov == "clerk":
+        result = security_incident_demo_service.clear_clerk(workspace_id=workspace_id, db=db)
     else:
         result = security_incident_demo_service.clear(workspace_id=workspace_id, db=db)
     return IncidentDemoClearResponse(**result)

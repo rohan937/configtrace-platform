@@ -1211,7 +1211,10 @@ class TestCapabilityMatrix:
         """After M83B, planned_next_stage should reference M83C or a later Clerk stage."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert ("M83C" in stage or "M83D" in stage or "M83E" in stage or "M83F" in stage or "M83G" in stage), (
+        assert (
+            "M83C" in stage or "M83D" in stage or "M83E" in stage
+            or "M83F" in stage or "M83G" in stage or "M83H" in stage
+        ), (
             f"After M83B, planned_next_stage should reference a post-M83B Clerk stage; got {stage!r}"
         )
         assert "Clerk" in stage or "clerk" in stage.lower(), (
@@ -1221,13 +1224,14 @@ class TestCapabilityMatrix:
     def test_expansion_framework_exact_m83c_label(self):
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        # M83C, M83D, M83E, and M83F are complete; framework now points at M83G or later.
+        # M83C through M83G are complete; framework now points at M83H or later.
         assert stage in (
             "M83C: Clerk Auth/Application Risk Expansion",
             "M83D: Clerk Activity/Event Ingestion",
             "M83E: Clerk Activity Signals",
             "M83F: Clerk Risk × Activity Correlations",
             "M83G: Clerk Demo + QA",
+            "M83H: Clerk Provider Depth QA",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

@@ -944,16 +944,16 @@ _CLERK = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
         "Clerk identity infrastructure drift, core security, auth/application risk "
         "expansion, activity ingestion, activity signals, and risk × activity correlations "
-        "(M83A–M83F). Drift snapshots "
+        "(M83A–M83G). Drift snapshots "
         "cover 10 safe configuration surfaces from the Clerk Backend API v1. M83B adds 21 "
         "core security rules. M83C adds 19 auth/application risk expansion rules. M83D adds "
         "configuration-state activity ingestion synthesized from the same 10 safe drift "
@@ -963,15 +963,16 @@ _CLERK = ProviderCapability(
         "M83F adds risk × activity correlations: active Clerk configuration-risk findings "
         "are joined with Clerk activity signals across correlation families keyed by safe "
         "resource identity. "
+        "M83G adds demo + QA: a review-safe Clerk demo incident chain (seed/clear/status) "
+        "with configuration findings, activity events, signals, correlations, and a linked "
+        "case. Case report, evidence timeline, and evidence graph are fully supported. "
         "Privacy contract: Clerk secret key values, "
         "publishable key values, session tokens, JWTs, OAuth tokens, bearer tokens, "
         "webhook secrets, raw webhook/redirect URLs, raw domain names, JWT template "
         "bodies, custom claims, audience URIs, user emails, user IDs, phone numbers, "
         "names, member identities, session history, login history, IP addresses, user "
         "agents, raw audit payloads, and customer PII are NEVER fetched or stored. "
-        "Demo seed/clear, case reports, "
-        "evidence timelines, and evidence graphs are not yet implemented. "
-        "planned_next_stage: M83G: Clerk Demo + QA."
+        "planned_next_stage: M83H: Clerk Provider Depth QA."
     ),
 )
 

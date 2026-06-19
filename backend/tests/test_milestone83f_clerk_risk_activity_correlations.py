@@ -559,11 +559,12 @@ def test_capability_matrix_clerk_risk_correlations_true():
 
 
 def test_capability_matrix_clerk_demo_false():
-    """Capability matrix must record demo_seed_clear=False and case_report=False for Clerk (M83F stage)."""
+    """Rolled forward at M83G: demo_seed_clear=True and case_report=True for Clerk."""
     cap = get_provider_capability("clerk")
     assert cap is not None
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
+    # M83G promoted demo_seed_clear and case_report to True.
+    assert cap.security.demo_seed_clear is True
+    assert cap.security.case_report is True
 
 
 def test_expansion_framework_m83g():

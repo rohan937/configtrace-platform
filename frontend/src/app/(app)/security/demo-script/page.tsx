@@ -359,6 +359,16 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
   { provider: "sendgrid",  label: "SendGrid",    category: "communications",     drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
   { provider: "auth0",    label: "Auth0",       category: "auth",               drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
   { provider: "datadog",  label: "Datadog",     category: "observability",      drift: true, security: true,  signals: true,  correlations: true,  demo: true  },
+  {
+    provider: "clerk",
+    label: "Clerk",
+    category: "Identity",
+    drift: true,
+    security: true,
+    signals: true,
+    correlations: true,
+    demo: true,
+  },
 ];
 
 function Dot({ on }: { on: boolean }) {

@@ -48,7 +48,7 @@ const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
-  | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog";
+  | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -204,6 +204,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Datadog demo",
     seedColor: "#632ca6",
   },
+  {
+    provider: "clerk",
+    label: "Clerk",
+    intro: "Try the Clerk security demo:",
+    description:
+      "Shows a Clerk session policy finding with related configuration activity, signal, and correlation. This is review evidence only and does not confirm compromise, unauthorized access, or data exposure.",
+    seedButton: "Load Clerk security demo",
+    clearButton: "Clear Clerk demo",
+    seedColor: "#4f4fa3",
+  },
 ];
 
 export default function CasesPage() {
@@ -262,7 +272,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -281,7 +291,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -314,7 +324,9 @@ export default function CasesPage() {
                                 ? "Auth0 demo data cleared."
                                 : provider === "datadog"
                                   ? "Datadog demo data cleared."
-                                  : "Demo data cleared.",
+                                  : provider === "clerk"
+                                    ? "Clerk demo data cleared."
+                                    : "Demo data cleared.",
       );
       await load();
     } catch {

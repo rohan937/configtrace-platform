@@ -63,6 +63,8 @@ from app.services import auth0_activity_signal_service as auth0_sig
 from app.services import auth0_risk_activity_correlation_service as auth0_corr_svc
 from app.services import datadog_activity_signal_service as dd_sig
 from app.services import datadog_risk_activity_correlation_service as dd_corr_svc
+from app.services import clerk_activity_signal_service as clerk_sig
+from app.services import clerk_risk_activity_correlation_service as clerk_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -6704,6 +6706,440 @@ def clear_datadog(
         ).delete(synchronize_session=False)
 
     integ = get_datadog_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True}
+
+
+# ── Clerk demo ────────────────────────────────────────────────────────────────
+
+CLERK_DEMO_INTEGRATION_NAME = "ConfigTrace Clerk incident demo (sample data)"
+CLERK_DEMO_CASE_SOURCE = "demo_clerk_incident"
+CLERK_DEMO_DATASET = "clerk_incident_demo_v1"
+
+# Safe placeholder -- no real Clerk values, no secret keys, no JWT tokens.
+_CLERK_DEMO_SESSION_POLICY_ID = "CLERK_DEMO_SESSION_POLICY_ID"
+
+
+def _get_clerk_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == CLERK_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_clerk_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == CLERK_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_clerk_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_clerk_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_clerk(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Clerk demo incident chain (idempotent). No real Clerk sync.
+
+    One coherent Clerk session-policy story:
+      Session policy posture risks (extended lifetime, token rotation disabled,
+      reverification disabled) -> Clerk session-policy activity event ->
+      Clerk activity signal -> Clerk risk x activity correlation -> case.
+
+    All objects are anchored on a hidden demo integration so clear_clerk
+    removes them and nothing else. Evidence is built directly for the demo
+    objects (never by scanning the real workspace).
+
+    PRIVACY: no secret key values, publishable key values, JWT tokens, webhook
+    secrets, application IDs, user IDs, email addresses, IP addresses, raw Clerk
+    audit log payloads, raw API responses, or customer data. Only safe booleans,
+    counts, opaque IDs, and category labels.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+    """
+    existing = _existing_clerk_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -> never shown / never synced).
+    integ = _get_clerk_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": CLERK_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=CLERK_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is evidence for review and does not confirm compromise, "
+        "unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real Clerk session-policy rule keys (M83B).
+    session_finding_1 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="clerk",
+        finding_key=(
+            f"clerk_session_lifetime_extended:{_CLERK_DEMO_SESSION_POLICY_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Clerk session lifetime is set to an extended duration",
+        resource_id=None,
+        description=(
+            "Sample Clerk session lifetime posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "clerk_session_lifetime_extended", "demo": True,
+            "record_id": _CLERK_DEMO_SESSION_POLICY_ID,
+            "record_type": "clerk_session_policy",
+            "resource_name": "Clerk session policy review",
+            "lifetime_category": "extended",
+            "lifetime_hours_category": "long",
+        },
+        remediation={
+            "summary": (
+                "Reduce the Clerk session lifetime to the recommended default "
+                "to limit the window of exposure for stolen session tokens."
+            ),
+        },
+    )
+
+    session_finding_2 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="clerk",
+        finding_key=(
+            f"clerk_session_token_rotation_disabled:{_CLERK_DEMO_SESSION_POLICY_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Clerk session token rotation is disabled",
+        resource_id=None,
+        description=(
+            "Sample Clerk token rotation posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "clerk_session_token_rotation_disabled", "demo": True,
+            "record_id": _CLERK_DEMO_SESSION_POLICY_ID,
+            "record_type": "clerk_session_policy",
+            "resource_name": "Clerk session policy review",
+            "token_rotation_enabled": False,
+        },
+        remediation={
+            "summary": (
+                "Enable session token rotation in the Clerk session policy "
+                "to reduce the risk from long-lived session tokens."
+            ),
+        },
+    )
+
+    session_finding_3 = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="clerk",
+        finding_key=(
+            f"clerk_session_reverification_disabled:{_CLERK_DEMO_SESSION_POLICY_ID}#demo"
+        ),
+        severity="medium",
+        title="Demo: Clerk session reverification is disabled",
+        resource_id=None,
+        description=(
+            "Sample Clerk reverification posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "clerk_session_reverification_disabled", "demo": True,
+            "record_id": _CLERK_DEMO_SESSION_POLICY_ID,
+            "record_type": "clerk_session_policy",
+            "resource_name": "Clerk session policy review",
+            "reverification_enabled": False,
+        },
+        remediation={
+            "summary": (
+                "Enable reverification in the Clerk session policy for "
+                "sensitive operations to require re-authentication."
+            ),
+        },
+    )
+
+    clerk_findings = [session_finding_1, session_finding_2, session_finding_3]
+
+    # 3. Activity event (provider="clerk", source="clerk_activity_event").
+    CLERK_ACTIVITY_SOURCE = "clerk_activity_event"
+
+    def _mk_clerk_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        resource_id: str, extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+            "event_source": CLERK_ACTIVITY_SOURCE,
+            "status": "observed",
+            "category": "clerk_configuration",
+            "status_category": "observed",
+            "operation_family": f"clerk.{resource_type}",
+            "operation_action": "observe",
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="clerk", source=CLERK_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    session_event = _mk_clerk_event(
+        event_type="clerk.session_policy.updated",
+        resource_type="session_policy",
+        provider_event_id="CLERK_DEMO_EVT_SESSION_POLICY_001",
+        resource_id=_CLERK_DEMO_SESSION_POLICY_ID,
+        extra={
+            "session_policy_id": _CLERK_DEMO_SESSION_POLICY_ID,
+            "resource_name": "Clerk session policy review",
+            "lifetime_category": "extended",
+            "token_rotation_enabled": False,
+            "reverification_enabled": False,
+            "single_session_enabled": True,
+            "device_tracking_enabled": True,
+            "inactivity_timeout_category": "standard",
+        },
+    )
+
+    clerk_events = [session_event]
+
+    # 4. Activity signals via the real M83E signal builder.
+    clerk_signals: list[SecurityIncidentSignal] = []
+    for ev in clerk_events:
+        sig_dict = clerk_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            clerk_signals.append(sig)
+
+    # 5. Correlation via the real M83F builder.
+    clerk_correlations: list[SecuritySignalCorrelation] = []
+    signals_by_type_clerk: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in clerk_signals
+    }
+
+    def _add_clerk_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+        confidence: str = "medium",
+    ) -> SecuritySignalCorrelation:
+        rule = clerk_corr_svc.CLERK_CORRELATION_RULES[correlation_type]
+        cdict = clerk_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason, confidence=confidence,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        clerk_correlations.append(corr)
+        return corr
+
+    session_signal = signals_by_type_clerk.get("clerk_session_policy_config_changed")
+    if session_signal is not None:
+        _add_clerk_correlation(
+            finding=session_finding_1,
+            signal=session_signal,
+            correlation_type="clerk_session_policy_risk_activity_correlation",
+            match_reason="session_policy_id_match",
+            confidence="medium",
+        )
+
+    # 6. Case linking 3 findings, 1 event, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title=(
+            "[Demo] Clerk session policy review: posture risks and "
+            "configuration activity"
+        ),
+        summary=(
+            "Review-safe Clerk demo case linking session policy configuration "
+            "risks to control-plane activity evidence. Groups Clerk session "
+            "policy findings (extended lifetime, token rotation disabled, "
+            "reverification disabled) with a Clerk configuration-state "
+            "activity event for the same policy, plus the matching activity "
+            "signal and risk x activity correlation. "
+            "Marked demo -- no real Clerk sync, no secret key values, no "
+            "publishable key values, no JWT tokens, no user IDs, no email "
+            "addresses, no IP addresses, no raw Clerk audit log payloads, no "
+            "customer data. Evidence for review. Does not confirm compromise, "
+            "unauthorized access, or data exposure."
+        ),
+        severity="high",
+        provider="clerk",
+        metadata={
+            "source": CLERK_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+    db.flush()
+
+    # Link findings.
+    for f in clerk_findings:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="finding",
+            linked_finding_id=f.id,
+            db=db,
+        )
+
+    # Link activity events.
+    for ev in clerk_events:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="activity_event",
+            linked_activity_event_id=ev.id,
+            db=db,
+        )
+
+    # Link signals.
+    for sig in clerk_signals:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="signal",
+            linked_signal_id=sig.id,
+            db=db,
+        )
+
+    # Link correlations.
+    for corr in clerk_correlations:
+        case_svc.add_link(
+            case_id=case.id,
+            link_type="correlation",
+            linked_correlation_id=corr.id,
+            db=db,
+        )
+
+    db.commit()
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_clerk(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Clerk demo incident objects (and nothing else)."""
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == CLERK_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = _get_clerk_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

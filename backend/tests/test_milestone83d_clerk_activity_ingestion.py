@@ -873,8 +873,9 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
             f"risk_activity_correlations must be True for clerk after M83F. "
             f"Got: {clerk_cap.security.risk_activity_correlations!r}"
         )
-        assert clerk_cap.security.demo_seed_clear is False, (
-            f"demo_seed_clear must be False for clerk at M83D. "
+        # M83G rolled forward: demo_seed_clear is now True for Clerk.
+        assert clerk_cap.security.demo_seed_clear is True, (
+            f"demo_seed_clear must be True for clerk after M83G. "
             f"Got: {clerk_cap.security.demo_seed_clear!r}"
         )
 
