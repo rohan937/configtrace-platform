@@ -526,6 +526,55 @@ export const TRUST_PROFILES: Partial<Record<ProviderId, ProviderTrustProfile>> =
     ],
     remediation_supported: false,
   },
+
+  // ── M86A — Jira trust profile ─────────────────────────────────────────────
+  jira: {
+    id: "jira",
+    reads: [
+      "Project metadata: key presence, type, lead presence, category — never issue keys, issue content, or assignees",
+      "Board metadata: type, project association — never issue content or sprint data",
+      "Workflow metadata: status structure, transition count category — never issue assignments",
+      "Workflow scheme metadata: project mapping structure — never issue content",
+      "Permission scheme metadata: grant count category, holder type structure — never account IDs or user identities",
+      "Notification scheme metadata: event count category, recipient type structure — never emails or identities",
+      "Webhook subscription metadata: enabled status, event types, URL scheme category — never delivery URL or secret value",
+      "Automation rule metadata: enabled status, trigger type, action count category — never rule content or conditions",
+      "Integration / app metadata: type, enabled status — never credentials, API tokens, or secrets",
+    ],
+    never_reads: [
+      "Jira API token values or OAuth tokens",
+      "Webhook delivery URLs or webhook secrets",
+      "Issue keys, issue titles, descriptions, or body content",
+      "Comments, attachments, or issue activity",
+      "User emails, user names, account IDs, or phone numbers",
+      "Member identities, assignees, reporters, or watcher lists",
+      "Automation rule logic, conditions, or action details",
+      "Authorization headers or raw API response payloads",
+      "Audit logs, activity feeds, or notification history",
+      "Customer data or PII of any kind",
+    ],
+    credential_note:
+      "Jira configuration monitoring at foundation stage (M86A). Snapshot-only — no issue titles, descriptions, comments, account IDs, or customer data stored. The Jira API token is stored encrypted at rest using AES-256-GCM. It is never returned in API responses, never logged, and never copied to resource metadata.",
+    permissions: [
+      "Jira REST API: projects (configuration metadata only)",
+      "Jira REST API: boards (type and project association)",
+      "Jira REST API: workflows (status and transition structure)",
+      "Jira REST API: workflow schemes (mapping structure)",
+      "Jira REST API: permission schemes (grant structure metadata)",
+      "Jira REST API: notification schemes (recipient structure metadata)",
+      "Jira REST API: webhooks (configuration metadata — not payloads)",
+      "Jira REST API: automation rules (enabled status and structure)",
+      "Jira REST API: installed apps (type and enabled status)",
+      "No write permissions of any kind",
+    ],
+    revoke_steps: [
+      "Sign in to your Atlassian account",
+      "Go to id.atlassian.com → Security → API tokens",
+      "Find the API token created for ConfigTrace",
+      "Delete or revoke it to invalidate it immediately",
+    ],
+    remediation_supported: false,
+  },
 };
 
 // ── Global trust summary constants ────────────────────────────────────────────

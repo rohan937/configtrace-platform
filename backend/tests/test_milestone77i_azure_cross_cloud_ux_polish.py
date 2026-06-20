@@ -118,7 +118,9 @@ def test_expansion_framework_next_stage_is_beyond_m79d():
     assert ("M81B" in stage or "Auth0" in stage or "Datadog" in stage
             or "M82" in stage or "M83" in stage or "Clerk" in stage
             or "M84" in stage or "PagerDuty" in stage
-                or "M85A" in stage or "Linear" in stage)
+                or "M85A" in stage or "Linear" in stage
+                or "M86A" in stage or "M86B" in stage or "Jira" in stage
+                or "M87A" in stage or "GitLab" in stage)
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():
@@ -129,8 +131,8 @@ def test_expansion_framework_top_recommendation_is_google_cloud():
     assert len(recs) > 0
     top = recs[0]
     # After M84A, PagerDuty launched; Linear is now at head.
-    assert top["provider"] in ("pagerduty", "linear", "jira")
-    assert top["label"] in ("PagerDuty", "Linear", "Jira")
+    assert top["provider"] in ("pagerduty", "linear", "jira", "gitlab")
+    assert top["label"] in ("PagerDuty", "Linear", "Jira", "GitLab")
     # GCP, auth0, datadog, clerk must no longer be in the recommended list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
@@ -159,9 +161,9 @@ def test_expansion_framework_summary_next_provider_is_google_cloud():
     """Flipped in M80A: Auth0 is now the head of the recommended queue."""
     fw = exp_svc.get_framework()
     # After M84A, PagerDuty launched; Linear is now head.
-    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira")
+    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab")
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms
+    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms or "M86B" in next_ms or "M87A" in next_ms or "GitLab" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

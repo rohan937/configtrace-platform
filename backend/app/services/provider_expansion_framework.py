@@ -472,43 +472,49 @@ class RecommendedProvider:
 # Clerk also moved into PROVIDER_CAPABILITIES_PARTIAL. M83B added Clerk
 # core security rules; M83D adds Clerk activity/event ingestion. PagerDuty
 # launched in M84A and is no longer in the recommended queue. Linear
-# launched in M85A and is no longer in the recommended queue. Jira is
+# launched in M85A and is no longer in the recommended queue. Jira
+# launched in M86A and is no longer in the recommended queue. GitLab is
 # now the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
     RecommendedProvider(
-        provider="jira",
-        label="Jira",
+        provider="gitlab",
+        label="GitLab",
         category="devops",
         why_high_fit=(
-            "Jira webhook configuration, project permission schemes, and API token "
-            "posture are common IT/DevOps configuration surfaces. Permission-scheme "
-            "drift that broadens access is a reviewable security signal."
+            "GitLab webhook configuration, CI/CD pipeline security settings, "
+            "project access controls, and deploy token posture are common "
+            "DevOps configuration surfaces. Branch protection drift and "
+            "overly-broad access-level changes are reviewable security signals."
         ),
         drift_surfaces=(
             "webhook_endpoints",
-            "project_permission_schemes",
-            "issue_security_schemes",
-            "api_token_posture",
+            "project_access_controls",
+            "branch_protection_rules",
+            "deploy_tokens",
+            "ci_cd_settings",
         ),
         security_surfaces=(
             "webhook_http_endpoint",
-            "overly_broad_permission_scheme",
-            "issue_security_scheme_missing",
+            "overly_broad_project_access",
+            "branch_protection_missing",
+            "deploy_token_posture",
         ),
         sensitive_data_to_avoid=(
             "issue_summaries_or_descriptions",
             "user_emails_unless_safe",
             "auth_tokens_or_api_keys",
             "raw_webhook_payloads",
-            "comment_content",
-            "attachment_content",
+            "ci_cd_variable_values",
+            "repository_content",
+            "merge_request_content",
         ),
-        first_milestone_name="M86A: Jira Drift Provider Foundation",
+        first_milestone_name="M87A: GitLab Drift Provider Foundation",
         notes=(
-            "Use the Jira REST API v3. Focus on /rest/api/3/webhook (webhook "
-            "endpoint URLs and schemes), /rest/api/3/permissionscheme (scheme "
-            "NAME + grant summary, never raw grants), and API token metadata "
-            "(label + status, never value). Never store issue content or user emails."
+            "Use the GitLab REST API v4. Focus on /api/v4/hooks (group/system "
+            "webhook endpoint URLs and triggers), /api/v4/projects/:id/protected_branches "
+            "(branch protection rules), and /api/v4/projects/:id/deploy_tokens "
+            "(token metadata — never the token value). Never store issue content, "
+            "MR content, CI/CD variable values, or user emails."
         ),
     ),
 ]

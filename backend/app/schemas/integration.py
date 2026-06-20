@@ -76,6 +76,8 @@ class IntegrationCreateRequest(BaseModel):
         "pagerduty",
         # M85A — Linear drift provider foundation.
         "linear",
+        # M86A — Jira drift provider foundation.
+        "jira",
     ] = Field(
         ...,
         description=(
@@ -475,6 +477,32 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Jira fields (M86A) ───────────────────────────────────────────────────
+    jira_site_url: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='jira'. "
+            "Jira Cloud site URL (e.g. myco.atlassian.net). "
+            "Never returned in API responses. Never logged."
+        ),
+    )
+    jira_email: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='jira'. "
+            "Jira account email for API authentication. "
+            "Never returned in API responses. Never logged."
+        ),
+    )
+    jira_api_token: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='jira'. "
+            "Jira API token. Stored encrypted. "
+            "Never returned in any response. Never logged."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -645,6 +673,20 @@ class IntegrationCreateRequest(BaseModel):
             if not self.linear_api_key:
                 raise ValueError(
                     "linear_api_key is required for Linear integrations."
+                )
+        # ── M86A — Jira drift provider ────────────────────────────────────────
+        elif self.provider == "jira":
+            if not self.jira_site_url:
+                raise ValueError(
+                    "jira_site_url is required for Jira integrations."
+                )
+            if not self.jira_email:
+                raise ValueError(
+                    "jira_email is required for Jira integrations."
+                )
+            if not self.jira_api_token:
+                raise ValueError(
+                    "jira_api_token is required for Jira integrations."
                 )
         return self
 

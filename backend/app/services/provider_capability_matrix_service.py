@@ -1097,7 +1097,43 @@ _LINEAR = ProviderCapability(
         "metadata. Issue titles, descriptions, comments, attachments, user emails, user "
         "names, member identities, raw URLs, webhook secrets, and customer data are "
         "never fetched or stored. "
-        "planned_next_stage: M86A: Jira Drift Provider Foundation."
+        "planned_next_stage: M86B: Jira Core Security Foundation."
+    ),
+)
+
+
+_JIRA = ProviderCapability(
+    provider="jira",
+    label="Jira",
+    category="devops",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=False,
+        drift_review_workflow=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Jira project management configuration drift foundation (M86A). "
+        "Drift snapshots cover Jira Cloud configuration surfaces: projects, boards, "
+        "workflows, workflow schemes, permission schemes, notification schemes, "
+        "issue type schemes, field configuration schemes, screen schemes, webhook "
+        "subscriptions, and automation rules. "
+        "M86A adds the connector, schema, and provider registration. "
+        "Issue keys, issue titles, issue descriptions, comments, attachments, user names, "
+        "user emails, account IDs, and customer data are never fetched or stored. "
+        "Authentication uses Jira email + API token (stored encrypted, never returned). "
+        "planned_next_stage: M86B: Jira Core Security Foundation."
     ),
 )
 
@@ -1113,6 +1149,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _CLERK,
     _PAGERDUTY,
     _LINEAR,
+    _JIRA,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

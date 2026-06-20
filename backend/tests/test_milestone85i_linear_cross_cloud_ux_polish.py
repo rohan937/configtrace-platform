@@ -281,8 +281,10 @@ def test_b4_jira_head_of_recommended_next_providers() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    assert "jira" in provider.lower() or "Jira" in str(first), (
-        f"Jira should be head of recommended_next_providers; got: {provider!r}"
+    # After M86A launched Jira, GitLab became the new head.
+    assert ("jira" in provider.lower() or "Jira" in str(first)
+            or "gitlab" in provider.lower() or "GitLab" in str(first)), (
+        f"Jira or GitLab should be head of recommended_next_providers; got: {provider!r}"
     )
 
 
@@ -290,8 +292,11 @@ def test_b5_expansion_framework_next_milestone_m86a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_ms = summary.get("next_milestone", "") or ""
-    assert "M86A" in next_ms or "Jira" in next_ms, (
-        f"next_milestone should reference M86A/Jira; got: {next_ms!r}"
+    # After M86A launched Jira, M86B or M87A/GitLab is next.
+    assert ("M86A" in next_ms or "Jira" in next_ms
+            or "M86B" in next_ms
+            or "M87A" in next_ms or "GitLab" in next_ms), (
+        f"next_milestone should reference M86A/Jira, M86B, or M87A/GitLab; got: {next_ms!r}"
     )
 
 
@@ -299,8 +304,10 @@ def test_b6_expansion_framework_next_provider_jira() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_prov = summary.get("next_provider", "") or ""
-    assert "Jira" in next_prov or "jira" in next_prov.lower(), (
-        f"next_provider should be Jira; got: {next_prov!r}"
+    # After M86A launched Jira, GitLab is now next_provider.
+    assert ("Jira" in next_prov or "jira" in next_prov.lower()
+            or "GitLab" in next_prov or "gitlab" in next_prov.lower()), (
+        f"next_provider should be Jira or GitLab; got: {next_prov!r}"
     )
 
 

@@ -33,6 +33,8 @@ import ClerkIntegrationForm from "@/components/integrations/ClerkIntegrationForm
 import PagerDutyIntegrationForm from "@/components/integrations/PagerDutyIntegrationForm";
 // ── M85A — Linear drift provider foundation ──────────────────────────────────
 import LinearIntegrationForm from "@/components/integrations/LinearIntegrationForm";
+// ── M86A — Jira drift provider foundation ────────────────────────────────────
+import JiraIntegrationForm from "@/components/integrations/JiraIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -952,6 +954,44 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M86A — Jira setup guide ───────────────────────────────────────────────
+
+  if (provider === "jira") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Jira site
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Sign in to your Atlassian account.",
+            body: <>Go to <strong style={{ color: "#e8eaf0" }}>your-org.atlassian.net</strong> and
+              sign in to the site you want to connect.</>,
+          },
+          {
+            heading: "Create an API token.",
+            body: <>Open <strong style={{ color: "#e8eaf0" }}>id.atlassian.com → Security → API
+              tokens</strong> and click &ldquo;Create API token&rdquo;. Copy it — it is only shown once.</>,
+          },
+          {
+            heading: "Enter your site URL and email.",
+            body: <>Use your full site URL (e.g. https://your-org.atlassian.net) and the email
+              tied to the token.</>,
+          },
+          {
+            heading: "Paste the token in the field below.",
+            body: <>The token is stored encrypted and never returned in any API response.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace uses a read-only API token to snapshot configuration metadata only. It does
+          not read issue keys, issue content, comments, attachments, user emails, account IDs, or
+          customer data.
+        </p>
+      </>
+    );
+  }
+
   return null;
 }
 
@@ -1109,6 +1149,10 @@ export default function IntegrationsPage() {
     // ── M85A — Linear ─────────────────────────────────────────────────────────
     if (selectedProvider === "linear") {
       return <LinearIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M86A — Jira ─────────────────────────────────────────────────────────────
+    if (selectedProvider === "jira") {
+      return <JiraIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

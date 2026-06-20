@@ -159,7 +159,9 @@ def test_expansion_framework_planned_next_stage_is_m83a():
     framework = get_framework()
     stage = framework["summary"]["planned_next_stage"]
     assert ("M83A" in stage or "Clerk" in stage or "M84A" in stage or "PagerDuty" in stage
-            or "M85A" in stage or "Linear" in stage), (
+            or "M85A" in stage or "Linear" in stage
+            or "M86A" in stage or "M86B" in stage or "Jira" in stage
+            or "M87A" in stage or "GitLab" in stage), (
         f"planned_next_stage should reference M83A/Clerk or later; got {stage!r}"
     )
 
@@ -179,8 +181,8 @@ def test_expansion_framework_pagerduty_first_recommended():
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
     # After M84A, PagerDuty launched and Linear moved to head.
-    assert recs[0]["provider"] in ("pagerduty", "linear", "jira")
-    assert recs[0]["label"] in ("PagerDuty", "Linear", "Jira")
+    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab")
+    assert recs[0]["label"] in ("PagerDuty", "Linear", "Jira", "GitLab")
 
 
 def test_expansion_framework_datadog_not_in_recommended():

@@ -178,7 +178,9 @@ export interface IntegrationCreateRequest {
     // ── M84A — PagerDuty drift provider foundation ────────────────────────────
     | "pagerduty"
     // ── M85A — Linear drift provider foundation ───────────────────────────────
-    | "linear";
+    | "linear"
+    // ── M86A — Jira drift provider foundation ─────────────────────────────────
+    | "jira";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -347,6 +349,18 @@ export interface IntegrationCreateRequest {
    * Stored encrypted server-side — NEVER returned in API responses.
    */
   linear_api_key?: string;
+  // ── Jira fields (M86A) ────────────────────────────────────────────────────
+  /** Jira site URL, e.g. https://your-org.atlassian.net. */
+  jira_site_url?: string;
+  /** Account email associated with the Jira API token. */
+  jira_email?: string;
+  /**
+   * Jira API token (read-only).
+   * Required for the jira provider. Sent to backend once; never stored in
+   * frontend state after submission.
+   * Stored encrypted server-side — NEVER returned in API responses.
+   */
+  jira_api_token?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

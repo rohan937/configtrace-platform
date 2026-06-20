@@ -260,13 +260,24 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    # ── M86A — Jira drift provider ─────────────────────────────────────────────
+    elif provider == "jira":
+        return _create_jira_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
             "'twilio', 'sendgrid', 'auth0', 'datadog', 'clerk', 'pagerduty', "
-            "'linear'."
+            "'linear', 'jira'."
         )
 
 
@@ -1424,6 +1435,70 @@ def _create_linear_integration(
         provider_resource_id=str(integration.id),
         display_name=display_name,
         resource_metadata={"provider_family": "devops"},
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_jira_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Jira integration + project-management resource (M86A).
+
+    SECURITY: credentials["api_token"] is NEVER logged, NEVER returned,
+    NEVER stored in plaintext.  credentials["email"] is also NEVER stored
+    in resource_metadata.  Only the safe site_url (hostname) is exposed
+    through resource_metadata.
+
+    Live API validation is deferred to the first sync.
+    """
+    site_url: str = (credentials.get("site_url") or "").strip().lower()
+
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    # SECURITY: api_token and email are encrypted here and NEVER stored in
+    # plaintext or returned in any response.
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="jira",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the safe site_url and a
+    # provider_family label.  api_token and email are NEVER copied here.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="jira_site",
+        provider_resource_id=site_url or str(integration.id),
+        display_name=f"{display_name} ({site_url})" if site_url else display_name,
+        resource_metadata={
+            "site_url": site_url,
+            "provider_family": "project_management",
+        },
         is_active=True,
     )
     db.add(resource)

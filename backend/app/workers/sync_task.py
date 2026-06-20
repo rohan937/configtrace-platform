@@ -330,6 +330,12 @@ def sync_integration(
 
                 connector = LinearConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "jira":
+                # SECURITY: api_token is NEVER logged.
+                from app.connectors.jira import JiraConnector
+
+                connector = JiraConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

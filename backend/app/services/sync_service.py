@@ -266,6 +266,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk",
         "pagerduty",
         "linear",
+        "jira",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

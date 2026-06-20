@@ -64,8 +64,8 @@ EXPECTED_NEXT_PROVIDER_ORDER = [
     # M79A launched Twilio. M80A launched SendGrid. M81A launched Auth0
     # (moved into PROVIDER_CAPABILITIES_PARTIAL). M82A launched Datadog.
     # M83A launched Clerk. M84A launched PagerDuty. M85A launched Linear.
-    # Jira is now the head.
-    "jira",
+    # M86A launched Jira. GitLab is now the head.
+    "gitlab",
 ]
 
 
@@ -251,11 +251,12 @@ def test_get_framework_structure():
     assert "required_safe_phrases" in template
     summary = fw["summary"]
     assert summary["stage_count"] == 6
-    # M85A launched Linear; Jira is now the queue head.
-    assert summary["next_provider"] in ("PagerDuty", "Linear", "Jira")
+    # M85A launched Linear; Jira was queue head. M86A launched Jira; GitLab is now the head.
+    assert summary["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab")
     next_ms = summary["next_milestone"] or ""
     assert ("PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms
-            or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms)
+            or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms
+            or "GitLab" in next_ms or "M87A" in next_ms)
     assert (
         "M83" in summary["planned_next_stage"]
         or "Clerk" in summary["planned_next_stage"]
@@ -267,7 +268,10 @@ def test_get_framework_structure():
         or "Linear" in summary["planned_next_stage"]
         or "M85B" in summary["planned_next_stage"]
         or "M86A" in summary["planned_next_stage"]
+        or "M86B" in summary["planned_next_stage"]
         or "Jira" in summary["planned_next_stage"]
+        or "M87A" in summary["planned_next_stage"]
+        or "GitLab" in summary["planned_next_stage"]
     )
 
 
@@ -279,11 +283,12 @@ def test_framework_is_static_no_db_needed():
 
 def test_get_next_provider_recommendations_first_is_pagerduty():
     """Flipped in M83A: Clerk launched; PagerDuty is now the head of the queue.
-    Updated in M85A: Linear launched; Jira is now the head."""
+    Updated in M85A: Linear launched; Jira is now the head.
+    Updated in M86A: Jira launched; GitLab is now the head."""
     recs = svc.get_next_provider_recommendations()
-    # After M85A, Linear launched; Jira is now at head.
-    assert recs[0]["provider"] in ("pagerduty", "linear", "jira")
-    assert recs[0]["label"] in ("PagerDuty", "Linear", "Jira")
+    # After M86A, Jira launched; GitLab is now at head.
+    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab")
+    assert recs[0]["label"] in ("PagerDuty", "Linear", "Jira", "GitLab")
     assert len(recs[0]["sensitive_data_to_avoid"]) >= 1
     # google_cloud, auth0, datadog, clerk must no longer be in this list.
     providers = [r["provider"] for r in recs]
@@ -313,8 +318,9 @@ def test_endpoint_returns_framework(client):
     body = r.json()
     assert "template" in body and "recommended_next_providers" in body
     assert body["summary"]["stage_count"] == 6
-    # M85A: Linear launched (now in PARTIAL); Jira is now the queue head.
-    assert body["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira")
+    # M85A: Linear launched (now in PARTIAL); Jira was queue head.
+    # M86A: Jira launched (now in PARTIAL); GitLab is now the queue head.
+    assert body["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab")
 
 
 def test_endpoint_stages_in_order(client):
@@ -333,11 +339,12 @@ def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
     assert "SendGrid" not in labels
     assert "Auth0" not in labels
     assert "Datadog" not in labels
-    # Clerk launched in M83A, PagerDuty in M84A, Linear in M85A — none in recommended queue.
+    # Clerk launched in M83A, PagerDuty in M84A, Linear in M85A, Jira in M86A — none in recommended queue.
     assert "Clerk" not in labels
     assert "PagerDuty" not in labels  # PagerDuty launched in M84A
     assert "Linear" not in labels  # Linear launched in M85A
-    assert "Jira" in labels  # Jira is now head after M85A
+    assert "Jira" not in labels  # Jira launched in M86A
+    assert "GitLab" in labels  # GitLab is now head after M86A
 
 
 def test_endpoint_unauthenticated_rejected():

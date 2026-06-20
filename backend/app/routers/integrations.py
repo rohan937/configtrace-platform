@@ -241,6 +241,14 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
     elif body.provider == "linear":
         # SECURITY: linear_api_key is NEVER logged here or in the service.
         return {"api_key": body.linear_api_key}
+    # ── M86A — Jira drift provider ────────────────────────────────────────────
+    elif body.provider == "jira":
+        # SECURITY: jira_site_url, jira_email, and jira_api_token are NEVER logged here.
+        return {
+            "site_url": body.jira_site_url,
+            "email": body.jira_email,
+            "api_token": body.jira_api_token,
+        }
     return {}
 
 

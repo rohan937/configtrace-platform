@@ -261,9 +261,11 @@ def test_b4_linear_head_of_recommended_next_providers() -> None:
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
     # After M84I, Linear was head. After M85A launched Linear, Jira became head.
+    # After M86A launched Jira, GitLab is now head.
     assert ("linear" in provider.lower() or "Linear" in str(first)
-            or "jira" in provider.lower() or "Jira" in str(first)), (
-        f"Linear or Jira should be head of recommended_next_providers; got: {provider!r}"
+            or "jira" in provider.lower() or "Jira" in str(first)
+            or "gitlab" in provider.lower() or "GitLab" in str(first)), (
+        f"Linear, Jira, or GitLab should be head of recommended_next_providers; got: {provider!r}"
     )
 
 
@@ -271,10 +273,12 @@ def test_b5_expansion_framework_next_milestone_m85a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_ms = summary.get("next_milestone", "") or ""
-    # After M84I, M85A/Linear was next. After M85A launched, M86A/Jira is next.
+    # After M84I, M85A/Linear was next. After M85A launched, M86A/Jira was next.
+    # After M86A launched, M87A/GitLab is next.
     assert ("M85A" in next_ms or "Linear" in next_ms
-            or "M86A" in next_ms or "Jira" in next_ms), (
-        f"next_milestone should reference M85A/Linear or M86A/Jira; got: {next_ms!r}"
+            or "M86A" in next_ms or "Jira" in next_ms
+            or "M87A" in next_ms or "GitLab" in next_ms), (
+        f"next_milestone should reference M85A/Linear, M86A/Jira, or M87A/GitLab; got: {next_ms!r}"
     )
 
 
@@ -282,10 +286,12 @@ def test_b6_expansion_framework_next_provider_linear() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_prov = summary.get("next_provider", "") or ""
-    # After M84I, Linear was next_provider. After M85A launched Linear, Jira is next.
+    # After M84I, Linear was next_provider. After M85A launched Linear, Jira was next.
+    # After M86A launched Jira, GitLab is now next.
     assert ("Linear" in next_prov or "linear" in next_prov.lower()
-            or "Jira" in next_prov or "jira" in next_prov.lower()), (
-        f"next_provider should be Linear or Jira; got: {next_prov!r}"
+            or "Jira" in next_prov or "jira" in next_prov.lower()
+            or "GitLab" in next_prov or "gitlab" in next_prov.lower()), (
+        f"next_provider should be Linear, Jira, or GitLab; got: {next_prov!r}"
     )
 
 

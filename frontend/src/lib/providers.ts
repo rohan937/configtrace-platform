@@ -34,7 +34,9 @@ export type ProviderId =
   // ── M84A — PagerDuty drift provider foundation ────────────────────────────
   | "pagerduty"
   // ── M85A — Linear drift provider foundation ───────────────────────────────
-  | "linear";
+  | "linear"
+  // ── M86A — Jira drift provider foundation ─────────────────────────────────
+  | "jira";
 
 export type ProviderCategory =
   | "cdn_dns"
@@ -469,6 +471,32 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     bgColor: "rgba(94,106,210,0.10)",
     borderColor: "rgba(94,106,210,0.25)",
   },
+
+  // ── M86A — Jira drift provider foundation ──────────────────────────────────
+  jira: {
+    id: "jira",
+    label: "Jira",
+    shortLabel: "Jira",
+    category: "devops",
+    description:
+      "Track Jira project management configuration including projects, boards, workflows, permission schemes, notification schemes, webhook subscriptions, and automation rules. Snapshot-only — no issue keys, titles, descriptions, comments, or account identities are ever stored.",
+    monitoredSurfaces: [
+      "Projects (key presence, type, lead presence, category — no issue content or assignees)",
+      "Boards (type, project association — no issue content or sprint data)",
+      "Workflows (status structure, transition count category — no issue assignments)",
+      "Workflow schemes (mapping structure — no issue content)",
+      "Permission schemes (grant count category, holder type structure — no account IDs)",
+      "Notification schemes (event count category, recipient type structure — no emails or identities)",
+      "Webhook subscriptions (enabled status, event types, URL scheme — never the URL or secret value)",
+      "Automation rules (enabled status, trigger type, action count category — no rule content)",
+      "Integrations / apps (type, enabled status — no credentials or API keys)",
+    ],
+    trustNote:
+      "ConfigTrace stores Jira credentials encrypted and uses them only to read selected configuration metadata. It does not store Jira API token values, OAuth tokens, webhook secrets, delivery URLs, user emails, issue keys, issue titles, issue descriptions, comments, attachments, account IDs, member identities, customer data, or PII in configuration records.",
+    color: "#0052CC",
+    bgColor: "rgba(0,82,204,0.10)",
+    borderColor: "rgba(0,82,204,0.25)",
+  },
 };
 
 /** All provider IDs in display order. */
@@ -495,6 +523,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "pagerduty",
   // ── M85A — Linear drift provider foundation ───────────────────────────────
   "linear",
+  // ── M86A — Jira drift provider foundation ─────────────────────────────────
+  "jira",
 ];
 
 /**
@@ -527,6 +557,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "pagerduty",
   // ── M85A — Linear drift provider foundation ───────────────────────────────
   "linear",
+  // ── M86A — Jira drift provider foundation ─────────────────────────────────
+  "jira",
 ];
 
 /**
