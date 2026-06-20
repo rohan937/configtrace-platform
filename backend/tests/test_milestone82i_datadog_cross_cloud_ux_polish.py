@@ -161,7 +161,8 @@ def test_expansion_framework_planned_next_stage_is_m83a():
     assert ("M83A" in stage or "Clerk" in stage or "M84A" in stage or "PagerDuty" in stage
             or "M85A" in stage or "Linear" in stage
             or "M86A" in stage or "M86B" in stage or "Jira" in stage
-            or "M87A" in stage or "GitLab" in stage), (
+            or "M87A" in stage or "GitLab" in stage
+            or "M88A" in stage or "Terraform" in stage), (
         f"planned_next_stage should reference M83A/Clerk or later; got {stage!r}"
     )
 
@@ -391,8 +392,12 @@ def test_fe_demo_script_datadog_demo_true():
 @pytest.mark.skipif(not FE_DEMO_PAGE.exists(), reason="frontend tree absent")
 def test_fe_demo_script_clerk_in_next_providers():
     src = FE_DEMO_PAGE.read_text()
-    assert "Clerk" in src, "Clerk must appear in NEXT_PROVIDERS_BRIEF on demo-script page"
-    assert "M83A" in src, "Clerk's M83A milestone must appear in demo-script NEXT_PROVIDERS_BRIEF"
+    # Clerk arc (M83A–M83I) is now complete; later arcs have since advanced
+    # NEXT_PROVIDERS_BRIEF beyond Clerk. Accept Clerk or any later provider.
+    assert ("Clerk" in src or "PagerDuty" in src or "Linear" in src
+            or "Jira" in src or "GitLab" in src or "Terraform" in src), (
+        "NEXT_PROVIDERS_BRIEF must contain Clerk or a later provider"
+    )
 
 
 @pytest.mark.skipif(not FE_DEMO_PAGE.exists(), reason="frontend tree absent")

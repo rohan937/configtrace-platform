@@ -1207,8 +1207,17 @@ _GITLAB = ProviderCapability(
         "seed/clear/status are confirmed idempotent; case report renders GitLab and "
         "includes the required disclaimer; forbidden wording and secret-shape greps "
         "are clean. No production-blocking field mismatches were found. "
-        "Cross-cloud UX polish planned for M87I. "
-        "planned_next_stage: M87I: GitLab Cross-Cloud UX Polish."
+        "M87I completes the GitLab arc with cross-cloud UX polish: GitLab-safe keys "
+        "added to the case report _PREVIEW_ALLOWLIST (project_resource_id, "
+        "owner_resource_id, owner_type, pattern_category, allow_force_push, "
+        "code_owner_approval_required, push/merge access level categories, enabled, "
+        "ssl_verification_enabled, webhook_scheme_category, CI variable counts, "
+        "correlation metadata keys); PROVIDER_CAPABILITY_TABLE and NEXT_PROVIDERS_BRIEF "
+        "in demo-script/page.tsx updated to include GitLab and Jira and advance the "
+        "next-provider pointer to Terraform Cloud at M88A; securityDemoScript.ts "
+        "incident timeline text updated to include Jira and GitLab in provider lists. "
+        "GitLab arc M87A–M87I complete. "
+        "planned_next_stage: M88A: Terraform Cloud Drift Provider Foundation."
     ),
 )
 

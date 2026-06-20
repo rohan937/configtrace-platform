@@ -944,7 +944,8 @@ def test_capability_matrix_planned_next_stage_m87i() -> None:
 def test_expansion_framework_planned_next_stage_m87i() -> None:
     from app.services.provider_expansion_framework import get_framework
     planned = get_framework().get("summary", {}).get("planned_next_stage", "")
-    assert "M87I" in planned or "Cross-Cloud" in planned
+    assert ("M87I" in planned or "Cross-Cloud" in planned
+            or "M88A" in planned or "Terraform" in planned)
 
 
 def test_expansion_framework_terraform_cloud_in_queue() -> None:

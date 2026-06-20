@@ -594,8 +594,9 @@ def test_expansion_framework_jira_points_to_m86g() -> None:
     assert (
         "M86G" in planned or "Jira" in planned
         or "M87A" in planned or "GitLab" in planned
+        or "M88A" in planned or "Terraform" in planned
     ), (
-        f"planned_next_stage should reference M86G/Jira/M87A/GitLab; got: {planned!r}"
+        f"planned_next_stage should reference M86G/Jira/M87A/GitLab or later; got: {planned!r}"
     )
 
 

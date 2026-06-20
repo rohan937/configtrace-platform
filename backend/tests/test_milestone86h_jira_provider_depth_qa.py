@@ -626,8 +626,9 @@ def test_expansion_framework_jira_points_to_m86i() -> None:
     assert (
         "M86I" in planned or "Jira" in planned
         or "M87A" in planned or "GitLab" in planned
+        or "M88A" in planned or "Terraform" in planned
     ), (
-        f"Expected M86I/Jira/M87A/GitLab in planned_next_stage, got '{planned}'"
+        f"Expected M86I/Jira/M87A/GitLab or later in planned_next_stage, got '{planned}'"
     )
 
 

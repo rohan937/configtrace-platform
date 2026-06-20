@@ -845,8 +845,9 @@ def test_g1_planned_next_stage_references_jira_core_or_m86b() -> None:
     assert (
         "M86B" in planned or "Jira Core" in planned or "M86" in planned or "Jira" in planned
         or "M87A" in planned or "GitLab" in planned
+        or "M88A" in planned or "Terraform" in planned
     ), (
-        f"planned_next_stage should reference M86B / Jira / M87A / GitLab; got {planned!r}"
+        f"planned_next_stage should reference M86B / Jira / M87A / GitLab or later; got {planned!r}"
     )
 
 

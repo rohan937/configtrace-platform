@@ -277,6 +277,8 @@ def test_get_framework_structure():
         or "Jira" in summary["planned_next_stage"]
         or "M87A" in summary["planned_next_stage"]
         or "GitLab" in summary["planned_next_stage"]
+        or "M88A" in summary["planned_next_stage"]
+        or "Terraform" in summary["planned_next_stage"]
     )
 
 

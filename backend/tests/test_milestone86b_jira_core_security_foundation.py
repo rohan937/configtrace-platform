@@ -947,6 +947,7 @@ class TestCapabilityMatrixAndFramework:
             or "M86F" in planned or "M86G" in planned or "M86H" in planned
             or "M86I" in planned
             or "M87A" in planned or "GitLab" in planned
+            or "M88A" in planned or "Terraform" in planned
         ), (
             f"planned_next_stage should reference M86C or later; got {planned!r}"
         )

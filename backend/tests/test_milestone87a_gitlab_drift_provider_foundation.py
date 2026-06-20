@@ -1016,7 +1016,8 @@ class TestExpansionFramework:
                 or "Correlations" in planned or "M87G" in planned
                 or "Demo" in planned or "M87H" in planned
                 or "Provider Depth" in planned
-                or "M87I" in planned or "Cross-Cloud" in planned), (
+                or "M87I" in planned or "Cross-Cloud" in planned
+                or "M88A" in planned or "Terraform" in planned), (
             f"planned_next_stage should reference M87B or later GitLab arc stage; got: {planned!r}"
         )
 

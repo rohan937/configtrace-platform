@@ -233,8 +233,9 @@ def test_b1_expansion_framework_planned_next_stage_m84a() -> None:
     assert ("M84A" in planned or "PagerDuty" in planned
             or "M85A" in planned or "Linear" in planned
             or "M86A" in planned or "Jira" in planned
-            or "M87A" in planned or "GitLab" in planned), (
-        f"planned_next_stage should point to M84A+/PagerDuty/Linear/Jira/GitLab; got: {planned!r}"
+            or "M87A" in planned or "GitLab" in planned
+            or "M88A" in planned or "Terraform" in planned), (
+        f"planned_next_stage should point to M84A+/PagerDuty/Linear/Jira/GitLab or later; got: {planned!r}"
     )
 
 
@@ -546,8 +547,9 @@ def test_d15_pagerduty_in_next_providers_brief() -> None:
     brief_block = text[block_start:block_end]
     # M85I complete; Linear arc done, Jira is now at head of NEXT_PROVIDERS_BRIEF.
     assert ("PagerDuty" in brief_block or "Linear" in brief_block
-            or "Jira" in brief_block), (
-        "NEXT_PROVIDERS_BRIEF should contain PagerDuty, Linear, or Jira (next recommended provider)"
+            or "Jira" in brief_block or "GitLab" in brief_block
+            or "Terraform" in brief_block), (
+        "NEXT_PROVIDERS_BRIEF should contain PagerDuty, Linear, Jira, or a later provider"
     )
 
 

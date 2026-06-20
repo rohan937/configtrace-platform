@@ -225,6 +225,41 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "automation_has_external_action",  # bool — automation external-action posture
     "automation_scope_category",  # "global" / "project" scope category label
     "deployment_type",            # Jira "cloud" / "server" deployment category
+    # GitLab-safe resource identifiers (M87I) — opaque IDs, category labels,
+    # booleans, and safe counts only. NEVER GitLab access tokens, OAuth tokens,
+    # PRIVATE-TOKEN values, webhook secret tokens, raw webhook URLs, CI/CD
+    # variable names/values, deploy key material, SSH keys, runner tokens/IPs,
+    # project names, group names, namespace paths, repo URLs, branch names,
+    # commit messages, merge request titles, issue titles, pipeline/job logs,
+    # artifacts, user emails, usernames, customer data, PII, or raw API payloads.
+    "project_resource_id",        # opaque project resource ID (never project name/path)
+    "owner_resource_id",          # opaque owner resource ID (project or group)
+    "owner_type",                 # "project" or "group" label (never name/path)
+    "pattern_category",           # "default" / "wildcard" / "protected" category label
+    "allow_force_push",           # bool — branch force-push posture
+    "code_owner_approval_required",   # bool — code owner approval posture
+    "push_access_level_category", # "developer" / "maintainer" / etc. category
+    "merge_access_level_category",    # "developer" / "maintainer" / etc. category
+    "enabled",                    # bool — webhook enabled posture
+    "ssl_verification_enabled",   # bool — webhook SSL verification posture
+    "webhook_scheme_category",    # "http" / "https" / "other" category (never raw URL)
+    "variable_count",             # int — total CI/CD variable count
+    "protected_variable_count",   # int — protected CI/CD variable count
+    "masked_variable_count",      # int — masked CI/CD variable count
+    "unprotected_unmasked_count", # int — unprotected and unmasked variable count
+    "gitlab_event_id",            # opaque GitLab activity event ID
+    "event_source",               # "gitlab_activity_event" label
+    "event_types",                # safe comma-joined event type string (no raw values)
+    "operation_family",           # "gitlab_configuration" operation family label
+    "matched_on",                 # correlation match reason label
+    "correlation_reason",         # correlation reason label
+    "correlation_strength",       # correlation strength category label
+    "signal_count",               # int — correlated signal count
+    "activity_count",             # int — correlated activity count
+    "risk_count",                 # int — correlated risk finding count
+    "lookback_hours",             # int — correlation lookback window in hours
+    "window_start",               # ISO timestamp — review window start
+    "window_end",                 # ISO timestamp — review window end
 })
 
 

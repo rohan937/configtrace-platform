@@ -149,8 +149,9 @@ def test_jira_planned_next_stage_reflects_completion() -> None:
     assert "M86I" not in planned, (
         f"planned_next_stage should have advanced past M86I; got: {planned!r}"
     )
-    assert planned in (None, "", "complete") or "M87A" in planned or "GitLab" in planned, (
-        f"planned_next_stage should be None/''/'complete' or M87A/GitLab; got: {planned!r}"
+    assert (planned in (None, "", "complete") or "M87A" in planned or "GitLab" in planned
+            or "M88A" in planned or "Terraform" in planned), (
+        f"planned_next_stage should be None/''/'complete' or M87A/GitLab or later; got: {planned!r}"
     )
 
 

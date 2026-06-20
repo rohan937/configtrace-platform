@@ -253,7 +253,8 @@ def test_b1_expansion_framework_planned_next_stage_m86a() -> None:
     # The Jira arc (M86A–M86I) has since completed; the framework's single
     # global planned_next_stage now advances to M87A: GitLab.
     assert ("M86A" in planned or "Jira" in planned
-            or "M87A" in planned or "GitLab" in planned), (
+            or "M87A" in planned or "GitLab" in planned
+            or "M88A" in planned or "Terraform" in planned), (
         f"After M85I, planned_next_stage should point to M86A/Jira or later; got: {planned!r}"
     )
 
@@ -559,8 +560,8 @@ def test_d15_jira_is_head_of_next_providers_brief() -> None:
     if block_start == -1 or block_end == -1:
         return
     brief_block = text[block_start:block_end]
-    assert "Jira" in brief_block, (
-        "Jira should be head of NEXT_PROVIDERS_BRIEF after Linear arc complete"
+    assert "Jira" in brief_block or "Terraform" in brief_block or "GitLab" in brief_block, (
+        "NEXT_PROVIDERS_BRIEF should contain Jira or a later provider after Linear arc complete"
     )
 
 

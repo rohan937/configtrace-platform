@@ -327,10 +327,13 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 // NOTE: Twilio arc complete M79A–M79I; SendGrid arc complete M80A–M80I;
 // Auth0 arc complete M81A–M81I; Datadog arc complete M82A–M82I;
 // Clerk arc complete M83A–M83I; PagerDuty arc complete M84A–M84I;
-// Linear arc complete M85A–M85F.
-// Jira is now the head of the recommended provider queue at M86A.
+// Linear arc complete M85A–M85F; Jira arc complete M86A–M86I;
+// GitLab arc complete M87A–M87I.
+// Terraform Cloud is now the head of the recommended provider queue at M88A.
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
-  { label: "Jira",      category: "devops",         milestone: "M86A" },
+  { label: "Terraform Cloud", category: "devops",  milestone: "M88A" },
+  { label: "Kubernetes",      category: "devops",  milestone: "M89A" },
+  { label: "Sentry",          category: "devops",  milestone: "M90A" },
 ];
 
 // M75C — Static capability table data. Source of truth lives in the backend
@@ -373,6 +376,8 @@ const PROVIDER_CAPABILITY_TABLE: Array<{
   },
   { provider: "pagerduty", label: "PagerDuty", category: "incident management", drift: true, security: true, signals: true, correlations: true, demo: true },
   { provider: "linear",    label: "Linear",    category: "devops",             drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "jira",      label: "Jira",      category: "devops",             drift: true, security: true, signals: true, correlations: true, demo: true },
+  { provider: "gitlab",    label: "GitLab",    category: "devops",             drift: true, security: true, signals: true, correlations: true, demo: true },
 ];
 
 function Dot({ on }: { on: boolean }) {

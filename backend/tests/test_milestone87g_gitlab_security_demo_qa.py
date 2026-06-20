@@ -573,6 +573,7 @@ def test_expansion_framework_planned_next_stage_m87h() -> None:
     assert (
         "M87H" in planned or "Provider Depth" in planned
         or "M87I" in planned or "Cross-Cloud" in planned
+        or "M88A" in planned or "Terraform" in planned
     )
 
 
