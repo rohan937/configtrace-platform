@@ -469,6 +469,19 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "jira_board_unknown_swimlane_strategy",
         "jira_board_no_columns",
         "jira_screen_scheme_unmapped_screens",
+        # GitLab — M87B core security rules
+        "gitlab_project_public_visibility",
+        "gitlab_project_shared_runners_enabled",
+        "gitlab_project_snippets_enabled_public",
+        "gitlab_group_public_visibility",
+        "gitlab_branch_force_push_enabled",
+        "gitlab_branch_code_owner_approval_missing",
+        "gitlab_webhook_secret_missing",
+        "gitlab_webhook_ssl_verification_disabled",
+        "gitlab_ci_unprotected_unmasked_variables",
+        "gitlab_deploy_key_write_enabled",
+        "gitlab_runner_untagged",
+        "gitlab_merge_request_approval_not_required",
     }
 )
 

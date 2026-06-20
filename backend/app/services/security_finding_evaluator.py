@@ -53,6 +53,7 @@ from app.services.security_rules import clerk as clerk_rules
 from app.services.security_rules import pagerduty as pagerduty_rules
 from app.services.security_rules import linear as linear_rules
 from app.services.security_rules import jira as jira_rules
+from app.services.security_rules import gitlab as gitlab_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,8 @@ _PROVIDER_RULES = {
     # M85B: Linear core security rules
     "linear": [linear_rules.evaluate],
     "jira": [jira_rules.evaluate],
+    # M87B: GitLab core security rules
+    "gitlab": [gitlab_rules.evaluate],
 }
 
 

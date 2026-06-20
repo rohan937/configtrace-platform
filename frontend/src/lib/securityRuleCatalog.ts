@@ -7241,6 +7241,237 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     remediation: "Map a screen to each operation slot, or confirm the default screen is intended.",
     falsePositiveGuard: "Only fires when screen_unmapped_screen_count is greater than 0 on a jira_screen_scheme record.",
   },
+
+  // ── GitLab (M87B core security rules) ────────────────────────────────────
+  {
+    key: "gitlab_project_public_visibility",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab project has public visibility",
+    category: "Project visibility posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A GitLab project is configured with public visibility. Public projects are accessible to anyone on the internet without authentication. GitLab project configuration evidence may require review. This does not confirm compromise, unauthorized access, source-code exposure, or data exposure.",
+    whatItChecks: "The visibility_category field on each gitlab_project record.",
+    whyItMatters:
+      "Public projects expose repository structure, CI/CD configuration metadata, and issue counts to unauthenticated users. Verify the project is intentionally public.",
+    evidence: "Project resource ID (opaque), visibility category, archived status, protected branch count.",
+    remediation:
+      "Change the project visibility to internal or private in GitLab Settings → General → Visibility, project features, permissions.",
+    falsePositiveGuard:
+      "Only fires when visibility_category is 'public' on a gitlab_project record. Open-source or intentionally public projects may require a documented exception.",
+  },
+  {
+    key: "gitlab_group_public_visibility",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab group has public visibility",
+    category: "Group visibility posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A GitLab group is configured with public visibility. Public groups expose their membership structure and contained projects to anyone on the internet. GitLab group configuration evidence may require review. This does not confirm compromise, unauthorized access, or data exposure.",
+    whatItChecks: "The visibility_category field on each gitlab_group record.",
+    whyItMatters:
+      "Public groups may reveal organizational structure, project names, and member counts to unauthenticated users. Verify the group is intentionally public.",
+    evidence: "Group resource ID (opaque), visibility category, project count, subgroup count, member count category.",
+    remediation:
+      "Change the group visibility to internal or private in GitLab Group Settings → General → Visibility level.",
+    falsePositiveGuard:
+      "Only fires when visibility_category is 'public' on a gitlab_group record. Open-source organizations may intentionally use public groups.",
+  },
+  {
+    key: "gitlab_branch_force_push_enabled",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab protected branch allows force push",
+    category: "Branch protection posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A GitLab branch protection rule has force push enabled. Allowing force push on protected branches permits rewriting or removing commit history on that branch. GitLab branch protection configuration evidence may require review. This does not confirm that any force push occurred.",
+    whatItChecks: "The allow_force_push field on each gitlab_branch_protection record.",
+    whyItMatters:
+      "Force push on protected branches can overwrite the commit history that CI/CD, audit logs, and other consumers depend on. Verified history integrity may be important for compliance.",
+    evidence: "Branch protection rule ID (opaque), project resource ID (opaque), pattern category, allow_force_push flag.",
+    remediation:
+      "Disable allow force push on the protected branch rule in GitLab Repository → Protected branches.",
+    falsePositiveGuard:
+      "Only fires when allow_force_push=true on a gitlab_branch_protection record. Some teams use force push on short-lived or feature branch patterns intentionally.",
+  },
+  {
+    key: "gitlab_branch_code_owner_approval_missing",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab branch protection does not require code owner approval",
+    category: "Branch protection posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "A GitLab protected branch rule does not require code owner approval before merge. Code owner approval helps ensure that changes to designated areas receive review from the responsible owners. GitLab branch protection configuration evidence may require review.",
+    whatItChecks:
+      "The code_owner_approval_required field on gitlab_branch_protection records with pattern_category 'protected', 'default', or 'wildcard'.",
+    whyItMatters:
+      "Without code owner approval requirements, merge requests may be merged without review from the designated owners of sensitive files or areas.",
+    evidence: "Branch protection rule ID (opaque), project resource ID (opaque), pattern category, code_owner_approval_required flag.",
+    remediation:
+      "Enable 'Require approval from code owners' on the protected branch rule in GitLab Repository → Protected branches.",
+    falsePositiveGuard:
+      "Only fires when code_owner_approval_required=false on protected/default/wildcard branch rules. Teams using alternative review controls may intentionally skip code owner enforcement.",
+  },
+  {
+    key: "gitlab_webhook_secret_missing",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab webhook has no secret token",
+    category: "Webhook security posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "An active GitLab webhook does not have a secret token configured. Without a secret token, the receiving endpoint cannot verify that delivery requests originate from GitLab. GitLab webhook configuration evidence may require review. Webhook URLs are never stored.",
+    whatItChecks: "The secret_token_present boolean on active (enabled=true) gitlab_webhook records.",
+    whyItMatters:
+      "Without signature verification, any actor who knows the webhook endpoint URL could send forged GitLab-style delivery requests to the receiver.",
+    evidence: "Webhook resource ID (opaque), owner type, owner resource ID (opaque), enabled status, secret_token_present flag, event count.",
+    remediation:
+      "Add a secret token to the webhook in GitLab Settings → Webhooks and update the receiving endpoint to verify the X-Gitlab-Token header.",
+    falsePositiveGuard:
+      "Only fires for active webhooks where secret_token_present is false. The webhook URL is never stored — only the secret presence boolean.",
+  },
+  {
+    key: "gitlab_webhook_ssl_verification_disabled",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab webhook has SSL verification disabled",
+    category: "Webhook security posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "An active GitLab webhook has SSL certificate verification disabled. Disabling SSL verification means the endpoint's TLS certificate is not validated before delivery. GitLab webhook security posture evidence may require review.",
+    whatItChecks: "The ssl_verification_enabled boolean on active (enabled=true) gitlab_webhook records.",
+    whyItMatters:
+      "Without SSL verification, webhook payloads may be delivered to endpoints with invalid, expired, or self-signed certificates. Verify the endpoint uses a trusted certificate.",
+    evidence: "Webhook resource ID (opaque), owner type, owner resource ID (opaque), ssl_verification_enabled flag, event count.",
+    remediation:
+      "Enable SSL verification on the webhook in GitLab Settings → Webhooks, and ensure the endpoint uses a valid TLS certificate.",
+    falsePositiveGuard:
+      "Only fires for active webhooks where ssl_verification_enabled is false. Some internal or development endpoints use self-signed certificates intentionally.",
+  },
+  {
+    key: "gitlab_ci_unprotected_unmasked_variables",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab project has unprotected and unmasked CI/CD variables",
+    category: "CI/CD variable posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "One or more CI/CD variables in this GitLab project or group are neither protected nor masked. Unprotected variables are available in all branches and forks; unmasked variables may appear in job logs. CI/CD variable posture evidence may require review. Variable names and values are never stored.",
+    whatItChecks: "The unprotected_unmasked_count field on gitlab_ci_variable_summary records.",
+    whyItMatters:
+      "CI/CD variables that are neither protected nor masked may be accessible in forked repositories and may surface in pipeline job output. Review the protection and masking posture of each variable.",
+    evidence: "CI variable summary resource ID (opaque), owner type, owner resource ID (opaque), variable count, unprotected/unmasked count, protected count, masked count.",
+    remediation:
+      "Enable 'Protected' and 'Masked' flags on sensitive CI/CD variables in GitLab Settings → CI/CD → Variables. Variable names and values are never stored by ConfigTrace.",
+    falsePositiveGuard:
+      "Only fires when unprotected_unmasked_count > 0. Variables intentionally scoped to all branches (e.g. public configuration) may not require protection or masking.",
+  },
+  {
+    key: "gitlab_deploy_key_write_enabled",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab project has write-enabled deploy keys",
+    category: "Deploy key posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "One or more deploy keys on this GitLab project have write access enabled. Write-enabled deploy keys can push commits to the repository. Deploy key posture evidence may require review. Key titles, fingerprints, and key material are never stored.",
+    whatItChecks: "The write_enabled_count field on gitlab_deploy_key_summary records.",
+    whyItMatters:
+      "Write-enabled deploy keys grant repository write access. If a key is compromised, an actor could push commits without going through the normal access-control path.",
+    evidence: "Deploy key summary resource ID (opaque), project resource ID (opaque), deploy key count, write-enabled count, read-only count.",
+    remediation:
+      "Review write-enabled deploy keys in GitLab Repository → Deploy keys. Rotate any keys that are no longer in active use, and use read-only keys unless write access is specifically required.",
+    falsePositiveGuard:
+      "Only fires when write_enabled_count > 0. Some CI/CD pipelines require write-enabled deploy keys for automated commits — verify each write-enabled key is expected.",
+  },
+  {
+    key: "gitlab_runner_untagged",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab runner accepts untagged jobs",
+    category: "Runner security posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "One or more GitLab runners are configured to accept untagged jobs. Runners that accept untagged jobs will execute any pipeline job without tag restrictions. Runner configuration evidence may require review. Runner tokens and IP addresses are never stored.",
+    whatItChecks: "The untagged_runner_count field on gitlab_runner_summary records.",
+    whyItMatters:
+      "Runners that accept untagged jobs may execute arbitrary pipeline jobs from any project or branch they are assigned to. Tag restrictions help ensure runners only execute intended job types.",
+    evidence: "Runner summary resource ID (opaque), owner type, owner resource ID (opaque), runner count, untagged count, tagged count, locked count.",
+    remediation:
+      "Configure runners to require tags by disabling 'Run untagged jobs' in GitLab Settings → CI/CD → Runners, and restrict job execution to tagged pipelines.",
+    falsePositiveGuard:
+      "Only fires when untagged_runner_count > 0. Some general-purpose runners intentionally accept untagged jobs for broad pipeline support.",
+  },
+  {
+    key: "gitlab_merge_request_approval_not_required",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab project does not require merge request approvals",
+    category: "Merge request approval posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This GitLab project has no merge request approval requirement. Merge requests can be merged without any peer review approval. Merge request approval configuration evidence may require review.",
+    whatItChecks: "The approvals_required field on gitlab_merge_request_approval_summary records.",
+    whyItMatters:
+      "Without required approvals, any developer with merge permissions can merge changes without peer review. Approval requirements help enforce code quality and change control.",
+    evidence: "MR approval summary resource ID (opaque), project resource ID (opaque), approval rule count, approvals_required, code_owner_approval_required.",
+    remediation:
+      "Enable merge request approvals in GitLab Settings → General → Merge request approvals and set a minimum required approver count.",
+    falsePositiveGuard:
+      "Only fires when approvals_required is exactly 0. Some projects (rapid iteration, personal, demo) intentionally skip approval requirements.",
+  },
+  {
+    key: "gitlab_project_shared_runners_enabled",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab project uses shared runners",
+    category: "Project runner posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "Shared runners are enabled on this GitLab project. Shared runners execute CI/CD jobs on infrastructure shared with other projects and organizations. GitLab project runner configuration evidence may require review.",
+    whatItChecks: "The shared_runners_enabled field on gitlab_project records where visibility_category is not 'public'.",
+    whyItMatters:
+      "Shared runners run on shared infrastructure. For projects with sensitive build artifacts or CI variables, dedicated runners may provide better isolation.",
+    evidence: "Project resource ID (opaque), visibility category, shared_runners_enabled flag.",
+    remediation:
+      "Disable shared runners in GitLab Settings → CI/CD → Runners if your project requires dedicated runner isolation, and configure project-specific or group-specific runners.",
+    falsePositiveGuard:
+      "Only fires on non-public projects with shared_runners_enabled=true. Shared runners are appropriate for many projects — evaluate based on your isolation requirements.",
+  },
+  {
+    key: "gitlab_project_snippets_enabled_public",
+    provider: "gitlab",
+    severity: "low",
+    title: "GitLab public project has snippets enabled",
+    category: "Project feature posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "Snippets are enabled on a public GitLab project. Project members can post code snippets that are publicly visible alongside the project. GitLab project configuration evidence may require review.",
+    whatItChecks: "The snippets_enabled field on gitlab_project records with visibility_category 'public'.",
+    whyItMatters:
+      "Snippets on public projects are visible to any unauthenticated visitor. Confirm snippet sharing is appropriate for this project's data sensitivity.",
+    evidence: "Project resource ID (opaque), visibility category, snippets_enabled flag.",
+    remediation:
+      "Disable snippets for this project in GitLab Settings → General → Visibility, project features, permissions if snippet sharing is not required.",
+    falsePositiveGuard:
+      "Only fires on public projects with snippets_enabled=true. Open-source projects may intentionally share code snippets alongside the project.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -7454,6 +7685,19 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "Event orchestration posture",
       "Business service ownership posture",
       "Response play posture",
+    ],
+  },
+  {
+    provider: "gitlab",
+    surfaces: [
+      "Project visibility posture",
+      "Group visibility posture",
+      "Branch protection posture",
+      "Webhook security posture",
+      "CI/CD variable posture",
+      "Deploy key posture",
+      "Runner security posture",
+      "Merge request approval posture",
     ],
   },
 ];

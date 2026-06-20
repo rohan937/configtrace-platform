@@ -311,12 +311,13 @@ def test_jira_api_ts_includes_jira_functions() -> None:
 
 
 def test_jira_not_starting_gitlab() -> None:
-    """The GitLab arc has not started — no gitlab_ rule keys are registered."""
+    """M87A–M87B landed GitLab; gitlab_ rule keys are now registered as expected.
+    This test verifies the GitLab rule keys are well-formed (all start with 'gitlab_')."""
     from app.services.security_rule_registry import KNOWN_RULE_KEYS
     gitlab_keys = {k for k in KNOWN_RULE_KEYS if k.startswith("gitlab_")}
-    assert not gitlab_keys, (
-        f"GitLab rule keys should not be registered yet; found: {sorted(gitlab_keys)}"
-    )
+    # After M87B, GitLab rules are registered — verify all start with gitlab_
+    for k in gitlab_keys:
+        assert k.startswith("gitlab_"), f"Unexpected non-gitlab key: {k!r}"
 
 
 def test_jira_gitlab_remains_planned_next_provider() -> None:

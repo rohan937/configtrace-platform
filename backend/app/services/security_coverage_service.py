@@ -50,6 +50,7 @@ PROVIDERS = [
     "pagerduty",
     "linear",
     "jira",
+    "gitlab",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -514,6 +515,19 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "jira_board_unknown_swimlane_strategy": ("jira_board",),
     "jira_board_no_columns": ("jira_board",),
     "jira_screen_scheme_unmapped_screens": ("jira_screen_scheme",),
+    # GitLab — M87B core security rules
+    "gitlab_project_public_visibility": ("gitlab_project",),
+    "gitlab_project_shared_runners_enabled": ("gitlab_project",),
+    "gitlab_project_snippets_enabled_public": ("gitlab_project",),
+    "gitlab_group_public_visibility": ("gitlab_group",),
+    "gitlab_branch_force_push_enabled": ("gitlab_branch_protection",),
+    "gitlab_branch_code_owner_approval_missing": ("gitlab_branch_protection",),
+    "gitlab_webhook_secret_missing": ("gitlab_webhook",),
+    "gitlab_webhook_ssl_verification_disabled": ("gitlab_webhook",),
+    "gitlab_ci_unprotected_unmasked_variables": ("gitlab_ci_variable_summary",),
+    "gitlab_deploy_key_write_enabled": ("gitlab_deploy_key_summary",),
+    "gitlab_runner_untagged": ("gitlab_runner_summary",),
+    "gitlab_merge_request_approval_not_required": ("gitlab_merge_request_approval_summary",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -630,6 +644,16 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Screen schemes",
         "Webhook subscriptions",
         "Automation rules",
+    ],
+    "gitlab": [
+        "Projects",
+        "Groups",
+        "Branch protection rules",
+        "Webhook subscriptions",
+        "CI/CD variable summaries",
+        "Deploy key summaries",
+        "Runner summaries",
+        "Merge request approval summaries",
     ],
 }
 
@@ -1023,6 +1047,39 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "jira_automation_rule": {
         "message": "Jira automation rule metadata was not observed.",
         "hints": ["Automation rule metadata uses the Jira Cloud automation API. It may be plan-gated or absent if no automation rules are configured."],
+    },
+    # GitLab — M87B
+    "gitlab_project": {
+        "message": "GitLab project metadata was not observed.",
+        "hints": ["Ensure the access token has read_api scope and the token owner has access to at least one project."],
+    },
+    "gitlab_group": {
+        "message": "GitLab group metadata was not observed.",
+        "hints": ["Group metadata requires the token owner to be a member of at least one group."],
+    },
+    "gitlab_branch_protection": {
+        "message": "GitLab branch protection metadata was not observed.",
+        "hints": ["Branch protection metadata is fetched per project. It may be absent if no branches are protected, or if the token lacks Maintainer access."],
+    },
+    "gitlab_webhook": {
+        "message": "GitLab webhook metadata was not observed.",
+        "hints": ["Webhook metadata requires Maintainer or Owner access. It may be absent if no webhooks are configured."],
+    },
+    "gitlab_ci_variable_summary": {
+        "message": "GitLab CI/CD variable summary was not observed.",
+        "hints": ["CI variable summaries require Maintainer access. Counts are stored only — variable names and values are never fetched."],
+    },
+    "gitlab_deploy_key_summary": {
+        "message": "GitLab deploy key summary was not observed.",
+        "hints": ["Deploy key summaries require read_repository scope or Maintainer access. Counts are stored only — key material is never fetched."],
+    },
+    "gitlab_runner_summary": {
+        "message": "GitLab runner summary was not observed.",
+        "hints": ["Runner summaries require Maintainer access. Runner tokens and IPs are never stored."],
+    },
+    "gitlab_merge_request_approval_summary": {
+        "message": "GitLab merge request approval summary was not observed.",
+        "hints": ["MR approval summaries require read_api scope and at least Reporter access. May be absent on Free-tier projects."],
     },
 }
 

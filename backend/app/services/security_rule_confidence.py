@@ -497,6 +497,19 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "jira_board_unknown_swimlane_strategy": (MEDIUM, "Fires when board_swimlane_strategy_category is empty or 'unknown'; reflects a strategy the connector could not classify rather than a confirmed misconfiguration."),
     "jira_board_no_columns": (HIGH, "Only fires when board_column_count < 1 on a jira_board record — a direct count."),
     "jira_screen_scheme_unmapped_screens": (HIGH, "Only fires when screen_unmapped_screen_count > 0 on a jira_screen_scheme record — a direct count of operation slots without a mapped screen."),
+    # GitLab — M87B core security rules
+    "gitlab_project_public_visibility": (HIGH, "Only fires when visibility_category is explicitly 'public' on a gitlab_project record — a direct category from the GitLab API."),
+    "gitlab_project_shared_runners_enabled": (MEDIUM, "Fires when shared_runners_enabled=True on a non-public gitlab_project record; shared runners may be intentional for some projects."),
+    "gitlab_project_snippets_enabled_public": (MEDIUM, "Fires when snippets_enabled=True on a public gitlab_project record; public snippet sharing may be intentional for open-source projects."),
+    "gitlab_group_public_visibility": (HIGH, "Only fires when visibility_category is explicitly 'public' on a gitlab_group record — a direct category from the GitLab API."),
+    "gitlab_branch_force_push_enabled": (HIGH, "Only fires when allow_force_push=True on a gitlab_branch_protection record — a direct boolean from the GitLab protected-branches API."),
+    "gitlab_branch_code_owner_approval_missing": (MEDIUM, "Fires when code_owner_approval_required=False on a protected/default/wildcard branch rule; code owner approval may be managed via other controls."),
+    "gitlab_webhook_secret_missing": (HIGH, "Only fires when secret_token_present=False on an active (enabled=True) gitlab_webhook record — a direct boolean derived in the connector."),
+    "gitlab_webhook_ssl_verification_disabled": (HIGH, "Only fires when ssl_verification_enabled=False on an active (enabled=True) gitlab_webhook record — a direct boolean from the GitLab hooks API."),
+    "gitlab_ci_unprotected_unmasked_variables": (HIGH, "Only fires when unprotected_unmasked_count > 0 on a gitlab_ci_variable_summary record — a direct count derived in the connector. CI variable names and values are never stored."),
+    "gitlab_deploy_key_write_enabled": (HIGH, "Only fires when write_enabled_count > 0 on a gitlab_deploy_key_summary record — a direct count. Deploy key titles, fingerprints, and key material are never stored."),
+    "gitlab_runner_untagged": (MEDIUM, "Fires when untagged_runner_count > 0 on a gitlab_runner_summary record; untagged runners may be intentional for some CI/CD configurations."),
+    "gitlab_merge_request_approval_not_required": (MEDIUM, "Fires when approvals_required == 0 on a gitlab_merge_request_approval_summary record; some projects intentionally allow unreviewed merges."),
 }
 
 

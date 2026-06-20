@@ -1114,7 +1114,7 @@ _GITLAB = ProviderCapability(
         drift_remediation_preview=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1125,7 +1125,7 @@ _GITLAB = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "GitLab DevOps configuration drift foundation (M87A). "
+        "GitLab DevOps configuration drift foundation (M87A) and core security rules (M87B). "
         "Drift snapshots cover 9 safe configuration surfaces from the GitLab REST API v4: "
         "instance posture (version/enterprise/settings — never base URL), "
         "projects (visibility, feature flags, per-project posture counts — never project names, "
@@ -1137,14 +1137,23 @@ _GITLAB = ProviderCapability(
         "deploy key summaries (counts only — never key titles, fingerprints, or key material), "
         "runner summaries (posture counts — never runner tokens, IPs, or descriptions), "
         "and MR approval summaries (approval posture booleans/counts — never approver identities). "
-        "Drift risk classification (M87A): high for public visibility changes, force-push enabled, "
-        "webhook SSL disabled, webhook secret removed, unprotected/unmasked CI variable increase, "
-        "deploy key write-count increase; medium for approval reductions, code-owner approval "
-        "disabled, event scope broadening; low for count-only metadata changes. "
+        "M87B adds 12 core configuration-risk security rules: "
+        "gitlab_project_public_visibility (high), gitlab_group_public_visibility (high), "
+        "gitlab_branch_force_push_enabled (high), gitlab_webhook_secret_missing (high), "
+        "gitlab_webhook_ssl_verification_disabled (high), "
+        "gitlab_ci_unprotected_unmasked_variables (high), "
+        "gitlab_deploy_key_write_enabled (high), "
+        "gitlab_branch_code_owner_approval_missing (medium), "
+        "gitlab_runner_untagged (medium), "
+        "gitlab_merge_request_approval_not_required (medium), "
+        "gitlab_project_shared_runners_enabled (medium), "
+        "gitlab_project_snippets_enabled_public (low). "
+        "All rule evidence is metadata-only (booleans, counts, categories, opaque IDs). "
+        "Never stores access tokens, webhook URLs, CI variable names/values, deploy key "
+        "material, runner tokens/IPs, branch names, user emails, or customer PII. "
         "Authentication uses a GitLab personal access token (stored encrypted, never returned). "
-        "Security rules planned for M87B. Activity ingestion, signals, correlations, "
-        "and demo planned for M87C–M87G. "
-        "planned_next_stage: M87B: GitLab Core Security Foundation."
+        "Activity ingestion, signals, correlations, and demo planned for M87C–M87G. "
+        "planned_next_stage: M87C: GitLab Branch/Webhook/CI Risk Expansion."
     ),
 )
 
