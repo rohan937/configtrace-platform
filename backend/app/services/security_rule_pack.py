@@ -76,6 +76,8 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "cloudflare_hsts_disabled": ("cloudflare", "medium", "HTTPS"),
     "cloudflare_waf_rule_disabled": ("cloudflare", "high", "WAF / security"),
     "cloudflare_dns_private_origin": ("cloudflare", "high", "DNS"),
+    "cloudflare_access_policy_bypass": ("cloudflare", "high", "Access control"),
+    "cloudflare_access_policy_disabled": ("cloudflare", "medium", "Access control"),
     # Supabase
     "supabase_rls_disabled": ("supabase", "high", "RLS"),
     "supabase_anonymous_access_enabled": ("supabase", "medium", "Auth"),

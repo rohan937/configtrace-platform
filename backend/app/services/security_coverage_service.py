@@ -95,6 +95,8 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "cloudflare_hsts_disabled": ("cloudflare_zone_setting",),
     "cloudflare_waf_rule_disabled": ("cloudflare_waf_rule",),
     "cloudflare_dns_private_origin": ("A", "AAAA"),
+    "cloudflare_access_policy_bypass": ("cloudflare_access_policy",),
+    "cloudflare_access_policy_disabled": ("cloudflare_access_policy",),
     # Supabase
     "supabase_rls_disabled": ("supabase_rls_status",),
     "supabase_anonymous_access_enabled": ("supabase_auth_config",),

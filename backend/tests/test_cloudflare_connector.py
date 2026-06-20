@@ -15,6 +15,12 @@ import respx
 import httpx
 
 from app.connectors.cloudflare import CloudflareConnector
+from app.connectors.cloudflare_schema import (
+    CLOUDFLARE_ACCESS_POLICY,
+    CLOUDFLARE_RULESET,
+    CLOUDFLARE_WAF_RULE,
+    CLOUDFLARE_ZONE_SETTING,
+)
 from app.connectors.exceptions import (
     AuthenticationError,
     ConnectorError,
@@ -28,6 +34,53 @@ VALID_CREDS = {"api_token": "test-token-abc123", "zone_id": "zone1234567890abcde
 
 CF_BASE = "https://api.cloudflare.com/client/v4"
 DNS_URL = f"{CF_BASE}/zones/{VALID_CREDS['zone_id']}/dns_records"
+ZONE_ID = VALID_CREDS["zone_id"]
+
+# Setting IDs the connector fetches (mirrors _ZONE_SETTING_IDS in the connector)
+_SETTING_IDS = (
+    "ssl",
+    "always_use_https",
+    "min_tls_version",
+    "security_level",
+    "browser_check",
+    "development_mode",
+    "automatic_https_rewrites",
+    "security_header",
+)
+
+
+# ── Stub helper ──────────────────────────────────────────────────────────────
+
+def _stub_extra_surfaces() -> None:
+    """Register 403 responses for every secondary surface the connector
+    fetches after DNS records. This allows DNS-focused tests to run without
+    real Cloudflare scope for WAF, settings, page rules, workers, or Access.
+
+    All of those surfaces use _safe_get() which treats 403 as a graceful
+    skip, so fetch() returns only the DNS records when they return 403.
+    """
+    _empty_403 = httpx.Response(403, json={"success": False, "errors": []})
+
+    # WAF rulesets (called twice: once for _fetch_rulesets, once for _fetch_waf_rules)
+    respx.get(f"{CF_BASE}/zones/{ZONE_ID}/rulesets").mock(return_value=_empty_403)
+
+    # Individual zone settings
+    for sid in _SETTING_IDS:
+        respx.get(f"{CF_BASE}/zones/{ZONE_ID}/settings/{sid}").mock(
+            return_value=_empty_403
+        )
+
+    # Page rules
+    respx.get(f"{CF_BASE}/zones/{ZONE_ID}/pagerules").mock(return_value=_empty_403)
+
+    # Worker routes
+    respx.get(f"{CF_BASE}/zones/{ZONE_ID}/workers/routes").mock(
+        return_value=_empty_403
+    )
+
+    # Account-id resolution (GET /zones/{zone_id}) — 403 means no account context,
+    # so worker scripts, Access apps/policies are also skipped.
+    respx.get(f"{CF_BASE}/zones/{ZONE_ID}").mock(return_value=_empty_403)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -108,11 +161,14 @@ def test_fetch_returns_normalised_fields(connector: CloudflareConnector) -> None
         modified_on="2024-06-01T12:00:00Z",
     )
     respx.get(DNS_URL).mock(return_value=httpx.Response(200, json=_cf_response([raw])))
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
 
-    assert len(records) == 1
-    r = records[0]
+    # Only DNS records are returned (secondary surfaces return 403 and are skipped).
+    dns_records = [r for r in records if r.get("record_type") == "A"]
+    assert len(dns_records) == 1
+    r = dns_records[0]
     assert r["record_id"] == "abc123"
     assert r["record_type"] == "A"
     assert r["name"] == "api.example.com"
@@ -129,11 +185,13 @@ def test_fetch_cloudflare_id_maps_to_record_id(connector: CloudflareConnector) -
     """Cloudflare's ``id`` field is mapped to ``record_id``."""
     raw = _raw_record(record_id="cf_id_xyz")
     respx.get(DNS_URL).mock(return_value=httpx.Response(200, json=_cf_response([raw])))
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
-    assert records[0]["record_id"] == "cf_id_xyz"
+    dns = [r for r in records if "content" in r]
+    assert dns[0]["record_id"] == "cf_id_xyz"
     # The original Cloudflare ``id`` key should not appear at the top level
-    assert "id" not in records[0]
+    assert "id" not in dns[0]
 
 
 @respx.mock
@@ -141,10 +199,12 @@ def test_fetch_cloudflare_type_maps_to_record_type(connector: CloudflareConnecto
     """Cloudflare's ``type`` field is mapped to ``record_type``."""
     raw = _raw_record(record_type="CNAME")
     respx.get(DNS_URL).mock(return_value=httpx.Response(200, json=_cf_response([raw])))
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
-    assert records[0]["record_type"] == "CNAME"
-    assert "type" not in records[0]
+    dns = [r for r in records if "content" in r]
+    assert dns[0]["record_type"] == "CNAME"
+    assert "type" not in dns[0]
 
 
 @respx.mock
@@ -152,9 +212,11 @@ def test_fetch_mx_record_preserves_priority(connector: CloudflareConnector) -> N
     """MX records have their ``priority`` field forwarded."""
     raw = _raw_record("mx1", "MX", "example.com", "mail.example.com", priority=10)
     respx.get(DNS_URL).mock(return_value=httpx.Response(200, json=_cf_response([raw])))
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
-    assert records[0]["priority"] == 10
+    dns = [r for r in records if "content" in r]
+    assert dns[0]["priority"] == 10
 
 
 @respx.mock
@@ -162,17 +224,21 @@ def test_fetch_comment_forwarded_when_present(connector: CloudflareConnector) ->
     """Optional ``comment`` field is preserved when set."""
     raw = _raw_record(comment="primary web server IP")
     respx.get(DNS_URL).mock(return_value=httpx.Response(200, json=_cf_response([raw])))
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
-    assert records[0]["comment"] == "primary web server IP"
+    dns = [r for r in records if "content" in r]
+    assert dns[0]["comment"] == "primary web server IP"
 
 
 @respx.mock
 def test_fetch_returns_empty_list_for_empty_zone(connector: CloudflareConnector) -> None:
-    """An empty zone returns an empty list without error."""
+    """An empty zone returns an empty list when secondary surfaces are also absent."""
     respx.get(DNS_URL).mock(return_value=httpx.Response(200, json=_cf_response([])))
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
+    # With all secondary surfaces returning 403, the overall result is empty.
     assert records == []
 
 
@@ -190,11 +256,14 @@ def test_fetch_paginates_through_all_pages(connector: CloudflareConnector) -> No
         httpx.Response(200, json=_cf_response(page1, page=1, per_page=3, total_count=5)),
         httpx.Response(200, json=_cf_response(page2, page=2, per_page=3, total_count=5)),
     ]
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
 
-    assert len(records) == 5
-    assert [r["record_id"] for r in records] == [f"rec{i}" for i in range(5)]
+    # DNS records only (secondary surfaces stubbed out with 403).
+    dns = [r for r in records if "content" in r]
+    assert len(dns) == 5
+    assert [r["record_id"] for r in dns] == [f"rec{i}" for i in range(5)]
 
 
 @respx.mock
@@ -203,10 +272,12 @@ def test_fetch_single_page_when_records_equal_total_count(connector: CloudflareC
     raws = [_raw_record(f"rec{i}") for i in range(3)]
     route = respx.get(DNS_URL)
     route.mock(return_value=httpx.Response(200, json=_cf_response(raws, total_count=3)))
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
 
-    assert len(records) == 3
+    dns = [r for r in records if "content" in r]
+    assert len(dns) == 3
     assert route.call_count == 1
 
 
@@ -290,10 +361,12 @@ def test_fetch_retries_on_429_and_succeeds(
         httpx.Response(429, headers={"Retry-After": "1"}, json={}),
         httpx.Response(200, json=_cf_response(raw)),
     ]
+    _stub_extra_surfaces()
 
     records = connector.fetch(VALID_CREDS)
-    assert len(records) == 1
-    assert records[0]["record_id"] == "rec1"
+    dns = [r for r in records if "content" in r]
+    assert len(dns) == 1
+    assert dns[0]["record_id"] == "rec1"
 
 
 @respx.mock
@@ -330,6 +403,7 @@ def test_fetch_uses_retry_after_header_for_sleep_duration(
         httpx.Response(429, headers={"Retry-After": "42"}, json={}),
         httpx.Response(200, json=_cf_response(raw)),
     ]
+    _stub_extra_surfaces()
 
     connector.fetch(VALID_CREDS)
 

@@ -81,6 +81,7 @@ def _make_integration(
         encrypted_credentials=ciphertext,
         credential_iv=iv,
         status=status,
+        scheduled_sync_enabled=True,  # explicitly opt in so the scheduler picks it up
     )
     db_session.add(integration)
     db_session.commit()
@@ -124,10 +125,14 @@ def test_enqueues_active_cloudflare_integration(
     assert result["enqueued"] >= 1
     assert result["errors"] == 0
 
-    # SyncRun row exists with the right shape.
+    # SyncRun row exists with the right shape. Filter to pending only in case
+    # a stale run from a previous test cycle was already cleaned up.
     sync_run = (
         db_session.query(SyncRun)
-        .filter(SyncRun.integration_id == integration.id)
+        .filter(
+            SyncRun.integration_id == integration.id,
+            SyncRun.status == "pending",
+        )
         .one()
     )
     assert sync_run.triggered_by == "scheduled"

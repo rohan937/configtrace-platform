@@ -76,6 +76,8 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "cloudflare_hsts_disabled": (HIGH, "Only an explicit enabled=false fires; indeterminate values are skipped."),
     "cloudflare_waf_rule_disabled": (HIGH, "Disabled log/skip rules are ignored — only protective actions fire."),
     "cloudflare_dns_private_origin": (HIGH, "Public/global IPs are normal and never flagged; non-IP content is ignored."),
+    "cloudflare_access_policy_bypass": (HIGH, "Only fires when decision is exactly 'bypass'; allow/deny/non-bypass decisions are never flagged."),
+    "cloudflare_access_policy_disabled": (HIGH, "Only fires when enabled is explicitly False; absent or unknown values are never flagged."),
     # Supabase
     "supabase_rls_disabled": (HIGH, "Only an explicit rls_enabled=false fires; missing/unknown is skipped."),
     "supabase_anonymous_access_enabled": (MEDIUM, "Anonymous auth is a feature; risky mainly with weak RLS, so wording stays careful."),
