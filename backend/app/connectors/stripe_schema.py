@@ -30,7 +30,7 @@ SECURITY
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 # ── Record type constants ──────────────────────────────────────────────────────
 

@@ -68,7 +68,7 @@ _RULE_ACCOUNT_CAPABILITY_INCOMPLETE = "stripe_account_capability_incomplete"
 
 # A webhook subscribed to this many or more event types is treated as
 # over-broad (least-privilege review item). The wildcard "*" always counts.
-_BROAD_EVENT_COUNT = 50
+BROAD_WEBHOOK_EVENT_THRESHOLD = 50
 
 
 def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
@@ -164,7 +164,7 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
         events = events if isinstance(events, list) else []
         has_wildcard = "*" in events
         count = len(events)
-        if has_wildcard or count >= _BROAD_EVENT_COUNT:
+        if has_wildcard or count >= BROAD_WEBHOOK_EVENT_THRESHOLD:
             out.append(
                 FindingCandidate(
                     provider="stripe",
