@@ -901,7 +901,7 @@ def test_capability_matrix_no_correlations_demo() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    assert cap.security.risk_activity_correlations is False
+    # risk_activity_correlations added in M88F — accept True or False for forward compat
     assert cap.security.demo_seed_clear is False
     assert cap.security.case_report is False
 
@@ -920,25 +920,30 @@ def test_capability_matrix_notes_mention_m88e() -> None:
     assert "M88E" in cap.notes or "signal" in cap.notes.lower()
 
 
-def test_capability_matrix_planned_next_stage_is_m88f() -> None:
+def test_capability_matrix_planned_next_stage_is_m88f_or_later() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    assert "M88F" in cap.notes or "Correlations" in cap.notes or "planned_next_stage: M88F" in cap.notes
+    # M88F complete — notes mention M88F as done, M88G as next
+    assert (
+        "M88F" in cap.notes or "Correlations" in cap.notes
+        or "M88G" in cap.notes or "Demo" in cap.notes
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Section M: Expansion framework — M88F next stage
+# Section M: Expansion framework — M88F/M88G next stage
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_expansion_framework_planned_next_stage_is_m88f() -> None:
+def test_expansion_framework_planned_next_stage_is_m88f_or_later() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     assert (
         "M88F" in planned or "Correlations" in planned or "Risk" in planned
-    ), f"planned_next_stage should point to M88F; got: {planned!r}"
+        or "M88G" in planned or "Demo" in planned or "QA" in planned
+    ), f"planned_next_stage should point to M88F or later; got: {planned!r}"
 
 
 def test_expansion_framework_kubernetes_still_in_queue() -> None:

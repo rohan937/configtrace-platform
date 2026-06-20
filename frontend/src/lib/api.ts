@@ -1046,6 +1046,27 @@ export async function generateGitlabActivitySignals(
 }
 
 /**
+ * generateTerraformCloudRiskActivityCorrelations — POST /security/terraform-cloud-activity/generate-correlations
+ * Admin only. Joins active Terraform Cloud configuration-risk findings with
+ * Terraform Cloud activity signals on the same safe opaque resource_id within
+ * a review window. Does not confirm breach, compromise, unauthorized access,
+ * state exposure, secret exposure, token exposure, credential exposure,
+ * infrastructure exposure, or data exposure. No API tokens, VCS tokens,
+ * variable names/values, state files, webhook URLs, tokens, team names, user
+ * emails, org/workspace/project names, customer infrastructure data, or PII
+ * are stored.
+ */
+export async function generateTerraformCloudRiskActivityCorrelations(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").TerraformCloudRiskActivityCorrelationGenerateResponse> {
+  return apiFetch<import("@/types").TerraformCloudRiskActivityCorrelationGenerateResponse>(
+    "/security/terraform-cloud-activity/generate-correlations",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * generateGitlabRiskActivityCorrelations — POST /security/gitlab-activity/generate-correlations
  * Admin only. Joins active GitLab configuration-risk findings with GitLab
  * activity signals on the same safe opaque resource_id within a review window.

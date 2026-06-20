@@ -2285,6 +2285,19 @@ export interface TerraformCloudActivitySignalGenerateResponse {
   max_signals: number;
 }
 
+// M88F — Terraform Cloud Risk × Activity correlation generation summary.
+export interface TerraformCloudRiskActivityCorrelationGenerateResponse {
+  provider: string;
+  findings_scanned: number;
+  signals_scanned: number;
+  events_scanned: number;
+  correlations_created: number;
+  correlations_skipped: number;
+  groups_scanned: number;
+  lookback_hours: number;
+  max_correlations: number;
+}
+
 // M87F — GitLab Risk × Activity correlation generation summary.
 export interface GitLabRiskActivityCorrelationGenerateResponse {
   provider: string;

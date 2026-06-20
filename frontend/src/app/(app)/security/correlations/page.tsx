@@ -27,7 +27,7 @@ import type {
   JiraRiskActivityCorrelationGenerateResponse,
   GitLabRiskActivityCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations, generatePagerDutyCorrelations, generateLinearCorrelations, generateJiraRiskActivityCorrelations, generateGitlabRiskActivityCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations, generatePagerDutyCorrelations, generateLinearCorrelations, generateJiraRiskActivityCorrelations, generateGitlabRiskActivityCorrelations, generateTerraformCloudRiskActivityCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -40,7 +40,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira", "gitlab"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira", "gitlab", "terraform_cloud"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -268,6 +268,24 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "gitlab_public_feature_risk_with_activity",
     "gitlab_configuration_risk_with_activity",
   ],
+  // M88F — Terraform Cloud risk × activity correlation types.
+  terraform_cloud: [
+    "terraform_cloud_organization_access_risk_with_activity",
+    "terraform_cloud_workspace_auto_apply_risk_with_activity",
+    "terraform_cloud_workspace_remote_state_risk_with_activity",
+    "terraform_cloud_workspace_execution_risk_with_activity",
+    "terraform_cloud_workspace_vcs_risk_with_activity",
+    "terraform_cloud_workspace_run_control_risk_with_activity",
+    "terraform_cloud_workspace_version_risk_with_activity",
+    "terraform_cloud_variable_risk_with_activity",
+    "terraform_cloud_variable_set_scope_risk_with_activity",
+    "terraform_cloud_policy_set_risk_with_activity",
+    "terraform_cloud_notification_risk_with_activity",
+    "terraform_cloud_run_trigger_risk_with_activity",
+    "terraform_cloud_team_access_risk_with_activity",
+    "terraform_cloud_state_version_metadata_risk_with_activity",
+    "terraform_cloud_configuration_risk_with_activity",
+  ],
   // M86F — Jira risk x activity correlation types.
   jira: [
     "jira_permission_scheme_risk_with_activity",
@@ -367,6 +385,9 @@ export default function CorrelationsPage() {
         setGenResult(r);
       } else if (provider === "gitlab") {
         const r = await generateGitlabRiskActivityCorrelations(token);
+        setGenResult(r);
+      } else if (provider === "terraform_cloud") {
+        const r = await generateTerraformCloudRiskActivityCorrelations(token);
         setGenResult(r);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);

@@ -386,10 +386,10 @@ _ACTIVITY_PROVIDERS = [
 # GitLab activity ingestion landed in M87D; signals landed in M87E;
 # correlations landed in M87F. GitLab now appears in all three selectors.
 # Terraform Cloud activity ingestion landed in M88D; signals landed in M88E.
-# Correlations (M88F) are not yet implemented — terraform_cloud is NOT in
-# the correlations selector yet.
+# Terraform Cloud risk × activity correlations landed in M88F — terraform_cloud
+# is now in all three selectors.
 _SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)  # terraform_cloud added in M88E
-_CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "terraform_cloud"]
+_CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)  # terraform_cloud added in M88F
 
 
 def _provider_selector_array(text: str) -> list[str] | None:

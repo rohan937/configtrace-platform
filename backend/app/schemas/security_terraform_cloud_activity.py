@@ -64,3 +64,24 @@ class TerraformCloudActivitySignalGenerateResponse(BaseModel):
     signals_skipped: int = 0
     lookback_hours: int = 24
     max_signals: int = 100
+
+
+class TerraformCloudRiskActivityCorrelationGenerateRequest(BaseModel):
+    """POST /security/terraform-cloud-activity/generate-correlations request body (all optional)."""
+
+    lookback_hours: int = Field(default=24, ge=1, le=168)
+    max_correlations: int = Field(default=100, ge=1, le=1000)
+
+
+class TerraformCloudRiskActivityCorrelationGenerateResponse(BaseModel):
+    """Terraform Cloud Risk × Activity correlation generation summary."""
+
+    provider: str = "terraform_cloud"
+    findings_scanned: int = 0
+    signals_scanned: int = 0
+    events_scanned: int = 0
+    correlations_created: int = 0
+    correlations_skipped: int = 0
+    groups_scanned: int = 0
+    lookback_hours: int = 24
+    max_correlations: int = 100

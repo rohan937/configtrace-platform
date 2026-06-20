@@ -1348,7 +1348,7 @@ _TERRAFORM_CLOUD = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -1402,8 +1402,11 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "workspace execution, VCS, run control, variable posture, variable set scope, "
         "policy set enforcement, notification transport, run triggers, team access, and "
         "state version metadata. All signal metadata is allowlisted and flat. "
-        "Correlations, demo, and case report planned for M88F+. "
-        "planned_next_stage: M88F: Terraform Cloud Risk x Activity Correlations."
+        "M88F adds risk x activity correlations: joins 36 Terraform Cloud "
+        "configuration-risk findings (M88B/M88C) with 17 activity signal types (M88E) "
+        "across 14 specialized correlation families. Correlation metadata is allowlisted "
+        "and flat. Demo and case report planned for M88G+. "
+        "planned_next_stage: M88G: Terraform Cloud Demo + QA."
     ),
 )
 

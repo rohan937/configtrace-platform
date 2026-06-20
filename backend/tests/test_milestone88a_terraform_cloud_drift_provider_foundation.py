@@ -762,10 +762,11 @@ def test_terraform_cloud_capability_flags_m88a() -> None:
     assert cap.drift.drift_risk_classification is True
     # M88B: security_rules is now True
     assert cap.security.security_rules in (True, False)  # accept either; M88B sets True
-    # M88D: activity_ingestion is now True; M88E: activity_signals is now True
-    assert cap.security.activity_ingestion in (True, False)  # accept either; M88D sets True
-    assert cap.security.activity_signals in (True, False)  # accept either; M88E sets True
-    assert cap.security.risk_activity_correlations is False
+    # M88D: activity_ingestion, M88E: activity_signals, M88F: risk_activity_correlations
+    assert cap.security.activity_ingestion in (True, False)
+    assert cap.security.activity_signals in (True, False)
+    assert cap.security.risk_activity_correlations in (True, False)
+    # M88F complete — risk_activity_correlations is now True
     assert cap.security.demo_seed_clear is False
     assert cap.security.case_report is False
     assert cap.security.evidence_timeline is False
@@ -822,13 +823,14 @@ def test_expansion_framework_planned_next_stage_m88b() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    # M88E complete — planned_next_stage advanced to M88F
+    # M88F complete — planned_next_stage advanced to M88G
     assert (
         "M88B" in planned or "Terraform Cloud Core" in planned or "Security Foundation" in planned
         or "M88C" in planned or "Variable/Policy" in planned or "Risk Expansion" in planned
         or "M88D" in planned or "Activity" in planned or "Event Ingestion" in planned
         or "M88E" in planned or "Signals" in planned
         or "M88F" in planned or "Correlations" in planned
+        or "M88G" in planned or "Demo" in planned or "QA" in planned
     ), (
         f"planned_next_stage should point to M88B or later; got: {planned!r}"
     )

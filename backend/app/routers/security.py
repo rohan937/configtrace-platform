@@ -291,11 +291,14 @@ from app.schemas.security_gitlab_activity import (
 )
 from app.services import terraform_cloud_activity_ingestion_service
 from app.services import terraform_cloud_activity_signal_service
+from app.services import terraform_cloud_risk_activity_correlation_service
 from app.schemas.security_terraform_cloud_activity import (
     TerraformCloudActivitySyncRequest,
     TerraformCloudActivitySyncResponse,
     TerraformCloudActivitySignalGenerateRequest,
     TerraformCloudActivitySignalGenerateResponse,
+    TerraformCloudRiskActivityCorrelationGenerateRequest,
+    TerraformCloudRiskActivityCorrelationGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -3766,6 +3769,59 @@ def generate_terraform_cloud_activity_signals_endpoint(
         max_signals=max_signals,
     )
     return TerraformCloudActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/terraform-cloud-activity/generate-correlations",
+    response_model=TerraformCloudRiskActivityCorrelationGenerateResponse,
+)
+def generate_terraform_cloud_risk_activity_correlations(
+    body: Optional[TerraformCloudRiskActivityCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TerraformCloudRiskActivityCorrelationGenerateResponse:
+    """Generate Terraform Cloud Risk × Activity correlations for a workspace (M88F).
+
+    Admin/owner only. Joins active Terraform Cloud configuration-risk findings
+    with Terraform Cloud activity signals on the same safe opaque resource_id
+    within a review window. Covers fourteen correlation families: organization
+    access, workspace auto-apply, workspace remote state, workspace execution,
+    workspace VCS, workspace run control, workspace version, variable, variable
+    set scope, policy set, notification, run trigger, team access, state version
+    metadata, and a generic config fallback.
+
+    Does not confirm breach, compromise, unauthorized access, state exposure,
+    secret exposure, token exposure, credential exposure, infrastructure
+    exposure, or data exposure. Idempotent — re-running creates no duplicates.
+
+    Terraform Cloud API tokens, OAuth tokens, VCS tokens, variable names/values,
+    state files, state outputs, plan/apply logs, webhook URLs, notification
+    tokens, org/workspace/project names, VCS URLs, branch names, team names,
+    user emails, customer infrastructure data, PII, and raw API payloads are
+    NEVER stored.
+
+    Members can read correlations via
+    GET /security/correlations?provider=terraform_cloud.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = (
+        min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    )
+    max_correlations = (
+        min(body.max_correlations, 1000) if body and body.max_correlations else 100
+    )
+    summary = (
+        terraform_cloud_risk_activity_correlation_service.generate_terraform_cloud_correlations(
+            workspace_id=workspace_id,
+            db=db,
+            lookback_hours=lookback_hours,
+            max_correlations=max_correlations,
+        )
+    )
+    return TerraformCloudRiskActivityCorrelationGenerateResponse(**summary)
 
 
 @router.post(

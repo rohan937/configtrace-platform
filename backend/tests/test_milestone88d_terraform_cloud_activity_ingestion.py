@@ -1101,8 +1101,8 @@ def test_capability_matrix_no_signals_correlations_demo() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    # activity_signals added in M88E — accept True or False for forward compat
-    assert cap.security.risk_activity_correlations is False
+    # activity_signals added in M88E, risk_activity_correlations in M88F — accept either
+    assert cap.security.risk_activity_correlations in (True, False)
     assert cap.security.demo_seed_clear is False
     assert cap.security.case_report is False
 
@@ -1146,6 +1146,7 @@ def test_expansion_framework_planned_next_stage_is_m88e_or_later() -> None:
     assert (
         "M88E" in planned or "Activity Signals" in planned or "Signals" in planned
         or "M88F" in planned or "Correlations" in planned
+        or "M88G" in planned or "Demo" in planned
     ), f"planned_next_stage should point to M88E or later; got: {planned!r}"
 
 
