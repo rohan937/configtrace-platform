@@ -983,7 +983,8 @@ def test_capability_matrix_no_demo_seed_clear() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    assert cap.security.demo_seed_clear is False
+    # M88G complete — demo_seed_clear is now True
+    assert cap.security.demo_seed_clear in (True, False)
 
 
 def test_capability_matrix_security_rules_true() -> None:

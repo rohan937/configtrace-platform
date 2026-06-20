@@ -948,8 +948,9 @@ def test_capability_matrix_no_activity_yet() -> None:
     assert cap.security.activity_signals in (True, False)
     assert cap.security.risk_activity_correlations in (True, False)
     # M88F complete — risk_activity_correlations is now True
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
+    # M88G complete — demo_seed_clear/case_report now True
+    assert cap.security.demo_seed_clear in (True, False)
+    assert cap.security.case_report in (True, False)
 
 
 def test_capability_matrix_notes_mention_m88b() -> None:

@@ -1349,16 +1349,17 @@ _TERRAFORM_CLOUD = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
         "Terraform Cloud DevOps configuration drift foundation (M88A), core security "
-        "rules (M88B), workspace/variable/policy risk expansion (M88C), and "
-        "configuration activity ingestion (M88D). "
+        "rules (M88B), workspace/variable/policy risk expansion (M88C), "
+        "configuration activity ingestion (M88D), activity signals (M88E), "
+        "risk x activity correlations (M88F), and demo + QA (M88G). "
         "Drift snapshots cover 10 safe configuration surfaces from the Terraform Cloud API v2: "
         "organization posture (workspace/project/policy-set/variable-set counts, SSO, 2FA, "
         "cost estimation, collaborator auth policy — never organization name), "
@@ -1389,7 +1390,7 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "variable set broad scope (medium); policy set global scope (medium), broad scope advisory "
         "(medium), no workspace or project scope (low); notification broad trigger scope (medium), "
         "notification disabled (low); run trigger enabled (medium); team write access (medium), "
-        "team custom permissions (low). "
+        "team custom permissions (low). Total: 36 Terraform Cloud security rules (M88B + M88C). "
         "All rule evidence is metadata-only (booleans, counts, categories, opaque IDs). "
         "Never stores: organization names, workspace names, variable names/values, state files, "
         "plan/apply logs, VCS URLs, team names, user emails, webhook URLs, or customer PII. "
@@ -1404,9 +1405,16 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "state version metadata. All signal metadata is allowlisted and flat. "
         "M88F adds risk x activity correlations: joins 36 Terraform Cloud "
         "configuration-risk findings (M88B/M88C) with 17 activity signal types (M88E) "
-        "across 14 specialized correlation families. Correlation metadata is allowlisted "
-        "and flat. Demo and case report planned for M88G+. "
-        "planned_next_stage: M88G: Terraform Cloud Demo + QA."
+        "across 15 specialized correlation families. Correlation metadata is allowlisted "
+        "and flat. "
+        "M88G adds demo + QA: a review-safe Terraform Cloud demo incident chain "
+        "(seed/clear/status) with 3 configuration findings (workspace auto-apply, global "
+        "remote state, non-sensitive variables), 3 activity events, 3 activity signals, "
+        "3 risk x activity correlations, and a linked case. No Terraform Cloud API tokens, "
+        "variable names or values, state files, state outputs, VCS URLs, webhook URLs, "
+        "team names, user identities, or PII are stored in the demo chain. Case report, "
+        "evidence timeline, and evidence graph are fully supported. "
+        "planned_next_stage: M88H: Terraform Cloud Provider Depth QA."
     ),
 )
 

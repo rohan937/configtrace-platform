@@ -73,6 +73,8 @@ from app.services import jira_activity_signal_service as jira_sig
 from app.services import jira_risk_activity_correlation_service as jira_corr_svc
 from app.services import gitlab_activity_signal_service as gitlab_sig
 from app.services import gitlab_risk_activity_correlation_service as gitlab_corr_svc
+from app.services import terraform_cloud_activity_signal_service as tc_sig
+from app.services import terraform_cloud_risk_activity_correlation_service as tc_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -9136,6 +9138,507 @@ def clear_gitlab(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         ).delete(synchronize_session=False)
 
     integ = _get_gitlab_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            objects_removed += db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        objects_removed += db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True, "objects_removed": objects_removed}
+
+
+# ── Terraform Cloud posture review demo (M88G) ────────────────────────────────
+#
+# "Terraform Cloud Workspace, Variable, and Policy Posture Review"
+# Story: workspace auto-apply + global remote state risk -> activity events ->
+# signals -> correlations -> case.
+#
+# PRIVACY: no Terraform Cloud API tokens, OAuth tokens, VCS tokens, variable
+# names or values, state files, state outputs, resource addresses, plan/apply
+# logs, run logs, webhook URLs, notification tokens, organization names,
+# workspace names, project names, VCS URLs, branch names, team names, user
+# emails, usernames, customer infrastructure data, PII, or raw API payloads.
+# Only safe booleans, counts, opaque placeholder IDs, and category labels.
+#
+# SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+
+TERRAFORM_CLOUD_DEMO_INTEGRATION_NAME = (
+    "ConfigTrace Terraform Cloud posture review demo (sample data)"
+)
+TERRAFORM_CLOUD_DEMO_CASE_SOURCE = "demo_terraform_cloud_posture_review"
+TERRAFORM_CLOUD_DEMO_DATASET = "terraform_cloud_posture_review_demo_v1"
+
+TERRAFORM_CLOUD_DEMO_WORKSPACE_001 = "TERRAFORM_CLOUD_DEMO_WORKSPACE_001"
+TERRAFORM_CLOUD_DEMO_VARIABLE_SUMMARY_001 = "TERRAFORM_CLOUD_DEMO_VARIABLE_SUMMARY_001"
+TERRAFORM_CLOUD_DEMO_VARIABLE_SET_001 = "TERRAFORM_CLOUD_DEMO_VARIABLE_SET_001"
+TERRAFORM_CLOUD_DEMO_NOTIFICATION_001 = "TERRAFORM_CLOUD_DEMO_NOTIFICATION_001"
+TERRAFORM_CLOUD_DEMO_TEAM_ACCESS_001 = "TERRAFORM_CLOUD_DEMO_TEAM_ACCESS_001"
+TERRAFORM_CLOUD_DEMO_STATE_VERSION_001 = "TERRAFORM_CLOUD_DEMO_STATE_VERSION_001"
+
+
+def _get_terraform_cloud_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.display_name == TERRAFORM_CLOUD_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_terraform_cloud_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext
+            == TERRAFORM_CLOUD_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_terraform_cloud_status(
+    workspace_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    case = _existing_terraform_cloud_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_terraform_cloud(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Terraform Cloud posture review demo chain (idempotent). No real TC sync.
+
+    "Terraform Cloud Workspace, Variable, and Policy Posture Review" story:
+      Workspace auto-apply risk + global remote state risk + non-sensitive
+      variables risk -> 3 Terraform Cloud activity events -> 3 activity signals
+      -> 3 risk x activity correlations -> case.
+
+    PRIVACY: no Terraform Cloud API tokens, OAuth tokens, VCS tokens,
+    variable names or values, state files, state outputs, resource addresses,
+    plan/apply logs, run logs, webhook URLs, notification tokens, organization
+    names, workspace names, project names, VCS URLs, branch names, team names,
+    user emails, customer infrastructure data, PII, or raw API payloads.
+    Only safe booleans, counts, opaque placeholder IDs, and category labels.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+    """
+    existing = _existing_terraform_cloud_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" - never shown / never synced).
+    integ = _get_terraform_cloud_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": TERRAFORM_CLOUD_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=TERRAFORM_CLOUD_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is Terraform Cloud configuration evidence for review and does not "
+        "confirm compromise, unauthorized access, state exposure, secret exposure, "
+        "token exposure, credential exposure, infrastructure exposure, or data "
+        "exposure."
+    )
+
+    # 2. Security findings using real Terraform Cloud rule keys (M88B/M88C).
+    auto_apply_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="terraform_cloud",
+        finding_key=(
+            f"terraform_cloud_workspace_auto_apply_enabled:"
+            f"{TERRAFORM_CLOUD_DEMO_WORKSPACE_001}#demo"
+        ),
+        severity="high",
+        title="Demo: Terraform Cloud workspace has auto-apply enabled",
+        resource_id=None,
+        description=(
+            "Terraform Cloud workspace configuration evidence indicates auto-apply "
+            "is enabled, meaning plans are automatically applied without a manual "
+            "review step. This may require review. Sample posture risk for the "
+            f"Terraform Cloud posture-review demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "terraform_cloud_workspace_auto_apply_enabled",
+            "demo": True,
+            "record_id": TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+            "record_type": "terraform_cloud_workspace",
+            "resource_type": "terraform_cloud_workspace",
+            "auto_apply": True,
+            "execution_mode_category": "remote",
+            "vcs_connected": True,
+            "global_remote_state": False,
+        },
+        remediation={
+            "summary": (
+                "Review the Terraform Cloud workspace auto-apply setting and "
+                "disable it so plans require a manual approval before they are "
+                "applied to infrastructure."
+            ),
+        },
+    )
+
+    remote_state_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="terraform_cloud",
+        finding_key=(
+            f"terraform_cloud_workspace_global_remote_state_enabled:"
+            f"{TERRAFORM_CLOUD_DEMO_WORKSPACE_001}#demo"
+        ),
+        severity="high",
+        title="Demo: Terraform Cloud workspace has global remote state sharing enabled",
+        resource_id=None,
+        description=(
+            "Terraform Cloud workspace configuration evidence indicates global "
+            "remote state sharing is enabled, making this workspace's state "
+            "accessible to all other workspaces in the organization. "
+            f"This may require review. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "terraform_cloud_workspace_global_remote_state_enabled",
+            "demo": True,
+            "record_id": TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+            "record_type": "terraform_cloud_workspace",
+            "resource_type": "terraform_cloud_workspace",
+            "global_remote_state": True,
+            "execution_mode_category": "remote",
+            "vcs_connected": True,
+        },
+        remediation={
+            "summary": (
+                "Review the Terraform Cloud workspace global remote state setting "
+                "and restrict state access to only the workspaces that need it "
+                "rather than sharing it with the entire organization."
+            ),
+        },
+    )
+
+    variable_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="terraform_cloud",
+        finding_key=(
+            f"terraform_cloud_workspace_non_sensitive_variables_present:"
+            f"{TERRAFORM_CLOUD_DEMO_VARIABLE_SUMMARY_001}#demo"
+        ),
+        severity="medium",
+        title="Demo: Terraform Cloud workspace has non-sensitive variables present",
+        resource_id=None,
+        description=(
+            "Terraform Cloud workspace configuration evidence indicates variables "
+            "are present that are not marked as sensitive. Variable values are "
+            "NEVER read or stored. This is a variable posture review signal. "
+            f"This may require review. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "terraform_cloud_workspace_non_sensitive_variables_present",
+            "demo": True,
+            "record_id": TERRAFORM_CLOUD_DEMO_VARIABLE_SUMMARY_001,
+            "record_type": "terraform_cloud_workspace_variable_summary",
+            "resource_type": "terraform_cloud_workspace_variable_summary",
+            "workspace_resource_id": TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+            "variable_count": 6,
+            "sensitive_variable_count": 2,
+            "non_sensitive_variable_count": 4,
+            "raw_value_never_read": True,
+        },
+        remediation={
+            "summary": (
+                "Review the Terraform Cloud workspace variable configuration and "
+                "mark variables as sensitive where appropriate so their values "
+                "are not visible in the Terraform Cloud UI or API responses."
+            ),
+        },
+    )
+
+    tc_findings = [auto_apply_finding, remote_state_finding, variable_finding]
+
+    # 3. Activity events (provider="terraform_cloud", source="terraform_cloud_activity_event").
+    TC_ACTIVITY_SOURCE = "terraform_cloud_activity_event"
+
+    def _mk_tc_event(event_type, resource_type, provider_event_id, resource_id, extra):
+        meta = {
+            "resource_type": resource_type,
+            "event_source": TC_ACTIVITY_SOURCE,
+            "operation_family": "terraform_cloud_configuration",
+            "operation_action": "configuration_observed",
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="terraform_cloud", source=TC_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    auto_apply_event = _mk_tc_event(
+        "terraform_cloud.workspace.auto_apply_enabled",
+        "terraform_cloud_workspace",
+        "TERRAFORM_CLOUD_DEMO_AUTO_APPLY_EVENT_ID",
+        TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+        {
+            "resource_id": TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+            "auto_apply": True,
+            "execution_mode_category": "remote",
+            "vcs_connected": True,
+        },
+    )
+
+    remote_state_event = _mk_tc_event(
+        "terraform_cloud.workspace.global_remote_state_enabled",
+        "terraform_cloud_workspace",
+        "TERRAFORM_CLOUD_DEMO_REMOTE_STATE_EVENT_ID",
+        TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+        {
+            "resource_id": TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+            "global_remote_state": True,
+            "execution_mode_category": "remote",
+        },
+    )
+
+    variable_event = _mk_tc_event(
+        "terraform_cloud.variables.non_sensitive_variables_detected",
+        "terraform_cloud_workspace_variable_summary",
+        "TERRAFORM_CLOUD_DEMO_VARIABLES_EVENT_ID",
+        TERRAFORM_CLOUD_DEMO_VARIABLE_SUMMARY_001,
+        {
+            "resource_id": TERRAFORM_CLOUD_DEMO_VARIABLE_SUMMARY_001,
+            "workspace_resource_id": TERRAFORM_CLOUD_DEMO_WORKSPACE_001,
+            "variable_count": 6,
+            "sensitive_variable_count": 2,
+            "non_sensitive_variable_count": 4,
+            "raw_value_never_read": True,
+        },
+    )
+
+    tc_events = [auto_apply_event, remote_state_event, variable_event]
+
+    # 4. Activity signals via the real M88E signal builder.
+    tc_signals = []
+    for ev in tc_events:
+        sig_dict = tc_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            tc_signals.append(sig)
+
+    # 5. Risk x activity correlations via the real M88F builder.
+    tc_correlations = []
+    signals_by_type_tc = {s.signal_type: s for s in tc_signals}
+
+    def _add_tc_corr(finding, signal, correlation_type, match_reason):
+        rule = tc_corr_svc.TERRAFORM_CLOUD_CORRELATION_RULES[correlation_type]
+        cdict = tc_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        tc_correlations.append(corr)
+        return corr
+
+    auto_apply_signal = signals_by_type_tc.get("terraform_cloud_workspace_auto_apply_signal")
+    if auto_apply_signal is not None:
+        _add_tc_corr(
+            auto_apply_finding, auto_apply_signal,
+            "terraform_cloud_workspace_auto_apply_risk_with_activity",
+            "resource_id_match",
+        )
+
+    remote_state_signal = signals_by_type_tc.get(
+        "terraform_cloud_workspace_global_remote_state_signal"
+    )
+    if remote_state_signal is not None:
+        _add_tc_corr(
+            remote_state_finding, remote_state_signal,
+            "terraform_cloud_workspace_remote_state_risk_with_activity",
+            "resource_id_match",
+        )
+
+    variable_signal = signals_by_type_tc.get("terraform_cloud_variable_posture_signal")
+    if variable_signal is not None:
+        _add_tc_corr(
+            variable_finding, variable_signal,
+            "terraform_cloud_variable_risk_with_activity",
+            "resource_id_match",
+        )
+
+    # 6. Case linking all findings, events, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="Terraform Cloud Workspace, Variable, and Policy Posture Review",
+        summary=(
+            "Terraform Cloud configuration evidence indicates workspace auto-apply, "
+            "global remote state sharing, and variable posture may require review. "
+            "Groups configuration findings with related Terraform Cloud configuration "
+            "activity, signals, and correlations. Evidence for review. "
+            "This does not confirm compromise, unauthorized access, state exposure, "
+            "secret exposure, token exposure, credential exposure, infrastructure "
+            "exposure, or data exposure. No Terraform Cloud API tokens, variable "
+            "names or values, state files, state outputs, VCS URLs, webhook URLs, "
+            "team names, user identities, or PII."
+        ),
+        severity="high",
+        provider="terraform_cloud",
+        metadata={"source": TERRAFORM_CLOUD_DEMO_CASE_SOURCE},
+        db=db,
+    )
+    db.flush()
+
+    for f in tc_findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=f.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    for ev in tc_events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    seen_signal_ids_tc = set()
+    for sig in tc_signals:
+        seen_signal_ids_tc.add(sig.id)
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    for corr in tc_correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids_tc
+        ):
+            seen_signal_ids_tc.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    db.commit()
+    logger.info(
+        "terraform_cloud_posture_review_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_terraform_cloud(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Terraform Cloud demo posture-review objects (and nothing else)."""
+    objects_removed = 0
+
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext
+            == TERRAFORM_CLOUD_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        objects_removed += db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = _get_terraform_cloud_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

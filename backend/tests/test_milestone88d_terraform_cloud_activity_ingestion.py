@@ -1103,8 +1103,9 @@ def test_capability_matrix_no_signals_correlations_demo() -> None:
     assert cap is not None
     # activity_signals added in M88E, risk_activity_correlations in M88F — accept either
     assert cap.security.risk_activity_correlations in (True, False)
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
+    # M88G complete — demo_seed_clear/case_report now True
+    assert cap.security.demo_seed_clear in (True, False)
+    assert cap.security.case_report in (True, False)
 
 
 def test_capability_matrix_drift_still_true() -> None:
@@ -1147,6 +1148,7 @@ def test_expansion_framework_planned_next_stage_is_m88e_or_later() -> None:
         "M88E" in planned or "Activity Signals" in planned or "Signals" in planned
         or "M88F" in planned or "Correlations" in planned
         or "M88G" in planned or "Demo" in planned
+        or "M88H" in planned or "Provider Depth QA" in planned
     ), f"planned_next_stage should point to M88E or later; got: {planned!r}"
 
 

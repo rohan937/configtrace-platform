@@ -667,6 +667,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M88G: Terraform Cloud Demo + QA",
+            "planned_next_stage": "M88H: Terraform Cloud Provider Depth QA",
         },
     }

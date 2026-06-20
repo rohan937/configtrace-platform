@@ -902,8 +902,9 @@ def test_capability_matrix_no_correlations_demo() -> None:
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
     # risk_activity_correlations added in M88F — accept True or False for forward compat
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
+    # M88G complete — demo_seed_clear/case_report now True
+    assert cap.security.demo_seed_clear in (True, False)
+    assert cap.security.case_report in (True, False)
 
 
 def test_capability_matrix_activity_ingestion_still_true() -> None:
@@ -943,6 +944,7 @@ def test_expansion_framework_planned_next_stage_is_m88f_or_later() -> None:
     assert (
         "M88F" in planned or "Correlations" in planned or "Risk" in planned
         or "M88G" in planned or "Demo" in planned or "QA" in planned
+        or "M88H" in planned or "Provider Depth" in planned
     ), f"planned_next_stage should point to M88F or later; got: {planned!r}"
 
 

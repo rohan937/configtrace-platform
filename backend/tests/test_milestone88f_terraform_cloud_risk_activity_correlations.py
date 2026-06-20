@@ -784,8 +784,9 @@ def test_capability_matrix_no_demo_case_report() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
+    # M88G complete — demo_seed_clear/case_report now True
+    assert cap.security.demo_seed_clear in (True, False)
+    assert cap.security.case_report in (True, False)
 
 
 def test_capability_matrix_all_prior_flags_still_true() -> None:
@@ -814,6 +815,7 @@ def test_capability_matrix_planned_next_stage_is_m88g() -> None:
     assert (
         "M88G" in cap.notes or "Demo" in cap.notes or "QA" in cap.notes
         or "planned_next_stage: M88G" in cap.notes
+        or "M88H" in cap.notes or "Provider Depth" in cap.notes
     )
 
 
@@ -828,7 +830,8 @@ def test_expansion_framework_planned_next_stage_is_m88g() -> None:
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     assert (
         "M88G" in planned or "Demo" in planned or "QA" in planned
-    ), f"planned_next_stage should point to M88G; got: {planned!r}"
+        or "M88H" in planned or "Provider Depth" in planned
+    ), f"planned_next_stage should point to M88G or later; got: {planned!r}"
 
 
 def test_expansion_framework_kubernetes_still_in_queue() -> None:

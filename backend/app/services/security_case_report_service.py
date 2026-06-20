@@ -70,7 +70,7 @@ def _ids_by_type(links: list[SecurityCaseLink]) -> dict[str, list[uuid.UUID]]:
 # response bodies). It correlates evidence for review — it does NOT confirm
 # compromise, attacker presence, unauthorized access, or breach.
 
-_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud", "twilio": "Twilio", "sendgrid": "SendGrid", "auth0": "Auth0", "datadog": "Datadog", "clerk": "Clerk", "pagerduty": "PagerDuty", "linear": "Linear", "jira": "Jira", "gitlab": "GitLab"}
+_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud", "twilio": "Twilio", "sendgrid": "SendGrid", "auth0": "Auth0", "datadog": "Datadog", "clerk": "Clerk", "pagerduty": "PagerDuty", "linear": "Linear", "jira": "Jira", "gitlab": "GitLab", "terraform_cloud": "Terraform Cloud"}
 
 # Item-type tie-breaker order (stable, deterministic) when timestamps are equal.
 _TYPE_RANK = {"finding": 0, "activity_event": 1, "incident_signal": 2, "correlation": 3}
@@ -260,6 +260,51 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "lookback_hours",             # int — correlation lookback window in hours
     "window_start",               # ISO timestamp — review window start
     "window_end",                 # ISO timestamp — review window end
+    # Terraform Cloud-safe resource identifiers (M88G) — opaque IDs, category
+    # labels, booleans, and safe counts only. NEVER Terraform Cloud API tokens,
+    # OAuth tokens, VCS tokens, variable names/values, state files, state
+    # outputs, resource addresses, plan/apply logs, run logs, webhook URLs,
+    # notification tokens, org/workspace/project names, VCS URLs, branch names,
+    # commit SHAs, team names, user emails, customer infrastructure data, PII,
+    # or raw API payloads of any kind.
+    "organization_resource_id",   # opaque org resource ID
+    "workspace_resource_id",      # opaque workspace resource ID
+    "variable_set_resource_id",   # opaque variable set resource ID
+    "policy_set_resource_id",     # opaque policy set resource ID
+    "notification_resource_id",   # opaque notification config resource ID
+    "run_trigger_resource_id",    # opaque run trigger resource ID
+    "execution_mode_category",    # workspace execution mode category
+    "terraform_version_category", # Terraform version category
+    "auto_apply",                 # bool — workspace auto-apply posture
+    "global_remote_state",        # bool — workspace global remote state sharing
+    "vcs_connected",              # bool — workspace VCS connection present
+    "queue_all_runs",             # bool — workspace queue-all-runs posture
+    "file_triggers_enabled",      # bool — workspace file-based run triggers
+    "speculative_enabled",        # bool — workspace speculative plans posture
+    "run_trigger_count",          # int — count of run triggers on workspace
+    "latest_run_status_category", # workspace latest run status category
+    "sensitive_variable_count",   # int — count of sensitive variables
+    "non_sensitive_variable_count",  # int — count of non-sensitive variables
+    "raw_value_never_read",       # bool — variable raw values never fetched
+    "global_scope",               # bool — variable set / policy set global scope
+    "workspace_count",            # int — count of workspaces in scope
+    "policy_count",               # int — count of policies in a policy set
+    "enforcement_level_category", # policy set enforcement level category
+    "destination_type_category",  # notification destination type category
+    "trigger_count",              # int — count of notification trigger subscriptions
+    "token_present",              # bool — notification webhook token present
+    "webhook_url_scheme_category",  # notification webhook URL scheme category
+    "sourceable_type_category",   # run trigger sourceable type category
+    "team_access_count",          # int — count of team access entries
+    "admin_access_count",         # int — count of teams with admin access
+    "apply_access_count",         # int — count of teams with apply access
+    "write_access_count",         # int — count of teams with write access
+    "custom_permission_count",    # int — count of teams with custom permissions
+    "state_version_present",      # bool — workspace has a current state version
+    "state_version_count_category",  # state version count category
+    "raw_state_never_fetched",    # bool — raw state files never fetched
+    "sso_enabled",                # bool — organization SSO enabled flag
+    "two_factor_requirement_enabled",  # bool — org 2FA requirement flag
 })
 
 

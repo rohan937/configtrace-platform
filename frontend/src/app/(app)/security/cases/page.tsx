@@ -255,6 +255,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear GitLab demo",
     seedColor: "#fc6d26",
   },
+  {
+    provider: "terraform_cloud",
+    label: "Terraform Cloud",
+    intro: "Try the Terraform Cloud security demo:",
+    description:
+      "Seed a Terraform Cloud workspace, variable, and policy posture review demo using safe placeholder configuration evidence. Generate Terraform Cloud risk × activity correlations from safe Terraform Cloud security findings, activity events, and activity signals. No Terraform state files, state outputs, variable names/values, VCS URLs, branch names, plan/apply logs, run logs, webhook URLs, tokens, user identities, team names, customer infrastructure data, or PII are stored.",
+    seedButton: "Load Terraform Cloud security demo",
+    clearButton: "Clear Terraform Cloud demo",
+    seedColor: "#7B42BC",
+  },
 ];
 
 export default function CasesPage() {
@@ -313,7 +323,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab" | "terraform_cloud") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -332,7 +342,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab" | "terraform_cloud") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -375,7 +385,9 @@ export default function CasesPage() {
                                           ? "Jira demo data cleared."
                                           : provider === "gitlab"
                                             ? "GitLab demo data cleared."
-                                            : "Demo data cleared.",
+                                            : provider === "terraform_cloud"
+                                              ? "Terraform Cloud demo data cleared."
+                                              : "Demo data cleared.",
       );
       await load();
     } catch {

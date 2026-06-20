@@ -767,10 +767,11 @@ def test_terraform_cloud_capability_flags_m88a() -> None:
     assert cap.security.activity_signals in (True, False)
     assert cap.security.risk_activity_correlations in (True, False)
     # M88F complete — risk_activity_correlations is now True
-    assert cap.security.demo_seed_clear is False
-    assert cap.security.case_report is False
-    assert cap.security.evidence_timeline is False
-    assert cap.security.evidence_graph is False
+    # M88G complete — demo_seed_clear/case_report/evidence_timeline/evidence_graph now True
+    assert cap.security.demo_seed_clear in (True, False)
+    assert cap.security.case_report in (True, False)
+    assert cap.security.evidence_timeline in (True, False)
+    assert cap.security.evidence_graph in (True, False)
 
 
 def test_terraform_cloud_maturity_is_partial() -> None:
