@@ -821,10 +821,11 @@ def test_expansion_framework_planned_next_stage_m88b() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    # M88B complete — planned_next_stage advanced to M88C
+    # M88C complete — planned_next_stage advanced to M88D
     assert (
         "M88B" in planned or "Terraform Cloud Core" in planned or "Security Foundation" in planned
         or "M88C" in planned or "Variable/Policy" in planned or "Risk Expansion" in planned
+        or "M88D" in planned or "Activity" in planned or "Event Ingestion" in planned
     ), (
         f"planned_next_stage should point to M88B or later; got: {planned!r}"
     )

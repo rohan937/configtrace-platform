@@ -36,6 +36,7 @@ FE_RULE_CATALOG = REPO_ROOT / "frontend" / "src" / "lib" / "securityRuleCatalog.
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 ALL_RULE_KEYS = {
+    # M88B rules
     "terraform_cloud_organization_two_factor_not_required",
     "terraform_cloud_organization_sso_not_enabled",
     "terraform_cloud_workspace_auto_apply_enabled",
@@ -54,6 +55,25 @@ ALL_RULE_KEYS = {
     "terraform_cloud_team_apply_access",
     "terraform_cloud_variable_set_global_scope",
     "terraform_cloud_state_version_present",
+    # M88C rules (added in M88C; reflected here for forward-compatibility)
+    "terraform_cloud_workspace_agent_execution_mode",
+    "terraform_cloud_workspace_file_triggers_disabled",
+    "terraform_cloud_workspace_speculative_plans_disabled",
+    "terraform_cloud_workspace_run_triggers_present",
+    "terraform_cloud_workspace_many_trigger_prefixes",
+    "terraform_cloud_workspace_latest_run_failed",
+    "terraform_cloud_workspace_environment_variables_non_sensitive",
+    "terraform_cloud_workspace_terraform_variables_non_sensitive",
+    "terraform_cloud_variable_set_non_sensitive_variables",
+    "terraform_cloud_variable_set_broad_scope",
+    "terraform_cloud_policy_set_global_scope",
+    "terraform_cloud_policy_set_broad_scope_advisory",
+    "terraform_cloud_policy_set_no_workspace_or_project_scope",
+    "terraform_cloud_notification_broad_trigger_scope",
+    "terraform_cloud_notification_disabled",
+    "terraform_cloud_run_trigger_enabled",
+    "terraform_cloud_team_write_access",
+    "terraform_cloud_team_custom_permissions",
 }
 
 FORBIDDEN_EVIDENCE_KEYS = {
@@ -272,7 +292,8 @@ def test_terraform_cloud_rule_keys_importable() -> None:
 
 def test_rule_keys_count() -> None:
     from app.services.security_rules.terraform_cloud import TERRAFORM_CLOUD_RULE_KEYS
-    assert len(TERRAFORM_CLOUD_RULE_KEYS) == 18
+    # M88C expanded from 18 to 36 rules
+    assert len(TERRAFORM_CLOUD_RULE_KEYS) == 36
 
 
 def test_all_rule_keys_prefixed() -> None:
@@ -456,10 +477,17 @@ def test_healthy_notification_https_with_token_no_findings() -> None:
     assert not findings
 
 
-def test_disabled_notification_no_findings() -> None:
+def test_disabled_notification_no_m88b_findings() -> None:
     from app.services.security_rules.terraform_cloud import evaluate
+    # M88C adds terraform_cloud_notification_disabled for disabled notifications;
+    # M88B rules (http_webhook, token_missing) must not fire on disabled notification.
+    M88B_NOTIFICATION_RULES = {
+        "terraform_cloud_notification_http_webhook",
+        "terraform_cloud_notification_token_missing",
+    }
     findings = evaluate(_notification({"enabled": False, "webhook_url_scheme_category": "http"}))
-    assert not findings
+    fired_m88b = {f.rule_key for f in findings} & M88B_NOTIFICATION_RULES
+    assert not fired_m88b, f"M88B notification rules fired on disabled notification: {fired_m88b}"
 
 
 def test_healthy_policy_set_mandatory_no_findings() -> None:
@@ -478,16 +506,24 @@ def test_policy_set_soft_mandatory_no_findings() -> None:
     assert not findings
 
 
-def test_healthy_team_access_no_admin_no_apply_no_findings() -> None:
+def test_healthy_team_access_no_admin_no_apply_no_m88b_findings() -> None:
     from app.services.security_rules.terraform_cloud import evaluate
+    # M88C adds write_access and custom_permissions rules; the _team_access builder
+    # has write_access_count=1 by default. Only verify M88B rules don't fire here.
+    M88B_TEAM_RULES = {"terraform_cloud_team_admin_access", "terraform_cloud_team_apply_access"}
     findings = evaluate(_team_access({"admin_access_count": 0, "apply_access_count": 0}))
-    assert not findings
+    fired_m88b = {f.rule_key for f in findings} & M88B_TEAM_RULES
+    assert not fired_m88b, f"M88B team rules fired when no admin/apply: {fired_m88b}"
 
 
-def test_healthy_varset_scoped_no_findings() -> None:
+def test_healthy_varset_scoped_no_m88b_findings() -> None:
     from app.services.security_rules.terraform_cloud import evaluate
+    # M88C adds non_sensitive_variables rule that fires on the default varset
+    # (non_sensitive_variable_count=1). Only verify M88B rule doesn't fire.
+    M88B_VARSET_RULE = "terraform_cloud_variable_set_global_scope"
     findings = evaluate(_varset({"global_scope": False}))
-    assert not findings
+    fired_m88b = {f.rule_key for f in findings if f.rule_key == M88B_VARSET_RULE}
+    assert not fired_m88b, "M88B varset global_scope rule fired on non-global varset"
 
 
 def test_state_version_absent_no_findings() -> None:
@@ -793,8 +829,9 @@ def test_frontend_catalog_terraform_cloud_provider_label() -> None:
 def test_frontend_catalog_terraform_cloud_count() -> None:
     text = FE_RULE_CATALOG.read_text()
     catalog_keys = set(re.findall(r'key: "terraform_cloud_([a-z_]+)"', text))
-    assert len(catalog_keys) == 18, (
-        f"Expected 18 terraform_cloud catalog entries, found {len(catalog_keys)}: {sorted(catalog_keys)}"
+    # M88C expanded from 18 to 36 terraform_cloud catalog entries
+    assert len(catalog_keys) == 36, (
+        f"Expected 36 terraform_cloud catalog entries, found {len(catalog_keys)}: {sorted(catalog_keys)}"
     )
 
 
@@ -932,8 +969,12 @@ def test_expansion_framework_planned_next_stage_m88c() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M88C" in planned or "Variable/Policy" in planned or "Risk Expansion" in planned, (
-        f"planned_next_stage should point to M88C; got: {planned!r}"
+    # M88C complete — planned_next_stage advanced to M88D
+    assert (
+        "M88C" in planned or "Variable/Policy" in planned or "Risk Expansion" in planned
+        or "M88D" in planned or "Activity" in planned or "Event Ingestion" in planned
+    ), (
+        f"planned_next_stage should point to M88C or later; got: {planned!r}"
     )
 
 

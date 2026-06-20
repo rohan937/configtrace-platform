@@ -1356,8 +1356,8 @@ _TERRAFORM_CLOUD = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Terraform Cloud DevOps configuration drift foundation (M88A) and core security "
-        "rules (M88B). "
+        "Terraform Cloud DevOps configuration drift foundation (M88A), core security "
+        "rules (M88B), and workspace/variable/policy risk expansion (M88C). "
         "Drift snapshots cover 10 safe configuration surfaces from the Terraform Cloud API v2: "
         "organization posture (workspace/project/policy-set/variable-set counts, SSO, 2FA, "
         "cost estimation, collaborator auth policy — never organization name), "
@@ -1381,11 +1381,19 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "no sensitive variables (low); notification webhook HTTP (high), token missing (medium); "
         "policy set advisory enforcement (medium), policy set empty (low); team admin access (high), "
         "team apply access (medium); variable set global scope (medium); state version present (low). "
+        "M88C adds 18 additional rules: workspace agent execution mode (medium), file triggers "
+        "disabled (medium), speculative plans disabled (low), run triggers present (medium), "
+        "many trigger prefixes (low), latest run failed (medium); workspace env vars non-sensitive "
+        "(medium), Terraform vars non-sensitive (low); variable set non-sensitive variables (medium), "
+        "variable set broad scope (medium); policy set global scope (medium), broad scope advisory "
+        "(medium), no workspace or project scope (low); notification broad trigger scope (medium), "
+        "notification disabled (low); run trigger enabled (medium); team write access (medium), "
+        "team custom permissions (low). "
         "All rule evidence is metadata-only (booleans, counts, categories, opaque IDs). "
         "Never stores: organization names, workspace names, variable names/values, state files, "
         "plan/apply logs, VCS URLs, team names, user emails, webhook URLs, or customer PII. "
-        "Activity ingestion, signals, correlations, demo, and case report planned for M88C+. "
-        "planned_next_stage: M88C: Terraform Cloud Workspace/Variable/Policy Risk Expansion."
+        "Activity ingestion, signals, correlations, demo, and case report planned for M88D+. "
+        "planned_next_stage: M88D: Terraform Cloud Activity/Event Ingestion."
     ),
 )
 

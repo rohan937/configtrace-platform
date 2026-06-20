@@ -515,6 +515,25 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "terraform_cloud_team_apply_access",
         "terraform_cloud_variable_set_global_scope",
         "terraform_cloud_state_version_present",
+        # ── M88C: Terraform Cloud workspace/variable/policy risk expansion ────
+        "terraform_cloud_workspace_agent_execution_mode",
+        "terraform_cloud_workspace_file_triggers_disabled",
+        "terraform_cloud_workspace_speculative_plans_disabled",
+        "terraform_cloud_workspace_run_triggers_present",
+        "terraform_cloud_workspace_many_trigger_prefixes",
+        "terraform_cloud_workspace_latest_run_failed",
+        "terraform_cloud_workspace_environment_variables_non_sensitive",
+        "terraform_cloud_workspace_terraform_variables_non_sensitive",
+        "terraform_cloud_variable_set_non_sensitive_variables",
+        "terraform_cloud_variable_set_broad_scope",
+        "terraform_cloud_policy_set_global_scope",
+        "terraform_cloud_policy_set_broad_scope_advisory",
+        "terraform_cloud_policy_set_no_workspace_or_project_scope",
+        "terraform_cloud_notification_broad_trigger_scope",
+        "terraform_cloud_notification_disabled",
+        "terraform_cloud_run_trigger_enabled",
+        "terraform_cloud_team_write_access",
+        "terraform_cloud_team_custom_permissions",
     }
 )
 

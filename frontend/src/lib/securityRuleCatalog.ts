@@ -8070,6 +8070,349 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Fires when state_version_present=true. Most active workspaces will have state. This is a low-severity informational signal to prompt a review of state access controls.",
   },
+  // ── Terraform Cloud (M88C workspace/variable/policy risk expansion) ──────────
+  {
+    key: "terraform_cloud_workspace_agent_execution_mode",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace uses agent execution mode",
+    category: "Workspace execution posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This workspace is configured to use agent execution mode, meaning Terraform plans and applies run on self-hosted agents rather than Terraform Cloud's managed environment. Agent-based execution relies on your own infrastructure for isolation and audit logging. Workspace execution posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The execution_mode_category field on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Agent execution mode shifts isolation, logging, and security controls to your own agent infrastructure. Review whether the agent pool configuration meets your security requirements.",
+    evidence: "Workspace resource ID (opaque), execution_mode_category, vcs_connected flag.",
+    remediation:
+      "Review the agent pool configuration used by this workspace. Ensure agents run in isolated environments, have appropriate network access controls, and that agent activity is logged.",
+    falsePositiveGuard:
+      "Only fires when execution_mode_category='agent'. Agent mode is an intentional configuration; verify agent security posture rather than switching mode without review.",
+  },
+  {
+    key: "terraform_cloud_workspace_file_triggers_disabled",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has file-based run triggers disabled",
+    category: "Workspace execution posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "File-based run triggers are disabled on this workspace. When disabled, all pushes to the connected VCS branch trigger a run regardless of which files changed. This can lead to unnecessary runs and may obscure which configuration changes are driving infrastructure updates. Workspace execution posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The file_triggers_enabled boolean on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Without file-based triggers, every VCS push triggers an infrastructure run. This increases run volume and may make it harder to trace which changes are driving applies.",
+    evidence: "Workspace resource ID (opaque), file_triggers_enabled flag, vcs_connected flag, execution_mode_category.",
+    remediation:
+      "Enable file-based triggers and configure trigger prefixes or patterns to limit runs to relevant configuration paths.",
+    falsePositiveGuard:
+      "Only fires when file_triggers_enabled=false. Some workspaces are intentionally configured to run on every push or are API-driven without VCS.",
+  },
+  {
+    key: "terraform_cloud_workspace_speculative_plans_disabled",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud workspace has speculative plan runs disabled",
+    category: "Workspace configuration posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Speculative plan runs are disabled on this workspace. Speculative plans allow VCS pull request authors to preview infrastructure changes before merging. Disabling them removes this review mechanism for contributors. Workspace configuration posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The speculative_enabled boolean on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Speculative plans provide a pre-merge preview of infrastructure changes, helping teams catch configuration issues before they reach production.",
+    evidence: "Workspace resource ID (opaque), speculative_enabled flag, vcs_connected flag.",
+    remediation:
+      "Consider enabling speculative plans to give contributors a safe preview of infrastructure changes from pull requests.",
+    falsePositiveGuard:
+      "Only fires when speculative_enabled=false. Some high-privilege or sensitive workspaces intentionally disable speculative plans to prevent unauthorized plan previews.",
+  },
+  {
+    key: "terraform_cloud_workspace_run_triggers_present",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has run triggers configured",
+    category: "Run trigger posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This workspace has run triggers configured. Run triggers automatically queue runs on this workspace when another source workspace completes a successful apply. This creates an implicit dependency that can propagate changes broadly. Run trigger configuration evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The run_trigger_count field on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Run triggers create implicit dependencies between workspaces, meaning changes in one workspace automatically drive changes in another. Review whether all run triggers are intentional and the source workspaces are trusted.",
+    evidence: "Workspace resource ID (opaque), run_trigger_count, execution_mode_category.",
+    remediation:
+      "Review each run trigger to confirm the source workspace dependency is intentional and that the propagation of changes is expected behavior.",
+    falsePositiveGuard:
+      "Only fires when run_trigger_count > 0. Run triggers are a legitimate Terraform Cloud feature for chaining workspace deployments.",
+  },
+  {
+    key: "terraform_cloud_workspace_many_trigger_prefixes",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud workspace has many file trigger prefixes",
+    category: "Workspace configuration posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has a significant number of file trigger prefixes configured. A large number of trigger prefixes may indicate a broad set of configuration paths that can trigger runs. Review whether all prefixes are intentional. Workspace configuration posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The trigger_prefix_count field on terraform_cloud_workspace records (threshold: 5).",
+    whyItMatters:
+      "Many trigger prefixes can expand the attack surface for unintended runs triggered by VCS pushes to many configuration paths.",
+    evidence: "Workspace resource ID (opaque), trigger_prefix_count, file_triggers_enabled flag.",
+    remediation:
+      "Review the configured trigger prefixes and remove any that are no longer needed or are overly broad.",
+    falsePositiveGuard:
+      "Fires when trigger_prefix_count >= 5. Large monorepo configurations may legitimately require many prefixes.",
+  },
+  {
+    key: "terraform_cloud_workspace_latest_run_failed",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace latest run is in a review-worthy state",
+    category: "Workspace execution posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The latest run on this workspace has a status category that may require review (errored, canceled, policy-overridden, or discarded). These states can indicate configuration issues, failed compliance checks, or interrupted apply workflows. Workspace execution posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The latest_run_status_category field on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Persistent failed or canceled run states may indicate a workspace that is not being actively maintained, has a broken configuration, or is blocked by a policy violation.",
+    evidence: "Workspace resource ID (opaque), latest_run_status_category, execution_mode_category.",
+    remediation:
+      "Investigate the cause of the failed or canceled run. Review workspace configuration, policy set enforcement, and whether the workspace is still actively used.",
+    falsePositiveGuard:
+      "Only fires for errored, canceled, policy_override, or discarded run status categories. A single transient failure may not indicate a persistent issue.",
+  },
+  {
+    key: "terraform_cloud_workspace_environment_variables_non_sensitive",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has non-sensitive environment variables",
+    category: "Variable posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has environment variables (category: env) that are not marked as sensitive. Environment variables are often used for credentials, API tokens, and configuration secrets. Non-sensitive environment variables appear in plan output and run logs. Review whether any environment variable holds a sensitive value that should be marked as sensitive. Variable names and values are never stored by ConfigTrace. Variable posture evidence may require review. This does not confirm compromise, secret exposure, or data exposure.",
+    whatItChecks: "The environment_variable_count and non_sensitive_variable_count fields on terraform_cloud_workspace_variable_summary records.",
+    whyItMatters:
+      "Environment variables used for cloud credentials or API tokens are a common source of accidental secret exposure in run logs if not marked as sensitive.",
+    evidence: "Workspace resource ID (opaque), variable_count, environment_variable_count, non_sensitive_variable_count. Variable names and values are never stored.",
+    remediation:
+      "Review all environment variables on this workspace. Mark any variable that holds a credential, token, or sensitive value as sensitive to prevent it from appearing in run output.",
+    falsePositiveGuard:
+      "Fires when environment_variable_count > 0 and non_sensitive_variable_count > 0. Many workspaces use non-sensitive env vars for non-secret configuration such as region or log level.",
+  },
+  {
+    key: "terraform_cloud_workspace_terraform_variables_non_sensitive",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud workspace has non-sensitive Terraform variables",
+    category: "Variable posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has Terraform variables (category: terraform) that are not marked as sensitive. Terraform variables may hold module input values. Non-sensitive Terraform variables appear in plan output. Review whether any Terraform variable holds a value that should be marked as sensitive. Variable names and values are never stored by ConfigTrace. Variable posture evidence may require review. This does not confirm compromise, secret exposure, or data exposure.",
+    whatItChecks: "The terraform_variable_count and non_sensitive_variable_count fields on terraform_cloud_workspace_variable_summary records.",
+    whyItMatters:
+      "Terraform variables that carry database passwords, secret keys, or other confidential module inputs should be marked sensitive to prevent plan output exposure.",
+    evidence: "Workspace resource ID (opaque), variable_count, terraform_variable_count, non_sensitive_variable_count. Variable names and values are never stored.",
+    remediation:
+      "Review Terraform variables on this workspace and mark any that carry sensitive module input values as sensitive.",
+    falsePositiveGuard:
+      "Fires when terraform_variable_count > 0 and non_sensitive_variable_count > 0. Most Terraform variables are non-sensitive configuration values for module inputs.",
+  },
+  {
+    key: "terraform_cloud_variable_set_non_sensitive_variables",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud variable set has non-sensitive variables",
+    category: "Variable set scope posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This variable set has variables that are not marked as sensitive. Variable sets propagate variables to multiple workspaces. Non-sensitive variables in shared sets appear in plan output and run logs across all associated workspaces. Review whether all non-sensitive variables in this set are appropriate for shared scope. Variable names and values are never stored by ConfigTrace. Variable set configuration evidence may require review. This does not confirm compromise, secret exposure, or data exposure.",
+    whatItChecks: "The non_sensitive_variable_count field on terraform_cloud_variable_set records.",
+    whyItMatters:
+      "Non-sensitive variables in a shared variable set appear in plan logs across all workspaces that use the set. If any variable holds a sensitive value, it may be exposed broadly.",
+    evidence: "Variable set resource ID (opaque), global_scope flag, workspace_count, project_count, variable_count, sensitive_variable_count, non_sensitive_variable_count.",
+    remediation:
+      "Review all non-sensitive variables in this variable set. Mark any that carry sensitive values as sensitive, or move them to workspace-specific variables.",
+    falsePositiveGuard:
+      "Fires when non_sensitive_variable_count > 0. Many variable sets contain intentionally non-sensitive configuration values such as region or environment name.",
+  },
+  {
+    key: "terraform_cloud_variable_set_broad_scope",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud global variable set has a significant number of variables",
+    category: "Variable set scope posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This variable set is scoped globally and contains a significant number of variables. A globally scoped variable set with many variables propagates a broad set of values to all workspaces in the organization. Review whether global scope is appropriate given the volume and sensitivity of the variables. Variable names and values are never stored by ConfigTrace. Variable set configuration evidence may require review. This does not confirm compromise, secret exposure, or data exposure.",
+    whatItChecks: "The global_scope boolean and variable_count field on terraform_cloud_variable_set records (variable_count threshold: 5).",
+    whyItMatters:
+      "A globally scoped variable set with many variables increases the blast radius of any misconfigured or sensitive variable, propagating it to every workspace in the organization.",
+    evidence: "Variable set resource ID (opaque), global_scope flag, workspace_count, project_count, variable_count.",
+    remediation:
+      "Consider scoping this variable set to specific workspaces or projects rather than using global scope, especially if the variable set contains many variables.",
+    falsePositiveGuard:
+      "Only fires when global_scope=true and variable_count >= 5. Some organizations intentionally use global variable sets for shared non-sensitive configuration.",
+  },
+  {
+    key: "terraform_cloud_policy_set_global_scope",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud policy set has global scope",
+    category: "Policy enforcement posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This policy set is scoped globally and applies to all workspaces in the organization. A globally scoped policy set enforces or advises on policy for every workspace, which can have broad operational impact. Review whether global scope is intentional and the policy content is appropriate for all workspaces. Policy set configuration evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The global_scope boolean on terraform_cloud_policy_set records.",
+    whyItMatters:
+      "A globally scoped policy set affects every workspace in the organization. If the policy set is misconfigured or advisory-only, it may provide a false sense of compliance coverage.",
+    evidence: "Policy set resource ID (opaque), global_scope flag, workspace_count, project_count, policy_count, enforcement_level_category.",
+    remediation:
+      "Review whether global scope is appropriate for this policy set. Consider scoping to specific workspaces or projects if the policy applies only to certain environments.",
+    falsePositiveGuard:
+      "Only fires when global_scope=true. Some policy sets are intentionally global for organization-wide compliance requirements.",
+  },
+  {
+    key: "terraform_cloud_policy_set_broad_scope_advisory",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud policy set uses advisory enforcement across broad scope",
+    category: "Policy enforcement posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This policy set uses advisory enforcement and applies across a broad scope (global or many workspaces). Advisory policies emit warnings but do not prevent runs from proceeding across any of the associated workspaces. A broadly scoped advisory policy set provides no enforcement guarantee. Policy enforcement posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The enforcement_level_category and global_scope/workspace_count fields on terraform_cloud_policy_set records.",
+    whyItMatters:
+      "Advisory enforcement on a broadly scoped policy set means that policy violations across many workspaces generate warnings only — no runs are blocked. This may provide a false sense of compliance coverage.",
+    evidence: "Policy set resource ID (opaque), global_scope flag, workspace_count, project_count, policy_count, enforcement_level_category.",
+    remediation:
+      "Review whether mandatory or soft-mandatory enforcement is appropriate for this broadly scoped policy set. Advisory enforcement may be appropriate during gradual rollout but should not be permanent for security-critical policies.",
+    falsePositiveGuard:
+      "Fires when enforcement_level_category='advisory' and the set is global or has workspace_count >= 5. Advisory enforcement is appropriate for gradual policy rollout.",
+  },
+  {
+    key: "terraform_cloud_policy_set_no_workspace_or_project_scope",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud policy set has no workspace or project scope",
+    category: "Policy enforcement posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This policy set is not globally scoped and has no associated workspaces or projects. A policy set with no scope enforces no policies on any workspace. This may represent an incomplete configuration or an orphaned policy set. Policy set configuration evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The global_scope boolean, workspace_count, and project_count fields on terraform_cloud_policy_set records.",
+    whyItMatters:
+      "A policy set with no scope is not enforcing any policy. If this was intended to enforce compliance on specific workspaces, the configuration is incomplete.",
+    evidence: "Policy set resource ID (opaque), global_scope flag, workspace_count, project_count, policy_count, enforcement_level_category.",
+    remediation:
+      "Assign this policy set to the appropriate workspaces or projects, scope it globally if intended for organization-wide enforcement, or remove it if no longer needed.",
+    falsePositiveGuard:
+      "Fires when global_scope=false and workspace_count=0 and project_count=0. A policy set may be newly created and not yet scoped.",
+  },
+  {
+    key: "terraform_cloud_notification_broad_trigger_scope",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud notification is subscribed to many run event triggers",
+    category: "Notification security posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This notification configuration is subscribed to many run event triggers. A broad trigger scope may result in a high volume of notifications that could overwhelm the receiver or obscure critical events. Notification configuration evidence may require review. This does not confirm compromise, unauthorized access, or data exposure.",
+    whatItChecks: "The enabled boolean and trigger_count field on terraform_cloud_notification_configuration records (threshold: 5).",
+    whyItMatters:
+      "Notifications subscribed to many event types generate high volume, which may lead to alert fatigue or important events being missed.",
+    evidence: "Notification resource ID (opaque), workspace resource ID (opaque), enabled flag, destination_type_category, trigger_count.",
+    remediation:
+      "Review the trigger subscriptions for this notification and remove any that are not needed. Consider subscribing only to high-priority run events.",
+    falsePositiveGuard:
+      "Fires when enabled=true and trigger_count >= 5. Some teams intentionally subscribe to all run events for comprehensive audit logging.",
+  },
+  {
+    key: "terraform_cloud_notification_disabled",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud notification configuration is disabled",
+    category: "Notification security posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This notification configuration is disabled. A disabled notification will not deliver run event alerts to the configured destination. If this notification was intended to alert on run events, review whether it should be re-enabled. Notification configuration evidence may require review. This does not confirm compromise, unauthorized access, or data exposure.",
+    whatItChecks: "The enabled boolean on terraform_cloud_notification_configuration records.",
+    whyItMatters:
+      "A disabled notification means run events on this workspace are not being delivered to the configured destination, which may result in missed alerts.",
+    evidence: "Notification resource ID (opaque), workspace resource ID (opaque), enabled flag, destination_type_category, trigger_count.",
+    remediation:
+      "Review whether this notification should be re-enabled. If it is no longer needed, consider removing it to keep the notification configuration clean.",
+    falsePositiveGuard:
+      "Only fires when enabled=false. Notifications may be intentionally disabled during testing or decommissioning.",
+  },
+  {
+    key: "terraform_cloud_run_trigger_enabled",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has an active run trigger",
+    category: "Run trigger posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A run trigger is configured on this workspace. Run triggers automatically queue a run on this workspace when a source workspace completes a successful apply. This creates an implicit workspace dependency that can propagate infrastructure changes from one workspace to another. Run trigger configuration evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The sourceable_type_category field on terraform_cloud_run_trigger records.",
+    whyItMatters:
+      "Active run triggers create implicit propagation paths for infrastructure changes. A compromised or misconfigured source workspace can trigger downstream workspace runs.",
+    evidence: "Run trigger resource ID (opaque), workspace resource ID (opaque), sourceable_type_category.",
+    remediation:
+      "Review whether this run trigger is intentional and the source workspace is trusted. Remove run triggers that are no longer needed.",
+    falsePositiveGuard:
+      "Fires on every active run trigger record. Run triggers are a legitimate Terraform Cloud feature for chaining workspace deployments.",
+  },
+  {
+    key: "terraform_cloud_team_write_access",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has teams with write access",
+    category: "Team access posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has teams with write-level access. Write access allows teams to create and queue runs, manage workspace variables, and manage workspace state. Review whether write access is limited to teams that require it. Team names are never stored by ConfigTrace. Team access posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The write_access_count field on terraform_cloud_team_access_summary records.",
+    whyItMatters:
+      "Write access grants the ability to create runs and manage workspace variables. Teams with write access can queue infrastructure changes without apply-level approval.",
+    evidence: "Workspace resource ID (opaque), team_access_count, write_access_count, admin_access_count.",
+    remediation:
+      "Review which teams have write access to this workspace. Reduce write access to only teams that need to create and queue runs.",
+    falsePositiveGuard:
+      "Fires when write_access_count > 0. Write access is commonly granted to deployment teams and is expected in many organizations.",
+  },
+  {
+    key: "terraform_cloud_team_custom_permissions",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud workspace has teams with custom permissions",
+    category: "Team access posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has teams with custom permission configurations. Custom permissions allow fine-grained control over which run operations, variable management, and state access a team can perform. Review custom permission configurations to ensure they follow the principle of least privilege. Team names are never stored by ConfigTrace. Team access posture evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The custom_permission_count field on terraform_cloud_team_access_summary records.",
+    whyItMatters:
+      "Custom permissions can grant granular capabilities that are harder to audit than the standard access levels. Review custom configurations to ensure they are appropriately scoped.",
+    evidence: "Workspace resource ID (opaque), team_access_count, custom_permission_count.",
+    remediation:
+      "Review the custom permissions configured for teams on this workspace. Prefer standard access levels where possible and document any custom permissions.",
+    falsePositiveGuard:
+      "Fires when custom_permission_count > 0. Custom permissions are a legitimate Terraform Cloud feature for fine-grained access control.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────

@@ -51,6 +51,7 @@ PROVIDERS = [
     "linear",
     "jira",
     "gitlab",
+    "terraform_cloud",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -561,6 +562,25 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "terraform_cloud_team_apply_access": ("terraform_cloud_team_access_summary",),
     "terraform_cloud_variable_set_global_scope": ("terraform_cloud_variable_set",),
     "terraform_cloud_state_version_present": ("terraform_cloud_state_version_summary",),
+    # ── M88C: Terraform Cloud workspace/variable/policy risk expansion ─────────
+    "terraform_cloud_workspace_agent_execution_mode": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_file_triggers_disabled": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_speculative_plans_disabled": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_run_triggers_present": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_many_trigger_prefixes": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_latest_run_failed": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_environment_variables_non_sensitive": ("terraform_cloud_workspace_variable_summary",),
+    "terraform_cloud_workspace_terraform_variables_non_sensitive": ("terraform_cloud_workspace_variable_summary",),
+    "terraform_cloud_variable_set_non_sensitive_variables": ("terraform_cloud_variable_set",),
+    "terraform_cloud_variable_set_broad_scope": ("terraform_cloud_variable_set",),
+    "terraform_cloud_policy_set_global_scope": ("terraform_cloud_policy_set",),
+    "terraform_cloud_policy_set_broad_scope_advisory": ("terraform_cloud_policy_set",),
+    "terraform_cloud_policy_set_no_workspace_or_project_scope": ("terraform_cloud_policy_set",),
+    "terraform_cloud_notification_broad_trigger_scope": ("terraform_cloud_notification_configuration",),
+    "terraform_cloud_notification_disabled": ("terraform_cloud_notification_configuration",),
+    "terraform_cloud_run_trigger_enabled": ("terraform_cloud_run_trigger",),
+    "terraform_cloud_team_write_access": ("terraform_cloud_team_access_summary",),
+    "terraform_cloud_team_custom_permissions": ("terraform_cloud_team_access_summary",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -697,6 +717,7 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Team access summaries",
         "Variable set scope posture",
         "State version summaries",
+        "Run trigger posture",
     ],
 }
 
@@ -1156,6 +1177,10 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "terraform_cloud_state_version_summary": {
         "message": "Terraform Cloud state version summary was not observed.",
         "hints": ["State version presence is derived from workspace metadata. Raw state files, state outputs, and resource addresses are never fetched or stored."],
+    },
+    "terraform_cloud_run_trigger": {
+        "message": "Terraform Cloud run trigger metadata was not observed.",
+        "hints": ["Run trigger metadata requires at least read access to the workspace. Source workspace identities and run payload contents are never stored — only sourceable type category."],
     },
 }
 

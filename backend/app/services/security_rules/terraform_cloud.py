@@ -1,4 +1,4 @@
-"""Terraform Cloud configuration-risk security rules — M88B.
+"""Terraform Cloud configuration-risk security rules — M88B, expanded M88C.
 
 Every rule fires only on explicit, reliable normalized fields produced by the
 Terraform Cloud connector (app/connectors/terraform_cloud.py + schema, M88A).
@@ -50,6 +50,7 @@ from app.connectors.terraform_cloud_schema import (
     TERRAFORM_CLOUD_NOTIFICATION_CONFIGURATION,
     TERRAFORM_CLOUD_ORGANIZATION,
     TERRAFORM_CLOUD_POLICY_SET,
+    TERRAFORM_CLOUD_RUN_TRIGGER,
     TERRAFORM_CLOUD_STATE_VERSION_SUMMARY,
     TERRAFORM_CLOUD_TEAM_ACCESS_SUMMARY,
     TERRAFORM_CLOUD_VARIABLE_SET,
@@ -107,10 +108,50 @@ RULE_VARIABLE_SET_GLOBAL = "terraform_cloud_variable_set_global_scope"
 # State version rules (M88B)
 RULE_STATE_VERSION_PRESENT = "terraform_cloud_state_version_present"
 
+# ── M88C rule key constants ────────────────────────────────────────────────────
+
+# Workspace execution/run posture (M88C)
+RULE_WORKSPACE_AGENT_EXECUTION = "terraform_cloud_workspace_agent_execution_mode"
+RULE_WORKSPACE_FILE_TRIGGERS_DISABLED = "terraform_cloud_workspace_file_triggers_disabled"
+RULE_WORKSPACE_SPECULATIVE_DISABLED = "terraform_cloud_workspace_speculative_plans_disabled"
+RULE_WORKSPACE_RUN_TRIGGERS_PRESENT = "terraform_cloud_workspace_run_triggers_present"
+RULE_WORKSPACE_MANY_TRIGGER_PREFIXES = "terraform_cloud_workspace_many_trigger_prefixes"
+RULE_WORKSPACE_LATEST_RUN_FAILED = "terraform_cloud_workspace_latest_run_failed"
+
+# Workspace variable posture (M88C)
+RULE_ENV_VARS_NON_SENSITIVE = "terraform_cloud_workspace_environment_variables_non_sensitive"
+RULE_TF_VARS_NON_SENSITIVE = "terraform_cloud_workspace_terraform_variables_non_sensitive"
+
+# Variable set posture (M88C)
+RULE_VARSET_NON_SENSITIVE = "terraform_cloud_variable_set_non_sensitive_variables"
+RULE_VARSET_BROAD_SCOPE = "terraform_cloud_variable_set_broad_scope"
+
+# Policy set posture (M88C)
+RULE_POLICY_GLOBAL_SCOPE = "terraform_cloud_policy_set_global_scope"
+RULE_POLICY_BROAD_SCOPE_ADVISORY = "terraform_cloud_policy_set_broad_scope_advisory"
+RULE_POLICY_NO_SCOPE = "terraform_cloud_policy_set_no_workspace_or_project_scope"
+
+# Notification posture (M88C)
+RULE_NOTIFICATION_BROAD_TRIGGERS = "terraform_cloud_notification_broad_trigger_scope"
+RULE_NOTIFICATION_DISABLED = "terraform_cloud_notification_disabled"
+
+# Run trigger posture (M88C)
+RULE_RUN_TRIGGER_ENABLED = "terraform_cloud_run_trigger_enabled"
+
+# Team access posture (M88C)
+RULE_TEAM_WRITE_ACCESS = "terraform_cloud_team_write_access"
+RULE_TEAM_CUSTOM_PERMISSIONS = "terraform_cloud_team_custom_permissions"
+
+# Thresholds
+_TRIGGER_PREFIX_THRESHOLD = 5    # trigger_prefix_count >= this → medium
+_NOTIFICATION_TRIGGER_THRESHOLD = 5  # trigger_count >= this → broad scope
+_VARSET_BROAD_VARIABLE_THRESHOLD = 5  # variable_count >= this → meaningful blast radius
+_POLICY_BROAD_WORKSPACE_THRESHOLD = 5  # workspace_count >= this → broad scope
 
 # Exported frozenset of all rule keys
 TERRAFORM_CLOUD_RULE_KEYS: frozenset[str] = frozenset(
     {
+        # M88B rules
         RULE_ORG_2FA_NOT_REQUIRED,
         RULE_ORG_SSO_NOT_ENABLED,
         RULE_WORKSPACE_AUTO_APPLY_ENABLED,
@@ -129,6 +170,25 @@ TERRAFORM_CLOUD_RULE_KEYS: frozenset[str] = frozenset(
         RULE_TEAM_APPLY_ACCESS,
         RULE_VARIABLE_SET_GLOBAL,
         RULE_STATE_VERSION_PRESENT,
+        # M88C rules
+        RULE_WORKSPACE_AGENT_EXECUTION,
+        RULE_WORKSPACE_FILE_TRIGGERS_DISABLED,
+        RULE_WORKSPACE_SPECULATIVE_DISABLED,
+        RULE_WORKSPACE_RUN_TRIGGERS_PRESENT,
+        RULE_WORKSPACE_MANY_TRIGGER_PREFIXES,
+        RULE_WORKSPACE_LATEST_RUN_FAILED,
+        RULE_ENV_VARS_NON_SENSITIVE,
+        RULE_TF_VARS_NON_SENSITIVE,
+        RULE_VARSET_NON_SENSITIVE,
+        RULE_VARSET_BROAD_SCOPE,
+        RULE_POLICY_GLOBAL_SCOPE,
+        RULE_POLICY_BROAD_SCOPE_ADVISORY,
+        RULE_POLICY_NO_SCOPE,
+        RULE_NOTIFICATION_BROAD_TRIGGERS,
+        RULE_NOTIFICATION_DISABLED,
+        RULE_RUN_TRIGGER_ENABLED,
+        RULE_TEAM_WRITE_ACCESS,
+        RULE_TEAM_CUSTOM_PERMISSIONS,
     }
 )
 
@@ -793,6 +853,612 @@ def _eval_state_version_summary(record: dict[str, Any]) -> list[FindingCandidate
     return candidates
 
 
+# ── M88C: Extended workspace rules ────────────────────────────────────────────
+
+
+def _eval_workspace_m88c(record: dict[str, Any]) -> list[FindingCandidate]:
+    """M88C expansion rules for terraform_cloud_workspace records."""
+    candidates: list[FindingCandidate] = []
+    record_id = record.get("record_id")
+    workspace_resource_id = get_str(record, "workspace_resource_id")
+    exec_mode = get_str(record, "execution_mode_category")
+
+    # Rule M88C-1: agent execution mode
+    if exec_mode == "agent":
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_WORKSPACE_AGENT_EXECUTION,
+                finding_key=make_finding_key(RULE_WORKSPACE_AGENT_EXECUTION, record_id),
+                severity="medium",
+                title="Terraform Cloud workspace uses agent execution mode",
+                description=(
+                    "This workspace is configured to use agent execution mode, meaning "
+                    "Terraform plans and applies run on self-hosted agents rather than "
+                    "Terraform Cloud's managed environment. Agent-based execution relies "
+                    "on your own infrastructure for isolation and audit logging. Review "
+                    "whether agent pool configuration and security posture meet your "
+                    "requirements. Workspace execution posture evidence may require review. "
+                    + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id", "execution_mode_category",
+                    "vcs_connected",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-2: file triggers disabled
+    file_triggers = _get_bool(record, "file_triggers_enabled")
+    if file_triggers is False:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_WORKSPACE_FILE_TRIGGERS_DISABLED,
+                finding_key=make_finding_key(RULE_WORKSPACE_FILE_TRIGGERS_DISABLED, record_id),
+                severity="medium",
+                title="Terraform Cloud workspace has file-based run triggers disabled",
+                description=(
+                    "File-based run triggers are disabled on this workspace. When disabled, "
+                    "all pushes to the connected VCS branch trigger a run regardless of which "
+                    "files changed. This can lead to unnecessary runs and may obscure which "
+                    "configuration changes are driving infrastructure updates. Workspace "
+                    "execution posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id", "file_triggers_enabled",
+                    "vcs_connected", "execution_mode_category",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-3: speculative plans disabled
+    speculative = _get_bool(record, "speculative_enabled")
+    if speculative is False:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_WORKSPACE_SPECULATIVE_DISABLED,
+                finding_key=make_finding_key(RULE_WORKSPACE_SPECULATIVE_DISABLED, record_id),
+                severity="low",
+                title="Terraform Cloud workspace has speculative plan runs disabled",
+                description=(
+                    "Speculative plan runs are disabled on this workspace. Speculative "
+                    "plans allow VCS pull request authors to preview infrastructure changes "
+                    "before merging. Disabling them removes this review mechanism for "
+                    "contributors. Workspace configuration posture evidence may require "
+                    "review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id", "speculative_enabled",
+                    "vcs_connected",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-4: run triggers present
+    run_trigger_count = _get_int(record, "run_trigger_count")
+    if run_trigger_count is not None and run_trigger_count > 0:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_WORKSPACE_RUN_TRIGGERS_PRESENT,
+                finding_key=make_finding_key(RULE_WORKSPACE_RUN_TRIGGERS_PRESENT, record_id),
+                severity="medium",
+                title="Terraform Cloud workspace has run triggers configured",
+                description=(
+                    f"This workspace has {run_trigger_count} run trigger(s) configured. "
+                    "Run triggers automatically queue runs on this workspace when another "
+                    "source workspace completes a successful apply. This creates an "
+                    "implicit dependency that can propagate changes broadly. Review "
+                    "whether all run triggers are intentional and scoped appropriately. "
+                    "Run trigger posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id", "run_trigger_count",
+                    "execution_mode_category",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-5: many trigger prefixes
+    trigger_prefix_count = _get_int(record, "trigger_prefix_count")
+    if trigger_prefix_count is not None and trigger_prefix_count >= _TRIGGER_PREFIX_THRESHOLD:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_WORKSPACE_MANY_TRIGGER_PREFIXES,
+                finding_key=make_finding_key(RULE_WORKSPACE_MANY_TRIGGER_PREFIXES, record_id),
+                severity="low",
+                title="Terraform Cloud workspace has many file trigger prefixes",
+                description=(
+                    f"This workspace has {trigger_prefix_count} file trigger prefix(es) "
+                    f"(threshold: {_TRIGGER_PREFIX_THRESHOLD}). A large number of trigger "
+                    "prefixes may indicate a broad set of configuration paths that can "
+                    "trigger runs. Review whether all prefixes are intentional. Workspace "
+                    "configuration posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id", "trigger_prefix_count",
+                    "file_triggers_enabled",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-6: latest run in review-worthy failure/error state
+    run_status = get_str(record, "latest_run_status_category")
+    _FAILED_STATUSES = {"errored", "canceled", "policy_override", "discarded"}
+    if run_status and run_status in _FAILED_STATUSES:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_WORKSPACE_LATEST_RUN_FAILED,
+                finding_key=make_finding_key(RULE_WORKSPACE_LATEST_RUN_FAILED, record_id),
+                severity="medium",
+                title="Terraform Cloud workspace latest run is in a review-worthy state",
+                description=(
+                    f"The latest run on this workspace has a status category of "
+                    f"'{run_status}', which may require review. Errored, canceled, "
+                    "policy-overridden, or discarded runs can indicate configuration "
+                    "issues, failed compliance checks, or interrupted apply workflows. "
+                    "Workspace execution posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id", "latest_run_status_category",
+                    "execution_mode_category",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    return candidates
+
+
+# ── M88C: Extended workspace variable summary rules ───────────────────────────
+
+
+def _eval_workspace_variable_summary_m88c(
+    record: dict[str, Any],
+) -> list[FindingCandidate]:
+    """M88C expansion rules for terraform_cloud_workspace_variable_summary."""
+    candidates: list[FindingCandidate] = []
+    record_id = record.get("record_id")
+    workspace_resource_id = get_str(record, "workspace_resource_id")
+
+    variable_count = _get_int(record, "variable_count")
+    non_sensitive_count = _get_int(record, "non_sensitive_variable_count")
+    env_count = _get_int(record, "environment_variable_count")
+    tf_count = _get_int(record, "terraform_variable_count")
+
+    if variable_count is None or variable_count == 0:
+        return []
+
+    # Rule M88C-7: environment variables that are non-sensitive
+    if env_count is not None and env_count > 0 and non_sensitive_count is not None and non_sensitive_count > 0:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_ENV_VARS_NON_SENSITIVE,
+                finding_key=make_finding_key(RULE_ENV_VARS_NON_SENSITIVE, record_id),
+                severity="medium",
+                title="Terraform Cloud workspace has non-sensitive environment variables",
+                description=(
+                    "This workspace has environment variables (category: env) that are "
+                    "not marked as sensitive. Environment variables are often used for "
+                    "credentials, API tokens, and configuration secrets. Non-sensitive "
+                    "environment variables appear in plan output and run logs. Review "
+                    "whether any environment variable holds a sensitive value that should "
+                    "be marked as sensitive. Variable names and values are never stored by "
+                    "ConfigTrace. Variable posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id",
+                    "variable_count", "environment_variable_count",
+                    "non_sensitive_variable_count", "raw_value_never_read",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-8: Terraform variables that are non-sensitive
+    if tf_count is not None and tf_count > 0 and non_sensitive_count is not None and non_sensitive_count > 0:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_TF_VARS_NON_SENSITIVE,
+                finding_key=make_finding_key(RULE_TF_VARS_NON_SENSITIVE, record_id),
+                severity="low",
+                title="Terraform Cloud workspace has non-sensitive Terraform variables",
+                description=(
+                    "This workspace has Terraform variables (category: terraform) that are "
+                    "not marked as sensitive. Terraform variables may hold module input "
+                    "values. Non-sensitive Terraform variables appear in plan output. "
+                    "Review whether any Terraform variable holds a value that should be "
+                    "marked as sensitive. Variable names and values are never stored by "
+                    "ConfigTrace. Variable posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id",
+                    "variable_count", "terraform_variable_count",
+                    "non_sensitive_variable_count", "raw_value_never_read",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    return candidates
+
+
+# ── M88C: Extended variable set rules ─────────────────────────────────────────
+
+
+def _eval_variable_set_m88c(record: dict[str, Any]) -> list[FindingCandidate]:
+    """M88C expansion rules for terraform_cloud_variable_set."""
+    candidates: list[FindingCandidate] = []
+    record_id = record.get("record_id")
+    variable_set_resource_id = get_str(record, "variable_set_resource_id")
+
+    global_scope = _get_bool(record, "global_scope")
+    variable_count = _get_int(record, "variable_count")
+    non_sensitive_count = _get_int(record, "non_sensitive_variable_count")
+    workspace_count = _get_int(record, "workspace_count")
+    project_count = _get_int(record, "project_count")
+    sensitive_count = _get_int(record, "sensitive_variable_count")
+
+    # Rule M88C-9: variable set has non-sensitive variables
+    if non_sensitive_count is not None and non_sensitive_count > 0:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_VARSET_NON_SENSITIVE,
+                finding_key=make_finding_key(RULE_VARSET_NON_SENSITIVE, record_id),
+                severity="medium",
+                title="Terraform Cloud variable set has non-sensitive variables",
+                description=(
+                    "This variable set has variables that are not marked as sensitive. "
+                    "Variable sets propagate variables to multiple workspaces. Non-sensitive "
+                    "variables in shared sets appear in plan output and run logs across all "
+                    "associated workspaces. Review whether all non-sensitive variables in "
+                    "this set are appropriate for shared scope. Variable names and values "
+                    "are never stored by ConfigTrace. Variable set configuration evidence "
+                    "may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "variable_set_resource_id",
+                    "global_scope", "workspace_count", "project_count",
+                    "variable_count", "sensitive_variable_count",
+                    "non_sensitive_variable_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-10: variable set has global scope AND meaningful variable count
+    # (distinct from M88B RULE_VARIABLE_SET_GLOBAL which fires on global_scope alone)
+    if (
+        global_scope is True
+        and variable_count is not None
+        and variable_count >= _VARSET_BROAD_VARIABLE_THRESHOLD
+    ):
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_VARSET_BROAD_SCOPE,
+                finding_key=make_finding_key(RULE_VARSET_BROAD_SCOPE, record_id),
+                severity="medium",
+                title="Terraform Cloud global variable set has a significant number of variables",
+                description=(
+                    f"This variable set is scoped globally and contains {variable_count} "
+                    f"variable(s) (threshold: {_VARSET_BROAD_VARIABLE_THRESHOLD}). A "
+                    "globally scoped variable set with many variables propagates a "
+                    "broad set of values — including potentially sensitive ones — to "
+                    "all workspaces in the organization. Review whether global scope is "
+                    "appropriate given the volume and sensitivity of the variables. "
+                    "Variable names and values are never stored by ConfigTrace. "
+                    "Variable set configuration evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "variable_set_resource_id",
+                    "global_scope", "workspace_count", "project_count",
+                    "variable_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    return candidates
+
+
+# ── M88C: Extended policy set rules ───────────────────────────────────────────
+
+
+def _eval_policy_set_m88c(record: dict[str, Any]) -> list[FindingCandidate]:
+    """M88C expansion rules for terraform_cloud_policy_set."""
+    candidates: list[FindingCandidate] = []
+    record_id = record.get("record_id")
+    policy_set_resource_id = get_str(record, "policy_set_resource_id")
+
+    global_scope = _get_bool(record, "global_scope")
+    enforcement_level = get_str(record, "enforcement_level_category")
+    workspace_count = _get_int(record, "workspace_count")
+    project_count = _get_int(record, "project_count")
+    policy_count = _get_int(record, "policy_count")
+
+    # Rule M88C-11: policy set has global scope
+    if global_scope is True:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_POLICY_GLOBAL_SCOPE,
+                finding_key=make_finding_key(RULE_POLICY_GLOBAL_SCOPE, record_id),
+                severity="medium",
+                title="Terraform Cloud policy set has global scope",
+                description=(
+                    "This policy set is scoped globally and applies to all workspaces "
+                    "in the organization. A globally scoped policy set enforces (or "
+                    "advises on) policy for every workspace, which can have broad "
+                    "operational impact. Review whether global scope is intentional and "
+                    "the policy content is appropriate for all workspaces. Policy set "
+                    "configuration evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "policy_set_resource_id",
+                    "global_scope", "workspace_count", "project_count",
+                    "policy_count", "enforcement_level_category",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-12: advisory enforcement on a broadly scoped policy set
+    _is_broad = (
+        global_scope is True
+        or (workspace_count is not None and workspace_count >= _POLICY_BROAD_WORKSPACE_THRESHOLD)
+    )
+    if enforcement_level == "advisory" and _is_broad:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_POLICY_BROAD_SCOPE_ADVISORY,
+                finding_key=make_finding_key(RULE_POLICY_BROAD_SCOPE_ADVISORY, record_id),
+                severity="medium",
+                title="Terraform Cloud policy set uses advisory enforcement across broad scope",
+                description=(
+                    "This policy set uses advisory enforcement and applies across a broad "
+                    "scope (global or many workspaces). Advisory policies emit warnings "
+                    "but do not prevent runs from proceeding across any of the associated "
+                    "workspaces. A broadly scoped advisory policy set provides no "
+                    "enforcement guarantee. Review whether mandatory or soft-mandatory "
+                    "enforcement is appropriate given the policy scope. Policy enforcement "
+                    "posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "policy_set_resource_id",
+                    "global_scope", "workspace_count", "project_count",
+                    "policy_count", "enforcement_level_category",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-13: policy set with no workspace or project scope (orphaned)
+    if (
+        global_scope is False
+        and (workspace_count is not None and workspace_count == 0)
+        and (project_count is not None and project_count == 0)
+    ):
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_POLICY_NO_SCOPE,
+                finding_key=make_finding_key(RULE_POLICY_NO_SCOPE, record_id),
+                severity="low",
+                title="Terraform Cloud policy set has no workspace or project scope",
+                description=(
+                    "This policy set is not globally scoped and has no associated "
+                    "workspaces or projects. A policy set with no scope enforces no "
+                    "policies on any workspace. This may represent an incomplete "
+                    "configuration or an orphaned policy set. Review whether this "
+                    "policy set should be scoped to relevant workspaces or removed. "
+                    "Policy set configuration evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "policy_set_resource_id",
+                    "global_scope", "workspace_count", "project_count",
+                    "policy_count", "enforcement_level_category",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    return candidates
+
+
+# ── M88C: Extended notification rules ─────────────────────────────────────────
+
+
+def _eval_notification_m88c(record: dict[str, Any]) -> list[FindingCandidate]:
+    """M88C expansion rules for terraform_cloud_notification_configuration."""
+    candidates: list[FindingCandidate] = []
+    record_id = record.get("record_id")
+    notification_resource_id = get_str(record, "notification_resource_id")
+    workspace_resource_id = get_str(record, "workspace_resource_id")
+
+    enabled = _get_bool(record, "enabled")
+    dest_type = get_str(record, "destination_type_category")
+    trigger_count = _get_int(record, "trigger_count")
+
+    # Rule M88C-14: broad trigger scope (many events)
+    if enabled is True and trigger_count is not None and trigger_count >= _NOTIFICATION_TRIGGER_THRESHOLD:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_NOTIFICATION_BROAD_TRIGGERS,
+                finding_key=make_finding_key(RULE_NOTIFICATION_BROAD_TRIGGERS, record_id),
+                severity="medium",
+                title="Terraform Cloud notification is subscribed to many run event triggers",
+                description=(
+                    f"This notification configuration is subscribed to {trigger_count} "
+                    f"run event trigger(s) (threshold: {_NOTIFICATION_TRIGGER_THRESHOLD}). "
+                    "A broad trigger scope may result in a high volume of notifications "
+                    "that could overwhelm the receiver or obscure critical events. Review "
+                    "whether all trigger subscriptions are intentional and appropriate "
+                    "for this workspace. Notification configuration evidence may require "
+                    "review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "notification_resource_id", "workspace_resource_id",
+                    "enabled", "destination_type_category", "trigger_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-15: notification disabled
+    if enabled is False:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_NOTIFICATION_DISABLED,
+                finding_key=make_finding_key(RULE_NOTIFICATION_DISABLED, record_id),
+                severity="low",
+                title="Terraform Cloud notification configuration is disabled",
+                description=(
+                    "This notification configuration is disabled. A disabled notification "
+                    "will not deliver run event alerts to the configured destination. "
+                    "If this notification was intended to alert on run events, review "
+                    "whether it should be re-enabled. Notification configuration evidence "
+                    "may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "notification_resource_id", "workspace_resource_id",
+                    "enabled", "destination_type_category", "trigger_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    return candidates
+
+
+# ── M88C: Run trigger rules ────────────────────────────────────────────────────
+
+
+def _eval_run_trigger(record: dict[str, Any]) -> list[FindingCandidate]:
+    """M88C rules for terraform_cloud_run_trigger records.
+
+    Note: The M88A connector does not emit an 'enabled' field for run triggers;
+    every emitted record represents a configured (active) trigger. Rule M88C-16
+    fires on any known run trigger record as a posture indicator.
+    """
+    candidates: list[FindingCandidate] = []
+    record_id = record.get("record_id")
+    run_trigger_resource_id = get_str(record, "run_trigger_resource_id")
+    workspace_resource_id = get_str(record, "workspace_resource_id")
+    sourceable_type = get_str(record, "sourceable_type_category")
+
+    # Rule M88C-16: active run trigger present
+    # Every emitted record represents an active trigger (connector only emits configured triggers).
+    candidates.append(
+        FindingCandidate(
+            provider="terraform_cloud",
+            rule_key=RULE_RUN_TRIGGER_ENABLED,
+            finding_key=make_finding_key(RULE_RUN_TRIGGER_ENABLED, record_id),
+            severity="medium",
+            title="Terraform Cloud workspace has an active run trigger",
+            description=(
+                "A run trigger is configured on this workspace. Run triggers automatically "
+                "queue a run on this workspace when a source workspace completes a successful "
+                "apply. This creates an implicit workspace dependency that can propagate "
+                "infrastructure changes from one workspace to another. Review whether this "
+                "run trigger is intentional and the source workspace is trusted. Run trigger "
+                "configuration evidence may require review. " + _DISCLAIMER
+            ),
+            evidence=_safe_evidence(
+                record, "run_trigger_resource_id", "workspace_resource_id",
+                "sourceable_type_category",
+            ),
+            record_id=record_id,
+        )
+    )
+
+    return candidates
+
+
+# ── M88C: Extended team access rules ──────────────────────────────────────────
+
+
+def _eval_team_access_summary_m88c(record: dict[str, Any]) -> list[FindingCandidate]:
+    """M88C expansion rules for terraform_cloud_team_access_summary."""
+    candidates: list[FindingCandidate] = []
+    record_id = record.get("record_id")
+    workspace_resource_id = get_str(record, "workspace_resource_id")
+
+    write_count = _get_int(record, "write_access_count")
+    custom_count = _get_int(record, "custom_permission_count")
+    team_access_count = _get_int(record, "team_access_count")
+    admin_count = _get_int(record, "admin_access_count")
+
+    # Rule M88C-17: teams with write access
+    if write_count is not None and write_count > 0:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_TEAM_WRITE_ACCESS,
+                finding_key=make_finding_key(RULE_TEAM_WRITE_ACCESS, record_id),
+                severity="medium",
+                title="Terraform Cloud workspace has teams with write access",
+                description=(
+                    f"This workspace has {write_count} team(s) with write-level access. "
+                    "Write access allows teams to create and queue runs, manage workspace "
+                    "variables, and manage workspace state. Review whether write access "
+                    "is limited to teams that require it. Team names are never stored by "
+                    "ConfigTrace. Team access posture evidence may require review. "
+                    + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id",
+                    "team_access_count", "write_access_count",
+                    "admin_access_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule M88C-18: teams with custom permissions
+    if custom_count is not None and custom_count > 0:
+        candidates.append(
+            FindingCandidate(
+                provider="terraform_cloud",
+                rule_key=RULE_TEAM_CUSTOM_PERMISSIONS,
+                finding_key=make_finding_key(RULE_TEAM_CUSTOM_PERMISSIONS, record_id),
+                severity="low",
+                title="Terraform Cloud workspace has teams with custom permissions",
+                description=(
+                    f"This workspace has {custom_count} team(s) with custom permission "
+                    "configurations. Custom permissions allow fine-grained control over "
+                    "which run operations, variable management, and state access a team "
+                    "can perform. Review custom permission configurations to ensure they "
+                    "follow the principle of least privilege. Team names are never stored "
+                    "by ConfigTrace. Team access posture evidence may require review. "
+                    + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record, "workspace_resource_id",
+                    "team_access_count", "custom_permission_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    return candidates
+
+
 # ── Top-level dispatcher ───────────────────────────────────────────────────────
 
 
@@ -816,19 +1482,21 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
     if rtype == TERRAFORM_CLOUD_ORGANIZATION:
         return _eval_organization(record)
     if rtype == TERRAFORM_CLOUD_WORKSPACE:
-        return _eval_workspace(record)
+        return _eval_workspace(record) + _eval_workspace_m88c(record)
     if rtype == TERRAFORM_CLOUD_WORKSPACE_VARIABLE_SUMMARY:
-        return _eval_workspace_variable_summary(record)
+        return _eval_workspace_variable_summary(record) + _eval_workspace_variable_summary_m88c(record)
     if rtype == TERRAFORM_CLOUD_NOTIFICATION_CONFIGURATION:
-        return _eval_notification(record)
+        return _eval_notification(record) + _eval_notification_m88c(record)
     if rtype == TERRAFORM_CLOUD_POLICY_SET:
-        return _eval_policy_set(record)
+        return _eval_policy_set(record) + _eval_policy_set_m88c(record)
     if rtype == TERRAFORM_CLOUD_TEAM_ACCESS_SUMMARY:
-        return _eval_team_access_summary(record)
+        return _eval_team_access_summary(record) + _eval_team_access_summary_m88c(record)
     if rtype == TERRAFORM_CLOUD_VARIABLE_SET:
-        return _eval_variable_set(record)
+        return _eval_variable_set(record) + _eval_variable_set_m88c(record)
     if rtype == TERRAFORM_CLOUD_STATE_VERSION_SUMMARY:
         return _eval_state_version_summary(record)
+    if rtype == TERRAFORM_CLOUD_RUN_TRIGGER:
+        return _eval_run_trigger(record)
 
-    # terraform_cloud_project, terraform_cloud_run_trigger: no rules at M88B
+    # terraform_cloud_project: no rules at M88B/M88C
     return []
