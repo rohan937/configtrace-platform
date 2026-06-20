@@ -380,10 +380,10 @@ _ACTIVITY_PROVIDERS = [
 # Jira activity ingestion landed in M86D; Jira signals landed in M86E; Jira
 # correlations landed in M86F, so jira now appears in the activity, signals,
 # and correlations selectors.
-# GitLab activity ingestion landed in M87D, but GitLab signals (M87E) and
-# correlations (M87F) have NOT shipped yet, so gitlab appears only in the
-# activity selector — not in the signals or correlations selectors.
-_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "gitlab"]
+# GitLab activity ingestion landed in M87D; GitLab signals landed in M87E.
+# GitLab correlations (M87F) have NOT shipped yet, so gitlab appears in both
+# the activity and signals selectors, but not the correlations selector.
+_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 _CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "gitlab"]
 
 

@@ -279,9 +279,12 @@ from app.services import jira_activity_ingestion_service
 from app.services import jira_activity_signal_service
 from app.services import jira_risk_activity_correlation_service
 from app.services import gitlab_activity_ingestion_service
+from app.services import gitlab_activity_signal_service
 from app.schemas.security_gitlab_activity import (
     GitLabActivitySyncRequest,
     GitLabActivitySyncResponse,
+    GitLabActivitySignalGenerateRequest,
+    GitLabActivitySignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -3649,6 +3652,48 @@ def sync_gitlab_activity_events(
         db=db,
     )
     return GitLabActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/gitlab-activity/generate-signals",
+    response_model=GitLabActivitySignalGenerateResponse,
+)
+def generate_gitlab_activity_signals_endpoint(
+    body: Optional[GitLabActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitLabActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe GitLab configuration activity events (M87E).
+
+    Admin/owner only. Promotes ingested gitlab/gitlab_activity_event config-state
+    events into review-priority Incident Signals grouped by resource identity.
+    Idempotent — re-running creates no duplicates. Review signals only.
+
+    Does not confirm breach, compromise, unauthorized access, source-code
+    exposure, secret exposure, token exposure, credential exposure, or data
+    exposure.
+
+    GitLab access tokens, OAuth tokens, PRIVATE-TOKEN values, webhook secret
+    tokens, CI/CD variable names/values, deploy key material, SSH keys, runner
+    tokens/IPs, project/group names, namespace paths, repo URLs, raw webhook
+    URLs, branch names, commit messages, merge request titles, issue titles,
+    pipeline/job logs, artifacts, user identities, and PII are NEVER stored.
+
+    Members can read signals via GET /security/signals?provider=gitlab.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 100
+    summary = gitlab_activity_signal_service.generate_gitlab_activity_signals(
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_signals=max_signals,
+    )
+    return GitLabActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

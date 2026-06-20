@@ -1116,7 +1116,7 @@ _GITLAB = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -1126,7 +1126,8 @@ _GITLAB = ProviderCapability(
     maturity="partial",
     notes=(
         "GitLab DevOps configuration drift foundation (M87A), core security rules (M87B), "
-        "branch/webhook/CI risk expansion (M87C), and activity ingestion (M87D). "
+        "branch/webhook/CI risk expansion (M87C), activity ingestion (M87D), and activity "
+        "signals (M87E). "
         "Drift snapshots cover 9 safe configuration surfaces from the GitLab REST API v4: "
         "instance posture (version/enterprise/settings — never base URL), "
         "projects (visibility, feature flags, per-project posture counts — never project names, "
@@ -1166,8 +1167,16 @@ _GITLAB = ProviderCapability(
         "configuration evidence for review and never confirm breach, compromise, unauthorized "
         "access, source-code exposure, secret exposure, token exposure, credential exposure, "
         "or data exposure. "
-        "Activity signals, correlations, and demo planned for M87E–M87G. "
-        "planned_next_stage: M87E: GitLab Activity Signals."
+        "M87E adds GitLab activity signals: review-priority Incident Signals synthesized "
+        "from M87D config-state activity events covering project visibility, group visibility, "
+        "branch protection, webhook security, CI/CD variable posture, deploy key posture, "
+        "runner posture, and merge request approval configuration activity, generated via "
+        "POST /security/gitlab-activity/generate-signals and read via "
+        "GET /security/signals?provider=gitlab. Idempotent; signals are evidence for review "
+        "and never confirm breach, compromise, unauthorized access, source-code exposure, "
+        "secret exposure, token exposure, credential exposure, or data exposure. "
+        "Correlations and demo planned for M87F–M87G. "
+        "planned_next_stage: M87F: GitLab Risk × Activity Correlations."
     ),
 )
 

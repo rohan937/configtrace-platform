@@ -48,6 +48,7 @@ import {
   generatePagerDutyActivitySignals,
   generateLinearActivitySignals,
   generateJiraActivitySignals,
+  generateGitlabActivitySignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -62,7 +63,7 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab";
 
 const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity", "cloudflare_waf_activity_signal"];
 const VERCEL_SIGNAL_TYPES = ["vercel_activity_signal"];
@@ -163,6 +164,26 @@ const LINEAR_SIGNAL_TYPES = [
   "linear_integration_config_changed",
   "linear_config_activity",
 ];
+// M87E — GitLab configuration activity signal types.
+const GITLAB_SIGNAL_TYPES = [
+  "gitlab_project_visibility_signal",
+  "gitlab_project_public_feature_signal",
+  "gitlab_group_visibility_signal",
+  "gitlab_force_push_enabled_signal",
+  "gitlab_branch_protection_weakened",
+  "gitlab_webhook_secret_removed_signal",
+  "gitlab_webhook_ssl_disabled_signal",
+  "gitlab_webhook_http_scheme_signal",
+  "gitlab_webhook_broad_event_scope_signal",
+  "gitlab_ci_unprotected_unmasked_variables_signal",
+  "gitlab_ci_variable_posture_signal",
+  "gitlab_deploy_key_write_enabled_signal",
+  "gitlab_deploy_key_posture_signal",
+  "gitlab_shared_runner_enabled_signal",
+  "gitlab_runner_posture_signal",
+  "gitlab_merge_request_approval_weakened",
+  "gitlab_configuration_activity_signal",
+];
 // M86E — Jira configuration activity signal types.
 const JIRA_SIGNAL_TYPES = [
   "jira_site_config_changed",
@@ -192,7 +213,7 @@ const AUTH0_SIGNAL_TYPES = [
   "auth0_config_activity",
 ];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira", gitlab: "GitLab" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
@@ -412,6 +433,14 @@ export default function IncidentSignalsPage() {
         };
       } else if (provider === "jira") {
         const v = await generateJiraActivitySignals(token);
+        res = {
+          provider: v.provider,
+          activity_events_scanned: v.events_scanned,
+          signals_created: v.signals_created,
+          signals_skipped: v.signals_skipped,
+        };
+      } else if (provider === "gitlab") {
+        const v = await generateGitlabActivitySignals(token);
         res = {
           provider: v.provider,
           activity_events_scanned: v.events_scanned,
@@ -664,14 +693,14 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira", "gitlab"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
         <Select
           label="Signal type"
           value={signalType}
           onChange={setSignalType}
-          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : provider === "azure" ? AZURE_SIGNAL_TYPES : provider === "google_cloud" ? GOOGLE_CLOUD_SIGNAL_TYPES : provider === "twilio" ? TWILIO_SIGNAL_TYPES : provider === "sendgrid" ? SENDGRID_SIGNAL_TYPES : provider === "auth0" ? AUTH0_SIGNAL_TYPES : provider === "datadog" ? DATADOG_SIGNAL_TYPES : provider === "clerk" ? CLERK_SIGNAL_TYPES : provider === "pagerduty" ? PAGERDUTY_SIGNAL_TYPES : provider === "linear" ? LINEAR_SIGNAL_TYPES : provider === "jira" ? JIRA_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : provider === "azure" ? AZURE_SIGNAL_TYPES : provider === "google_cloud" ? GOOGLE_CLOUD_SIGNAL_TYPES : provider === "twilio" ? TWILIO_SIGNAL_TYPES : provider === "sendgrid" ? SENDGRID_SIGNAL_TYPES : provider === "auth0" ? AUTH0_SIGNAL_TYPES : provider === "datadog" ? DATADOG_SIGNAL_TYPES : provider === "clerk" ? CLERK_SIGNAL_TYPES : provider === "pagerduty" ? PAGERDUTY_SIGNAL_TYPES : provider === "linear" ? LINEAR_SIGNAL_TYPES : provider === "jira" ? JIRA_SIGNAL_TYPES : provider === "gitlab" ? GITLAB_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
         />
       </div>
 
@@ -805,6 +834,7 @@ function GenerateBar({
   const isPagerDuty = provider === "pagerduty";
   const isLinear = provider === "linear";
   const isJira = provider === "jira";
+  const isGitlab = provider === "gitlab";
   const label = isCloudflare ? "Generate Cloudflare signals"
     : isAws ? "Generate AWS signals"
     : isVercel ? "Generate Vercel activity signals"
@@ -822,6 +852,7 @@ function GenerateBar({
     : isPagerDuty ? "Generate PagerDuty signals"
     : isLinear ? "Generate Linear signals"
     : isJira ? "Generate Jira signals"
+    : isGitlab ? "Generate GitLab signals"
     : "Generate signals";
   const desc = isCloudflare
     ? "Generate review signals from Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity)."
@@ -857,7 +888,9 @@ function GenerateBar({
                                   ? "Generate review signals from safe Linear configuration activity derived from workspace, team, project, workflow state, label, webhook, view, cycle, and integration configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API keys, OAuth tokens, webhook secrets, raw URLs, issue titles, issue descriptions, comment bodies, user identities, or PII."
                                   : isJira
                                     ? "Generate review-safe Jira signals from existing Jira configuration activity. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
-                                    : "Scans recent GitHub audit activity events and creates review signals.";
+                                    : isGitlab
+                                      ? "Generate GitLab activity signals from safe GitLab configuration activity events. No GitLab issue content, merge request titles, commit messages, branch names, CI variable names/values, webhook URLs, tokens, user identities, logs, artifacts, or PII are stored."
+                                      : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1316,6 +1349,11 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               (isAdmin
                 ? " Use \"Generate Jira signals\" above once Jira configuration-state events have been ingested via the Activity page. Signals summarize review-worthy configuration activity patterns across site, project, board, workflow, workflow scheme, permission scheme, notification scheme, issue type scheme, field configuration scheme, screen scheme, webhook, and automation rule settings. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
                 : " A workspace admin can sync Jira activity and generate Jira signals.")
+          : provider === "gitlab"
+            ? "Sync GitLab activity first, then generate GitLab signals." +
+              (isAdmin
+                ? " Use \"Generate GitLab signals\" above once GitLab configuration-state events have been ingested via the Activity page. Signals summarize review-worthy GitLab configuration activity across project visibility, group visibility, branch protection, webhook security, CI/CD variable posture, deploy key posture, runner posture, and merge request approval configuration. No GitLab issue content, merge request titles, commit messages, branch names, CI variable names/values, webhook URLs, tokens, user identities, logs, artifacts, or PII are stored."
+                : " A workspace admin can sync GitLab activity and generate GitLab configuration signals.")
           : "Run GitHub activity sync first, then generate signals." +
             (isAdmin
               ? " Use “Generate signals” above once activity has been ingested."

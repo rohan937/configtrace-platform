@@ -900,10 +900,10 @@ class TestCapabilityMatrix:
     def test_gitlab_activity_ingestion_still_false(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("gitlab")
-        # activity_ingestion was False at M87B; M87D promoted it to True. The
-        # later-stage capabilities remain False until their own milestones.
+        # activity_ingestion was False at M87B; M87D promoted it to True.
+        # activity_signals was False at M87B; M87E promoted it to True.
         assert cap.security.activity_ingestion is True
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
@@ -941,9 +941,10 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        # M87C landed and advanced this to M87D — accept M87C or later
+        # M87C→M87D→M87E→M87F: accept any later GitLab arc stage
         assert ("M87C" in planned or "GitLab Branch" in planned or "CI Risk" in planned
-                or "M87D" in planned or "GitLab Activity" in planned), (
+                or "M87D" in planned or "GitLab Activity" in planned
+                or "M87E" in planned or "M87F" in planned or "Correlations" in planned), (
             f"planned_next_stage should reference M87C or later; got: {planned!r}"
         )
 
@@ -1073,9 +1074,9 @@ class TestNoCapsNotClaimed:
     def test_gitlab_no_activity_router_endpoint(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("gitlab")
-        # activity_ingestion landed in M87D; activity_signals remains a later stage.
+        # activity_ingestion landed in M87D; activity_signals landed in M87E.
         assert cap.security.activity_ingestion is True
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
 
     def test_capability_matrix_demo_false(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability

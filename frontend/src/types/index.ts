@@ -2244,6 +2244,18 @@ export interface GitLabActivitySyncResponse {
   max_events: number;
 }
 
+// M87E — GitLab activity signal generation summary.
+export interface GitLabActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+  lookback_hours: number;
+  max_signals: number;
+}
+
 export interface JiraActivitySignalGenerateRequest {
   lookback_hours: number;
   max_signals: number;

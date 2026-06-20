@@ -981,6 +981,26 @@ export async function syncGitlabActivity(
 }
 
 /**
+ * generateGitlabActivitySignals — POST /security/gitlab-activity/generate-signals
+ * Admin only. Promotes ingested GitLab configuration-state activity events
+ * (provider=gitlab, source=gitlab_activity_event) into review-priority Incident
+ * Signals. Idempotent — re-running creates no duplicates. Does not confirm
+ * breach, compromise, unauthorized access, source-code exposure, secret
+ * exposure, token exposure, credential exposure, or data exposure. No access
+ * tokens, webhook URLs/secrets, CI variable names/values, deploy key material,
+ * runner tokens/IPs, branch names, user identities, or PII are stored.
+ */
+export async function generateGitlabActivitySignals(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").GitLabActivitySignalGenerateResponse> {
+  return apiFetch<import("@/types").GitLabActivitySignalGenerateResponse>(
+    "/security/gitlab-activity/generate-signals",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.

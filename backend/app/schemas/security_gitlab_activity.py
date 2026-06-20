@@ -43,3 +43,23 @@ class GitLabActivitySyncResponse(BaseModel):
     groups_scanned: int = 0
     lookback_hours: int = 24
     max_events: int = 100
+
+
+class GitLabActivitySignalGenerateRequest(BaseModel):
+    """POST /security/gitlab-activity/generate-signals request body (all optional)."""
+
+    lookback_hours: int = Field(default=24, ge=1, le=168)
+    max_signals: int = Field(default=100, ge=1, le=1000)
+
+
+class GitLabActivitySignalGenerateResponse(BaseModel):
+    """GitLab configuration activity signal generation summary."""
+
+    provider: str = "gitlab"
+    source: str = "gitlab_activity_event"
+    events_scanned: int = 0
+    groups_scanned: int = 0
+    signals_created: int = 0
+    signals_skipped: int = 0
+    lookback_hours: int = 24
+    max_signals: int = 100

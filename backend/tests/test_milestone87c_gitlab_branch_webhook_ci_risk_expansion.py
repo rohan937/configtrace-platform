@@ -892,8 +892,9 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M87D" in planned or "GitLab Activity" in planned or "Ingestion" in planned, (
-            f"planned_next_stage should reference M87D after M87C; got: {planned!r}"
+        assert ("M87D" in planned or "GitLab Activity" in planned or "Ingestion" in planned
+                or "M87E" in planned or "M87F" in planned or "Correlations" in planned), (
+            f"planned_next_stage should reference M87D or later after M87C; got: {planned!r}"
         )
 
     def test_terraform_cloud_still_in_queue(self) -> None:

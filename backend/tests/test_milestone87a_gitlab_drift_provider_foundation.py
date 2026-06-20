@@ -951,8 +951,9 @@ class TestCapabilityMatrix:
         # security_rules was False at M87A; M87B promoted it to True — accept either
         # (M87B is now complete so the matrix correctly shows True)
         # activity_ingestion was False at M87A; M87D promoted it to True.
+        # activity_signals was False at M87A; M87E promoted it to True.
         assert cap.security.activity_ingestion is True
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
@@ -1002,10 +1003,12 @@ class TestExpansionFramework:
     def test_planned_next_stage_references_m87b(self) -> None:
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        # M87B→M87C→M87D: accept any GitLab arc stage pointer
+        # M87B→M87C→M87D→M87E→M87F: accept any GitLab arc stage pointer
         assert ("M87B" in planned or "GitLab Core" in planned
                 or "M87C" in planned or "GitLab Branch" in planned
-                or "M87D" in planned or "GitLab Activity" in planned), (
+                or "M87D" in planned or "GitLab Activity" in planned
+                or "M87E" in planned or "M87F" in planned
+                or "Correlations" in planned), (
             f"planned_next_stage should reference M87B or later GitLab arc stage; got: {planned!r}"
         )
 
