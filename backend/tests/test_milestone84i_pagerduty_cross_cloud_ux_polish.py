@@ -228,8 +228,9 @@ def test_b1_expansion_framework_planned_next_stage_m85a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    assert "M85A" in planned or "Linear" in planned, (
-        f"After M84I, planned_next_stage should point to M85A Linear; got: {planned!r}"
+    assert ("M85A" in planned or "Linear" in planned
+            or "M86A" in planned or "Jira" in planned), (
+        f"After M84I, planned_next_stage should point to M85A/Linear or later; got: {planned!r}"
     )
 
 
@@ -530,8 +531,8 @@ def test_d15_linear_is_head_of_next_providers_brief() -> None:
     if block_start == -1 or block_end == -1:
         return
     brief_block = text[block_start:block_end]
-    assert "Linear" in brief_block, (
-        "Linear should be head of NEXT_PROVIDERS_BRIEF after PagerDuty arc complete"
+    assert ("Linear" in brief_block or "Jira" in brief_block), (
+        "Linear or Jira should be in NEXT_PROVIDERS_BRIEF after PagerDuty arc complete"
     )
 
 

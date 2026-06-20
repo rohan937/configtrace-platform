@@ -1216,12 +1216,13 @@ class TestCapabilityMatrix:
             or "M83F" in stage or "M83G" in stage or "M83H" in stage
             or "M83I" in stage or "M84A" in stage or "PagerDuty" in stage
             or "M85A" in stage or "Linear" in stage
+            or "M86A" in stage or "Jira" in stage
         ), (
-            f"After M83B, planned_next_stage should reference a post-M83B Clerk stage; got {stage!r}"
+            f"After M83B, planned_next_stage should reference a post-M83B stage; got {stage!r}"
         )
         assert ("Clerk" in stage or "clerk" in stage.lower() or "PagerDuty" in stage or "M84" in stage
-                or "M85A" in stage or "Linear" in stage), (
-            f"planned_next_stage should mention Clerk or the next arc; got {stage!r}"
+                or "M85A" in stage or "Linear" in stage or "M86A" in stage or "Jira" in stage), (
+            f"planned_next_stage should mention Clerk, PagerDuty, Linear, or Jira arc; got {stage!r}"
         )
 
     def test_expansion_framework_exact_m83c_label(self):
@@ -1254,6 +1255,7 @@ class TestCapabilityMatrix:
             "M85G: Linear Demo + QA",
             "M85H: Linear Provider Depth QA",
             "M85I: Linear Cross-Cloud UX Polish",
+            "M86A: Jira Drift Provider Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

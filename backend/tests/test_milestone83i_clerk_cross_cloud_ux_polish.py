@@ -229,10 +229,11 @@ def test_b1_expansion_framework_planned_next_stage_m84a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    # PagerDuty arc completes in M84I; framework then advances to M85A: Linear.
+    # M85I complete; framework now points to M86A/Jira.
     assert ("M84A" in planned or "PagerDuty" in planned
-            or "M85A" in planned or "Linear" in planned), (
-        f"After M83I, planned_next_stage should point to M84A PagerDuty or M85A Linear; got: {planned!r}"
+            or "M85A" in planned or "Linear" in planned
+            or "M86A" in planned or "Jira" in planned), (
+        f"planned_next_stage should point to M84A+/PagerDuty/Linear/Jira; got: {planned!r}"
     )
 
 
@@ -535,10 +536,10 @@ def test_d15_pagerduty_in_next_providers_brief() -> None:
     if block_start == -1 or block_end == -1:
         return
     brief_block = text[block_start:block_end]
-    # PagerDuty arc completes in M84G; it is then removed from NEXT_PROVIDERS_BRIEF.
-    # Accept either PagerDuty still present (pre-M84G) or Linear at head (post-M84G).
-    assert "PagerDuty" in brief_block or "Linear" in brief_block, (
-        "NEXT_PROVIDERS_BRIEF should contain PagerDuty or Linear (next recommended provider)"
+    # M85I complete; Linear arc done, Jira is now at head of NEXT_PROVIDERS_BRIEF.
+    assert ("PagerDuty" in brief_block or "Linear" in brief_block
+            or "Jira" in brief_block), (
+        "NEXT_PROVIDERS_BRIEF should contain PagerDuty, Linear, or Jira (next recommended provider)"
     )
 
 

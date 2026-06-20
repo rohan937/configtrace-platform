@@ -512,10 +512,12 @@ class TestCapabilityMatrixAndFramework:
         assert "M85D" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m85e(self):
-        # M85H is complete; framework now points to M85I.
+        # M85I complete; framework now points to M86A/Jira.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M85I" in planned
+        assert "M86" in planned or "Jira" in planned, (
+            f"planned_next_stage should reference M86/Jira; got {planned!r}"
+        )
 
     def test_expansion_framework_jira_is_head_of_queue(self):
         fw = get_framework()

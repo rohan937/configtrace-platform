@@ -797,18 +797,22 @@ def test_h13_linear_in_provider_capabilities_partial() -> None:
 
 
 def test_i1_planned_next_stage_contains_m85b() -> None:
-    # M85B has landed — planned_next_stage now references M85C; allow M85B or later M85.
+    # M85I complete — planned_next_stage now points to M86A/Jira.
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M85" in planned, (
-        f"planned_next_stage should reference an M85 Linear stage or later; got {planned!r}"
+    assert "M85" in planned or "M86" in planned or "Jira" in planned, (
+        f"planned_next_stage should reference M85/M86 or later; got {planned!r}"
     )
 
 
 def test_i2_planned_next_stage_mentions_linear() -> None:
+    # M85I complete — planned_next_stage now points to M86A/Jira. Linear arc done.
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "Linear" in planned or "linear" in planned
+    assert ("Linear" in planned or "linear" in planned
+            or "M86" in planned or "Jira" in planned), (
+        f"planned_next_stage should mention Linear, M86, or Jira; got {planned!r}"
+    )
 
 
 def test_i3_linear_not_in_recommended_next_providers() -> None:

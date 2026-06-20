@@ -266,6 +266,8 @@ def test_get_framework_structure():
         or "M85A" in summary["planned_next_stage"]
         or "Linear" in summary["planned_next_stage"]
         or "M85B" in summary["planned_next_stage"]
+        or "M86A" in summary["planned_next_stage"]
+        or "Jira" in summary["planned_next_stage"]
     )
 
 
