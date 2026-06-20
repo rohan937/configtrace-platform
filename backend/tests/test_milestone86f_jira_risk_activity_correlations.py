@@ -155,7 +155,7 @@ def test_rule_to_signal_mapping_includes_permission_scheme_rules() -> None:
         JIRA_RULE_KEY_TO_SIGNAL_TYPE,
     )
     assert (
-        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_permission_scheme_anonymous_grants"]
+        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_permission_scheme_anonymous_grant"]
         == "jira_permission_scheme_config_changed"
     )
 
@@ -175,7 +175,7 @@ def test_rule_to_signal_mapping_includes_workflow_rules() -> None:
         JIRA_RULE_KEY_TO_SIGNAL_TYPE,
     )
     assert (
-        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_workflow_draft"]
+        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_workflow_no_statuses"]
         == "jira_workflow_config_changed"
     )
 
@@ -195,7 +195,7 @@ def test_rule_to_signal_mapping_includes_board_rules() -> None:
         JIRA_RULE_KEY_TO_SIGNAL_TYPE,
     )
     assert (
-        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_board_no_projects"]
+        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_board_missing_project_link"]
         == "jira_board_config_changed"
     )
 
@@ -215,7 +215,7 @@ def test_rule_to_signal_mapping_includes_screen_scheme_rules() -> None:
         JIRA_RULE_KEY_TO_SIGNAL_TYPE,
     )
     assert (
-        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_screen_scheme_high_field_count"]
+        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_screen_scheme_no_fields"]
         == "jira_screen_scheme_config_changed"
     )
 
@@ -225,7 +225,7 @@ def test_rule_to_signal_mapping_includes_project_rules() -> None:
         JIRA_RULE_KEY_TO_SIGNAL_TYPE,
     )
     assert (
-        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_project_public_or_not_private"]
+        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_project_private"]
         == "jira_project_config_changed"
     )
 

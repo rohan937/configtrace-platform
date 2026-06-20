@@ -755,6 +755,44 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "automation_has_email_action",  # bool — rule sends email (NEVER addresses)
         "automation_has_external_action",  # bool — rule posts to an external service
         "automation_has_comment_action",   # bool — rule adds a comment (NEVER content)
+        # ── Jira schema-aligned posture fields (M86H) ─────────────────────────
+        # Derived booleans / counts / category enums consumed by the M86B base
+        # rules.  NEVER any raw URL, key, identity, JQL, email, or secret value.
+        "site_url_present",            # bool — site base-URL indicator (NEVER the URL)
+        "project_type_category",       # project type enum (software/business/…)
+        "project_style_category",      # project style enum (classic/next-gen/unknown)
+        "project_key_present",         # bool — project has a key (NEVER the key value)
+        "project_private",             # bool — project privacy flag
+        "project_archived",            # bool — project archived flag
+        "project_deleted",             # bool — project deleted flag
+        "project_simplified",          # bool — project simplified (team-managed) flag
+        "board_type_category",         # board type enum (scrum/kanban/simple/unknown)
+        "board_location_type_category",  # board location enum (project/user/filter/unknown)
+        "workflow_status_count",       # int — count of workflow statuses
+        "workflow_transition_count",   # int — count of workflow transitions
+        "workflow_scheme_project_count",   # int — projects associated with a scheme
+        "workflow_scheme_default_present",  # bool — scheme has a default workflow
+        "permission_anonymous_grant_count",  # int — grants to anonymous principals
+        "permission_anyone_grant_count",     # int — grants to the "anyone" principal
+        "permission_logged_in_grant_count",  # int — grants to all logged-in users
+        "permission_project_role_grant_count",  # int — grants to project roles
+        "notification_email_recipient_count",   # int — single-email recipient count
+        "notification_group_recipient_count",   # int — group recipient count
+        "notification_project_role_recipient_count",  # int — project-role recipient count
+        "issue_type_count",            # int — count of issue types in a scheme
+        "default_issue_type_present",  # bool — issue type scheme has a default
+        "field_configuration_count",   # int — count of field configurations in a scheme
+        "required_field_count",        # int — count of required fields
+        "hidden_field_count",          # int — count of hidden fields
+        "screen_count",                # int — count of screens in a scheme
+        "tab_count",                   # int — count of screen tabs (NEVER names)
+        "field_count",                 # int — count of screen fields (NEVER names)
+        "webhook_enabled",             # bool — webhook subscription enabled
+        "webhook_event_count",         # int — count of subscribed webhook events
+        "webhook_jql_filter_present",  # bool — webhook has a JQL filter (NEVER the JQL)
+        "automation_enabled",          # bool — automation rule enabled flag
+        "automation_trigger_type_category",  # automation trigger enum (issue/scheduled/…)
+        "automation_component_count",  # int — count of automation rule components
     }
 )
 

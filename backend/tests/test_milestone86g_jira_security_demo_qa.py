@@ -455,15 +455,15 @@ def test_capability_matrix_jira_case_report_true() -> None:
     assert cap.security.case_report is True
 
 
-def test_capability_matrix_jira_planned_next_stage_m86h() -> None:
+def test_capability_matrix_jira_planned_next_stage_m86i() -> None:
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M86H" in planned or "Jira" in planned, (
-        f"Expected M86H/Jira in planned_next_stage, got '{planned}'"
+    assert "M86I" in planned or "Jira" in planned, (
+        f"Expected M86I/Jira in planned_next_stage, got '{planned}'"
     )
 
 
-def test_expansion_framework_jira_points_to_m86h() -> None:
+def test_expansion_framework_jira_points_to_m86i() -> None:
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     assert "M86" in planned or "Jira" in planned or "GitLab" in planned, (

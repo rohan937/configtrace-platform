@@ -231,7 +231,9 @@ def test_expansion_framework_m83h() -> None:
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     assert ("M83H" in planned or "Provider Depth" in planned or "M83I" in planned
             or "Cross-Cloud" in planned or "M84A" in planned or "PagerDuty" in planned
-            or "M85A" in planned or "Linear" in planned)
+            or "M85A" in planned or "Linear" in planned
+            or "M86" in planned or "Jira" in planned
+            or "M87" in planned or "GitLab" in planned)
 
 
 # ── Section I: Frontend ───────────────────────────────────────────────────────

@@ -1124,7 +1124,7 @@ _JIRA = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Jira project management configuration drift foundation (M86A–M86G). "
+        "Jira project management configuration drift foundation (M86A–M86H). "
         "Drift snapshots cover Jira Cloud configuration surfaces: projects, boards, "
         "workflows, workflow schemes, permission schemes, notification schemes, "
         "issue type schemes, field configuration schemes, screen schemes, webhook "
@@ -1189,8 +1189,18 @@ _JIRA = ProviderCapability(
         "anchored on synthetic placeholder IDs so clearing removes only the demo "
         "objects. The case report labels Jira and surfaces Jira opaque resource "
         "identifiers, safe counts, posture booleans, and category labels only. "
+        "M86H is the Jira provider depth QA pass: the connector normalizers now emit "
+        "the canonical schema field names consumed by the security rules, so all 82 "
+        "configuration-risk rules (including the M86B base site/project/board/workflow/"
+        "scheme/permission/notification/issue-type/field-config/screen/webhook/automation "
+        "rules) fire on real connector output; the risk × activity correlation families "
+        "were realigned to the canonical 82 rule keys so findings route to their "
+        "resource-specific family instead of the generic fallback; and the non-HTTPS "
+        "webhook rule now matches the connector's URL scheme category domain. All "
+        "evidence remains metadata-only — counts, categories, and derived booleans, "
+        "never raw URLs, JQL, identities, secrets, or PII. "
         "Authentication uses Jira email + API token (stored encrypted, never returned). "
-        "planned_next_stage: M86H: Jira Provider Depth QA."
+        "planned_next_stage: M86I: Jira Cross-Cloud UX Polish."
     ),
 )
 

@@ -596,6 +596,16 @@ class JiraConnector(BaseConnector):
             "major_version": major_version,
             "build_number": _int(raw.get("buildNumber")),
             "scm_info_present": bool(raw.get("scmInfo")),
+            # Schema fields (JiraSiteRecord) consumed by the M86B site rules.
+            # site_url_present reflects whether /serverInfo returned a base URL
+            # indicator (the raw URL itself is never stored).  The project /
+            # webhook / automation counts are populated in fetch() once the
+            # other surfaces have been snapshotted; default to None here so the
+            # rules treat them as "unknown" until wired.
+            "site_url_present": bool(raw.get("baseUrl")),
+            "project_count": None,
+            "webhook_count": None,
+            "automation_rule_count": None,
         }
 
     def _normalize_project(self, raw: dict) -> dict:
@@ -608,6 +618,12 @@ class JiraConnector(BaseConnector):
         pid = _trunc(raw.get("id", ""), 64) or "unknown"
         type_key = _trunc(raw.get("projectTypeKey", ""), 32) or "unknown"
         style = _trunc(raw.get("style", ""), 32) or "unknown"
+        # Normalise the project type / style into the bounded category enums the
+        # M86B rules classify against (an unrecognised value maps to "unknown").
+        _known_type_categories = {"software", "business", "service_desk", "product_discovery"}
+        type_category = type_key if type_key in _known_type_categories else "unknown"
+        _known_style_categories = {"classic", "next-gen"}
+        style_category = style if style in _known_style_categories else "unknown"
         return {
             "record_type": JIRA_PROJECT,
             "provider": "jira",
@@ -620,6 +636,20 @@ class JiraConnector(BaseConnector):
             "is_archived": _bool(raw.get("archived")),
             "is_deleted": _bool(raw.get("deleted")),
             "is_simplified": _bool(raw.get("simplified")),
+            # Schema fields (JiraProjectRecord) consumed by the M86B project
+            # rules.  board_count / issue_type_count are not enumerated per
+            # project by this connector, so they are left as None ("unknown")
+            # to avoid false-positive "no boards / no issue types" findings.
+            "project_key_present": bool(raw.get("key")),
+            "project_type_category": type_category,
+            "project_private": _bool(raw.get("isPrivate")),
+            "project_archived": _bool(raw.get("archived")),
+            "project_deleted": _bool(raw.get("deleted")),
+            "project_simplified": _bool(raw.get("simplified")),
+            "project_style_category": style_category,
+            "board_count": None,
+            "issue_type_count": None,
+            "lead_present": bool(raw.get("lead")),
         }
 
     def _normalize_board(self, raw: dict) -> dict:
@@ -695,6 +725,26 @@ class JiraConnector(BaseConnector):
         if not strategy_raw:
             swimlane_category = "unknown"
 
+        # Board location type category — classify the location wrapper by its
+        # bounded type only (project / user / filter); never the location value.
+        location_type_raw = ""
+        if isinstance(location, dict):
+            location_type_raw = _trunc(location.get("type", ""), 32).lower()
+        if location_type_raw in ("project", "user", "filter"):
+            location_type_category = location_type_raw
+        elif isinstance(location, dict) and location.get("projectId"):
+            location_type_category = "project"
+        elif location:
+            location_type_category = "unknown"
+        else:
+            location_type_category = "unknown"
+        # Opaque project linkage id (never a project key/name).
+        project_id_val: Optional[str] = None
+        if isinstance(location, dict):
+            raw_pid = location.get("projectId") or location.get("projectKey")
+            if raw_pid is not None:
+                project_id_val = _trunc(str(raw_pid), 64) or None
+
         return {
             "record_type": JIRA_BOARD,
             "provider": "jira",
@@ -702,6 +752,10 @@ class JiraConnector(BaseConnector):
             "resource_id": bid,
             "board_type": board_type,
             "location_present": bool(location),
+            # Schema fields (JiraBoardRecord) consumed by the M86B board rules.
+            "board_type_category": board_type,
+            "board_location_type_category": location_type_category,
+            "project_id": project_id_val,
             # M86C safe board scope posture
             "board_filter_present": bool(filter_present),
             "board_jql_filter_broad": bool(jql_broad),
@@ -772,6 +826,9 @@ class JiraConnector(BaseConnector):
             "transition_count": _int(_count(transitions)),
             "status_count": _int(_count(statuses)),
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraWorkflowRecord) consumed by the M86B workflow rules.
+            "workflow_status_count": _int(_count(statuses)),
+            "workflow_transition_count": _int(_count(transitions)),
             # M86C safe structure posture
             "workflow_global_transition_count": _int(global_transition_count),
             "workflow_active": _bool(raw.get("isActive"), default=True),
@@ -796,6 +853,15 @@ class JiraConnector(BaseConnector):
         """
         sid = _trunc(raw.get("id", ""), 64) or "unknown"
         mapping = raw.get("issueTypeMappings")
+        # Associated-project count is only known when the API echoes it; left as
+        # None ("unknown") otherwise so the unused-scheme rule does not misfire.
+        _scheme_projects = raw.get("projects") or raw.get("projectIds")
+        scheme_project_count = (
+            _int(_count(_scheme_projects)) if _scheme_projects is not None else None
+        )
+        default_present = bool(
+            raw.get("defaultWorkflow") is not None or raw.get("default")
+        )
         # M86C — safe mapping posture. Distinct mapped workflow names are never
         # stored; only counts of mappings and unmapped issue types are kept.
         mapping_count = _count(mapping)
@@ -815,6 +881,9 @@ class JiraConnector(BaseConnector):
             "issue_type_mapping_count": _int(mapping_count),
             "has_draft": _bool(raw.get("draft")),
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraWorkflowSchemeRecord) consumed by the M86B rules.
+            "workflow_scheme_project_count": scheme_project_count,
+            "workflow_scheme_default_present": default_present,
             # M86C safe scheme mapping posture
             "workflow_scheme_workflow_count": _int(workflow_count),
             "workflow_scheme_issue_type_mapping_count": _int(mapping_count),
@@ -868,6 +937,11 @@ class JiraConnector(BaseConnector):
         unknown_holder_count = 0
         high_privilege_grant_count = 0
         public_grant_count = 0
+        # Per-holder-type grant counts consumed by the M86B permission rules.
+        anonymous_grant_count = 0
+        anyone_grant_count = 0
+        logged_in_grant_count = 0
+        project_role_grant_count = 0
 
         if isinstance(permissions, list):
             for grant in permissions:
@@ -880,6 +954,15 @@ class JiraConnector(BaseConnector):
                     holder_type = _trunc(holder.get("type", ""), 32).lower()
                 elif isinstance(holder, str):
                     holder_type = _trunc(holder, 32).lower()
+
+                if holder_type == "anonymous":
+                    anonymous_grant_count += 1
+                elif holder_type == "anyone":
+                    anyone_grant_count += 1
+                elif holder_type == "loggedin":
+                    logged_in_grant_count += 1
+                elif holder_type in ("projectrole", "role"):
+                    project_role_grant_count += 1
 
                 is_public = holder_type in _public_holder_types
                 if not holder_type:
@@ -899,6 +982,11 @@ class JiraConnector(BaseConnector):
             "resource_id": sid,
             "permission_grant_count": _int(_count(permissions)),
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraPermissionSchemeRecord) consumed by the M86B rules.
+            "permission_anonymous_grant_count": _int(anonymous_grant_count),
+            "permission_anyone_grant_count": _int(anyone_grant_count),
+            "permission_logged_in_grant_count": _int(logged_in_grant_count),
+            "permission_project_role_grant_count": _int(project_role_grant_count),
             # M86C safe public/high-privilege grant posture
             "permission_public_browse_projects": public_flags[
                 "permission_public_browse_projects"
@@ -936,6 +1024,10 @@ class JiraConnector(BaseConnector):
         # all-watcher and unrecognised recipient *types*, plus event count.
         all_watchers_count = 0
         unknown_recipient_count = 0
+        # Per-recipient-type counts consumed by the M86B notification rules.
+        email_recipient_count = 0
+        group_recipient_count = 0
+        project_role_recipient_count = 0
         _known_recipient_types = {
             "currentassignee",
             "reporter",
@@ -965,6 +1057,12 @@ class JiraConnector(BaseConnector):
                         ).lower()
                         if ntype == "allwatchers":
                             all_watchers_count += 1
+                        elif ntype == "emailaddress":
+                            email_recipient_count += 1
+                        elif ntype == "group":
+                            group_recipient_count += 1
+                        elif ntype == "projectrole":
+                            project_role_recipient_count += 1
                         elif ntype and ntype not in _known_recipient_types:
                             unknown_recipient_count += 1
                         elif not ntype:
@@ -977,6 +1075,12 @@ class JiraConnector(BaseConnector):
             "event_count": _int(_count(events)),
             "notification_count": _int(notification_count),
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraNotificationSchemeRecord) consumed by the M86B rules.
+            "notification_email_recipient_count": _int(email_recipient_count),
+            "notification_group_recipient_count": _int(group_recipient_count),
+            "notification_project_role_recipient_count": _int(
+                project_role_recipient_count
+            ),
             # M86C safe recipient posture
             "notification_all_watchers_recipient_count": _int(all_watchers_count),
             "notification_unknown_recipient_count": _int(unknown_recipient_count),
@@ -990,6 +1094,13 @@ class JiraConnector(BaseConnector):
         default-issue-type presence and a bucketed posture.
         """
         sid = _trunc(raw.get("id", ""), 64) or "unknown"
+        # Issue-type membership count is only known when the API echoes the
+        # mapping; left as None ("unknown") otherwise so the no-types rule does
+        # not misfire on schemes whose members were not expanded.
+        _issue_types = raw.get("issueTypeIds") or raw.get("issueTypes")
+        issue_type_count = (
+            _int(_count(_issue_types)) if _issue_types is not None else None
+        )
         return {
             "record_type": JIRA_ISSUE_TYPE_SCHEME,
             "provider": "jira",
@@ -998,6 +1109,9 @@ class JiraConnector(BaseConnector):
             "is_default": _bool(raw.get("isDefault")),
             "has_default_issue_type": bool(raw.get("defaultIssueTypeId")),
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraIssueTypeSchemeRecord) consumed by the M86B rules.
+            "issue_type_count": issue_type_count,
+            "default_issue_type_present": bool(raw.get("defaultIssueTypeId")),
         }
 
     def _normalize_field_configuration_scheme(self, raw: dict) -> dict:
@@ -1006,12 +1120,25 @@ class JiraConnector(BaseConnector):
         SECURITY: scheme name and description are never stored.
         """
         sid = _trunc(raw.get("id", ""), 64) or "unknown"
+        # Field-configuration membership counts are only known when the API
+        # echoes the mappings; left as None ("unknown") otherwise so the
+        # no-configurations / hidden-required-conflict rules do not misfire.
+        _mappings = raw.get("fieldConfigurationToIssueTypeMappings") or raw.get(
+            "mappings"
+        )
+        field_configuration_count = (
+            _int(_count(_mappings)) if _mappings is not None else None
+        )
         return {
             "record_type": JIRA_FIELD_CONFIGURATION_SCHEME,
             "provider": "jira",
             "record_id": sid,
             "resource_id": sid,
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraFieldConfigurationSchemeRecord) consumed by M86B.
+            "field_configuration_count": field_configuration_count,
+            "required_field_count": None,
+            "hidden_field_count": None,
         }
 
     def _normalize_screen_scheme(self, raw: dict) -> dict:
@@ -1045,6 +1172,13 @@ class JiraConnector(BaseConnector):
             "screen_mapping_count": _int(_count(screens)),
             "has_default_screen": has_default,
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraScreenSchemeRecord) consumed by the M86B rules.
+            # screen_count mirrors the mapped-screen count; field_count is not
+            # enumerated by this connector, so it is None ("unknown") to avoid a
+            # false-positive "no fields" finding.
+            "screen_count": _int(_count(screens)),
+            "tab_count": _int(tab_count),
+            "field_count": None,
             # M86C safe screen scheme mapping posture
             "screen_tab_count": _int(tab_count),
             "screen_unmapped_screen_count": _int(unmapped_screen_count),
@@ -1137,6 +1271,15 @@ class JiraConnector(BaseConnector):
             "webhook_url_present": bool(url),
             "webhook_url_scheme_category": _url_scheme_category(url),
             "has_filter": has_filter,
+            # Schema fields (JiraWebhookRecord) consumed by the M86B webhook rules.
+            # webhook_secret_present reflects whether a signing-secret indicator
+            # was present; the secret value itself is NEVER read or stored.
+            "webhook_enabled": _bool(raw.get("enabled"), default=True),
+            "webhook_event_count": _int(_count(events)),
+            "webhook_jql_filter_present": has_filter,
+            "webhook_secret_present": bool(
+                raw.get("secret") or raw.get("secretToken") or raw.get("signingSecret")
+            ),
             # M86C safe event-scope posture
             "webhook_has_issue_events": bool(has_issue),
             "webhook_has_comment_events": bool(has_comment),
@@ -1163,6 +1306,30 @@ class JiraConnector(BaseConnector):
         else:
             state = "unknown"
         components = raw.get("components") or raw.get("ruleComponents")
+
+        # Trigger type category — classify the trigger wrapper by a bounded set
+        # of safe tokens only; never the raw trigger expression/config.
+        trigger = raw.get("trigger")
+        trigger_token = ""
+        if isinstance(trigger, dict):
+            trigger_token = _trunc(
+                trigger.get("type", "") or trigger.get("component", ""), 64
+            ).lower()
+        elif isinstance(trigger, str):
+            trigger_token = _trunc(trigger, 64).lower()
+        _t = trigger_token.replace("_", ".").replace(" ", "")
+        if not trigger_token:
+            trigger_category = "unknown"
+        elif "schedule" in _t or "cron" in _t:
+            trigger_category = "scheduled"
+        elif "manual" in _t:
+            trigger_category = "manual"
+        elif "webhook" in _t or "incoming" in _t:
+            trigger_category = "webhook"
+        elif "issue" in _t or "comment" in _t or "field" in _t or "transition" in _t:
+            trigger_category = "issue"
+        else:
+            trigger_category = "unknown"
 
         # M86C — derive safe action posture. Component logic, action
         # configuration, URLs, email addresses, and rule expressions are NEVER
@@ -1235,6 +1402,12 @@ class JiraConnector(BaseConnector):
             "state": state,
             "component_count": _int(_count(components)),
             "has_description": bool(raw.get("description")),
+            # Schema fields (JiraAutomationRuleRecord) consumed by the M86B rules.
+            "automation_enabled": _bool(
+                raw.get("enabled"), default=(state == "enabled")
+            ),
+            "automation_trigger_type_category": trigger_category,
+            "automation_component_count": _int(_count(components)),
             # M86C safe action posture
             "automation_action_count": _int(action_count),
             "automation_condition_count": _int(condition_count),
@@ -1271,8 +1444,10 @@ class JiraConnector(BaseConnector):
         records: list[dict] = []
 
         # Required surfaces — propagate auth/rate-limit errors.
-        records.extend(self._fetch_site(site_url, email, api_token))
-        records.extend(self._fetch_projects(site_url, email, api_token))
+        site_records = self._fetch_site(site_url, email, api_token)
+        records.extend(site_records)
+        project_records = self._fetch_projects(site_url, email, api_token)
+        records.extend(project_records)
 
         # Optional surfaces — each fetcher fails soft on 403/404.
         records.extend(self._fetch_boards(site_url, email, api_token))
@@ -1285,8 +1460,19 @@ class JiraConnector(BaseConnector):
             self._fetch_field_configuration_schemes(site_url, email, api_token)
         )
         records.extend(self._fetch_screen_schemes(site_url, email, api_token))
-        records.extend(self._fetch_webhooks(site_url, email, api_token))
-        records.extend(self._fetch_automation_rules(site_url, email, api_token))
+        webhook_records = self._fetch_webhooks(site_url, email, api_token)
+        records.extend(webhook_records)
+        automation_records = self._fetch_automation_rules(site_url, email, api_token)
+        records.extend(automation_records)
+
+        # Backfill the site-level rollup counts now that the project, webhook,
+        # and automation surfaces have been snapshotted.  These feed the M86B
+        # site rules (jira_site_no_projects / _no_webhooks / _no_automation_rules).
+        # Only counts are stored — never any identity, key, or URL value.
+        if site_records:
+            site_records[0]["project_count"] = len(project_records)
+            site_records[0]["webhook_count"] = len(webhook_records)
+            site_records[0]["automation_rule_count"] = len(automation_records)
 
         return records
 

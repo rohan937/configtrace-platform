@@ -939,12 +939,13 @@ class TestCapabilityMatrixAndFramework:
         assert "M86B" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m86c(self):
-        # M86C–M86G have since landed — planned_next_stage now points to M86H.
+        # M86C–M86H have since landed — planned_next_stage now points to M86I.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
         assert (
             "M86C" in planned or "M86D" in planned or "M86E" in planned
             or "M86F" in planned or "M86G" in planned or "M86H" in planned
+            or "M86I" in planned
         ), (
             f"planned_next_stage should reference M86C or later; got {planned!r}"
         )

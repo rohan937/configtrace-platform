@@ -1276,7 +1276,9 @@ def test_expansion_framework_points_past_m82i():
     framework = get_framework()
     planned = framework["summary"].get("planned_next_stage", "")
     assert ("M83A" in planned or "Clerk" in planned or "M84A" in planned or "PagerDuty" in planned
-            or "M85A" in planned or "Linear" in planned), (
+            or "M85A" in planned or "Linear" in planned
+            or "M86" in planned or "Jira" in planned
+            or "M87" in planned or "GitLab" in planned), (
         f"planned_next_stage should reference M83A/Clerk or later; got: {planned!r}"
     )
 
@@ -1297,7 +1299,7 @@ def test_expansion_framework_pagerduty_at_head_of_queue():
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
     # After M84A, PagerDuty launched; Linear is now at head.
-    assert recs[0]["provider"] in ("pagerduty", "linear", "jira"), (
+    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab"), (
         f"PagerDuty or Linear should be head of RECOMMENDED_NEXT_PROVIDERS; got: {recs[0]['provider']!r}"
     )
 
@@ -1331,6 +1333,8 @@ def test_expansion_framework_arc_not_abandoned():
     framework = get_framework()
     planned = framework["summary"].get("planned_next_stage", "")
     assert ("M82" in planned or "M83" in planned or "M84" in planned
-            or "M85A" in planned or "Linear" in planned), (
+            or "M85A" in planned or "Linear" in planned
+            or "M86" in planned or "Jira" in planned
+            or "M87" in planned or "GitLab" in planned), (
         f"Datadog arc appears abandoned in expansion framework: {planned!r}"
     )

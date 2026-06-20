@@ -880,7 +880,8 @@ def test_expansion_framework_planned_next_stage_is_m83b():
     planned = framework["summary"]["planned_next_stage"]
     assert ("M83B" in planned or "M83C" in planned or "Clerk" in planned
             or "M84A" in planned or "PagerDuty" in planned
-            or "M85A" in planned or "Linear" in planned), (
+            or "M85A" in planned or "Linear" in planned
+            or "M86" in planned or "Jira" in planned or "GitLab" in planned), (
         f"planned_next_stage should reference an M83 Clerk stage or later; got {planned!r}"
     )
 
@@ -900,7 +901,8 @@ def test_expansion_framework_pagerduty_at_head():
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS must not be empty"
     # After M84A, PagerDuty launched and Linear moved to head.
-    assert recs[0]["provider"] in ("pagerduty", "linear", "jira"), (
+    # After M86A, Jira launched and GitLab moved to head.
+    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab"), (
         f"PagerDuty or Linear should be head of recommended queue; "
         f"got {recs[0]['provider']!r}"
     )

@@ -83,10 +83,9 @@ _GENERIC_SIGNAL = "jira_config_activity"
 # signal type.
 JIRA_RULE_KEY_TO_SIGNAL_TYPE: dict[str, str] = {
     # Permission scheme rules → jira_permission_scheme_config_changed
-    "jira_permission_scheme_anonymous_grants": "jira_permission_scheme_config_changed",
-    "jira_permission_scheme_anyone_grants": "jira_permission_scheme_config_changed",
-    "jira_permission_scheme_logged_in_grants": "jira_permission_scheme_config_changed",
-    "jira_permission_scheme_high_grant_count": "jira_permission_scheme_config_changed",
+    "jira_permission_scheme_anonymous_grant": "jira_permission_scheme_config_changed",
+    "jira_permission_scheme_anyone_grant": "jira_permission_scheme_config_changed",
+    "jira_permission_scheme_logged_in_grant": "jira_permission_scheme_config_changed",
     "jira_permission_scheme_public_browse_projects": "jira_permission_scheme_config_changed",
     "jira_permission_scheme_public_administer_projects": "jira_permission_scheme_config_changed",
     "jira_permission_scheme_public_manage_sprints": "jira_permission_scheme_config_changed",
@@ -99,18 +98,17 @@ JIRA_RULE_KEY_TO_SIGNAL_TYPE: dict[str, str] = {
     "jira_webhook_non_https": "jira_webhook_config_changed",
     "jira_webhook_no_secret_indicator": "jira_webhook_config_changed",
     "jira_webhook_no_jql_filter": "jira_webhook_config_changed",
-    "jira_webhook_broad_event_scope": "jira_webhook_config_changed",
     "jira_webhook_comment_event_scope": "jira_webhook_config_changed",
     "jira_webhook_attachment_event_scope": "jira_webhook_config_changed",
     "jira_webhook_sprint_event_scope": "jira_webhook_config_changed",
     "jira_webhook_worklog_event_scope": "jira_webhook_config_changed",
-    "jira_webhook_empty_or_broad_jql": "jira_webhook_config_changed",
     "jira_webhook_all_issue_events": "jira_webhook_config_changed",
     "jira_webhook_no_events": "jira_webhook_config_changed",
     "jira_webhook_disabled": "jira_webhook_config_changed",
     # Workflow rules → jira_workflow_config_changed
-    "jira_workflow_draft": "jira_workflow_config_changed",
-    "jira_workflow_low_transition_count": "jira_workflow_config_changed",
+    "jira_workflow_no_statuses": "jira_workflow_config_changed",
+    "jira_workflow_no_transitions": "jira_workflow_config_changed",
+    "jira_workflow_excessive_global_transitions": "jira_workflow_config_changed",
     "jira_workflow_no_done_status": "jira_workflow_config_changed",
     "jira_workflow_no_in_progress_status": "jira_workflow_config_changed",
     "jira_workflow_high_transition_rule_count": "jira_workflow_config_changed",
@@ -119,17 +117,16 @@ JIRA_RULE_KEY_TO_SIGNAL_TYPE: dict[str, str] = {
     "jira_workflow_high_post_function_count": "jira_workflow_config_changed",
     "jira_workflow_orphan_statuses": "jira_workflow_config_changed",
     "jira_workflow_inactive": "jira_workflow_config_changed",
-    "jira_workflow_low_status_count": "jira_workflow_config_changed",
     # Workflow scheme rules → jira_workflow_scheme_config_changed
-    "jira_workflow_scheme_no_projects": "jira_workflow_scheme_config_changed",
+    "jira_workflow_scheme_unused": "jira_workflow_scheme_config_changed",
     "jira_workflow_scheme_no_default": "jira_workflow_scheme_config_changed",
-    "jira_workflow_scheme_low_project_count": "jira_workflow_scheme_config_changed",
     "jira_workflow_scheme_unmapped_issue_types": "jira_workflow_scheme_config_changed",
     "jira_workflow_scheme_low_workflow_count": "jira_workflow_scheme_config_changed",
     "jira_workflow_scheme_high_issue_type_mapping_count": "jira_workflow_scheme_config_changed",
     # Automation rules → jira_automation_rule_config_changed
     "jira_automation_rule_disabled": "jira_automation_rule_config_changed",
-    "jira_automation_rule_workspace_scope": "jira_automation_rule_config_changed",
+    "jira_automation_rule_unknown_trigger": "jira_automation_rule_config_changed",
+    "jira_automation_rule_global_scope": "jira_automation_rule_config_changed",
     "jira_automation_rule_multi_project_scope": "jira_automation_rule_config_changed",
     "jira_automation_rule_unknown_scope": "jira_automation_rule_config_changed",
     "jira_automation_rule_web_request_action": "jira_automation_rule_config_changed",
@@ -139,42 +136,46 @@ JIRA_RULE_KEY_TO_SIGNAL_TYPE: dict[str, str] = {
     "jira_automation_rule_high_action_count": "jira_automation_rule_config_changed",
     "jira_automation_rule_high_branch_count": "jira_automation_rule_config_changed",
     # Board rules → jira_board_config_changed
-    "jira_board_no_projects": "jira_board_config_changed",
-    "jira_board_unknown_type": "jira_board_config_changed",
-    "jira_board_broad_location": "jira_board_config_changed",
+    "jira_board_unknown_type_category": "jira_board_config_changed",
+    "jira_board_unknown_location_type": "jira_board_config_changed",
+    "jira_board_missing_project_link": "jira_board_config_changed",
     "jira_board_broad_jql_filter": "jira_board_config_changed",
     "jira_board_no_filter_indicator": "jira_board_config_changed",
     "jira_board_high_quick_filter_count": "jira_board_config_changed",
     "jira_board_unknown_swimlane_strategy": "jira_board_config_changed",
     "jira_board_no_columns": "jira_board_config_changed",
     # Notification scheme rules → jira_notification_scheme_config_changed
-    "jira_notification_scheme_high_email_recipients": "jira_notification_scheme_config_changed",
+    "jira_notification_scheme_email_recipients": "jira_notification_scheme_config_changed",
     "jira_notification_scheme_group_recipients": "jira_notification_scheme_config_changed",
-    "jira_notification_scheme_project_role_recipients": "jira_notification_scheme_config_changed",
     "jira_notification_scheme_no_notifications": "jira_notification_scheme_config_changed",
     "jira_notification_scheme_unknown_recipients": "jira_notification_scheme_config_changed",
     "jira_notification_scheme_high_event_count": "jira_notification_scheme_config_changed",
     # Screen scheme rules → jira_screen_scheme_config_changed
-    "jira_screen_scheme_high_field_count": "jira_screen_scheme_config_changed",
-    "jira_screen_scheme_high_screen_field_count": "jira_screen_scheme_config_changed",
+    "jira_screen_scheme_no_screens": "jira_screen_scheme_config_changed",
+    "jira_screen_scheme_no_fields": "jira_screen_scheme_config_changed",
     "jira_screen_scheme_unmapped_screens": "jira_screen_scheme_config_changed",
-    "jira_screen_scheme_low_screen_count": "jira_screen_scheme_config_changed",
     # Field configuration scheme rules → jira_field_configuration_scheme_config_changed
-    "jira_field_configuration_scheme_high_required_fields": "jira_field_configuration_scheme_config_changed",
-    "jira_field_configuration_scheme_high_hidden_fields": "jira_field_configuration_scheme_config_changed",
+    "jira_field_configuration_scheme_no_configurations": "jira_field_configuration_scheme_config_changed",
+    "jira_field_configuration_scheme_hidden_required_conflict": "jira_field_configuration_scheme_config_changed",
     # Issue type scheme rules → jira_issue_type_scheme_config_changed
+    "jira_issue_type_scheme_no_types": "jira_issue_type_scheme_config_changed",
     "jira_issue_type_scheme_no_default": "jira_issue_type_scheme_config_changed",
-    "jira_issue_type_scheme_low_issue_type_count": "jira_issue_type_scheme_config_changed",
     # Project rules → jira_project_config_changed
-    "jira_project_key_missing": "jira_project_config_changed",
-    "jira_project_public_or_not_private": "jira_project_config_changed",
+    "jira_project_missing_key": "jira_project_config_changed",
+    "jira_project_private": "jira_project_config_changed",
     "jira_project_archived": "jira_project_config_changed",
     "jira_project_deleted": "jira_project_config_changed",
-    "jira_project_unknown_type": "jira_project_config_changed",
-    "jira_project_unknown_style": "jira_project_config_changed",
+    "jira_project_simplified": "jira_project_config_changed",
+    "jira_project_unknown_type_category": "jira_project_config_changed",
+    "jira_project_unknown_style_category": "jira_project_config_changed",
+    "jira_project_no_boards": "jira_project_config_changed",
+    "jira_project_no_issue_types": "jira_project_config_changed",
+    "jira_project_no_lead": "jira_project_config_changed",
     # Site rules → jira_site_config_changed
-    "jira_site_missing_site_url_indicator": "jira_site_config_changed",
-    "jira_site_low_project_count": "jira_site_config_changed",
+    "jira_site_missing_url": "jira_site_config_changed",
+    "jira_site_no_projects": "jira_site_config_changed",
+    "jira_site_no_webhooks": "jira_site_config_changed",
+    "jira_site_no_automation_rules": "jira_site_config_changed",
 }
 
 
@@ -208,10 +209,9 @@ def _family(
 JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     "jira_permission_scheme_risk_with_activity": _family(
         rule_keys={
-            "jira_permission_scheme_anonymous_grants",
-            "jira_permission_scheme_anyone_grants",
-            "jira_permission_scheme_logged_in_grants",
-            "jira_permission_scheme_high_grant_count",
+            "jira_permission_scheme_anonymous_grant",
+            "jira_permission_scheme_anyone_grant",
+            "jira_permission_scheme_logged_in_grant",
             "jira_permission_scheme_public_browse_projects",
             "jira_permission_scheme_public_administer_projects",
             "jira_permission_scheme_public_manage_sprints",
@@ -233,12 +233,10 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
             "jira_webhook_non_https",
             "jira_webhook_no_secret_indicator",
             "jira_webhook_no_jql_filter",
-            "jira_webhook_broad_event_scope",
             "jira_webhook_comment_event_scope",
             "jira_webhook_attachment_event_scope",
             "jira_webhook_sprint_event_scope",
             "jira_webhook_worklog_event_scope",
-            "jira_webhook_empty_or_broad_jql",
             "jira_webhook_all_issue_events",
             "jira_webhook_no_events",
             "jira_webhook_disabled",
@@ -252,8 +250,9 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_workflow_risk_with_activity": _family(
         rule_keys={
-            "jira_workflow_draft",
-            "jira_workflow_low_transition_count",
+            "jira_workflow_no_statuses",
+            "jira_workflow_no_transitions",
+            "jira_workflow_excessive_global_transitions",
             "jira_workflow_no_done_status",
             "jira_workflow_no_in_progress_status",
             "jira_workflow_high_transition_rule_count",
@@ -262,7 +261,6 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
             "jira_workflow_high_post_function_count",
             "jira_workflow_orphan_statuses",
             "jira_workflow_inactive",
-            "jira_workflow_low_status_count",
         },
         specific_signal="jira_workflow_config_changed",
         match_key="workflow",
@@ -273,9 +271,8 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_workflow_scheme_risk_with_activity": _family(
         rule_keys={
-            "jira_workflow_scheme_no_projects",
+            "jira_workflow_scheme_unused",
             "jira_workflow_scheme_no_default",
-            "jira_workflow_scheme_low_project_count",
             "jira_workflow_scheme_unmapped_issue_types",
             "jira_workflow_scheme_low_workflow_count",
             "jira_workflow_scheme_high_issue_type_mapping_count",
@@ -290,7 +287,8 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     "jira_automation_rule_risk_with_activity": _family(
         rule_keys={
             "jira_automation_rule_disabled",
-            "jira_automation_rule_workspace_scope",
+            "jira_automation_rule_unknown_trigger",
+            "jira_automation_rule_global_scope",
             "jira_automation_rule_multi_project_scope",
             "jira_automation_rule_unknown_scope",
             "jira_automation_rule_web_request_action",
@@ -309,9 +307,9 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_board_risk_with_activity": _family(
         rule_keys={
-            "jira_board_no_projects",
-            "jira_board_unknown_type",
-            "jira_board_broad_location",
+            "jira_board_unknown_type_category",
+            "jira_board_unknown_location_type",
+            "jira_board_missing_project_link",
             "jira_board_broad_jql_filter",
             "jira_board_no_filter_indicator",
             "jira_board_high_quick_filter_count",
@@ -327,9 +325,8 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_notification_scheme_risk_with_activity": _family(
         rule_keys={
-            "jira_notification_scheme_high_email_recipients",
+            "jira_notification_scheme_email_recipients",
             "jira_notification_scheme_group_recipients",
-            "jira_notification_scheme_project_role_recipients",
             "jira_notification_scheme_no_notifications",
             "jira_notification_scheme_unknown_recipients",
             "jira_notification_scheme_high_event_count",
@@ -343,10 +340,9 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_screen_scheme_risk_with_activity": _family(
         rule_keys={
-            "jira_screen_scheme_high_field_count",
-            "jira_screen_scheme_high_screen_field_count",
+            "jira_screen_scheme_no_screens",
+            "jira_screen_scheme_no_fields",
             "jira_screen_scheme_unmapped_screens",
-            "jira_screen_scheme_low_screen_count",
         },
         specific_signal="jira_screen_scheme_config_changed",
         match_key="screen_scheme",
@@ -357,8 +353,8 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_field_configuration_scheme_risk_with_activity": _family(
         rule_keys={
-            "jira_field_configuration_scheme_high_required_fields",
-            "jira_field_configuration_scheme_high_hidden_fields",
+            "jira_field_configuration_scheme_no_configurations",
+            "jira_field_configuration_scheme_hidden_required_conflict",
         },
         specific_signal="jira_field_configuration_scheme_config_changed",
         match_key="field_configuration_scheme",
@@ -369,8 +365,8 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_issue_type_scheme_risk_with_activity": _family(
         rule_keys={
+            "jira_issue_type_scheme_no_types",
             "jira_issue_type_scheme_no_default",
-            "jira_issue_type_scheme_low_issue_type_count",
         },
         specific_signal="jira_issue_type_scheme_config_changed",
         match_key="issue_type_scheme",
@@ -381,12 +377,16 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_project_risk_with_activity": _family(
         rule_keys={
-            "jira_project_key_missing",
-            "jira_project_public_or_not_private",
+            "jira_project_missing_key",
+            "jira_project_private",
             "jira_project_archived",
             "jira_project_deleted",
-            "jira_project_unknown_type",
-            "jira_project_unknown_style",
+            "jira_project_simplified",
+            "jira_project_unknown_type_category",
+            "jira_project_unknown_style_category",
+            "jira_project_no_boards",
+            "jira_project_no_issue_types",
+            "jira_project_no_lead",
         },
         specific_signal="jira_project_config_changed",
         match_key="project",
@@ -397,8 +397,10 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     ),
     "jira_site_risk_with_activity": _family(
         rule_keys={
-            "jira_site_missing_site_url_indicator",
-            "jira_site_low_project_count",
+            "jira_site_missing_url",
+            "jira_site_no_projects",
+            "jira_site_no_webhooks",
+            "jira_site_no_automation_rules",
         },
         specific_signal="jira_site_config_changed",
         match_key="site",

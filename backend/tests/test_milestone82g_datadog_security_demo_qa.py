@@ -897,7 +897,9 @@ def test_i6_expansion_framework_points_to_m83a():
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert ("M83A" in stage or "Clerk" in stage or "M84A" in stage or "PagerDuty" in stage
-            or "M85A" in stage or "Linear" in stage), (
+            or "M85A" in stage or "Linear" in stage
+            or "M86" in stage or "Jira" in stage
+            or "M87" in stage or "GitLab" in stage), (
         f"expected planned_next_stage to reference M83A/Clerk or later; got {stage!r}"
     )
 

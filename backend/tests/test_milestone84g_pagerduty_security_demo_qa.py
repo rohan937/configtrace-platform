@@ -271,7 +271,9 @@ def test_expansion_framework_m84h() -> None:
     # M84H ships depth QA; M84I UX polish; framework then advances to M85A: Linear.
     assert ("M84H" in planned or "Provider Depth" in planned
             or "M84I" in planned or "Cross-Cloud" in planned
-            or "M85A" in planned or "Linear" in planned)
+            or "M85A" in planned or "Linear" in planned
+            or "M86" in planned or "Jira" in planned
+            or "M87" in planned or "GitLab" in planned)
 
 
 # ── Section I: Frontend ───────────────────────────────────────────────────────

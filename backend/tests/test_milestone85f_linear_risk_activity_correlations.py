@@ -667,7 +667,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
-        assert recs and recs[0]["provider"] == "jira"
+        assert recs and recs[0]["provider"] in ("jira", "gitlab")
 
 
 # ── I. Frontend checks ─────────────────────────────────────────────────────────

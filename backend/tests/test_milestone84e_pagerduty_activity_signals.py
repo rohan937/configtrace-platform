@@ -538,7 +538,9 @@ class TestExpansionFramework:
         assert ("M84F" in planned or "M84G" in planned
                 or "M84H" in planned or "Provider Depth" in planned
                 or "M84I" in planned or "Cross-Cloud" in planned
-                or "M85A" in planned or "Linear" in planned), (
+                or "M85A" in planned or "Linear" in planned
+                or "M86" in planned or "Jira" in planned
+                or "M87" in planned or "GitLab" in planned), (
             f"planned_next_stage should reference M84F or beyond; got: {planned!r}"
         )
 
@@ -546,7 +548,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
-        assert recs and recs[0]["provider"] in ("linear", "jira")
+        assert recs and recs[0]["provider"] in ("linear", "jira", "gitlab")
 
 
 # ── I. Frontend checks ─────────────────────────────────────────────────────────

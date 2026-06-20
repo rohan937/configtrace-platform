@@ -665,6 +665,8 @@ class TestCapabilityMatrixAndFramework:
             "M83G" in planned or "M83H" in planned or "M83I" in planned
             or "M84A" in planned or "PagerDuty" in planned
             or "M85A" in planned or "Linear" in planned
+            or "M86" in planned or "Jira" in planned
+            or "M87" in planned or "GitLab" in planned
         ), (
             f"Expected planned_next_stage to contain 'M83D' or a later Clerk stage, got: {planned!r}"
         )

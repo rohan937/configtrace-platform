@@ -1289,6 +1289,8 @@ def test_i6_expansion_framework_planned_next_stage_is_m83i() -> None:
         "M83I" in planned or "Cross-Cloud UX Polish" in planned or "m83i" in planned.lower()
         or "M84A" in planned or "PagerDuty" in planned
         or "M85A" in planned or "Linear" in planned
+        or "M86" in planned or "Jira" in planned
+        or "M87" in planned or "GitLab" in planned
     ), (
         f"planned_next_stage should point to M83I or beyond (M84A/M85A) after M83H QA, got: {planned!r}"
     )
@@ -1320,7 +1322,8 @@ def test_i8_pagerduty_head_of_recommended_next_providers() -> None:
     # After M84A PagerDuty launched; after M85A Linear launched; Jira is now head.
     assert ("pagerduty" in provider.lower() or "PagerDuty" in provider
             or "linear" in provider.lower() or "Linear" in provider
-            or "jira" in provider.lower() or "Jira" in provider), (
+            or "jira" in provider.lower() or "Jira" in provider
+            or "gitlab" in provider.lower() or "GitLab" in provider), (
         f"PagerDuty, Linear, or Jira should be head of recommended_next_providers after Clerk arc, got: {provider!r}"
     )
 
@@ -1345,6 +1348,8 @@ def test_i9_capability_matrix_notes_no_stale_planned_next_stage_m83h() -> None:
         "M83I" in planned or "m83i" in planned.lower() or "Cross-Cloud" in planned
         or "M84A" in planned or "PagerDuty" in planned
         or "M85A" in planned or "Linear" in planned
+        or "M86" in planned or "Jira" in planned
+        or "M87" in planned or "GitLab" in planned
     ), (
         f"Expansion framework planned_next_stage still points to M83H: {planned!r}"
     )

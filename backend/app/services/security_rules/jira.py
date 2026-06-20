@@ -1310,7 +1310,7 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
     if (
         url_present is True
         and url_scheme_category
-        and url_scheme_category.lower() == "non_https"
+        and url_scheme_category.lower() in ("http", "other", "non_https")
     ):
         findings.append(_fc(
             rule_key=_RULE_WEBHOOK_NON_HTTPS, record_id=record_id, record_type=JIRA_WEBHOOK,

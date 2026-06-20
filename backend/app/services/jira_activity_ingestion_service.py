@@ -117,6 +117,11 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "major_version",
         "build_number",
         "scm_info_present",
+        # Schema-aligned site rollup fields (M86H).
+        "site_url_present",
+        "project_count",
+        "webhook_count",
+        "automation_rule_count",
     ),
     "jira_project": (
         "has_key",
@@ -126,10 +131,22 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "is_archived",
         "is_deleted",
         "is_simplified",
+        # Schema-aligned project fields (M86H).
+        "project_key_present",
+        "project_type_category",
+        "project_private",
+        "project_archived",
+        "project_deleted",
+        "project_simplified",
+        "project_style_category",
+        "lead_present",
     ),
     "jira_board": (
         "board_type",
         "location_present",
+        # Schema-aligned board fields (M86H).
+        "board_type_category",
+        "board_location_type_category",
         "board_filter_present",
         "board_jql_filter_broad",
         "board_column_count",
@@ -141,6 +158,9 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "transition_count",
         "status_count",
         "has_description",
+        # Schema-aligned workflow fields (M86H).
+        "workflow_status_count",
+        "workflow_transition_count",
         "workflow_global_transition_count",
         "workflow_active",
         "workflow_draft",
@@ -158,6 +178,9 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "issue_type_mapping_count",
         "has_draft",
         "has_description",
+        # Schema-aligned workflow scheme fields (M86H).
+        "workflow_scheme_project_count",
+        "workflow_scheme_default_present",
         "workflow_scheme_workflow_count",
         "workflow_scheme_issue_type_mapping_count",
         "workflow_scheme_unmapped_issue_type_count",
@@ -165,6 +188,11 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
     "jira_permission_scheme": (
         "permission_grant_count",
         "has_description",
+        # Schema-aligned permission scheme fields (M86H).
+        "permission_anonymous_grant_count",
+        "permission_anyone_grant_count",
+        "permission_logged_in_grant_count",
+        "permission_project_role_grant_count",
         "permission_public_browse_projects",
         "permission_public_administer_projects",
         "permission_public_manage_sprints",
@@ -178,6 +206,10 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "event_count",
         "notification_count",
         "has_description",
+        # Schema-aligned notification scheme fields (M86H).
+        "notification_email_recipient_count",
+        "notification_group_recipient_count",
+        "notification_project_role_recipient_count",
         "notification_all_watchers_recipient_count",
         "notification_unknown_recipient_count",
         "notification_event_count",
@@ -186,14 +218,25 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "is_default",
         "has_default_issue_type",
         "has_description",
+        # Schema-aligned issue type scheme fields (M86H).
+        "issue_type_count",
+        "default_issue_type_present",
     ),
     "jira_field_configuration_scheme": (
         "has_description",
+        # Schema-aligned field configuration scheme fields (M86H).
+        "field_configuration_count",
+        "required_field_count",
+        "hidden_field_count",
     ),
     "jira_screen_scheme": (
         "screen_mapping_count",
         "has_default_screen",
         "has_description",
+        # Schema-aligned screen scheme fields (M86H).
+        "screen_count",
+        "tab_count",
+        "field_count",
         "screen_tab_count",
         "screen_unmapped_screen_count",
     ),
@@ -203,6 +246,11 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "webhook_url_present",
         "webhook_url_scheme_category",
         "has_filter",
+        # Schema-aligned webhook fields (M86H).
+        "webhook_enabled",
+        "webhook_event_count",
+        "webhook_jql_filter_present",
+        "webhook_secret_present",
         "webhook_has_issue_events",
         "webhook_has_comment_events",
         "webhook_has_attachment_events",
@@ -218,6 +266,10 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "state",
         "component_count",
         "has_description",
+        # Schema-aligned automation rule fields (M86H).
+        "automation_enabled",
+        "automation_trigger_type_category",
+        "automation_component_count",
         "automation_action_count",
         "automation_condition_count",
         "automation_branch_count",

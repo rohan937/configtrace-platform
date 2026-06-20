@@ -891,7 +891,7 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         assert any(
             term in planned
             for term in ("M83E", "Activity Signals", "Clerk", "M84A", "PagerDuty",
-                         "M85A", "Linear")
+                         "M85A", "Linear", "M86", "Jira", "M87", "GitLab")
         ), (
             f"planned_next_stage must reference M83E/Activity Signals/Clerk or later, got: {planned!r}"
         )
