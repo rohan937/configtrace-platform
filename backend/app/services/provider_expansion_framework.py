@@ -586,6 +586,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M86C: Jira Workflow/Webhook Risk Expansion",
+            "planned_next_stage": "M86D: Jira Activity/Event Ingestion",
         },
     }

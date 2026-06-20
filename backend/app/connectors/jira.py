@@ -627,6 +627,11 @@ class JiraConnector(BaseConnector):
 
         SECURITY: board name and the project/filter it is scoped to are never
         stored beyond a location-presence boolean.
+
+        M86C — derive safe board scope posture. The raw JQL of the board filter,
+        filter name, column names, quick-filter names, and swimlane query text
+        are NEVER stored: only counts, booleans, and a hardcoded swimlane
+        strategy category enum.
         """
         bid = _trunc(raw.get("id", ""), 64) or "unknown"
         type_raw = _trunc(raw.get("type", ""), 32).lower()
@@ -634,13 +639,75 @@ class JiraConnector(BaseConnector):
             board_type = type_raw
         else:
             board_type = "unknown"
+
+        # Board filter presence — a board scoped to a filter (saved search) vs
+        # a project. We never read the filter's JQL, only its presence and a
+        # broad-scope heuristic flag if the API exposes a coarse indicator.
+        config = raw.get("columnConfig")
+        sub_query = raw.get("subQuery")
+        filter_obj = raw.get("filter")
+        location = raw.get("location")
+        filter_present = bool(filter_obj) or (
+            isinstance(location, dict)
+            and _trunc(location.get("type", ""), 32).lower() == "filter"
+        )
+
+        # Broad-JQL heuristic. We never store or inspect raw JQL text. We treat
+        # a board as broad only when the API explicitly flags an unbounded
+        # subQuery/filter via a safe boolean indicator.
+        jql_broad = _bool(raw.get("jqlFilterBroad")) or _bool(
+            raw.get("filterUnbounded")
+        )
+        if not jql_broad and isinstance(sub_query, dict):
+            # An empty subQuery query string means no additional scoping — treat
+            # as broad. We only inspect emptiness, never the query text itself.
+            q = sub_query.get("query")
+            if isinstance(q, str) and not q.strip():
+                jql_broad = True
+
+        # Column / quick-filter counts (structure only, never names).
+        column_count = 0
+        if isinstance(config, dict):
+            column_count = _count(config.get("columns"))
+
+        quick_filter_count = _count(raw.get("quickFilters"))
+
+        # Swimlane strategy category — hardcoded enum, never raw API text.
+        swimlane = raw.get("swimlaneStrategy") or raw.get("swimlanes")
+        strategy_raw = ""
+        if isinstance(swimlane, str):
+            strategy_raw = _trunc(swimlane, 32).lower()
+        elif isinstance(swimlane, dict):
+            strategy_raw = _trunc(swimlane.get("strategy", ""), 32).lower()
+        _swimlane_map = {
+            "project": "project",
+            "assignee": "assignee",
+            "epic": "epic",
+            "query": "query",
+            "custom": "query",
+            "parentchild": "parentChild",
+            "parentchildren": "parentChild",
+            "stories": "parentChild",
+            "none": "none",
+            "no_swimlane": "none",
+        }
+        swimlane_category = _swimlane_map.get(strategy_raw, "unknown")
+        if not strategy_raw:
+            swimlane_category = "unknown"
+
         return {
             "record_type": JIRA_BOARD,
             "provider": "jira",
             "record_id": bid,
             "resource_id": bid,
             "board_type": board_type,
-            "location_present": bool(raw.get("location")),
+            "location_present": bool(location),
+            # M86C safe board scope posture
+            "board_filter_present": bool(filter_present),
+            "board_jql_filter_broad": bool(jql_broad),
+            "board_column_count": _int(column_count),
+            "board_quick_filter_count": _int(quick_filter_count),
+            "board_swimlane_strategy_category": swimlane_category,
         }
 
     def _normalize_workflow(self, raw: dict) -> dict:
@@ -660,6 +727,42 @@ class JiraConnector(BaseConnector):
             wf_id = "unknown"
         transitions = raw.get("transitions")
         statuses = raw.get("statuses")
+        # M86C — derive safe workflow structure posture. No status/transition
+        # names, rule expressions, or configs are stored: only counts/booleans.
+        has_done = False
+        has_in_progress = False
+        category_keys: set[str] = set()
+        if isinstance(statuses, list):
+            for st in statuses:
+                if not isinstance(st, dict):
+                    continue
+                cat = st.get("statusCategory")
+                cat_key = ""
+                if isinstance(cat, dict):
+                    cat_key = _trunc(cat.get("key", ""), 32).lower()
+                elif isinstance(cat, str):
+                    cat_key = _trunc(cat, 32).lower()
+                if cat_key:
+                    category_keys.add(cat_key)
+                if cat_key == "done":
+                    has_done = True
+                if cat_key == "indeterminate":
+                    has_in_progress = True
+        validator_count = 0
+        condition_count = 0
+        post_function_count = 0
+        global_transition_count = 0
+        if isinstance(transitions, list):
+            for tr in transitions:
+                if not isinstance(tr, dict):
+                    continue
+                if _trunc(tr.get("type", ""), 32).lower() == "global":
+                    global_transition_count += 1
+                rules = tr.get("rules")
+                if isinstance(rules, dict):
+                    validator_count += _count(rules.get("validators"))
+                    condition_count += _count(rules.get("conditions"))
+                    post_function_count += _count(rules.get("postFunctions"))
         return {
             "record_type": JIRA_WORKFLOW,
             "provider": "jira",
@@ -669,6 +772,20 @@ class JiraConnector(BaseConnector):
             "transition_count": _int(_count(transitions)),
             "status_count": _int(_count(statuses)),
             "has_description": bool(raw.get("description")),
+            # M86C safe structure posture
+            "workflow_global_transition_count": _int(global_transition_count),
+            "workflow_active": _bool(raw.get("isActive"), default=True),
+            "workflow_draft": _bool(raw.get("draft")),
+            "workflow_has_done_status": has_done,
+            "workflow_has_in_progress_status": has_in_progress,
+            "workflow_transition_rule_count": _int(
+                validator_count + condition_count + post_function_count
+            ),
+            "workflow_validator_count": _int(validator_count),
+            "workflow_condition_count": _int(condition_count),
+            "workflow_post_function_count": _int(post_function_count),
+            "workflow_orphan_status_count": _int(_count(raw.get("orphanStatuses"))),
+            "workflow_status_category_count": _int(len(category_keys)),
         }
 
     def _normalize_workflow_scheme(self, raw: dict) -> dict:
@@ -679,6 +796,15 @@ class JiraConnector(BaseConnector):
         """
         sid = _trunc(raw.get("id", ""), 64) or "unknown"
         mapping = raw.get("issueTypeMappings")
+        # M86C — safe mapping posture. Distinct mapped workflow names are never
+        # stored; only counts of mappings and unmapped issue types are kept.
+        mapping_count = _count(mapping)
+        unmapped = _count(raw.get("unmappedIssueTypes") or raw.get("unmapped"))
+        workflow_count = _count(raw.get("workflows"))
+        if workflow_count == 0 and isinstance(mapping, dict):
+            # Distinct workflow values referenced by the mapping (count only).
+            distinct = {v for v in mapping.values() if isinstance(v, (str, int))}
+            workflow_count = len(distinct)
         return {
             "record_type": JIRA_WORKFLOW_SCHEME,
             "provider": "jira",
@@ -686,9 +812,13 @@ class JiraConnector(BaseConnector):
             "resource_id": sid,
             "is_default": _bool(raw.get("defaultWorkflow") is not None
                                 or raw.get("default")),
-            "issue_type_mapping_count": _int(_count(mapping)),
+            "issue_type_mapping_count": _int(mapping_count),
             "has_draft": _bool(raw.get("draft")),
             "has_description": bool(raw.get("description")),
+            # M86C safe scheme mapping posture
+            "workflow_scheme_workflow_count": _int(workflow_count),
+            "workflow_scheme_issue_type_mapping_count": _int(mapping_count),
+            "workflow_scheme_unmapped_issue_type_count": _int(unmapped),
         }
 
     def _normalize_permission_scheme(self, raw: dict) -> dict:
@@ -696,9 +826,72 @@ class JiraConnector(BaseConnector):
 
         SECURITY: grant holder identities (users, groups, roles), scheme
         name, and description are never stored — only grant counts.
+
+        M86C — derive safe public/high-privilege grant posture. Holder
+        identities, group names, and account IDs are NEVER stored: only
+        booleans indicating that a *public* holder type (anonymous / anyone /
+        loggedin / applicationRole) holds a sensitive permission, plus counts.
         """
         sid = _trunc(raw.get("id", ""), 64) or "unknown"
         permissions = raw.get("permissions")
+
+        # Holder types that represent "public" / broad principals. We classify
+        # by holder *type* only — never the holder's parameter (group/role id).
+        _public_holder_types = {
+            "anonymous",
+            "anyone",
+            "loggedin",
+            "applicationrole",
+        }
+        # Sensitive permission keys mapped to their public-flag field.
+        _public_perm_fields = {
+            "BROWSE_PROJECTS": "permission_public_browse_projects",
+            "ADMINISTER_PROJECTS": "permission_public_administer_projects",
+            "MANAGE_SPRINTS_PERMISSION": "permission_public_manage_sprints",
+            "CREATE_ISSUES": "permission_public_create_issues",
+            "TRANSITION_ISSUES": "permission_public_transition_issues",
+        }
+        # High-privilege permission keys (counted when granted to anyone).
+        _high_privilege_perms = {
+            "ADMINISTER_PROJECTS",
+            "ADMINISTER",
+            "SYSTEM_ADMIN",
+            "MANAGE_SPRINTS_PERMISSION",
+            "DELETE_ALL_WORKLOGS",
+            "DELETE_ALL_COMMENTS",
+            "EDIT_ALL_WORKLOGS",
+            "MODIFY_REPORTER",
+            "MANAGE_WATCHERS",
+        }
+
+        public_flags = {field: False for field in _public_perm_fields.values()}
+        unknown_holder_count = 0
+        high_privilege_grant_count = 0
+        public_grant_count = 0
+
+        if isinstance(permissions, list):
+            for grant in permissions:
+                if not isinstance(grant, dict):
+                    continue
+                perm_key = _trunc(grant.get("permission", ""), 64).upper()
+                holder = grant.get("holder")
+                holder_type = ""
+                if isinstance(holder, dict):
+                    holder_type = _trunc(holder.get("type", ""), 32).lower()
+                elif isinstance(holder, str):
+                    holder_type = _trunc(holder, 32).lower()
+
+                is_public = holder_type in _public_holder_types
+                if not holder_type:
+                    unknown_holder_count += 1
+                if is_public:
+                    public_grant_count += 1
+                    field = _public_perm_fields.get(perm_key)
+                    if field is not None:
+                        public_flags[field] = True
+                    if perm_key in _high_privilege_perms:
+                        high_privilege_grant_count += 1
+
         return {
             "record_type": JIRA_PERMISSION_SCHEME,
             "provider": "jira",
@@ -706,6 +899,27 @@ class JiraConnector(BaseConnector):
             "resource_id": sid,
             "permission_grant_count": _int(_count(permissions)),
             "has_description": bool(raw.get("description")),
+            # M86C safe public/high-privilege grant posture
+            "permission_public_browse_projects": public_flags[
+                "permission_public_browse_projects"
+            ],
+            "permission_public_administer_projects": public_flags[
+                "permission_public_administer_projects"
+            ],
+            "permission_public_manage_sprints": public_flags[
+                "permission_public_manage_sprints"
+            ],
+            "permission_public_create_issues": public_flags[
+                "permission_public_create_issues"
+            ],
+            "permission_public_transition_issues": public_flags[
+                "permission_public_transition_issues"
+            ],
+            "permission_unknown_holder_count": _int(unknown_holder_count),
+            "permission_high_privilege_grant_count": _int(
+                high_privilege_grant_count
+            ),
+            "permission_public_grant_count": _int(public_grant_count),
         }
 
     def _normalize_notification_scheme(self, raw: dict) -> dict:
@@ -717,10 +931,44 @@ class JiraConnector(BaseConnector):
         sid = _trunc(raw.get("id", ""), 64) or "unknown"
         events = raw.get("notificationSchemeEvents")
         notification_count = 0
+        # M86C — derive safe recipient posture. Recipient identities (users,
+        # groups, emails, account IDs) are NEVER stored: only counts of
+        # all-watcher and unrecognised recipient *types*, plus event count.
+        all_watchers_count = 0
+        unknown_recipient_count = 0
+        _known_recipient_types = {
+            "currentassignee",
+            "reporter",
+            "currentuser",
+            "projectlead",
+            "componentlead",
+            "user",
+            "group",
+            "projectrole",
+            "emailaddress",
+            "allwatchers",
+            "groupcustomfield",
+            "usercustomfield",
+        }
         if isinstance(events, list):
             for ev in events:
-                if isinstance(ev, dict):
-                    notification_count += _count(ev.get("notifications"))
+                if not isinstance(ev, dict):
+                    continue
+                notifications = ev.get("notifications")
+                notification_count += _count(notifications)
+                if isinstance(notifications, list):
+                    for notif in notifications:
+                        if not isinstance(notif, dict):
+                            continue
+                        ntype = _trunc(
+                            notif.get("notificationType", ""), 48
+                        ).lower()
+                        if ntype == "allwatchers":
+                            all_watchers_count += 1
+                        elif ntype and ntype not in _known_recipient_types:
+                            unknown_recipient_count += 1
+                        elif not ntype:
+                            unknown_recipient_count += 1
         return {
             "record_type": JIRA_NOTIFICATION_SCHEME,
             "provider": "jira",
@@ -729,6 +977,10 @@ class JiraConnector(BaseConnector):
             "event_count": _int(_count(events)),
             "notification_count": _int(notification_count),
             "has_description": bool(raw.get("description")),
+            # M86C safe recipient posture
+            "notification_all_watchers_recipient_count": _int(all_watchers_count),
+            "notification_unknown_recipient_count": _int(unknown_recipient_count),
+            "notification_event_count": _int(_count(events)),
         }
 
     def _normalize_issue_type_scheme(self, raw: dict) -> dict:
@@ -773,6 +1025,18 @@ class JiraConnector(BaseConnector):
         has_default = False
         if isinstance(screens, dict):
             has_default = bool(screens.get("default"))
+        # M86C — derive safe screen mapping posture. Screen names, tab names,
+        # and field names are NEVER stored: only counts.
+        tab_count = _int(_count(raw.get("tabs")))
+        # Operation slots a screen scheme may map: default/create/edit/view.
+        unmapped_screen_count = 0
+        if isinstance(screens, dict):
+            for slot in ("default", "create", "edit", "view"):
+                if not screens.get(slot):
+                    unmapped_screen_count += 1
+        else:
+            # No screens mapping at all — all four operation slots unmapped.
+            unmapped_screen_count = 4
         return {
             "record_type": JIRA_SCREEN_SCHEME,
             "provider": "jira",
@@ -781,6 +1045,9 @@ class JiraConnector(BaseConnector):
             "screen_mapping_count": _int(_count(screens)),
             "has_default_screen": has_default,
             "has_description": bool(raw.get("description")),
+            # M86C safe screen scheme mapping posture
+            "screen_tab_count": _int(tab_count),
+            "screen_unmapped_screen_count": _int(unmapped_screen_count),
         }
 
     def _normalize_webhook(self, raw: dict) -> dict:
@@ -793,6 +1060,73 @@ class JiraConnector(BaseConnector):
         wid = _trunc(raw.get("id", ""), 64) or "unknown"
         events = raw.get("events")
         url = raw.get("url")
+
+        # M86C — derive safe event-scope posture. Raw event identifiers are
+        # classified into hardcoded category booleans; the raw event strings,
+        # delivery URL, JQL filter, and secret are NEVER stored.
+        has_issue = False
+        has_comment = False
+        has_attachment = False
+        has_project = False
+        has_sprint = False
+        has_worklog = False
+        issue_event_kinds: set[str] = set()
+        # The canonical Jira issue lifecycle events.
+        _issue_event_kinds = {"created", "updated", "deleted"}
+        if isinstance(events, list):
+            for ev in events:
+                name = _trunc(ev, 64).lower() if isinstance(ev, str) else ""
+                if not name and isinstance(ev, dict):
+                    name = _trunc(ev.get("event", ""), 64).lower()
+                if not name:
+                    continue
+                if "comment" in name:
+                    has_comment = True
+                elif "attachment" in name:
+                    has_attachment = True
+                elif "worklog" in name:
+                    has_worklog = True
+                elif "sprint" in name:
+                    has_sprint = True
+                elif "project" in name:
+                    has_project = True
+                elif name.startswith("jira:issue") or name.startswith("issue"):
+                    has_issue = True
+                    for kind in _issue_event_kinds:
+                        if name.endswith(kind):
+                            issue_event_kinds.add(kind)
+
+        all_issue_events = _issue_event_kinds.issubset(issue_event_kinds)
+
+        # JQL empty-or-broad — never inspect the JQL text. We flag broad only
+        # when there is no filter indicator at all, or the API exposes a safe
+        # broad-scope boolean.
+        has_filter = bool(raw.get("filters") or raw.get("jqlFilter"))
+        jql_empty_or_broad = not has_filter or _bool(raw.get("jqlFilterBroad"))
+
+        # Event scope category — hardcoded enum derived from how many distinct
+        # event families the webhook subscribes to.
+        family_hits = sum(
+            1
+            for flag in (
+                has_issue,
+                has_comment,
+                has_attachment,
+                has_project,
+                has_sprint,
+                has_worklog,
+            )
+            if flag
+        )
+        if not isinstance(events, list) or not events:
+            scope_category = "unknown"
+        elif family_hits <= 1:
+            scope_category = "narrow"
+        elif family_hits <= 3:
+            scope_category = "medium"
+        else:
+            scope_category = "broad"
+
         return {
             "record_type": JIRA_WEBHOOK,
             "provider": "jira",
@@ -802,7 +1136,17 @@ class JiraConnector(BaseConnector):
             "event_count": _int(_count(events)),
             "webhook_url_present": bool(url),
             "webhook_url_scheme_category": _url_scheme_category(url),
-            "has_filter": bool(raw.get("filters") or raw.get("jqlFilter")),
+            "has_filter": has_filter,
+            # M86C safe event-scope posture
+            "webhook_has_issue_events": bool(has_issue),
+            "webhook_has_comment_events": bool(has_comment),
+            "webhook_has_attachment_events": bool(has_attachment),
+            "webhook_has_project_events": bool(has_project),
+            "webhook_has_sprint_events": bool(has_sprint),
+            "webhook_has_worklog_events": bool(has_worklog),
+            "webhook_all_issue_events": bool(all_issue_events),
+            "webhook_jql_empty_or_broad": bool(jql_empty_or_broad),
+            "webhook_event_scope_category": scope_category,
         }
 
     def _normalize_automation_rule(self, raw: dict) -> dict:
@@ -819,6 +1163,69 @@ class JiraConnector(BaseConnector):
         else:
             state = "unknown"
         components = raw.get("components") or raw.get("ruleComponents")
+
+        # M86C — derive safe action posture. Component logic, action
+        # configuration, URLs, email addresses, and rule expressions are NEVER
+        # stored: only counts by component *type* and hardcoded action-class
+        # booleans, plus a hardcoded scope category enum.
+        action_count = 0
+        condition_count = 0
+        branch_count = 0
+        has_web_request = False
+        has_email = False
+        has_external = False
+        has_comment = False
+        if isinstance(components, list):
+            for comp in components:
+                if not isinstance(comp, dict):
+                    continue
+                ctype = _trunc(comp.get("component", ""), 48).lower()
+                ctype_alt = _trunc(comp.get("type", ""), 48).lower()
+                kind = ctype or ctype_alt
+                if kind == "action":
+                    action_count += 1
+                elif kind == "condition":
+                    condition_count += 1
+                elif kind in ("branch", "iterate", "loop"):
+                    branch_count += 1
+                # Classify action sub-type by a safe type/value token only.
+                comp_type = _trunc(comp.get("value", ""), 64).lower()
+                if not comp_type:
+                    schema = comp.get("schemaVersion")
+                    comp_type = _trunc(comp.get("type", ""), 64).lower() if schema else comp_type
+                token = " ".join([kind, comp_type]).lower()
+                normalized = token.replace(".", "").replace("_", "").replace(" ", "")
+                if (
+                    "webrequest" in normalized
+                    or "outgoingwebhook" in normalized
+                    or "sendwebrequest" in normalized
+                ):
+                    has_web_request = True
+                if "sendemail" in normalized or "email" in normalized:
+                    has_email = True
+                if (
+                    "slack" in normalized
+                    or "microsoftteams" in normalized
+                    or "teams" in normalized
+                    or "outgoing" in normalized
+                ):
+                    has_external = True
+                if "comment" in normalized:
+                    has_comment = True
+
+        # Scope category — hardcoded enum, never raw project ids/names.
+        scope_raw = _trunc(raw.get("ruleScope") or raw.get("scope"), 32).lower()
+        project_ids = raw.get("projects") or raw.get("projectIds")
+        project_scope_count = _count(project_ids)
+        if scope_raw in ("global", "all"):
+            scope_category = "global"
+        elif project_scope_count > 1:
+            scope_category = "multi-project"
+        elif project_scope_count == 1 or scope_raw in ("project", "single"):
+            scope_category = "project"
+        else:
+            scope_category = "unknown"
+
         return {
             "record_type": JIRA_AUTOMATION_RULE,
             "provider": "jira",
@@ -828,6 +1235,15 @@ class JiraConnector(BaseConnector):
             "state": state,
             "component_count": _int(_count(components)),
             "has_description": bool(raw.get("description")),
+            # M86C safe action posture
+            "automation_action_count": _int(action_count),
+            "automation_condition_count": _int(condition_count),
+            "automation_branch_count": _int(branch_count),
+            "automation_scope_category": scope_category,
+            "automation_has_web_request_action": bool(has_web_request),
+            "automation_has_email_action": bool(has_email),
+            "automation_has_external_action": bool(has_external),
+            "automation_has_comment_action": bool(has_comment),
         }
 
     # ── Public interface ──────────────────────────────────────────────────────
