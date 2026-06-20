@@ -569,6 +569,116 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "label_count",                 # int — count of labels for a team
         "member_count_category",       # bucketed: none/small/medium/large
         "integration_type_category",   # safe integration type label
+        # Jira configuration activity signal fields (M86E) — synthesized from
+        # the same safe M86A–M86C drift surfaces (site, projects, boards,
+        # workflows, workflow schemes, permission schemes, notification schemes,
+        # issue type schemes, field configuration schemes, screen schemes,
+        # webhooks, automation rules). Jira's audit/issue/user activity APIs are
+        # NEVER ingested. NEVER stored: Jira API tokens, OAuth tokens, webhook
+        # secrets, integration secrets, raw webhook/delivery URLs, site base
+        # URLs, redirect URLs, JQL, filter expressions, board column / quick-
+        # filter / swimlane names, issue keys, issue titles, issue descriptions,
+        # comment bodies, attachment content, customer names, user emails, user
+        # names, account IDs, member identities, IP addresses, user agents, raw
+        # audit payloads, raw API response dicts, or PII.
+        "provider",                    # provider label ("jira") — never a secret
+        "signal_type",                 # generated signal_type label
+        "record_type",                 # safe Jira drift record_type label
+        "site_id",                     # Jira site/cloud id (opaque identifier)
+        "board_id",                    # Jira board id (opaque identifier)
+        "workflow_id",                 # Jira workflow id (opaque identifier)
+        "workflow_scheme_id",          # Jira workflow scheme id (opaque identifier)
+        "permission_scheme_id",        # Jira permission scheme id (opaque identifier)
+        "notification_scheme_id",      # Jira notification scheme id (opaque identifier)
+        "issue_type_scheme_id",        # Jira issue type scheme id (opaque identifier)
+        "field_configuration_scheme_id",  # Jira field configuration scheme id (opaque)
+        "screen_scheme_id",            # Jira screen scheme id (opaque identifier)
+        "automation_rule_id",          # Jira automation rule id (opaque identifier)
+        # Site posture
+        "deployment_type",             # safe deployment type label (cloud/server)
+        "major_version",               # int/str — major version (no build secrets)
+        "build_number",                # int/str — build number (no secrets)
+        "scm_info_present",            # bool — whether SCM info is present
+        # Project posture
+        "has_key",                     # bool — project key present
+        "project_type_key",            # safe project type label (software/business)
+        "style",                       # safe project style label (classic/next-gen)
+        "is_private",                  # bool — project is private
+        "is_archived",                 # bool — project is archived
+        "is_deleted",                  # bool — project is deleted
+        "is_simplified",               # bool — project uses simplified config
+        # Board posture
+        "board_type",                  # safe board type label (scrum/kanban)
+        "location_present",            # bool — board has a location set
+        "board_filter_present",        # bool — board has a saved filter (NEVER the JQL)
+        "board_jql_filter_broad",      # bool — board JQL is broad/empty (NEVER the JQL)
+        "board_column_count",          # int — count of board columns (NEVER names)
+        "board_quick_filter_count",    # int — count of quick filters (NEVER names/JQL)
+        "board_swimlane_strategy_category",  # safe swimlane strategy category label
+        # Workflow posture
+        "is_default",                  # bool — resource is the default
+        "transition_count",            # int — count of workflow transitions
+        "status_count",                # int — count of workflow statuses
+        "has_description",             # bool — resource has a description (NEVER text)
+        "workflow_global_transition_count",  # int — count of global transitions
+        "workflow_active",             # bool — workflow is active
+        "workflow_draft",              # bool — workflow has a draft
+        "workflow_has_done_status",    # bool — workflow has a Done-category status
+        "workflow_has_in_progress_status",  # bool — workflow has an In-Progress status
+        "workflow_transition_rule_count",   # int — count of transition rules
+        "workflow_validator_count",    # int — count of validators
+        "workflow_condition_count",    # int — count of conditions
+        "workflow_post_function_count",     # int — count of post functions
+        "workflow_orphan_status_count",     # int — count of orphan statuses
+        "workflow_status_category_count",   # int — count of distinct status categories
+        # Workflow scheme posture
+        "issue_type_mapping_count",    # int — count of issue type → workflow mappings
+        "has_draft",                   # bool — scheme has a draft
+        "workflow_scheme_workflow_count",   # int — count of workflows in scheme
+        "workflow_scheme_issue_type_mapping_count",  # int — count of mappings
+        "workflow_scheme_unmapped_issue_type_count", # int — count of unmapped types
+        # Permission scheme posture
+        "permission_grant_count",      # int — count of permission grants
+        "permission_public_browse_projects",      # bool — public browse grant present
+        "permission_public_administer_projects",  # bool — public administer grant present
+        "permission_public_manage_sprints",       # bool — public manage-sprints grant
+        "permission_public_create_issues",        # bool — public create-issues grant
+        "permission_public_transition_issues",    # bool — public transition grant
+        "permission_unknown_holder_count",         # int — count of unknown-holder grants
+        "permission_high_privilege_grant_count",   # int — count of high-privilege grants
+        "permission_public_grant_count",           # int — count of public/anyone grants
+        # Notification scheme posture
+        "notification_all_watchers_recipient_count",  # int — count of all-watchers recipients
+        "notification_unknown_recipient_count",       # int — count of unknown recipients
+        "notification_event_count",    # int — count of notification events
+        # Issue type scheme posture
+        "has_default_issue_type",      # bool — scheme has a default issue type
+        # Screen scheme posture
+        "screen_mapping_count",        # int — count of screen mappings
+        "has_default_screen",          # bool — scheme has a default screen
+        "screen_tab_count",            # int — count of screen tabs
+        "screen_unmapped_screen_count",  # int — count of unmapped screens
+        # Webhook posture
+        "has_filter",                  # bool — webhook has a JQL filter (NEVER the JQL)
+        "webhook_has_issue_events",    # bool — subscribes to issue events
+        "webhook_has_comment_events",  # bool — subscribes to comment events
+        "webhook_has_attachment_events",  # bool — subscribes to attachment events
+        "webhook_has_project_events",  # bool — subscribes to project events
+        "webhook_has_sprint_events",   # bool — subscribes to sprint events
+        "webhook_has_worklog_events",  # bool — subscribes to worklog events
+        "webhook_all_issue_events",    # bool — subscribes to all issue events
+        "webhook_jql_empty_or_broad",  # bool — webhook JQL is empty/broad (NEVER the JQL)
+        "webhook_event_scope_category",  # safe webhook event scope category label
+        # Automation rule posture
+        "component_count",             # int — count of rule components
+        "automation_action_count",     # int — count of automation actions
+        "automation_condition_count",  # int — count of automation conditions
+        "automation_branch_count",     # int — count of automation branches
+        "automation_scope_category",   # safe automation scope category label
+        "automation_has_web_request_action",  # bool — rule has a web-request action
+        "automation_has_email_action",        # bool — rule has an email action
+        "automation_has_external_action",     # bool — rule has an external action
+        "automation_has_comment_action",      # bool — rule has a comment action
     }
 )
 

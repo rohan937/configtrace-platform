@@ -893,9 +893,10 @@ class TestCapabilityMatrixAndFramework:
         assert cap.security.activity_ingestion is True
 
     def test_jira_activity_signals_false(self):
+        # M86E advanced activity_signals to True. Assert current state.
         cap = get_provider_capability("jira")
         assert cap is not None
-        assert cap.security.activity_signals is False
+        assert cap.security.activity_signals is True
 
     def test_jira_risk_activity_correlations_false(self):
         cap = get_provider_capability("jira")
@@ -933,10 +934,13 @@ class TestCapabilityMatrixAndFramework:
         assert "M86B" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m86c(self):
-        # M86C/M86D have since landed — planned_next_stage now points to M86E.
+        # M86C–M86E have since landed — planned_next_stage now points to M86F.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M86C" in planned or "M86D" in planned or "M86E" in planned, (
+        assert (
+            "M86C" in planned or "M86D" in planned or "M86E" in planned
+            or "M86F" in planned
+        ), (
             f"planned_next_stage should reference M86C or later; got {planned!r}"
         )
 

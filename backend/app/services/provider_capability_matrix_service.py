@@ -1115,7 +1115,7 @@ _JIRA = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -1160,8 +1160,14 @@ _JIRA = ProviderCapability(
         "GET /security/activity/events?provider=jira. Jira's audit log / issue / user "
         "activity APIs are never ingested — only safe counts, categories, booleans, and "
         "opaque resource identifiers are stored. "
+        "M86E adds Jira activity signals: ingested Jira configuration-state activity "
+        "events are promoted into review-priority Incident Signals grouped by safe "
+        "resource identity via POST /security/jira-activity/generate-signals and read "
+        "via GET /security/signals?provider=jira. Idempotent; review signals only — "
+        "never confirms breach, compromise, or unauthorized access. Only safe counts, "
+        "categories, booleans, and opaque resource identifiers are stored. "
         "Authentication uses Jira email + API token (stored encrypted, never returned). "
-        "planned_next_stage: M86E: Jira Activity Signals."
+        "planned_next_stage: M86F: Jira Risk × Activity Correlations."
     ),
 )
 

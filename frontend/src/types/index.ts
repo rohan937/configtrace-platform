@@ -2217,6 +2217,21 @@ export interface JiraActivitySyncResponse {
   max_events: number;
 }
 
+export interface JiraActivitySignalGenerateRequest {
+  lookback_hours: number;
+  max_signals: number;
+}
+export interface JiraActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+  lookback_hours: number;
+  max_signals: number;
+}
+
 export interface LinearActivitySignalGenerateResponse {
   provider: string;
   source: string;

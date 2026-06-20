@@ -447,10 +447,14 @@ def test_capability_matrix_jira_planned_next_stage_m86e() -> None:
 
 
 def test_expansion_framework_jira_points_to_m86e() -> None:
+    # M86E has since landed — planned_next_stage now points to M86F.
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M86E" in planned or "Jira Activity Signals" in planned, (
-        f"planned_next_stage should reference M86E; got {planned!r}"
+    assert (
+        "M86E" in planned or "Jira Activity Signals" in planned
+        or "M86F" in planned
+    ), (
+        f"planned_next_stage should reference M86E or later; got {planned!r}"
     )
 
 

@@ -2580,6 +2580,29 @@ export async function generateLinearActivitySignals(
 }
 
 /**
+ * generateJiraActivitySignals — POST /security/jira-activity/generate-signals
+ * Admin only. Generates review-priority Incident Signals from safe Jira
+ * configuration-state activity events. Promotes site, project, board, workflow,
+ * workflow scheme, permission scheme, notification scheme, issue type scheme,
+ * field configuration scheme, screen scheme, webhook, and automation rule
+ * config-state events into signals grouped by safe resource identity. Jira API
+ * tokens, OAuth tokens, webhook secrets, raw webhook/delivery URLs, site base
+ * URLs, JQL, filter expressions, issue keys, issue titles, issue descriptions,
+ * comment bodies, attachment content, customer names, user emails, user names,
+ * account IDs, IP addresses, user agents, and raw audit payloads are never
+ * stored. Does not confirm compromise or unauthorized access.
+ */
+export async function generateJiraActivitySignals(
+  token: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").JiraActivitySignalGenerateResponse> {
+  return apiFetch<import("@/types").JiraActivitySignalGenerateResponse>(
+    "/security/jira-activity/generate-signals",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * syncPagerDutyActivity — POST /security/pagerduty-activity/sync
  * Admin only. Synthesizes review-safe PagerDuty configuration-state activity
  * events from the same drift surfaces the connector reads: services, escalation

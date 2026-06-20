@@ -1260,6 +1260,7 @@ class TestCapabilityMatrix:
             "M86C: Jira Workflow/Webhook Risk Expansion",
             "M86D: Jira Activity/Event Ingestion",
             "M86E: Jira Activity Signals",
+            "M86F: Jira Risk × Activity Correlations",
             "M87A: GitLab Drift Provider Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"

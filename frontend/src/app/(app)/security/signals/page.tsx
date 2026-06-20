@@ -47,6 +47,7 @@ import {
   generateClerkActivitySignals,
   generatePagerDutyActivitySignals,
   generateLinearActivitySignals,
+  generateJiraActivitySignals,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -61,7 +62,7 @@ import {
 } from "@/components/security/findingDisplay";
 import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira";
 
 const CLOUDFLARE_SIGNAL_TYPES = ["cloudflare_audit_activity", "cloudflare_waf_activity_signal"];
 const VERCEL_SIGNAL_TYPES = ["vercel_activity_signal"];
@@ -162,6 +163,22 @@ const LINEAR_SIGNAL_TYPES = [
   "linear_integration_config_changed",
   "linear_config_activity",
 ];
+// M86E — Jira configuration activity signal types.
+const JIRA_SIGNAL_TYPES = [
+  "jira_site_config_changed",
+  "jira_project_config_changed",
+  "jira_board_config_changed",
+  "jira_workflow_config_changed",
+  "jira_workflow_scheme_config_changed",
+  "jira_permission_scheme_config_changed",
+  "jira_notification_scheme_config_changed",
+  "jira_issue_type_scheme_config_changed",
+  "jira_field_configuration_scheme_config_changed",
+  "jira_screen_scheme_config_changed",
+  "jira_webhook_config_changed",
+  "jira_automation_rule_config_changed",
+  "jira_config_activity",
+];
 // M81E — Auth0 configuration activity signal types.
 const AUTH0_SIGNAL_TYPES = [
   "auth0_tenant_config_changed",
@@ -175,7 +192,7 @@ const AUTH0_SIGNAL_TYPES = [
   "auth0_config_activity",
 ];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira" };
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
@@ -392,6 +409,14 @@ export default function IncidentSignalsPage() {
           activity_events_scanned: r.events_scanned,
           signals_created: r.signals_created,
           signals_skipped: r.signals_skipped,
+        };
+      } else if (provider === "jira") {
+        const v = await generateJiraActivitySignals(token);
+        res = {
+          provider: v.provider,
+          activity_events_scanned: v.events_scanned,
+          signals_created: v.signals_created,
+          signals_skipped: v.signals_skipped,
         };
       } else {
         res =
@@ -639,14 +664,14 @@ export default function IncidentSignalsPage() {
           marginBottom: "18px",
         }}
       >
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira"]} allowAll={false} />
         <Select label="Severity" value={severity} onChange={setSeverity} options={SEVERITY_OPTIONS} />
         <Select label="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
         <Select
           label="Signal type"
           value={signalType}
           onChange={setSignalType}
-          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : provider === "azure" ? AZURE_SIGNAL_TYPES : provider === "google_cloud" ? GOOGLE_CLOUD_SIGNAL_TYPES : provider === "twilio" ? TWILIO_SIGNAL_TYPES : provider === "sendgrid" ? SENDGRID_SIGNAL_TYPES : provider === "auth0" ? AUTH0_SIGNAL_TYPES : provider === "datadog" ? DATADOG_SIGNAL_TYPES : provider === "clerk" ? CLERK_SIGNAL_TYPES : provider === "pagerduty" ? PAGERDUTY_SIGNAL_TYPES : provider === "linear" ? LINEAR_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
+          options={provider === "aws" ? AWS_SIGNAL_TYPES : provider === "cloudflare" ? CLOUDFLARE_SIGNAL_TYPES : provider === "vercel" ? VERCEL_SIGNAL_TYPES : provider === "supabase" ? SUPABASE_SIGNAL_TYPES : provider === "firebase" ? FIREBASE_SIGNAL_TYPES : provider === "stripe" ? STRIPE_SIGNAL_TYPES : provider === "shopify" ? SHOPIFY_SIGNAL_TYPES : provider === "azure" ? AZURE_SIGNAL_TYPES : provider === "google_cloud" ? GOOGLE_CLOUD_SIGNAL_TYPES : provider === "twilio" ? TWILIO_SIGNAL_TYPES : provider === "sendgrid" ? SENDGRID_SIGNAL_TYPES : provider === "auth0" ? AUTH0_SIGNAL_TYPES : provider === "datadog" ? DATADOG_SIGNAL_TYPES : provider === "clerk" ? CLERK_SIGNAL_TYPES : provider === "pagerduty" ? PAGERDUTY_SIGNAL_TYPES : provider === "linear" ? LINEAR_SIGNAL_TYPES : provider === "jira" ? JIRA_SIGNAL_TYPES : GITHUB_SIGNAL_TYPES}
         />
       </div>
 
@@ -779,6 +804,7 @@ function GenerateBar({
   const isClerk = provider === "clerk";
   const isPagerDuty = provider === "pagerduty";
   const isLinear = provider === "linear";
+  const isJira = provider === "jira";
   const label = isCloudflare ? "Generate Cloudflare signals"
     : isAws ? "Generate AWS signals"
     : isVercel ? "Generate Vercel activity signals"
@@ -795,6 +821,7 @@ function GenerateBar({
     : isClerk ? "Generate Clerk signals"
     : isPagerDuty ? "Generate PagerDuty signals"
     : isLinear ? "Generate Linear signals"
+    : isJira ? "Generate Jira signals"
     : "Generate signals";
   const desc = isCloudflare
     ? "Generate review signals from Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings, API-token activity)."
@@ -828,7 +855,9 @@ function GenerateBar({
                                 ? "Generate review signals from safe PagerDuty configuration activity derived from service, escalation policy, schedule, integration, webhook, orchestration, business service, and response play configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API tokens, routing keys, integration keys, webhook secrets, raw URLs, user contact data, incident payloads, alert payloads, IP addresses, user agents, or PII."
                                 : isLinear
                                   ? "Generate review signals from safe Linear configuration activity derived from workspace, team, project, workflow state, label, webhook, view, cycle, and integration configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API keys, OAuth tokens, webhook secrets, raw URLs, issue titles, issue descriptions, comment bodies, user identities, or PII."
-                                  : "Scans recent GitHub audit activity events and creates review signals.";
+                                  : isJira
+                                    ? "Generate review-safe Jira signals from existing Jira configuration activity. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
+                                    : "Scans recent GitHub audit activity events and creates review signals.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1282,6 +1311,11 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               (isAdmin
                 ? " Use \"Generate Linear signals\" above once Linear configuration-state events have been ingested via the Activity page. Signals summarize review-worthy configuration activity patterns across workspace, team, project, workflow state, label, webhook, view, cycle, and integration settings. API keys, OAuth tokens, webhook secrets, raw URLs, issue titles, issue descriptions, comment bodies, user identities, and PII are never stored."
                 : " A workspace admin can sync Linear activity and generate Linear signals.")
+          : provider === "jira"
+            ? "Sync Jira activity first, then generate Jira signals." +
+              (isAdmin
+                ? " Use \"Generate Jira signals\" above once Jira configuration-state events have been ingested via the Activity page. Signals summarize review-worthy configuration activity patterns across site, project, board, workflow, workflow scheme, permission scheme, notification scheme, issue type scheme, field configuration scheme, screen scheme, webhook, and automation rule settings. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
+                : " A workspace admin can sync Jira activity and generate Jira signals.")
           : "Run GitHub activity sync first, then generate signals." +
             (isAdmin
               ? " Use “Generate signals” above once activity has been ingested."

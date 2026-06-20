@@ -263,6 +263,8 @@ from app.schemas.security_linear_activity import (
 from app.schemas.security_jira_activity import (
     JiraActivitySyncRequest,
     JiraActivitySyncResponse,
+    JiraActivitySignalGenerateRequest,
+    JiraActivitySignalGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
@@ -272,6 +274,7 @@ from app.services import linear_activity_ingestion_service
 from app.services import linear_activity_signal_service
 from app.services import linear_risk_activity_correlation_service
 from app.services import jira_activity_ingestion_service
+from app.services import jira_activity_signal_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3579,6 +3582,44 @@ def sync_jira_activity_events(
         db=db,
     )
     return JiraActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/jira-activity/generate-signals",
+    response_model=JiraActivitySignalGenerateResponse,
+)
+def generate_jira_activity_signals_endpoint(
+    body: Optional[JiraActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> JiraActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe Jira configuration activity events (M86E).
+
+    Admin/owner only. Promotes ingested jira/jira_activity_event config-state
+    events into review-priority Incident Signals grouped by resource identity.
+    Idempotent — re-running creates no duplicates. Review signals only; does not
+    confirm breach, compromise, unauthorized access, or data exposure.
+
+    Jira API tokens, OAuth tokens, webhook secrets, raw webhook/delivery URLs,
+    site base URLs, JQL, filter expressions, issue keys, issue titles, issue
+    descriptions, comment bodies, attachment content, customer names, user
+    emails, user names, account IDs, IP addresses, user agents, raw audit
+    payloads, and PII are NEVER stored. Members can read signals via
+    GET /security/signals?provider=jira.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 100
+    summary = jira_activity_signal_service.generate_jira_activity_signals(
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_signals=max_signals,
+    )
+    return JiraActivitySignalGenerateResponse(**summary)
 
 
 @router.post(
