@@ -955,11 +955,12 @@ def test_unknown_record_type_returns_no_findings() -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_capability_matrix_no_activity_ingestion() -> None:
+def test_capability_matrix_activity_ingestion_true() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    assert cap.security.activity_ingestion is False
+    # M88D set activity_ingestion=True
+    assert cap.security.activity_ingestion is True
 
 
 def test_capability_matrix_no_activity_signals() -> None:

@@ -1346,7 +1346,7 @@ _TERRAFORM_CLOUD = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -1357,7 +1357,8 @@ _TERRAFORM_CLOUD = ProviderCapability(
     maturity="partial",
     notes=(
         "Terraform Cloud DevOps configuration drift foundation (M88A), core security "
-        "rules (M88B), and workspace/variable/policy risk expansion (M88C). "
+        "rules (M88B), workspace/variable/policy risk expansion (M88C), and "
+        "configuration activity ingestion (M88D). "
         "Drift snapshots cover 10 safe configuration surfaces from the Terraform Cloud API v2: "
         "organization posture (workspace/project/policy-set/variable-set counts, SSO, 2FA, "
         "cost estimation, collaborator auth policy — never organization name), "
@@ -1392,8 +1393,12 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "All rule evidence is metadata-only (booleans, counts, categories, opaque IDs). "
         "Never stores: organization names, workspace names, variable names/values, state files, "
         "plan/apply logs, VCS URLs, team names, user emails, webhook URLs, or customer PII. "
-        "Activity ingestion, signals, correlations, demo, and case report planned for M88D+. "
-        "planned_next_stage: M88D: Terraform Cloud Activity/Event Ingestion."
+        "M88D adds configuration activity ingestion: synthesizes safe config-state events "
+        "from drift records across 9 Terraform Cloud record surfaces. Events use only "
+        "opaque IDs, booleans, counts, and category labels — never variable values, "
+        "state files, tokens, URLs, names, or customer data. "
+        "Activity signals, correlations, demo, and case report planned for M88E+. "
+        "planned_next_stage: M88E: Terraform Cloud Activity Signals."
     ),
 )
 

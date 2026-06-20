@@ -45,6 +45,7 @@ import {
   syncLinearActivity,
   syncJiraActivity,
   syncGitlabActivity,
+  syncTerraformCloudActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -54,7 +55,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab" | "terraform_cloud";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -482,9 +483,49 @@ const GITLAB_EVENT_TYPES = [
   "gitlab.config.event",
 ];
 
+// M88D — Terraform Cloud configuration activity (synthesized from drift records).
+// Terraform Cloud audit-log APIs are never ingested. No variable values, state
+// files, tokens, URLs, team names, user identities, or customer data are stored.
+const TERRAFORM_CLOUD_EVENT_TYPES = [
+  "terraform_cloud.organization.two_factor_not_required",
+  "terraform_cloud.organization.sso_not_enabled",
+  "terraform_cloud.organization.posture_changed",
+  "terraform_cloud.workspace.auto_apply_enabled",
+  "terraform_cloud.workspace.global_remote_state_enabled",
+  "terraform_cloud.workspace.execution_mode_changed",
+  "terraform_cloud.workspace.vcs_connection_missing",
+  "terraform_cloud.workspace.queue_all_runs_disabled",
+  "terraform_cloud.workspace.unpinned_terraform_version",
+  "terraform_cloud.workspace.file_triggers_disabled",
+  "terraform_cloud.workspace.speculative_plans_disabled",
+  "terraform_cloud.workspace.run_triggers_present",
+  "terraform_cloud.workspace.latest_run_failed",
+  "terraform_cloud.variables.non_sensitive_variables_detected",
+  "terraform_cloud.variables.no_sensitive_variables_detected",
+  "terraform_cloud.variable_set.global_scope_detected",
+  "terraform_cloud.variable_set.broad_scope_detected",
+  "terraform_cloud.variable_set.non_sensitive_variables_detected",
+  "terraform_cloud.policy_set.advisory_enforcement_detected",
+  "terraform_cloud.policy_set.empty_detected",
+  "terraform_cloud.policy_set.global_scope_detected",
+  "terraform_cloud.policy_set.broad_scope_advisory_detected",
+  "terraform_cloud.policy_set.unscoped_detected",
+  "terraform_cloud.notification.http_webhook_detected",
+  "terraform_cloud.notification.token_missing",
+  "terraform_cloud.notification.broad_trigger_scope",
+  "terraform_cloud.notification.disabled",
+  "terraform_cloud.run_trigger.enabled",
+  "terraform_cloud.team_access.admin_detected",
+  "terraform_cloud.team_access.apply_detected",
+  "terraform_cloud.team_access.write_detected",
+  "terraform_cloud.team_access.custom_permissions_detected",
+  "terraform_cloud.state_version.metadata_present",
+  "terraform_cloud.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira", gitlab: "GitLab" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira", gitlab: "GitLab", terraform_cloud: "Terraform Cloud" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -679,6 +720,12 @@ export default function ActivityEventsPage() {
         setSyncNote(
           `Scanned ${r.events_scanned} · created ${r.events_created} · skipped ${r.events_skipped}.`,
         );
+      } else if (provider === "terraform_cloud") {
+        const r = await syncTerraformCloudActivity(token);
+        setSyncWarn(false);
+        setSyncNote(
+          `Scanned ${r.events_scanned} · created ${r.events_created} · skipped ${r.events_skipped}.`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -727,7 +774,9 @@ export default function ActivityEventsPage() {
                                           ? "Could not sync Jira activity. Please try again."
                                           : provider === "gitlab"
                                             ? "Could not sync GitLab activity. Please try again."
-                                            : "Could not sync GitHub activity. Please try again.",
+                                            : provider === "terraform_cloud"
+                                              ? "Could not sync Terraform Cloud activity. Please try again."
+                                              : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -890,6 +939,7 @@ export default function ActivityEventsPage() {
     : provider === "linear" ? LINEAR_EVENT_TYPES
     : provider === "jira" ? JIRA_EVENT_TYPES
     : provider === "gitlab" ? GITLAB_EVENT_TYPES
+    : provider === "terraform_cloud" ? TERRAFORM_CLOUD_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -932,7 +982,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira", "gitlab"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira", "gitlab", "terraform_cloud"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit

@@ -372,6 +372,9 @@ _ACTIVITY_PROVIDERS = [
     # M87D added GitLab config-state activity ingestion (activity only — no
     # signals or correlations yet; those are planned for M87E/M87F).
     "gitlab",
+    # M88D added Terraform Cloud config-state activity ingestion (activity only —
+    # signals and correlations planned for M88E/M88F).
+    "terraform_cloud",
 ]
 # Datadog activity signals landed in M82E; correlations landed in M82F.
 # Clerk activity signals landed in M83E; correlations landed in M83F.
@@ -382,8 +385,11 @@ _ACTIVITY_PROVIDERS = [
 # and correlations selectors.
 # GitLab activity ingestion landed in M87D; signals landed in M87E;
 # correlations landed in M87F. GitLab now appears in all three selectors.
-_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
-_CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
+# Terraform Cloud activity ingestion landed in M88D. Signals (M88E) and
+# correlations (M88F) are not yet implemented — terraform_cloud is NOT in
+# the signals or correlations selectors yet.
+_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "terraform_cloud"]
+_CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "terraform_cloud"]
 
 
 def _provider_selector_array(text: str) -> list[str] | None:

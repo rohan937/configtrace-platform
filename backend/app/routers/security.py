@@ -289,6 +289,11 @@ from app.schemas.security_gitlab_activity import (
     GitLabRiskActivityCorrelationGenerateRequest,
     GitLabRiskActivityCorrelationGenerateResponse,
 )
+from app.services import terraform_cloud_activity_ingestion_service
+from app.schemas.security_terraform_cloud_activity import (
+    TerraformCloudActivitySyncRequest,
+    TerraformCloudActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3663,6 +3668,59 @@ def sync_gitlab_activity_events(
         db=db,
     )
     return GitLabActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/terraform-cloud-activity/sync",
+    response_model=TerraformCloudActivitySyncResponse,
+)
+def sync_terraform_cloud_activity_events(
+    body: Optional[TerraformCloudActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TerraformCloudActivitySyncResponse:
+    """Sync review-safe Terraform Cloud configuration activity events (M88D).
+
+    Admin/owner only. Synthesizes config-state events from the same safe
+    Terraform Cloud configuration posture records the drift connector already
+    stores (organization, workspaces, workspace variable summaries, variable
+    sets, policy sets, notification configurations, run triggers, team access
+    summaries, and state version summaries). Terraform Cloud audit-log APIs
+    are NEVER used — they contain actor user IDs, emails, IP addresses, user
+    agents, and workspace names in every entry.
+
+    Terraform Cloud API tokens, OAuth tokens, VCS tokens, authorization
+    headers, variable names or values, state files, state outputs, resource
+    addresses, plan/apply logs, run logs, webhook URLs, notification tokens,
+    Slack channels, email recipients, user emails, usernames, team names,
+    organization names, workspace names, project names, VCS URLs, branch
+    names, commit SHAs, customer infrastructure data, PII, and raw API
+    payloads are NEVER stored.
+
+    Evidence is configuration-state metadata only. Does not confirm breach,
+    compromise, unauthorized access, state exposure, secret exposure, token
+    exposure, credential exposure, infrastructure exposure, or data exposure.
+
+    Members can read ingested events via
+    GET /security/activity/events?provider=terraform_cloud.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = terraform_cloud_activity_ingestion_service.sync_terraform_cloud_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return TerraformCloudActivitySyncResponse(**summary)
 
 
 @router.post(

@@ -981,6 +981,29 @@ export async function syncGitlabActivity(
 }
 
 /**
+ * syncTerraformCloudActivity — POST /security/terraform-cloud-activity/sync
+ * Admin only. Synthesizes review-safe Terraform Cloud configuration-state
+ * activity events from the same safe drift surfaces the connector reads
+ * (organization, workspaces, workspace variable summaries, variable sets,
+ * policy sets, notification configurations, run triggers, team access
+ * summaries, and state version summaries).
+ * Terraform Cloud audit-log APIs are never ingested. API tokens, OAuth tokens,
+ * VCS tokens, variable names/values, state files, state outputs, plan/apply
+ * logs, webhook URLs, tokens, team names, user emails, organization names,
+ * workspace names, project names, VCS URLs, branch names, customer
+ * infrastructure data, and PII are never stored.
+ */
+export async function syncTerraformCloudActivity(
+  token?: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").TerraformCloudActivitySyncResponse> {
+  return apiFetch<import("@/types").TerraformCloudActivitySyncResponse>(
+    "/security/terraform-cloud-activity/sync",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * generateGitlabActivitySignals — POST /security/gitlab-activity/generate-signals
  * Admin only. Promotes ingested GitLab configuration-state activity events
  * (provider=gitlab, source=gitlab_activity_event) into review-priority Incident

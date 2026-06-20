@@ -854,6 +854,63 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "approvals_required",          # int — MR approvals required count
         "reset_approvals_on_push",     # bool — MR reset-approvals-on-push posture
         "override_approvers_disabled", # bool — MR per-request approver override disabled posture
+        # Terraform Cloud configuration activity fields (M88D) — config-state
+        # observation events synthesized from 9 safe drift surfaces (M88A–M88C).
+        # Terraform Cloud audit-log APIs (actor user IDs, emails, IPs, user
+        # agents) are NEVER ingested.  NEVER stored: Terraform Cloud API tokens,
+        # OAuth tokens, VCS tokens, authorization headers, variable names or
+        # values, state files, state outputs, resource addresses, plan/apply logs,
+        # run logs, webhook URLs, notification tokens, Slack channels, email
+        # recipients, user emails, usernames, team names, organization names,
+        # workspace names, project names, VCS URLs, branch names, commit SHAs,
+        # customer infrastructure data, PII, or raw API payloads of any kind.
+        "terraform_cloud_event_id",    # stable synthetic event identifier (record+type+observed-at)
+        "organization_resource_id",    # opaque Terraform Cloud org resource identifier
+        "workspace_resource_id",       # opaque workspace resource identifier
+        "variable_set_resource_id",    # opaque variable set resource identifier
+        "policy_set_resource_id",      # opaque policy set resource identifier
+        "notification_resource_id",    # opaque notification configuration resource identifier
+        "run_trigger_resource_id",     # opaque run trigger resource identifier
+        "execution_mode_category",     # workspace execution mode ("remote"/"local"/"agent")
+        "terraform_version_category",  # Terraform version category ("pinned"/"latest"/"unknown")
+        "auto_apply",                  # bool — workspace auto-apply enabled
+        "global_remote_state",         # bool — workspace global remote state sharing enabled
+        "vcs_connected",               # bool — workspace VCS connection present
+        "queue_all_runs",              # bool — workspace queue-all-runs enabled
+        "file_triggers_enabled",       # bool — workspace file-based run triggers enabled
+        "speculative_enabled",         # bool — workspace speculative plans enabled
+        "run_trigger_count",           # int — count of run triggers on workspace
+        "trigger_prefix_count",        # int — count of file trigger prefixes
+        "latest_run_status_category",  # workspace latest run status category (safe enum)
+        "sensitive_variable_count",    # int — count of sensitive variables
+        "non_sensitive_variable_count", # int — count of non-sensitive variables
+        "environment_variable_count",  # int — count of environment-category variables
+        "terraform_variable_count",    # int — count of Terraform-category variables
+        "raw_value_never_read",        # bool — variable raw values are never fetched
+        "global_scope",                # bool — variable set / policy set global scope flag
+        "workspace_count",             # int — count of workspaces in scope
+        "policy_set_count",            # int — count of policy sets in org
+        "variable_set_count",          # int — count of variable sets in org
+        "policy_count",                # int — count of policies in a policy set
+        "enforcement_level_category",  # policy set enforcement level ("mandatory"/"soft_mandatory"/"advisory")
+        "destination_type_category",   # notification destination type ("webhook"/"slack"/"email"/"…")
+        "trigger_count",               # int — count of notification trigger subscriptions
+        "token_present",               # bool — webhook notification token present
+        "webhook_url_scheme_category", # notification webhook URL scheme ("http"/"https") — never the URL
+        "sourceable_type_category",    # run trigger sourceable type category
+        "team_access_count",           # int — count of team access entries on workspace
+        "admin_access_count",          # int — count of teams with admin access
+        "write_access_count",          # int — count of teams with write access
+        "read_access_count",           # int — count of teams with read access
+        "plan_access_count",           # int — count of teams with plan access
+        "apply_access_count",          # int — count of teams with apply access
+        "custom_permission_count",     # int — count of teams with custom permissions
+        "state_version_present",       # bool — workspace has a current state version
+        "state_version_count_category", # state version count category (never raw count)
+        "raw_state_never_fetched",     # bool — raw state files are never fetched or stored
+        "sso_enabled",                 # bool — organization SSO enabled flag
+        "cost_estimation_enabled",     # bool — organization cost estimation enabled flag
+        "notification_count",          # int — count of notification configurations on workspace
     }
 )
 

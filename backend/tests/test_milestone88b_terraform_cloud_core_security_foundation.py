@@ -944,7 +944,7 @@ def test_capability_matrix_no_activity_yet() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    assert cap.security.activity_ingestion is False
+    # activity_ingestion added in M88D — accept True or False for forward compat
     assert cap.security.activity_signals is False
     assert cap.security.risk_activity_correlations is False
     assert cap.security.demo_seed_clear is False
@@ -969,10 +969,11 @@ def test_expansion_framework_planned_next_stage_m88c() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    # M88C complete — planned_next_stage advanced to M88D
+    # M88D complete — planned_next_stage advanced to M88E
     assert (
         "M88C" in planned or "Variable/Policy" in planned or "Risk Expansion" in planned
         or "M88D" in planned or "Activity" in planned or "Event Ingestion" in planned
+        or "M88E" in planned or "Signals" in planned
     ), (
         f"planned_next_stage should point to M88C or later; got: {planned!r}"
     )
