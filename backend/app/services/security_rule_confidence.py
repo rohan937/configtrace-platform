@@ -524,6 +524,25 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "gitlab_project_wiki_enabled_public": (MEDIUM, "Fires when wiki_enabled=True on a public gitlab_project record; public wikis are intentional for open-source projects that use them for documentation."),
     "gitlab_project_packages_enabled_public": (MEDIUM, "Fires when packages_enabled=True on a public gitlab_project record; public package registries are intentional for open-source distribution."),
     "gitlab_project_container_registry_enabled_public": (MEDIUM, "Fires when container_registry_enabled=True on a public gitlab_project record; public container registries may be intentional for public image distribution."),
+    # ── M88B: Terraform Cloud core security rules ──────────────────────────────
+    "terraform_cloud_organization_two_factor_not_required": (HIGH, "Only fires when two_factor_requirement_enabled is explicitly False on a terraform_cloud_organization record — a direct boolean from the API. Some organizations may rely on SSO as a compensating control."),
+    "terraform_cloud_organization_sso_not_enabled": (HIGH, "Only fires when sso_enabled is explicitly False on a terraform_cloud_organization record. Many organizations use 2FA instead of SSO; review organizational auth policy before acting."),
+    "terraform_cloud_workspace_auto_apply_enabled": (HIGH, "Only fires when auto_apply is True on a terraform_cloud_workspace record — a direct boolean. Some teams intentionally enable auto-apply for non-production workspaces."),
+    "terraform_cloud_workspace_global_remote_state_enabled": (HIGH, "Only fires when global_remote_state is True on a terraform_cloud_workspace record — a direct boolean. Global state sharing may be intentional for shared infrastructure modules."),
+    "terraform_cloud_workspace_local_execution_mode": (HIGH, "Only fires when execution_mode_category is 'local' on a terraform_cloud_workspace record. Local execution may be intentional for development or migration workspaces."),
+    "terraform_cloud_workspace_vcs_connection_missing": (MEDIUM, "Fires when vcs_connected is False and execution_mode_category is 'remote' on a terraform_cloud_workspace record; some workspaces are intentionally API-driven without VCS."),
+    "terraform_cloud_workspace_queue_all_runs_disabled": (MEDIUM, "Fires when queue_all_runs is False on a terraform_cloud_workspace record; some teams intentionally disable run queuing for certain workspace patterns."),
+    "terraform_cloud_workspace_unpinned_terraform_version": (HIGH, "Only fires when terraform_version_category is 'latest' or 'unknown'. Using latest may be intentional in development environments."),
+    "terraform_cloud_workspace_non_sensitive_variables_present": (MEDIUM, "Fires when non_sensitive_variable_count > 0 on a terraform_cloud_workspace_variable_summary record. Many workspaces intentionally use non-sensitive variables for non-secret configuration. Variable names and values are never stored."),
+    "terraform_cloud_workspace_no_sensitive_variables": (MEDIUM, "Fires when sensitive_variable_count == 0 and variable_count > 0 on a terraform_cloud_workspace_variable_summary record. Some workspaces intentionally store only non-secret configuration variables. Variable names and values are never stored."),
+    "terraform_cloud_notification_http_webhook": (HIGH, "Only fires when enabled=True, destination_type_category='webhook', and webhook_url_scheme_category='http'. Some internal webhook endpoints may be HTTP-only; webhook URLs are never stored."),
+    "terraform_cloud_notification_token_missing": (MEDIUM, "Fires when enabled=True, destination_type_category='webhook', and token_present=False. Webhook token is optional if the receiver validates delivery through other means."),
+    "terraform_cloud_policy_set_advisory_enforcement": (HIGH, "Only fires when enforcement_level_category='advisory'. Some policy sets are intentionally advisory for gradual rollout."),
+    "terraform_cloud_policy_set_empty": (HIGH, "Only fires when policy_count==0. An empty policy set may be in setup and not yet populated."),
+    "terraform_cloud_team_admin_access": (HIGH, "Only fires when admin_access_count > 0 on a terraform_cloud_team_access_summary record. Admin access may be required for platform teams. Team names are never stored."),
+    "terraform_cloud_team_apply_access": (MEDIUM, "Fires when apply_access_count > 0 on a terraform_cloud_team_access_summary record. Apply access is commonly granted to deployment teams. Team names are never stored."),
+    "terraform_cloud_variable_set_global_scope": (HIGH, "Only fires when global_scope is True on a terraform_cloud_variable_set record. Global scope is sometimes intentional for shared configuration. Variable names and values are never stored."),
+    "terraform_cloud_state_version_present": (HIGH, "Only fires when state_version_present is True on a terraform_cloud_state_version_summary record. State presence is expected for active workspaces; this is an informational posture indicator. Raw state is never fetched or stored."),
 }
 
 

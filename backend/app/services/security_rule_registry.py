@@ -496,6 +496,25 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "gitlab_project_wiki_enabled_public",
         "gitlab_project_packages_enabled_public",
         "gitlab_project_container_registry_enabled_public",
+        # ── M88B: Terraform Cloud core security rules ─────────────────────────
+        "terraform_cloud_organization_two_factor_not_required",
+        "terraform_cloud_organization_sso_not_enabled",
+        "terraform_cloud_workspace_auto_apply_enabled",
+        "terraform_cloud_workspace_global_remote_state_enabled",
+        "terraform_cloud_workspace_local_execution_mode",
+        "terraform_cloud_workspace_vcs_connection_missing",
+        "terraform_cloud_workspace_queue_all_runs_disabled",
+        "terraform_cloud_workspace_unpinned_terraform_version",
+        "terraform_cloud_workspace_non_sensitive_variables_present",
+        "terraform_cloud_workspace_no_sensitive_variables",
+        "terraform_cloud_notification_http_webhook",
+        "terraform_cloud_notification_token_missing",
+        "terraform_cloud_policy_set_advisory_enforcement",
+        "terraform_cloud_policy_set_empty",
+        "terraform_cloud_team_admin_access",
+        "terraform_cloud_team_apply_access",
+        "terraform_cloud_variable_set_global_scope",
+        "terraform_cloud_state_version_present",
     }
 )
 

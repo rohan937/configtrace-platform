@@ -54,6 +54,7 @@ from app.services.security_rules import pagerduty as pagerduty_rules
 from app.services.security_rules import linear as linear_rules
 from app.services.security_rules import jira as jira_rules
 from app.services.security_rules import gitlab as gitlab_rules
+from app.services.security_rules import terraform_cloud as terraform_cloud_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,8 @@ _PROVIDER_RULES = {
     "jira": [jira_rules.evaluate],
     # M87B: GitLab core security rules
     "gitlab": [gitlab_rules.evaluate],
+    # M88B: Terraform Cloud core security rules
+    "terraform_cloud": [terraform_cloud_rules.evaluate],
 }
 
 

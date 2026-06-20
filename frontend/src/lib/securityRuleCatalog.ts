@@ -7726,6 +7726,350 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires on public projects with container_registry_enabled=true. Open-source projects may intentionally publish public container images.",
   },
+
+  // ── Terraform Cloud (M88B core security rules) ────────────────────────────
+  {
+    key: "terraform_cloud_organization_two_factor_not_required",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud organization does not require two-factor authentication",
+    category: "Organization authentication posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Two-factor authentication is not required for members of this Terraform Cloud organization. Requiring 2FA reduces the risk of account compromise for workspace administrators and operators. Terraform Cloud configuration evidence may require review. This does not confirm compromise, unauthorized access, or data exposure.",
+    whatItChecks: "The two_factor_requirement_enabled boolean on terraform_cloud_organization records.",
+    whyItMatters:
+      "Without mandatory 2FA, organization members using only a password are at higher risk of account takeover. Workspace administrators can modify run settings, variable values, and team access.",
+    evidence: "Organization resource ID (opaque), two_factor_requirement_enabled flag, workspace count.",
+    remediation:
+      "Enable two-factor authentication requirement in Terraform Cloud Organization Settings → Security → Two-factor authentication.",
+    falsePositiveGuard:
+      "Only fires when two_factor_requirement_enabled is explicitly false. Organizations relying on SSO as a compensating control may choose to document an exception.",
+  },
+  {
+    key: "terraform_cloud_organization_sso_not_enabled",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud organization does not have SSO enabled",
+    category: "Organization authentication posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Single sign-on is not enabled for this Terraform Cloud organization. SSO centralizes identity management and can enforce organizational authentication policies. Terraform Cloud configuration evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The sso_enabled boolean on terraform_cloud_organization records.",
+    whyItMatters:
+      "Without SSO, organization members authenticate with local credentials only. SSO allows enforcement of organizational password and MFA policies centrally.",
+    evidence: "Organization resource ID (opaque), sso_enabled flag, workspace count.",
+    remediation:
+      "Enable SSO in Terraform Cloud Organization Settings → SSO if your identity provider is supported.",
+    falsePositiveGuard:
+      "Only fires when sso_enabled is false. Many organizations use 2FA without SSO and this may be intentional.",
+  },
+  {
+    key: "terraform_cloud_workspace_auto_apply_enabled",
+    provider: "terraform_cloud",
+    severity: "high",
+    title: "Terraform Cloud workspace has auto-apply enabled",
+    category: "Workspace execution posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Auto-apply is enabled on this Terraform Cloud workspace. Runs are applied automatically without manual confirmation after a successful plan, removing a human review gate before infrastructure changes take effect. Workspace configuration evidence may require review. This does not confirm compromise, unauthorized access, or infrastructure exposure.",
+    whatItChecks: "The auto_apply boolean on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Auto-apply removes the plan review step before applies. A misconfigured or malicious Terraform change could be applied without explicit approval, affecting cloud infrastructure.",
+    evidence: "Workspace resource ID (opaque), auto_apply flag, execution_mode_category, vcs_connected flag.",
+    remediation:
+      "Disable auto-apply in Terraform Cloud Workspace Settings → General → Apply method, and require manual applies for production workspaces.",
+    falsePositiveGuard:
+      "Only fires when auto_apply=true. Some teams intentionally use auto-apply for non-production or development workspaces.",
+  },
+  {
+    key: "terraform_cloud_workspace_global_remote_state_enabled",
+    provider: "terraform_cloud",
+    severity: "high",
+    title: "Terraform Cloud workspace has global remote state sharing enabled",
+    category: "Workspace state posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "Global remote state sharing is enabled on this workspace. All workspaces in the organization can access this workspace's state outputs. Broad state sharing may expose infrastructure topology to workspaces that do not require it. Workspace state posture evidence may require review. This does not confirm compromise, state exposure, or data exposure.",
+    whatItChecks: "The global_remote_state boolean on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Terraform state contains infrastructure topology. Enabling global sharing allows any workspace in the organization to read outputs from this workspace's state, which may include sensitive configuration.",
+    evidence: "Workspace resource ID (opaque), global_remote_state flag, execution_mode_category.",
+    remediation:
+      "Disable global remote state in Terraform Cloud Workspace Settings → General → Remote state sharing and instead explicitly share state only with workspaces that require it.",
+    falsePositiveGuard:
+      "Only fires when global_remote_state=true. Global state sharing may be intentional for shared infrastructure modules. Raw state files are never fetched or stored by ConfigTrace.",
+  },
+  {
+    key: "terraform_cloud_workspace_local_execution_mode",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace uses local execution mode",
+    category: "Workspace execution posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This workspace is configured to use local execution mode. Plans and applies run on the local machine rather than in Terraform Cloud's managed environment, bypassing Terraform Cloud's audit logging, access controls, and state locking for runs. Workspace execution posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The execution_mode_category field on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Local execution bypasses Terraform Cloud's centralized audit trail and access controls. Infrastructure changes made locally may not be captured in Terraform Cloud's run history.",
+    evidence: "Workspace resource ID (opaque), execution_mode_category, vcs_connected flag.",
+    remediation:
+      "Change the workspace execution mode to remote in Terraform Cloud Workspace Settings → General → Execution mode.",
+    falsePositiveGuard:
+      "Only fires when execution_mode_category='local'. Some teams intentionally use local execution for development or migration workspaces.",
+  },
+  {
+    key: "terraform_cloud_workspace_vcs_connection_missing",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has no VCS connection",
+    category: "Workspace VCS posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace uses remote execution but is not connected to a VCS repository. Without VCS integration, Terraform configuration changes may not follow code-review and version-control practices. Workspace VCS posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The vcs_connected boolean on terraform_cloud_workspace records with execution_mode_category='remote'.",
+    whyItMatters:
+      "VCS-connected workspaces enforce that Terraform configuration is version-controlled and reviewed before runs are triggered. API-driven or UI-driven configuration uploads bypass this.",
+    evidence: "Workspace resource ID (opaque), vcs_connected flag, execution_mode_category.",
+    remediation:
+      "Connect a VCS repository to this workspace in Terraform Cloud Workspace Settings → Version Control.",
+    falsePositiveGuard:
+      "Only fires when vcs_connected=false and execution_mode_category='remote'. Some workspaces are intentionally API-driven without VCS (e.g. for programmatic configuration).",
+  },
+  {
+    key: "terraform_cloud_workspace_queue_all_runs_disabled",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has queue-all-runs disabled",
+    category: "Workspace execution posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "Queue-all-runs is disabled on this workspace. When disabled, not all incoming runs are queued — some may be skipped under certain concurrency conditions, which can cause drift between planned and applied state. Workspace execution posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The queue_all_runs boolean on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Disabling queue-all-runs may allow infrastructure drift if some runs are discarded under concurrency pressure, especially when multiple VCS commits or API triggers are received in quick succession.",
+    evidence: "Workspace resource ID (opaque), queue_all_runs flag, execution_mode_category.",
+    remediation:
+      "Enable queue-all-runs in Terraform Cloud Workspace Settings → General if all runs should be queued and none discarded.",
+    falsePositiveGuard:
+      "Only fires when queue_all_runs=false. Some teams intentionally disable run queuing for workspaces that should only process the latest trigger.",
+  },
+  {
+    key: "terraform_cloud_workspace_unpinned_terraform_version",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud workspace uses an unpinned Terraform version",
+    category: "Workspace configuration posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This workspace is not pinned to a specific Terraform version. Using 'latest' may cause unexpected behavior when Terraform releases a new major or minor version, as behavior and resource schemas can change. Workspace configuration evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The terraform_version_category field on terraform_cloud_workspace records.",
+    whyItMatters:
+      "Unpinned Terraform versions may lead to unexpected upgrades that introduce breaking changes in provider or resource behavior, causing plan failures or unintended infrastructure changes.",
+    evidence: "Workspace resource ID (opaque), terraform_version_category.",
+    remediation:
+      "Pin a specific Terraform version in Terraform Cloud Workspace Settings → General → Terraform version.",
+    falsePositiveGuard:
+      "Only fires when terraform_version_category is 'latest' or 'unknown'. Development workspaces may intentionally use latest.",
+  },
+  {
+    key: "terraform_cloud_workspace_non_sensitive_variables_present",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has non-sensitive variables",
+    category: "Variable posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has variables that are not marked as sensitive. Non-sensitive variables may appear in plan output and run logs. Review whether all variables that carry sensitive values are marked as sensitive. Variable names and values are never stored by ConfigTrace. Variable posture evidence may require review. This does not confirm compromise, secret exposure, or data exposure.",
+    whatItChecks: "The non_sensitive_variable_count field on terraform_cloud_workspace_variable_summary records.",
+    whyItMatters:
+      "Variables not marked as sensitive are visible in plan output, run logs, and the Terraform Cloud UI to workspace members. If any contain credentials or secrets, they should be marked as sensitive.",
+    evidence: "Workspace resource ID (opaque), variable count, sensitive variable count, non-sensitive variable count. Variable names and values are never stored.",
+    remediation:
+      "In Terraform Cloud, mark variables that contain credentials, tokens, or other sensitive values as 'Sensitive' so their values are hidden in run output.",
+    falsePositiveGuard:
+      "Only fires when non_sensitive_variable_count > 0 and variable_count > 0. Many workspaces intentionally use non-sensitive variables for configuration that is not secret.",
+  },
+  {
+    key: "terraform_cloud_workspace_no_sensitive_variables",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud workspace has no sensitive-marked variables",
+    category: "Variable posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has variables but none are marked as sensitive. If any variables hold credentials, tokens, or other confidential values, they should be marked as sensitive to prevent them from appearing in run output. Variable names and values are never stored by ConfigTrace. Variable posture evidence may require review. This does not confirm compromise or data exposure.",
+    whatItChecks: "The sensitive_variable_count field on terraform_cloud_workspace_variable_summary records with variable_count > 0.",
+    whyItMatters:
+      "Workspaces with no sensitive variables may be storing credentials or other secrets in non-sensitive variables, making them visible in plan output.",
+    evidence: "Workspace resource ID (opaque), variable count, sensitive variable count. Variable names and values are never stored.",
+    remediation:
+      "Review all workspace variables and mark any that contain credentials, tokens, or secrets as 'Sensitive'.",
+    falsePositiveGuard:
+      "Only fires when sensitive_variable_count=0 and variable_count>0. Some workspaces intentionally use only non-sensitive configuration variables.",
+  },
+  {
+    key: "terraform_cloud_notification_http_webhook",
+    provider: "terraform_cloud",
+    severity: "high",
+    title: "Terraform Cloud notification webhook uses HTTP",
+    category: "Notification security posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "An active Terraform Cloud workspace notification is configured to deliver run events to a webhook endpoint over HTTP rather than HTTPS. Run event payloads may be transmitted over an unencrypted connection. The webhook URL is never stored by ConfigTrace. Notification configuration evidence may require review. This does not confirm compromise, token exposure, or data exposure.",
+    whatItChecks: "The webhook_url_scheme_category field on enabled terraform_cloud_notification_configuration records with destination_type_category='webhook'.",
+    whyItMatters:
+      "Run event payloads sent over HTTP are not encrypted in transit, which could expose run metadata to network observers.",
+    evidence: "Notification resource ID (opaque), workspace resource ID (opaque), enabled flag, destination type category, URL scheme category, trigger count. Webhook URL is never stored.",
+    remediation:
+      "Update the notification webhook to use an HTTPS endpoint in Terraform Cloud Workspace Settings → Notifications.",
+    falsePositiveGuard:
+      "Only fires on enabled webhook notifications with webhook_url_scheme_category='http'. Webhook URLs are never stored by ConfigTrace.",
+  },
+  {
+    key: "terraform_cloud_notification_token_missing",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud notification webhook has no HMAC token",
+    category: "Notification security posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "An active Terraform Cloud webhook notification is not configured with a token for HMAC signature verification. Without a token, receivers cannot verify that the payload originated from Terraform Cloud. Notification configuration evidence may require review. This does not confirm compromise or token exposure.",
+    whatItChecks: "The token_present boolean on enabled terraform_cloud_notification_configuration records with destination_type_category='webhook'.",
+    whyItMatters:
+      "Without HMAC token signing, webhook receivers cannot verify the authenticity of run event payloads, potentially allowing forged notifications to be processed.",
+    evidence: "Notification resource ID (opaque), workspace resource ID (opaque), enabled flag, destination type category, token_present flag, trigger count. Tokens are never stored.",
+    remediation:
+      "Add an HMAC token to the notification configuration in Terraform Cloud Workspace Settings → Notifications and verify it in your webhook receiver.",
+    falsePositiveGuard:
+      "Only fires on enabled webhook notifications with token_present=false. Some receivers may validate delivery through other means.",
+  },
+  {
+    key: "terraform_cloud_policy_set_advisory_enforcement",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud policy set uses advisory enforcement",
+    category: "Policy enforcement posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This Terraform Cloud policy set uses advisory enforcement level. Advisory policies emit warnings but do not block runs from proceeding. Mandatory or soft-mandatory enforcement is required to guarantee that policy violations prevent applies. Policy enforcement posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The enforcement_level_category field on terraform_cloud_policy_set records.",
+    whyItMatters:
+      "Advisory policy enforcement allows runs to proceed even when policies are violated. This means policy guardrails do not block non-compliant infrastructure changes.",
+    evidence: "Policy set resource ID (opaque), global scope, workspace count, project count, policy count, enforcement level category.",
+    remediation:
+      "Upgrade the policy set to soft-mandatory or mandatory enforcement in Terraform Cloud Organization Settings → Policy Sets.",
+    falsePositiveGuard:
+      "Only fires when enforcement_level_category='advisory'. Some teams use advisory enforcement for gradual policy rollout before enforcing.",
+  },
+  {
+    key: "terraform_cloud_policy_set_empty",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud policy set has no policies",
+    category: "Policy enforcement posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This Terraform Cloud policy set has zero policies and enforces no constraints on workspace runs. Review whether this policy set should contain policies or be removed. Policy posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The policy_count field on terraform_cloud_policy_set records.",
+    whyItMatters:
+      "An empty policy set provides no policy enforcement, even if it is assigned to workspaces or projects. It may represent an incomplete setup.",
+    evidence: "Policy set resource ID (opaque), global scope, workspace count, project count, policy count, enforcement level category.",
+    remediation:
+      "Add policies to the policy set or remove it from workspace/project assignments in Terraform Cloud Organization Settings → Policy Sets.",
+    falsePositiveGuard:
+      "Only fires when policy_count=0. An empty policy set may be in setup and not yet populated.",
+  },
+  {
+    key: "terraform_cloud_team_admin_access",
+    provider: "terraform_cloud",
+    severity: "high",
+    title: "Terraform Cloud workspace has teams with admin access",
+    category: "Team access posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This workspace has one or more teams with admin-level access. Admin access grants full control over workspace configuration, including run settings, variable management, and team membership. Review whether admin access is limited to teams that require it. Team names are never stored by ConfigTrace. Team access posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The admin_access_count field on terraform_cloud_team_access_summary records.",
+    whyItMatters:
+      "Admin-level workspace access allows teams to modify any workspace setting, including granting additional access to other teams. Excessive admin access broadens the blast radius of a compromised account.",
+    evidence: "Workspace resource ID (opaque), team access count, admin access count, write access count, read access count. Team names are never stored.",
+    remediation:
+      "Review team access in Terraform Cloud Workspace Settings → Team Access and reduce admin access to only the teams that require it.",
+    falsePositiveGuard:
+      "Only fires when admin_access_count > 0. Platform and infrastructure teams commonly require admin access.",
+  },
+  {
+    key: "terraform_cloud_team_apply_access",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud workspace has teams with apply access",
+    category: "Team access posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This workspace has one or more teams with apply-level access. Apply access allows team members to approve and apply Terraform runs that make infrastructure changes. Review whether apply access is limited to teams that require it. Team names are never stored by ConfigTrace. Team access posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The apply_access_count field on terraform_cloud_team_access_summary records.",
+    whyItMatters:
+      "Apply access allows teams to trigger infrastructure changes. Granting apply access to teams that only need to view runs is a broader permission grant than necessary.",
+    evidence: "Workspace resource ID (opaque), team access count, apply access count, admin access count. Team names are never stored.",
+    remediation:
+      "Review team access in Terraform Cloud Workspace Settings → Team Access and reduce apply access to only the deployment teams that require it.",
+    falsePositiveGuard:
+      "Only fires when apply_access_count > 0. Deployment teams commonly require apply access.",
+  },
+  {
+    key: "terraform_cloud_variable_set_global_scope",
+    provider: "terraform_cloud",
+    severity: "medium",
+    title: "Terraform Cloud variable set has global scope",
+    category: "Variable set scope posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This variable set is scoped globally and applies to all workspaces in the organization. Global variable sets propagate variables broadly across all workspaces. Review whether global scope is appropriate given the variable content. Variable names and values are never stored by ConfigTrace. Variable set scope posture evidence may require review. This does not confirm compromise, secret exposure, or data exposure.",
+    whatItChecks: "The global_scope boolean on terraform_cloud_variable_set records.",
+    whyItMatters:
+      "Global variable sets inject variables into every workspace in the organization, including workspaces that may not need them. If variables carry sensitive values, they are propagated to all workspaces.",
+    evidence: "Variable set resource ID (opaque), global scope flag, workspace count, project count, variable count, sensitive variable count. Variable names and values are never stored.",
+    remediation:
+      "Remove global scope from the variable set and assign it only to the specific workspaces or projects that require these variables.",
+    falsePositiveGuard:
+      "Only fires when global_scope=true. Some organizations intentionally use global variable sets for shared non-sensitive configuration.",
+  },
+  {
+    key: "terraform_cloud_state_version_present",
+    provider: "terraform_cloud",
+    severity: "low",
+    title: "Terraform Cloud workspace has a current state version",
+    category: "State version posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "This workspace has a current Terraform state version. This is an informational posture indicator. Terraform state files contain infrastructure topology and are never fetched or stored by ConfigTrace. State version posture evidence may require review. This does not confirm compromise, state exposure, or data exposure.",
+    whatItChecks: "The state_version_present boolean on terraform_cloud_state_version_summary records.",
+    whyItMatters:
+      "State presence confirms the workspace has active infrastructure. Review state access controls, remote state sharing settings, and workspace team access to ensure state is appropriately protected.",
+    evidence: "Workspace resource ID (opaque), state_version_present flag, state_version_count_category. Raw state files are never fetched or stored by ConfigTrace.",
+    remediation:
+      "Review workspace global_remote_state setting and team access to confirm state access is appropriately scoped.",
+    falsePositiveGuard:
+      "Fires when state_version_present=true. Most active workspaces will have state. This is a low-severity informational signal to prompt a review of state access controls.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -7953,6 +8297,22 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
       "Deploy key posture",
       "Runner security posture (untagged, shared runners)",
       "Merge request approval posture (required, reset, override)",
+    ],
+  },
+  {
+    provider: "terraform_cloud",
+    surfaces: [
+      "Organization authentication posture (2FA, SSO)",
+      "Workspace execution posture (auto-apply, execution mode, queue-all-runs)",
+      "Workspace state posture (global remote state sharing)",
+      "Workspace VCS posture (VCS connection presence)",
+      "Workspace configuration posture (Terraform version pinning)",
+      "Variable posture (sensitive variable marking)",
+      "Notification security posture (webhook scheme, HMAC token)",
+      "Policy enforcement posture (enforcement level, policy count)",
+      "Team access posture (admin and apply access counts)",
+      "Variable set scope posture (global scope)",
+      "State version posture (presence indicator)",
     ],
   },
 ];

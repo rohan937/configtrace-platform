@@ -542,6 +542,25 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "gitlab_project_wiki_enabled_public": ("gitlab_project",),
     "gitlab_project_packages_enabled_public": ("gitlab_project",),
     "gitlab_project_container_registry_enabled_public": ("gitlab_project",),
+    # ── M88B: Terraform Cloud core security rules ──────────────────────────────
+    "terraform_cloud_organization_two_factor_not_required": ("terraform_cloud_organization",),
+    "terraform_cloud_organization_sso_not_enabled": ("terraform_cloud_organization",),
+    "terraform_cloud_workspace_auto_apply_enabled": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_global_remote_state_enabled": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_local_execution_mode": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_vcs_connection_missing": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_queue_all_runs_disabled": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_unpinned_terraform_version": ("terraform_cloud_workspace",),
+    "terraform_cloud_workspace_non_sensitive_variables_present": ("terraform_cloud_workspace_variable_summary",),
+    "terraform_cloud_workspace_no_sensitive_variables": ("terraform_cloud_workspace_variable_summary",),
+    "terraform_cloud_notification_http_webhook": ("terraform_cloud_notification_configuration",),
+    "terraform_cloud_notification_token_missing": ("terraform_cloud_notification_configuration",),
+    "terraform_cloud_policy_set_advisory_enforcement": ("terraform_cloud_policy_set",),
+    "terraform_cloud_policy_set_empty": ("terraform_cloud_policy_set",),
+    "terraform_cloud_team_admin_access": ("terraform_cloud_team_access_summary",),
+    "terraform_cloud_team_apply_access": ("terraform_cloud_team_access_summary",),
+    "terraform_cloud_variable_set_global_scope": ("terraform_cloud_variable_set",),
+    "terraform_cloud_state_version_present": ("terraform_cloud_state_version_summary",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -668,6 +687,16 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Deploy key summaries",
         "Runner summaries",
         "Merge request approval summaries",
+    ],
+    "terraform_cloud": [
+        "Organization posture",
+        "Workspace execution posture",
+        "Workspace variable summaries",
+        "Notification configurations",
+        "Policy set enforcement posture",
+        "Team access summaries",
+        "Variable set scope posture",
+        "State version summaries",
     ],
 }
 
@@ -1094,6 +1123,39 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "gitlab_merge_request_approval_summary": {
         "message": "GitLab merge request approval summary was not observed.",
         "hints": ["MR approval summaries require read_api scope and at least Reporter access. May be absent on Free-tier projects."],
+    },
+    # Terraform Cloud — M88B
+    "terraform_cloud_organization": {
+        "message": "Terraform Cloud organization metadata was not observed.",
+        "hints": ["Ensure the API token has organization-level read access. Organization names are never stored — only opaque identifiers and posture booleans."],
+    },
+    "terraform_cloud_workspace": {
+        "message": "Terraform Cloud workspace metadata was not observed.",
+        "hints": ["Workspace metadata requires at least read access to the organization. Workspace names and variable values are never stored."],
+    },
+    "terraform_cloud_workspace_variable_summary": {
+        "message": "Terraform Cloud workspace variable summary was not observed.",
+        "hints": ["Variable summaries require read access to workspace variables. Only counts are stored — variable names and values are never fetched."],
+    },
+    "terraform_cloud_notification_configuration": {
+        "message": "Terraform Cloud notification configuration was not observed.",
+        "hints": ["Notification metadata requires Workspace Manager or Admin access. Webhook URLs and tokens are never stored — only presence and scheme category."],
+    },
+    "terraform_cloud_policy_set": {
+        "message": "Terraform Cloud policy set metadata was not observed.",
+        "hints": ["Policy set metadata requires read access at the organization level. Policy names and code are never stored."],
+    },
+    "terraform_cloud_team_access_summary": {
+        "message": "Terraform Cloud team access summary was not observed.",
+        "hints": ["Team access metadata requires Workspace Manager or Admin access. Team names and user identities are never stored — only access-level counts."],
+    },
+    "terraform_cloud_variable_set": {
+        "message": "Terraform Cloud variable set metadata was not observed.",
+        "hints": ["Variable set metadata requires organization-level read access. Variable names and values are never stored — only scope and count categories."],
+    },
+    "terraform_cloud_state_version_summary": {
+        "message": "Terraform Cloud state version summary was not observed.",
+        "hints": ["State version presence is derived from workspace metadata. Raw state files, state outputs, and resource addresses are never fetched or stored."],
     },
 }
 
