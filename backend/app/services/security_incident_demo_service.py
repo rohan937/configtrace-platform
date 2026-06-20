@@ -69,6 +69,8 @@ from app.services import pagerduty_activity_signal_service as pd_sig
 from app.services import pagerduty_risk_activity_correlation_service as pd_corr_svc
 from app.services import linear_activity_signal_service as linear_sig
 from app.services import linear_risk_activity_correlation_service as linear_corr_svc
+from app.services import jira_activity_signal_service as jira_sig
+from app.services import jira_risk_activity_correlation_service as jira_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -8100,6 +8102,507 @@ def clear_linear(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         ).delete(synchronize_session=False)
 
     integ = _get_linear_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            objects_removed += db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        objects_removed += db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True, "objects_removed": objects_removed}
+
+
+# ── Jira incident demo (M86G) — a SEPARATE hidden demo integration + case source
+# so "Clear Jira demo" removes only Jira demo objects and never touches any other
+# provider's demo (or any real Jira integration). Same safety rules: clearly
+# marked demo, no real sync, no notifications, idempotent.
+#
+# DEMO STORY: "Jira permission scheme review". One coherent Jira configuration
+# story:
+#   Permission scheme broad-access risk + webhook no-secret risk + automation
+#   external-action risk -> Jira permission-scheme config-state activity event
+#   (+ webhook config-state activity event) -> Jira permission scheme activity
+#   signal -> Jira permission scheme risk x activity correlation -> human-reviewed
+#   case -> report.
+#
+# All objects are anchored on a hidden demo integration so clear_jira removes
+# them and nothing else. Evidence is built directly for the demo objects (never
+# by scanning a real workspace).
+#
+# PRIVACY: no Jira API tokens, OAuth tokens, webhook secrets, integration secrets,
+# raw webhook/delivery URLs, site base URLs, JQL, filter expressions, issue keys,
+# issue titles, issue descriptions, comment bodies, attachment content, customer
+# names, user emails, user names, account IDs, member/grant-holder identities, IP
+# addresses, user agents, request/response payloads, raw audit payloads, or PII.
+# Only safe opaque placeholder IDs, booleans, counts, and category labels.
+#
+# SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+
+JIRA_DEMO_INTEGRATION_NAME = "ConfigTrace Jira incident demo (sample data)"
+JIRA_DEMO_CASE_SOURCE = "demo_jira_incident"
+JIRA_DEMO_DATASET = "jira_incident_demo_v1"
+
+# Safe placeholders -- no real Jira values, no API tokens, no webhook URLs.
+JIRA_DEMO_PERMISSION_SCHEME_ID = "JIRA_DEMO_PERMISSION_SCHEME_ID"
+JIRA_DEMO_WEBHOOK_ID = "JIRA_DEMO_WEBHOOK_ID"
+JIRA_DEMO_AUTOMATION_RULE_ID = "JIRA_DEMO_AUTOMATION_RULE_ID"
+JIRA_DEMO_WORKFLOW_ID = "JIRA_DEMO_WORKFLOW_ID"
+JIRA_DEMO_PROJECT_ID = "JIRA_DEMO_PROJECT_ID"
+JIRA_DEMO_SITE_ID = "JIRA_DEMO_SITE_ID"
+
+
+def _get_jira_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == JIRA_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_jira_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == JIRA_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_jira_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_jira_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_jira(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the Jira demo incident chain (idempotent). No real Jira sync.
+
+    "Jira permission scheme review" story:
+      Permission scheme broad-access risk + webhook no-secret risk + automation
+      external-action risk -> Jira permission-scheme config-state activity event
+      (+ webhook config-state activity event) -> Jira permission scheme activity
+      signal -> Jira permission scheme risk x activity correlation -> case.
+
+    All objects are anchored on a hidden demo integration so clear_jira removes
+    them and nothing else. Evidence is built directly for the demo objects
+    (never by scanning the real workspace).
+
+    PRIVACY: no Jira API tokens, OAuth tokens, webhook secrets, raw webhook/
+    delivery URLs, site base URLs, JQL, issue keys, issue titles, issue
+    descriptions, comment bodies, attachment content, user emails, user names,
+    account IDs, grant-holder identities, IP addresses, user agents, raw audit
+    payloads, raw API response dicts, or PII. Only safe booleans, counts, opaque
+    placeholder IDs, and category labels.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} are used.
+    """
+    existing = _existing_jira_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -- never shown / never synced).
+    integ = _get_jira_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": JIRA_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=JIRA_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is Jira configuration evidence for review and does not confirm "
+        "compromise, unauthorized access, or data exposure."
+    )
+
+    # 2. Security findings using real Jira rule keys (M86B/M86C).
+    #    Evidence uses only safe booleans, counts, opaque placeholder IDs, and
+    #    category labels -- never permission grant holders, webhook URLs/secrets,
+    #    automation action targets, user identities, issue content, or PII.
+
+    permission_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="jira",
+        finding_key=(
+            f"jira_permission_scheme_public_administer_projects:"
+            f"{JIRA_DEMO_PERMISSION_SCHEME_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Jira permission scheme grants broad administer access",
+        resource_id=None,
+        description=(
+            "Jira configuration evidence indicates the permission scheme may "
+            "require review. Sample Jira permission scheme broad-access posture "
+            f"risk for the incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "jira_permission_scheme_public_administer_projects",
+            "demo": True,
+            "record_id": JIRA_DEMO_PERMISSION_SCHEME_ID,
+            "record_type": "jira_permission_scheme",
+            "permission_scheme_id": JIRA_DEMO_PERMISSION_SCHEME_ID,
+            "resource_type": "permission_scheme",
+            "resource_name": "Jira permission scheme review",
+            "active": True,
+            "permission_public_administer_projects": True,
+            "permission_grant_count": 24,
+        },
+        remediation={
+            "summary": (
+                "Review the Jira permission scheme and remove broad public "
+                "administer-projects grants so only intended roles retain "
+                "administrative access."
+            ),
+        },
+    )
+
+    webhook_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="jira",
+        finding_key=(
+            f"jira_webhook_no_secret_indicator:{JIRA_DEMO_WEBHOOK_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Jira webhook has no secret indicated",
+        resource_id=None,
+        description=(
+            "Jira configuration evidence indicates the webhook may require "
+            "review. Sample Jira webhook missing-secret posture risk for the "
+            f"incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "jira_webhook_no_secret_indicator",
+            "demo": True,
+            "record_id": JIRA_DEMO_WEBHOOK_ID,
+            "record_type": "jira_webhook",
+            "webhook_id": JIRA_DEMO_WEBHOOK_ID,
+            "resource_type": "webhook",
+            "resource_name": "Jira webhook review",
+            "active": True,
+            "webhook_secret_present": False,
+            "webhook_event_count": 12,
+        },
+        remediation={
+            "summary": (
+                "Configure a signing secret for the Jira webhook so receivers "
+                "can verify event authenticity."
+            ),
+        },
+    )
+
+    automation_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="jira",
+        finding_key=(
+            f"jira_automation_rule_external_action:{JIRA_DEMO_AUTOMATION_RULE_ID}#demo"
+        ),
+        severity="high",
+        title="Demo: Jira automation rule performs an external action",
+        resource_id=None,
+        description=(
+            "Jira configuration evidence indicates the automation rule may "
+            "require review. Sample Jira automation external-action posture "
+            f"risk for the incident-workflow demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "jira_automation_rule_external_action",
+            "demo": True,
+            "record_id": JIRA_DEMO_AUTOMATION_RULE_ID,
+            "record_type": "jira_automation_rule",
+            "automation_rule_id": JIRA_DEMO_AUTOMATION_RULE_ID,
+            "resource_type": "automation_rule",
+            "resource_name": "Jira automation rule review",
+            "active": True,
+            "automation_has_external_action": True,
+            "automation_scope_category": "global",
+        },
+        remediation={
+            "summary": (
+                "Review the Jira automation rule and confirm whether the "
+                "external action is intended and appropriately scoped."
+            ),
+        },
+    )
+
+    jira_findings = [permission_finding, webhook_finding, automation_finding]
+
+    # 3. Activity events (provider="jira", source="jira_activity_event").
+    JIRA_ACTIVITY_SOURCE = "jira_activity_event"
+
+    def _mk_jira_event(
+        *, event_type: str, resource_type: str, provider_event_id: str,
+        resource_id: str, extra: dict,
+    ) -> SecurityActivityEvent:
+        meta: dict[str, Any] = {
+            "resource_type": resource_type,
+            "event_action": event_type,
+            "event_source": JIRA_ACTIVITY_SOURCE,
+            "status": "observed",
+            "category": "jira_configuration",
+            "status_category": "observed",
+            "operation_family": "jira_configuration",
+            "operation_action": "configuration_updated",
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="jira", source=JIRA_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    permission_event = _mk_jira_event(
+        event_type="jira.permission_scheme.updated",
+        resource_type="jira_permission_scheme",
+        provider_event_id="JIRA_DEMO_PERMISSION_ACTIVITY_EVENT_ID",
+        resource_id=JIRA_DEMO_PERMISSION_SCHEME_ID,
+        extra={
+            "resource_id": JIRA_DEMO_PERMISSION_SCHEME_ID,
+            "permission_scheme_id": JIRA_DEMO_PERMISSION_SCHEME_ID,
+            "resource_name": "Jira permission scheme review",
+            "permission_grant_count": 24,
+            "permission_public_administer_projects": True,
+        },
+    )
+
+    webhook_event = _mk_jira_event(
+        event_type="jira.webhook.updated",
+        resource_type="jira_webhook",
+        provider_event_id="JIRA_DEMO_WEBHOOK_ACTIVITY_EVENT_ID",
+        resource_id=JIRA_DEMO_WEBHOOK_ID,
+        extra={
+            "resource_id": JIRA_DEMO_WEBHOOK_ID,
+            "webhook_id": JIRA_DEMO_WEBHOOK_ID,
+            "resource_name": "Jira webhook review",
+            "webhook_enabled": True,
+            "webhook_event_count": 12,
+        },
+    )
+
+    jira_events = [permission_event, webhook_event]
+
+    # 4. Activity signals via the real M86E signal builder. One signal per
+    #    (signal_type, resource); the permission-scheme event yields the
+    #    jira_permission_scheme_config_changed signal used by the correlation.
+    jira_signals: list[SecurityIncidentSignal] = []
+    for ev in jira_events:
+        sig_dict = jira_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            jira_signals.append(sig)
+
+    # 5. Correlation via the real M86F builder.
+    jira_correlations: list[SecuritySignalCorrelation] = []
+    signals_by_type_jira: dict[str, SecurityIncidentSignal] = {
+        s.signal_type: s for s in jira_signals
+    }
+
+    def _add_jira_correlation(
+        *,
+        finding: SecurityFinding,
+        signal: SecurityIncidentSignal,
+        correlation_type: str,
+        match_reason: str,
+    ) -> SecuritySignalCorrelation:
+        rule = jira_corr_svc.JIRA_CORRELATION_RULES[correlation_type]
+        cdict = jira_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        jira_correlations.append(corr)
+        return corr
+
+    permission_signal = signals_by_type_jira.get(
+        "jira_permission_scheme_config_changed"
+    )
+    if permission_signal is not None:
+        _add_jira_correlation(
+            finding=permission_finding,
+            signal=permission_signal,
+            correlation_type="jira_permission_scheme_risk_with_activity",
+            match_reason="resource_id_match",
+        )
+
+    # 6. Case linking 3 findings, 2 events, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="Jira Permission Scheme Configuration Review",
+        summary=(
+            "Jira configuration evidence indicates permission scheme posture may require review."
+            " This does not confirm compromise, unauthorized access, or data exposure."
+            " This Jira permission scheme review groups configuration findings"
+            " (permission scheme, webhook, automation) with related Jira configuration"
+            " activity, signal, and correlation. Evidence for review. No Jira API tokens,"
+            " OAuth tokens, webhook secrets, raw URLs, JQL, issue content, grant-holder"
+            " identities, or PII."
+        ),
+        severity="high",
+        provider="jira",
+        metadata={
+            "source": JIRA_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+    db.flush()
+
+    for f in jira_findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=f.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    for ev in jira_events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    seen_signal_ids_jira: set = set()
+    for sig in jira_signals:
+        seen_signal_ids_jira.add(sig.id)
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    for corr in jira_correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids_jira
+        ):
+            seen_signal_ids_jira.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    db.commit()
+    logger.info(
+        "jira_incident_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_jira(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the Jira demo incident objects (and nothing else)."""
+    objects_removed = 0
+
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == JIRA_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        objects_removed += db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = _get_jira_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

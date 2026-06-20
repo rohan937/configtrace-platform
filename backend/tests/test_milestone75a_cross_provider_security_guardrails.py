@@ -367,13 +367,18 @@ _ACTIVITY_PROVIDERS = [
     "pagerduty",
     # M85D added Linear config-state activity ingestion.
     "linear",
+    # M86D added Jira config-state activity ingestion.
+    "jira",
 ]
 # Datadog activity signals landed in M82E; correlations landed in M82F.
 # Clerk activity signals landed in M83E; correlations landed in M83F.
 # PagerDuty signals landed in M84E; correlations landed in M84F.
 # Linear signals landed in M85E; correlations landed in M85F.
-_SIGNALS_PROVIDERS = _ACTIVITY_PROVIDERS[:]
-_CORRELATIONS_PROVIDERS = _ACTIVITY_PROVIDERS[:]
+# Jira activity ingestion landed in M86D; Jira signals landed in M86E; Jira
+# correlations landed in M86F, so jira now appears in the activity, signals,
+# and correlations selectors.
+_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
+_CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
 
 
 def _provider_selector_array(text: str) -> list[str] | None:

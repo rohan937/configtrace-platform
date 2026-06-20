@@ -904,25 +904,29 @@ class TestCapabilityMatrixAndFramework:
         assert cap is not None
         assert cap.security.risk_activity_correlations is True
 
-    def test_jira_demo_seed_clear_false(self):
+    def test_jira_demo_seed_clear_true(self):
+        # M86G ships the Jira demo seed/clear; flag flips True.
         cap = get_provider_capability("jira")
         assert cap is not None
-        assert cap.security.demo_seed_clear is False
+        assert cap.security.demo_seed_clear is True
 
-    def test_jira_case_report_false(self):
+    def test_jira_case_report_true(self):
+        # M86G adds Jira case-report support; flag flips True.
         cap = get_provider_capability("jira")
         assert cap is not None
-        assert cap.security.case_report is False
+        assert cap.security.case_report is True
 
-    def test_jira_evidence_timeline_false(self):
+    def test_jira_evidence_timeline_true(self):
+        # M86G enables the cross-provider evidence timeline for Jira.
         cap = get_provider_capability("jira")
         assert cap is not None
-        assert cap.security.evidence_timeline is False
+        assert cap.security.evidence_timeline is True
 
-    def test_jira_evidence_graph_false(self):
+    def test_jira_evidence_graph_true(self):
+        # M86G enables the evidence relationship graph for Jira.
         cap = get_provider_capability("jira")
         assert cap is not None
-        assert cap.security.evidence_graph is False
+        assert cap.security.evidence_graph is True
 
     def test_jira_maturity_partial(self):
         cap = get_provider_capability("jira")
@@ -935,12 +939,12 @@ class TestCapabilityMatrixAndFramework:
         assert "M86B" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m86c(self):
-        # M86C–M86F have since landed — planned_next_stage now points to M86G.
+        # M86C–M86G have since landed — planned_next_stage now points to M86H.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
         assert (
             "M86C" in planned or "M86D" in planned or "M86E" in planned
-            or "M86F" in planned or "M86G" in planned
+            or "M86F" in planned or "M86G" in planned or "M86H" in planned
         ), (
             f"planned_next_stage should reference M86C or later; got {planned!r}"
         )

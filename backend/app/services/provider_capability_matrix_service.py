@@ -1117,14 +1117,14 @@ _JIRA = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
-        "Jira project management configuration drift foundation (M86A–M86F). "
+        "Jira project management configuration drift foundation (M86A–M86G). "
         "Drift snapshots cover Jira Cloud configuration surfaces: projects, boards, "
         "workflows, workflow schemes, permission schemes, notification schemes, "
         "issue type schemes, field configuration schemes, screen schemes, webhook "
@@ -1180,8 +1180,17 @@ _JIRA = ProviderCapability(
         "identifiers are stored — never API tokens, OAuth tokens, webhook secrets, raw "
         "URLs, JQL text, issue content, comments, attachments, user identities, IP "
         "addresses, user agents, raw audit payloads, or PII. "
+        "M86G adds the Jira incident demo (seed/clear/status) and Jira case-report "
+        "support: a hidden demo integration seeds a review-safe 'Jira permission "
+        "scheme review' chain (permission scheme broad-access, webhook no-secret, and "
+        "automation external-action configuration findings → permission-scheme and "
+        "webhook configuration activity events → permission-scheme activity signal → "
+        "permission-scheme risk × activity correlation → human-reviewed case), all "
+        "anchored on synthetic placeholder IDs so clearing removes only the demo "
+        "objects. The case report labels Jira and surfaces Jira opaque resource "
+        "identifiers, safe counts, posture booleans, and category labels only. "
         "Authentication uses Jira email + API token (stored encrypted, never returned). "
-        "planned_next_stage: M86G: Jira Demo + QA."
+        "planned_next_stage: M86H: Jira Provider Depth QA."
     ),
 )
 

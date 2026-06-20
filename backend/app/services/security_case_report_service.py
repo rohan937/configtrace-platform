@@ -70,7 +70,7 @@ def _ids_by_type(links: list[SecurityCaseLink]) -> dict[str, list[uuid.UUID]]:
 # response bodies). It correlates evidence for review — it does NOT confirm
 # compromise, attacker presence, unauthorized access, or breach.
 
-_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud", "twilio": "Twilio", "sendgrid": "SendGrid", "auth0": "Auth0", "datadog": "Datadog", "clerk": "Clerk", "pagerduty": "PagerDuty", "linear": "Linear"}
+_TIMELINE_PROVIDER_LABELS = {"github": "GitHub", "aws": "AWS", "cloudflare": "Cloudflare", "vercel": "Vercel", "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe", "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud", "twilio": "Twilio", "sendgrid": "SendGrid", "auth0": "Auth0", "datadog": "Datadog", "clerk": "Clerk", "pagerduty": "PagerDuty", "linear": "Linear", "jira": "Jira"}
 
 # Item-type tie-breaker order (stable, deterministic) when timestamps are equal.
 _TYPE_RANK = {"finding": 0, "activity_event": 1, "incident_signal": 2, "correlation": 3}
@@ -200,6 +200,31 @@ _PREVIEW_ALLOWLIST: frozenset[str] = frozenset({
     "https_delivery",             # bool — webhook HTTPS delivery posture
     "url_scheme_category",        # safe webhook URL scheme category (never the URL)
     "event_scope_category",       # safe webhook event scope category label
+    # Jira-safe resource identifiers (M86G) — opaque IDs, category labels, safe
+    # counts, and posture booleans only. NEVER Jira API tokens, OAuth tokens,
+    # webhook secrets, raw webhook/delivery URLs, site base URLs, JQL, filter/
+    # screen/workflow names, issue keys, issue titles, issue descriptions,
+    # comment bodies, attachment content, permission grant-holder identities,
+    # automation action targets, user emails, user names, account IDs, IP
+    # addresses, user agents, raw Jira audit payloads, or customer PII.
+    "permission_scheme_id",       # Jira permission scheme opaque ID
+    "workflow_id",                # Jira workflow opaque ID
+    "workflow_scheme_id",         # Jira workflow scheme opaque ID
+    "notification_scheme_id",     # Jira notification scheme opaque ID
+    "issue_type_scheme_id",       # Jira issue type scheme opaque ID
+    "field_configuration_scheme_id",  # Jira field configuration scheme opaque ID
+    "screen_scheme_id",           # Jira screen scheme opaque ID
+    "webhook_id",                 # Jira webhook opaque ID (never the secret/URL)
+    "automation_rule_id",         # Jira automation rule opaque ID
+    "board_id",                   # Jira board opaque ID
+    "site_id",                    # Jira site opaque ID (never the base URL)
+    "permission_grant_count",     # int — permission grant count (never holders)
+    "permission_public_administer_projects",  # bool — public administer posture
+    "webhook_secret_present",     # bool — webhook signing-secret posture
+    "webhook_event_count",        # int — webhook event subscription count
+    "automation_has_external_action",  # bool — automation external-action posture
+    "automation_scope_category",  # "global" / "project" scope category label
+    "deployment_type",            # Jira "cloud" / "server" deployment category
 })
 
 
@@ -722,6 +747,8 @@ def build_case_report(*, case: SecurityCase, db: Session) -> dict[str, Any]:
         "supabase": "Supabase", "firebase": "Firebase", "stripe": "Stripe",
         "shopify": "Shopify", "azure": "Azure", "google_cloud": "Google Cloud",
         "twilio": "Twilio", "sendgrid": "SendGrid", "auth0": "Auth0",
+        "datadog": "Datadog", "clerk": "Clerk", "pagerduty": "PagerDuty",
+        "linear": "Linear", "jira": "Jira",
     }.get(provider_key, provider_key)
     evidence_label = f"{provider_label} incident evidence".strip()
     executive_summary = (

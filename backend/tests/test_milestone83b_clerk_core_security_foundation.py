@@ -1262,6 +1262,8 @@ class TestCapabilityMatrix:
             "M86E: Jira Activity Signals",
             "M86F: Jira Risk × Activity Correlations",
             "M86G: Jira Demo + QA",
+            "M86H: Jira Provider Depth QA",
+            "M86I: Jira Cross-Cloud UX Polish",
             "M87A: GitLab Drift Provider Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"

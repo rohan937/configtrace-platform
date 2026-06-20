@@ -793,8 +793,9 @@ def test_f5_jira_drift_risk_classification_false() -> None:
 def test_f6_jira_all_security_caps_false() -> None:
     # M86B advanced security_rules to True; M86D advanced activity_ingestion to
     # True. M86E advanced activity_signals to True. M86F advanced
-    # risk_activity_correlations to True. Check only the caps that remain False
-    # after M86F.
+    # risk_activity_correlations to True. M86G advanced demo_seed_clear,
+    # case_report, evidence_timeline, and evidence_graph to True — the full Jira
+    # security capability set is now complete.
     cap = get_provider_capability("jira")
     assert cap is not None
     sec = cap.security
@@ -804,8 +805,8 @@ def test_f6_jira_all_security_caps_false() -> None:
         "evidence_timeline",
         "evidence_graph",
     ):
-        assert getattr(sec, attr) is False, (
-            f"Jira security capability {attr!r} should be False after M86F"
+        assert getattr(sec, attr) is True, (
+            f"Jira security capability {attr!r} should be True after M86G"
         )
 
 
