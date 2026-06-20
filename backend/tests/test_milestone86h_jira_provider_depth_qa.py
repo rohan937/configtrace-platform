@@ -623,8 +623,11 @@ def test_expansion_framework_jira_points_to_m86i() -> None:
 
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M86I" in planned or "Jira" in planned, (
-        f"Expected M86I/Jira in planned_next_stage, got '{planned}'"
+    assert (
+        "M86I" in planned or "Jira" in planned
+        or "M87A" in planned or "GitLab" in planned
+    ), (
+        f"Expected M86I/Jira/M87A/GitLab in planned_next_stage, got '{planned}'"
     )
 
 

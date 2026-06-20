@@ -473,8 +473,9 @@ class RecommendedProvider:
 # core security rules; M83D adds Clerk activity/event ingestion. PagerDuty
 # launched in M84A and is no longer in the recommended queue. Linear
 # launched in M85A and is no longer in the recommended queue. Jira
-# launched in M86A and is no longer in the recommended queue. GitLab is
-# now the head of the recommended queue.
+# launched in M86A and completed its arc in M86I; Jira is no longer in
+# the recommended queue. GitLab is now the head of the recommended queue
+# (GitLab → Terraform Cloud → Kubernetes → Sentry).
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
     RecommendedProvider(
         provider="gitlab",
@@ -586,6 +587,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M86I: Jira Cross-Cloud UX Polish",
+            "planned_next_stage": "M87A: GitLab Drift Provider Foundation",
         },
     }

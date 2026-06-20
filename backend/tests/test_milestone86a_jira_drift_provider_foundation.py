@@ -841,8 +841,12 @@ def test_f10_jira_in_provider_capabilities_partial() -> None:
 def test_g1_planned_next_stage_references_jira_core_or_m86b() -> None:
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M86B" in planned or "Jira Core" in planned or "M86" in planned or "Jira" in planned, (
-        f"planned_next_stage should reference M86B / Jira Core / Jira; got {planned!r}"
+    # M86B–M86I have since landed — planned_next_stage now advances to M87A/GitLab.
+    assert (
+        "M86B" in planned or "Jira Core" in planned or "M86" in planned or "Jira" in planned
+        or "M87A" in planned or "GitLab" in planned
+    ), (
+        f"planned_next_stage should reference M86B / Jira / M87A / GitLab; got {planned!r}"
     )
 
 

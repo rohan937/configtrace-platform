@@ -596,8 +596,11 @@ def test_expansion_framework_jira_points_to_m86f() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M86F" in planned or "M86" in planned or "Jira" in planned, (
-        f"planned_next_stage should reference M86F/Jira; got: {planned!r}"
+    assert (
+        "M86F" in planned or "M86" in planned or "Jira" in planned
+        or "M87A" in planned or "GitLab" in planned
+    ), (
+        f"planned_next_stage should reference M86F/Jira/M87A/GitLab; got: {planned!r}"
     )
 
 

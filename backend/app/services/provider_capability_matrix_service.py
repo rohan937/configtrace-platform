@@ -1124,7 +1124,7 @@ _JIRA = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Jira project management configuration drift foundation (M86A–M86H). "
+        "Jira project management configuration drift foundation (M86A–M86I). "
         "Drift snapshots cover Jira Cloud configuration surfaces: projects, boards, "
         "workflows, workflow schemes, permission schemes, notification schemes, "
         "issue type schemes, field configuration schemes, screen schemes, webhook "
@@ -1199,8 +1199,15 @@ _JIRA = ProviderCapability(
         "webhook rule now matches the connector's URL scheme category domain. All "
         "evidence remains metadata-only — counts, categories, and derived booleans, "
         "never raw URLs, JQL, identities, secrets, or PII. "
+        "M86I adds Jira cross-cloud UX polish and completes the Jira arc (M86A–M86I): "
+        "Jira is a first-class completed provider across the internal security UX "
+        "surfaces (activity, signals, correlations, cases, rules), the provider "
+        "capability table, case-report / timeline labels, and the demo script, with "
+        "the roadmap handoff advancing to GitLab (M87A). "
         "Authentication uses Jira email + API token (stored encrypted, never returned). "
-        "planned_next_stage: M86I: Jira Cross-Cloud UX Polish."
+        "Jira remains partial (not in the canonical dual-stack-complete set of 8 "
+        "providers) because drift_review_workflow is not yet active. "
+        "planned_next_stage: M87A: GitLab Drift Provider Foundation."
     ),
 )
 
