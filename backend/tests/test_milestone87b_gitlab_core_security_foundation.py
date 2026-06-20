@@ -906,10 +906,14 @@ class TestCapabilityMatrix:
         assert cap.security.activity_signals is True
         # risk_activity_correlations was False at M87B; M87F promoted it to True.
         assert cap.security.risk_activity_correlations is True
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
-        assert cap.security.evidence_timeline is False
-        assert cap.security.evidence_graph is False
+        # demo_seed_clear landed in M87G.
+        assert cap.security.demo_seed_clear is True
+        # case_report landed in M87G.
+        assert cap.security.case_report is True
+        # evidence_timeline landed in M87G.
+        assert cap.security.evidence_timeline is True
+        # evidence_graph landed in M87G.
+        assert cap.security.evidence_graph is True
 
     def test_gitlab_maturity_partial(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability
@@ -946,7 +950,7 @@ class TestExpansionFramework:
         assert ("M87C" in planned or "GitLab Branch" in planned or "CI Risk" in planned
                 or "M87D" in planned or "GitLab Activity" in planned
                 or "M87E" in planned or "M87F" in planned or "Correlations" in planned
-                or "M87G" in planned or "Demo" in planned), (
+                or "M87G" in planned or "Demo" in planned or "M87H" in planned), (
             f"planned_next_stage should reference M87C or later; got: {planned!r}"
         )
 
@@ -1083,8 +1087,10 @@ class TestNoCapsNotClaimed:
     def test_capability_matrix_demo_false(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("gitlab")
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
+        # demo_seed_clear landed in M87G.
+        assert cap.security.demo_seed_clear is True
+        # case_report landed in M87G.
+        assert cap.security.case_report is True
 
 
 # ── Q. M87A regression smoke ──────────────────────────────────────────────────

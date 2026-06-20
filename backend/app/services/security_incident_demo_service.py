@@ -71,6 +71,8 @@ from app.services import linear_activity_signal_service as linear_sig
 from app.services import linear_risk_activity_correlation_service as linear_corr_svc
 from app.services import jira_activity_signal_service as jira_sig
 from app.services import jira_risk_activity_correlation_service as jira_corr_svc
+from app.services import gitlab_activity_signal_service as gitlab_sig
+from app.services import gitlab_risk_activity_correlation_service as gitlab_corr_svc
 
 logger = logging.getLogger(__name__)
 
@@ -8617,6 +8619,523 @@ def clear_jira(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
         ).delete(synchronize_session=False)
 
     integ = _get_jira_demo_integration(workspace_id, db)
+    if integ is not None:
+        finding_ids = [
+            f.id for f in db.query(SecurityFinding).filter(
+                SecurityFinding.integration_id == integ.id
+            ).all()
+        ]
+        activity_ids = [
+            a.id for a in db.query(SecurityActivityEvent).filter(
+                SecurityActivityEvent.integration_id == integ.id
+            ).all()
+        ]
+        corr_conds = []
+        if finding_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_finding_id.in_(finding_ids)
+            )
+        if activity_ids:
+            corr_conds.append(
+                SecuritySignalCorrelation.linked_activity_event_id.in_(activity_ids)
+            )
+        if corr_conds:
+            objects_removed += db.query(SecuritySignalCorrelation).filter(
+                SecuritySignalCorrelation.workspace_id == workspace_id,
+                or_(*corr_conds),
+            ).delete(synchronize_session=False)
+        sig_conds = [SecurityIncidentSignal.integration_id == integ.id]
+        if activity_ids:
+            sig_conds.append(
+                SecurityIncidentSignal.linked_activity_event_id.in_(activity_ids)
+            )
+        objects_removed += db.query(SecurityIncidentSignal).filter(
+            SecurityIncidentSignal.workspace_id == workspace_id,
+            or_(*sig_conds),
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityActivityEvent).filter(
+            SecurityActivityEvent.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityFinding).filter(
+            SecurityFinding.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Resource).filter(
+            Resource.integration_id == integ.id
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(Integration).filter(
+            Integration.id == integ.id
+        ).delete(synchronize_session=False)
+
+    db.commit()
+    return {"cleared": True, "objects_removed": objects_removed}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GitLab demo (M87G) — "GitLab Branch Protection and CI/CD Posture Review"
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Demo story:
+#   A GitLab project has review-worthy posture evidence:
+#     - branch protection rule allows force push on the default branch
+#     - an active webhook has no signing secret
+#     - CI/CD variable summary shows unprotected and unmasked variables
+#
+#   This creates: 3 GitLab security findings (real M87B/M87C rule keys) →
+#   3 GitLab activity events (M87D event types) → 3 GitLab activity signals
+#   (M87E signal types) → 3 GitLab risk × activity correlations (M87F) → one
+#   case linking all evidence.
+#
+# PRIVACY: no GitLab access tokens, OAuth tokens, PRIVATE-TOKEN values,
+# webhook secret tokens, CI/CD variable names/values, deploy key material,
+# SSH keys, runner tokens/IPs, project/group names, namespace paths, repo
+# URLs, raw webhook URLs, branch names, commit messages, merge request titles,
+# issue titles, pipeline/job logs, artifacts, user emails/names/usernames,
+# customer data, PII, or raw GitLab API payloads of any kind.
+# Only safe opaque placeholder IDs, booleans, counts, and category labels.
+#
+# SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} or glpat-[...] are used.
+
+GITLAB_DEMO_INTEGRATION_NAME = "ConfigTrace GitLab posture review demo (sample data)"
+GITLAB_DEMO_CASE_SOURCE = "demo_gitlab_posture_review"
+GITLAB_DEMO_DATASET = "gitlab_posture_review_demo_v1"
+
+# Safe placeholder IDs — no real GitLab values, no tokens, no URLs.
+GITLAB_DEMO_PROJECT_001 = "GITLAB_DEMO_PROJECT_001"
+GITLAB_DEMO_BRANCH_RULE_001 = "GITLAB_DEMO_BRANCH_RULE_001"
+GITLAB_DEMO_WEBHOOK_001 = "GITLAB_DEMO_WEBHOOK_001"
+GITLAB_DEMO_CI_VARIABLE_SUMMARY_001 = "GITLAB_DEMO_CI_VARIABLE_SUMMARY_001"
+
+
+def _get_gitlab_demo_integration(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[Integration]:
+    return (
+        db.query(Integration)
+        .filter(
+            Integration.workspace_id == workspace_id,
+            Integration.provider == DEMO_PROVIDER_TAG,
+            Integration.display_name == GITLAB_DEMO_INTEGRATION_NAME,
+        )
+        .first()
+    )
+
+
+def _existing_gitlab_demo_case(
+    workspace_id: uuid.UUID, db: Session
+) -> Optional[SecurityCase]:
+    return (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == GITLAB_DEMO_CASE_SOURCE,
+        )
+        .first()
+    )
+
+
+def get_gitlab_status(workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    case = _existing_gitlab_demo_case(workspace_id, db)
+    if case is None:
+        return {"seeded": False, "case_id": None, "link_count": 0}
+    return {
+        "seeded": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def seed_gitlab(
+    *, workspace_id: uuid.UUID, actor_user_id: uuid.UUID, db: Session
+) -> dict[str, Any]:
+    """Seed the GitLab posture review demo chain (idempotent). No real GitLab sync.
+
+    "GitLab branch protection and CI/CD posture review" story:
+      Force-push branch-protection risk + webhook secret-missing risk + CI/CD
+      unprotected/unmasked variable risk -> 3 GitLab activity events -> 3 GitLab
+      activity signals -> 3 GitLab risk x activity correlations -> case.
+
+    PRIVACY: no GitLab access tokens, OAuth tokens, PRIVATE-TOKEN values,
+    webhook secret tokens, CI/CD variable names/values, deploy key material,
+    SSH keys, runner tokens/IPs, project/group names, namespace paths, repo
+    URLs, raw webhook URLs, branch names, commit messages, merge request
+    titles, issue titles, pipeline/job logs, artifacts, user identities,
+    customer data, PII, or raw GitLab API payloads.
+    Only safe booleans, counts, opaque placeholder IDs, and category labels.
+
+    SECURITY: no strings matching eyJ[A-Za-z0-9_-]{10,} or glpat-[...] are used.
+    """
+    existing = _existing_gitlab_demo_case(workspace_id, db)
+    if existing is not None:
+        return {
+            "seeded": True,
+            "created": False,
+            "case_id": str(existing.id),
+            "link_count": case_svc.count_links(existing.id, db),
+        }
+
+    # 1. Hidden demo integration (status="deleted" -- never shown / never synced).
+    integ = _get_gitlab_demo_integration(workspace_id, db)
+    if integ is None:
+        ct, iv = encrypt_credentials({
+            "demo": True, "dataset": GITLAB_DEMO_DATASET,
+        })
+        integ = Integration(
+            user_id=actor_user_id,
+            workspace_id=workspace_id,
+            provider=DEMO_PROVIDER_TAG,
+            display_name=GITLAB_DEMO_INTEGRATION_NAME,
+            encrypted_credentials=ct,
+            credential_iv=iv,
+            status="deleted",
+            scheduled_sync_enabled=False,
+        )
+        db.add(integ)
+        db.flush()
+
+    common_disclaimer = (
+        "This is GitLab configuration evidence for review and does not confirm "
+        "compromise, unauthorized access, source-code exposure, secret exposure, "
+        "token exposure, credential exposure, or data exposure."
+    )
+
+    # 2. Security findings using real GitLab rule keys (M87B/M87C).
+    #    Evidence uses only safe booleans, counts, opaque placeholder IDs, and
+    #    category labels -- never branch names, webhook URLs/secrets, CI variable
+    #    names/values, project/group names, user identities, or PII.
+
+    branch_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="gitlab",
+        finding_key=(
+            f"gitlab_branch_force_push_enabled:{GITLAB_DEMO_BRANCH_RULE_001}#demo"
+        ),
+        severity="high",
+        title="Demo: GitLab branch protection rule allows force push",
+        resource_id=None,
+        description=(
+            "GitLab configuration evidence indicates the branch protection rule "
+            "may require review. Sample GitLab force-push posture risk for the "
+            f"posture-review demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "gitlab_branch_force_push_enabled",
+            "demo": True,
+            "record_id": GITLAB_DEMO_BRANCH_RULE_001,
+            "record_type": "gitlab_branch_protection",
+            "resource_type": "gitlab_branch_protection",
+            "project_resource_id": GITLAB_DEMO_PROJECT_001,
+            "pattern_category": "default",
+            "allow_force_push": True,
+            "code_owner_approval_required": False,
+            "push_access_level_category": "developer",
+            "merge_access_level_category": "developer",
+        },
+        remediation={
+            "summary": (
+                "Review the GitLab branch protection rule and disable force push "
+                "so protected branches cannot have history rewritten without review."
+            ),
+        },
+    )
+
+    webhook_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="gitlab",
+        finding_key=(
+            f"gitlab_webhook_secret_missing:{GITLAB_DEMO_WEBHOOK_001}#demo"
+        ),
+        severity="high",
+        title="Demo: GitLab webhook has no signing secret",
+        resource_id=None,
+        description=(
+            "GitLab configuration evidence indicates the webhook may require "
+            "review. Sample GitLab webhook secret-missing posture risk for the "
+            f"posture-review demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "gitlab_webhook_secret_missing",
+            "demo": True,
+            "record_id": GITLAB_DEMO_WEBHOOK_001,
+            "record_type": "gitlab_webhook",
+            "resource_type": "gitlab_webhook",
+            "owner_resource_id": GITLAB_DEMO_PROJECT_001,
+            "owner_type": "project",
+            "enabled": True,
+            "webhook_secret_present": False,
+            "ssl_verification_enabled": True,
+            "webhook_scheme_category": "https",
+            "event_count": 4,
+        },
+        remediation={
+            "summary": (
+                "Configure a signing secret for the GitLab webhook so receivers "
+                "can verify that event payloads originate from GitLab."
+            ),
+        },
+    )
+
+    ci_finding = finding_svc.upsert_active_finding(
+        db=db, workspace_id=workspace_id, integration_id=integ.id,
+        provider="gitlab",
+        finding_key=(
+            f"gitlab_ci_unprotected_unmasked_variables:"
+            f"{GITLAB_DEMO_CI_VARIABLE_SUMMARY_001}#demo"
+        ),
+        severity="high",
+        title="Demo: GitLab CI/CD variables are unprotected and unmasked",
+        resource_id=None,
+        description=(
+            "GitLab configuration evidence indicates the CI/CD variable posture "
+            "may require review. Sample GitLab CI/CD variable posture risk for "
+            f"the posture-review demo. {common_disclaimer}"
+        ),
+        evidence={
+            "rule": "gitlab_ci_unprotected_unmasked_variables",
+            "demo": True,
+            "record_id": GITLAB_DEMO_CI_VARIABLE_SUMMARY_001,
+            "record_type": "gitlab_ci_variable_summary",
+            "resource_type": "gitlab_ci_variable_summary",
+            "owner_resource_id": GITLAB_DEMO_PROJECT_001,
+            "owner_type": "project",
+            "variable_count": 5,
+            "protected_variable_count": 0,
+            "masked_variable_count": 0,
+            "unprotected_unmasked_count": 5,
+        },
+        remediation={
+            "summary": (
+                "Review the GitLab CI/CD variable configuration and protect and "
+                "mask variables that carry sensitive values so they are not "
+                "accessible to non-protected branches."
+            ),
+        },
+    )
+
+    gitlab_findings = [branch_finding, webhook_finding, ci_finding]
+
+    # 3. Activity events (provider="gitlab", source="gitlab_activity_event").
+    GITLAB_ACTIVITY_SOURCE = "gitlab_activity_event"
+
+    def _mk_gitlab_event(
+        event_type, resource_type, provider_event_id, resource_id, extra,
+    ):
+        meta = {
+            "resource_type": resource_type,
+            "event_source": GITLAB_ACTIVITY_SOURCE,
+            "operation_family": "gitlab_configuration",
+            "operation_action": "configuration_observed",
+        }
+        meta.update(extra)
+        norm = activity_svc.normalize_activity_event(
+            provider="gitlab", source=GITLAB_ACTIVITY_SOURCE,
+            event_type=event_type,
+            occurred_at=_utcnow(),
+            provider_event_id=provider_event_id,
+            actor_id=None, actor_type=None,
+            resource_type=resource_type, resource_id=resource_id,
+            metadata=meta,
+        )
+        _o, row = activity_svc.upsert_activity_event(
+            workspace_id=workspace_id, integration_id=integ.id,
+            normalized=norm, db=db,
+        )
+        return row
+
+    branch_event = _mk_gitlab_event(
+        "gitlab.branch_protection.force_push_enabled",
+        "gitlab_branch_protection",
+        "GITLAB_DEMO_BRANCH_FORCE_PUSH_EVENT_ID",
+        GITLAB_DEMO_BRANCH_RULE_001,
+        {
+            "resource_id": GITLAB_DEMO_BRANCH_RULE_001,
+            "project_resource_id": GITLAB_DEMO_PROJECT_001,
+            "pattern_category": "default",
+            "allow_force_push": True,
+            "code_owner_approval_required": False,
+        },
+    )
+
+    webhook_event = _mk_gitlab_event(
+        "gitlab.webhook.secret_removed",
+        "gitlab_webhook",
+        "GITLAB_DEMO_WEBHOOK_SECRET_EVENT_ID",
+        GITLAB_DEMO_WEBHOOK_001,
+        {
+            "resource_id": GITLAB_DEMO_WEBHOOK_001,
+            "owner_resource_id": GITLAB_DEMO_PROJECT_001,
+            "owner_type": "project",
+            "enabled": True,
+            "webhook_secret_present": False,
+            "ssl_verification_enabled": True,
+            "webhook_scheme_category": "https",
+            "event_count": 4,
+        },
+    )
+
+    ci_event = _mk_gitlab_event(
+        "gitlab.ci_variables.unprotected_unmasked_detected",
+        "gitlab_ci_variable_summary",
+        "GITLAB_DEMO_CI_VARIABLES_EVENT_ID",
+        GITLAB_DEMO_CI_VARIABLE_SUMMARY_001,
+        {
+            "resource_id": GITLAB_DEMO_CI_VARIABLE_SUMMARY_001,
+            "owner_resource_id": GITLAB_DEMO_PROJECT_001,
+            "owner_type": "project",
+            "variable_count": 5,
+            "protected_variable_count": 0,
+            "masked_variable_count": 0,
+            "unprotected_unmasked_count": 5,
+        },
+    )
+
+    gitlab_events = [branch_event, webhook_event, ci_event]
+
+    # 4. Activity signals via the real M87E signal builder.
+    gitlab_signals = []
+    for ev in gitlab_events:
+        sig_dict = gitlab_sig._build_signal([ev])
+        if sig_dict is not None:
+            _so, sig = signal_svc.upsert_incident_signal(
+                workspace_id=workspace_id, signal=sig_dict, db=db,
+            )
+            gitlab_signals.append(sig)
+
+    # 5. Risk x activity correlations via the real M87F builder.
+    gitlab_correlations = []
+    signals_by_type_gl = {s.signal_type: s for s in gitlab_signals}
+
+    def _add_gitlab_corr(finding, signal, correlation_type, match_reason):
+        rule = gitlab_corr_svc.GITLAB_CORRELATION_RULES[correlation_type]
+        cdict = gitlab_corr_svc._build_correlation(
+            finding=finding, signal=signal,
+            correlation_type=correlation_type, rule=rule,
+            match_reason=match_reason,
+        )
+        _co, corr = corr_svc.upsert_correlation(
+            workspace_id=workspace_id, correlation=cdict, db=db,
+        )
+        gitlab_correlations.append(corr)
+        return corr
+
+    branch_signal = signals_by_type_gl.get("gitlab_force_push_enabled_signal")
+    if branch_signal is not None:
+        _add_gitlab_corr(
+            branch_finding, branch_signal,
+            "gitlab_branch_protection_risk_with_activity", "resource_id_match",
+        )
+
+    webhook_signal = signals_by_type_gl.get("gitlab_webhook_secret_removed_signal")
+    if webhook_signal is not None:
+        _add_gitlab_corr(
+            webhook_finding, webhook_signal,
+            "gitlab_webhook_secret_risk_with_activity", "resource_id_match",
+        )
+
+    ci_signal = signals_by_type_gl.get(
+        "gitlab_ci_unprotected_unmasked_variables_signal"
+    )
+    if ci_signal is not None:
+        _add_gitlab_corr(
+            ci_finding, ci_signal,
+            "gitlab_ci_variable_risk_with_activity", "resource_id_match",
+        )
+
+    # 6. Case linking all findings, events, signals, and correlations.
+    case = case_svc.create_case(
+        workspace_id=workspace_id,
+        user_id=actor_user_id,
+        title="GitLab Branch Protection and CI/CD Posture Review",
+        summary=(
+            "GitLab configuration evidence indicates branch protection, webhook, "
+            "and CI/CD variable posture may require review. Groups configuration "
+            "findings (force-push enabled, webhook secret missing, CI/CD variable "
+            "unprotected/unmasked) with related GitLab configuration activity, "
+            "signals, and correlations. Evidence for review. "
+            "This does not confirm compromise, unauthorized access, source-code "
+            "exposure, secret exposure, token exposure, credential exposure, or "
+            "data exposure. No GitLab access tokens, webhook URLs/secrets, "
+            "CI variable names/values, branch names, user identities, or PII."
+        ),
+        severity="high",
+        provider="gitlab",
+        metadata={
+            "source": GITLAB_DEMO_CASE_SOURCE,
+        },
+        db=db,
+    )
+    db.flush()
+
+    for f in gitlab_findings:
+        case_svc.link_object_to_case(
+            case=case, object_type="finding", object_id=f.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    for ev in gitlab_events:
+        case_svc.link_object_to_case(
+            case=case, object_type="activity_event", object_id=ev.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    seen_signal_ids_gl = set()
+    for sig in gitlab_signals:
+        seen_signal_ids_gl.add(sig.id)
+        case_svc.link_object_to_case(
+            case=case, object_type="signal", object_id=sig.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+
+    for corr in gitlab_correlations:
+        case_svc.link_object_to_case(
+            case=case, object_type="correlation", object_id=corr.id,
+            actor_user_id=actor_user_id, db=db,
+        )
+        if (
+            corr.linked_signal_id is not None
+            and corr.linked_signal_id not in seen_signal_ids_gl
+        ):
+            seen_signal_ids_gl.add(corr.linked_signal_id)
+            case_svc.link_object_to_case(
+                case=case, object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id, db=db,
+            )
+
+    db.commit()
+    logger.info(
+        "gitlab_posture_review_demo: seeded workspace=%s case=%s",
+        workspace_id, case.id,
+    )
+    return {
+        "seeded": True,
+        "created": True,
+        "case_id": str(case.id),
+        "link_count": case_svc.count_links(case.id, db),
+    }
+
+
+def clear_gitlab(*, workspace_id: uuid.UUID, db: Session) -> dict[str, Any]:
+    """Remove exactly the GitLab demo posture-review objects (and nothing else)."""
+    objects_removed = 0
+
+    demo_cases = (
+        db.query(SecurityCase)
+        .filter(
+            SecurityCase.workspace_id == workspace_id,
+            SecurityCase.case_metadata["source"].astext == GITLAB_DEMO_CASE_SOURCE,
+        )
+        .all()
+    )
+    case_ids = [c.id for c in demo_cases]
+    if case_ids:
+        objects_removed += db.query(SecurityCaseLink).filter(
+            SecurityCaseLink.case_id.in_(case_ids)
+        ).delete(synchronize_session=False)
+        objects_removed += db.query(SecurityCase).filter(
+            SecurityCase.id.in_(case_ids)
+        ).delete(synchronize_session=False)
+
+    integ = _get_gitlab_demo_integration(workspace_id, db)
     if integ is not None:
         finding_ids = [
             f.id for f in db.query(SecurityFinding).filter(

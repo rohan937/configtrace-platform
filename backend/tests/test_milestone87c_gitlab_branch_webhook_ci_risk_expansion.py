@@ -882,7 +882,8 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("gitlab")
         # activity_ingestion landed in M87D; demo remains a later stage.
         assert cap.security.activity_ingestion is True
-        assert cap.security.demo_seed_clear is False
+        # demo_seed_clear landed in M87G.
+        assert cap.security.demo_seed_clear is True
 
 
 # ── J. Expansion framework ────────────────────────────────────────────────────
@@ -894,7 +895,7 @@ class TestExpansionFramework:
         planned = fw.get("summary", {}).get("planned_next_stage", "")
         assert ("M87D" in planned or "GitLab Activity" in planned or "Ingestion" in planned
                 or "M87E" in planned or "M87F" in planned or "Correlations" in planned
-                or "M87G" in planned or "Demo" in planned), (
+                or "M87G" in planned or "Demo" in planned or "M87H" in planned), (
             f"planned_next_stage should reference M87D or later after M87C; got: {planned!r}"
         )
 

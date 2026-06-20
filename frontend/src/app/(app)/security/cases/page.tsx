@@ -49,7 +49,7 @@ type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
   | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk"
-  | "pagerduty" | "linear" | "jira";
+  | "pagerduty" | "linear" | "jira" | "gitlab";
 
 interface ProviderDemoCard {
   provider: DemoProvider;
@@ -245,6 +245,16 @@ const PROVIDER_DEMO_CARDS: ProviderDemoCard[] = [
     clearButton: "Clear Jira demo",
     seedColor: "#2684ff",
   },
+  {
+    provider: "gitlab",
+    label: "GitLab",
+    intro: "Try the GitLab security demo:",
+    description:
+      "Seed a GitLab posture review demo using safe placeholder configuration evidence. No GitLab repo content, issue content, merge request titles, commit messages, branch names, CI variable names/values, webhook URLs, tokens, user identities, logs, artifacts, or PII are stored.",
+    seedButton: "Load GitLab security demo",
+    clearButton: "Clear GitLab demo",
+    seedColor: "#fc6d26",
+  },
 ];
 
 export default function CasesPage() {
@@ -303,7 +313,7 @@ export default function CasesPage() {
     }
   }, [getToken, newTitle, router]);
 
-  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira") => {
+  const onSeedDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -322,7 +332,7 @@ export default function CasesPage() {
     }
   }, [getToken, router, load]);
 
-  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira") => {
+  const onClearDemo = useCallback(async (provider: "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab") => {
     setDemoBusy(true);
     setDemoNote(null);
     try {
@@ -363,7 +373,9 @@ export default function CasesPage() {
                                         ? "Linear demo data cleared."
                                         : provider === "jira"
                                           ? "Jira demo data cleared."
-                                          : "Demo data cleared.",
+                                          : provider === "gitlab"
+                                            ? "GitLab demo data cleared."
+                                            : "Demo data cleared.",
       );
       await load();
     } catch {

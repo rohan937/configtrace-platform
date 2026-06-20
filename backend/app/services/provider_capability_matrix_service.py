@@ -1118,16 +1118,16 @@ _GITLAB = ProviderCapability(
         activity_ingestion=True,
         activity_signals=True,
         risk_activity_correlations=True,
-        demo_seed_clear=False,
-        case_report=False,
-        evidence_timeline=False,
-        evidence_graph=False,
+        demo_seed_clear=True,
+        case_report=True,
+        evidence_timeline=True,
+        evidence_graph=True,
     ),
     maturity="partial",
     notes=(
         "GitLab DevOps configuration drift foundation (M87A), core security rules (M87B), "
         "branch/webhook/CI risk expansion (M87C), activity ingestion (M87D), activity "
-        "signals (M87E), and risk × activity correlations (M87F). "
+        "signals (M87E), risk × activity correlations (M87F), and demo/QA (M87G). "
         "Drift snapshots cover 9 safe configuration surfaces from the GitLab REST API v4: "
         "instance posture (version/enterprise/settings — never base URL), "
         "projects (visibility, feature flags, per-project posture counts — never project names, "
@@ -1187,8 +1187,17 @@ _GITLAB = ProviderCapability(
         "Only safe opaque identifiers, booleans, counts, and category labels are stored — "
         "never access tokens, webhook URLs/secrets, CI variable names/values, deploy key "
         "material, runner tokens/IPs, branch names, user identities, or PII. "
-        "Demo and QA planned for M87G–M87H. "
-        "planned_next_stage: M87G: GitLab Demo + QA."
+        "M87G adds the GitLab branch protection and CI/CD posture review demo: a "
+        "safe synthetic evidence chain (3 findings, 3 activity events, 3 signals, "
+        "3 correlations, 1 case) seeded via POST /incident-demo/seed?provider=gitlab "
+        "and cleared via POST /incident-demo/clear?provider=gitlab. All demo evidence "
+        "uses safe placeholder IDs only — never access tokens, webhook URLs/secrets, "
+        "CI variable names/values, branch names, user identities, or PII. Case report "
+        "renders the GitLab provider label. Does not confirm compromise, unauthorized "
+        "access, source-code exposure, secret exposure, token exposure, credential "
+        "exposure, or data exposure. "
+        "Provider depth QA planned for M87H. "
+        "planned_next_stage: M87H: GitLab Provider Depth QA."
     ),
 )
 

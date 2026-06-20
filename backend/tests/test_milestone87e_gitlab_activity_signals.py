@@ -468,10 +468,14 @@ class TestCapabilityMatrix:
         cap = get_provider_capability("gitlab")
         # risk_activity_correlations landed in M87F.
         assert cap.security.risk_activity_correlations is True
-        assert cap.security.demo_seed_clear is False
-        assert cap.security.case_report is False
-        assert cap.security.evidence_timeline is False
-        assert cap.security.evidence_graph is False
+        # demo_seed_clear landed in M87G.
+        assert cap.security.demo_seed_clear is True
+        # case_report landed in M87G.
+        assert cap.security.case_report is True
+        # evidence_timeline landed in M87G.
+        assert cap.security.evidence_timeline is True
+        # evidence_graph landed in M87G.
+        assert cap.security.evidence_graph is True
 
     def test_notes_mention_m87e(self) -> None:
         cap = get_provider_capability("gitlab")
@@ -488,7 +492,7 @@ class TestExpansionFramework:
         planned = get_framework().get("summary", {}).get("planned_next_stage", "")
         # M87F landed; planned now points to M87G.
         assert ("M87F" in planned or "Correlations" in planned
-                or "M87G" in planned or "Demo" in planned)
+                or "M87G" in planned or "Demo" in planned or "M87H" in planned)
 
     def test_terraform_cloud_remains_in_queue(self) -> None:
         recs = get_framework().get("recommended_next_providers", [])
