@@ -1414,6 +1414,12 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "variable names or values, state files, state outputs, VCS URLs, webhook URLs, "
         "team names, user identities, or PII are stored in the demo chain. Case report, "
         "evidence timeline, and evidence graph are fully supported. "
+        "M88H adds provider-depth QA: durable guardrails covering taxonomy parity "
+        "(10 record types, 36 rule keys, 25+ activity event types, 17 signal types, "
+        "15 correlation types), privacy sanitization (allowlist verified for activity/ "
+        "signal/correlation/case-report layers), claim discipline (forbidden-phrase scan "
+        "across all TC modules), false-positive behavior pins, demo isolation "
+        "(seed/clear idempotency), router admin guards, and frontend consistency. "
         "planned_next_stage: M88H: Terraform Cloud Provider Depth QA."
     ),
 )
