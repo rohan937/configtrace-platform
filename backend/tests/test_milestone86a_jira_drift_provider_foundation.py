@@ -784,17 +784,19 @@ def test_f4_jira_drift_diff_true() -> None:
 
 
 def test_f5_jira_drift_risk_classification_false() -> None:
+    # M86B advanced drift_risk_classification to True (Jira security rules landed).
     cap = get_provider_capability("jira")
     assert cap is not None
-    assert cap.drift.drift_risk_classification is False
+    assert cap.drift.drift_risk_classification is True
 
 
 def test_f6_jira_all_security_caps_false() -> None:
+    # M86B advanced security_rules to True. Check only the caps that remain
+    # False after M86B.
     cap = get_provider_capability("jira")
     assert cap is not None
     sec = cap.security
     for attr in (
-        "security_rules",
         "activity_ingestion",
         "activity_signals",
         "risk_activity_correlations",
@@ -804,7 +806,7 @@ def test_f6_jira_all_security_caps_false() -> None:
         "evidence_graph",
     ):
         assert getattr(sec, attr) is False, (
-            f"Jira security capability {attr!r} should be False at M86A"
+            f"Jira security capability {attr!r} should be False after M86B"
         )
 
 

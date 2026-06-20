@@ -1256,6 +1256,9 @@ class TestCapabilityMatrix:
             "M85H: Linear Provider Depth QA",
             "M85I: Linear Cross-Cloud UX Polish",
             "M86A: Jira Drift Provider Foundation",
+            "M86B: Jira Core Security Foundation",
+            "M86C: Jira Workflow/Webhook Risk Expansion",
+            "M87A: GitLab Drift Provider Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

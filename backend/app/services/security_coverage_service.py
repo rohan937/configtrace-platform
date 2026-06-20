@@ -49,6 +49,7 @@ PROVIDERS = [
     "clerk",
     "pagerduty",
     "linear",
+    "jira",
 ]
 
 # rule_key → the snapshot record_type(s) the rule consumes. A rule is
@@ -429,6 +430,50 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "linear_webhook_attachment_scope": ("linear_webhook",),
     "linear_view_shared_without_team_scope": ("linear_view",),
     "linear_integration_workspace_scoped": ("linear_integration",),
+    # Jira — M86B
+    "jira_site_missing_url": ("jira_site",),
+    "jira_site_no_projects": ("jira_site",),
+    "jira_site_no_webhooks": ("jira_site",),
+    "jira_site_no_automation_rules": ("jira_site",),
+    "jira_project_missing_key": ("jira_project",),
+    "jira_project_private": ("jira_project",),
+    "jira_project_archived": ("jira_project",),
+    "jira_project_deleted": ("jira_project",),
+    "jira_project_simplified": ("jira_project",),
+    "jira_project_unknown_type_category": ("jira_project",),
+    "jira_project_unknown_style_category": ("jira_project",),
+    "jira_project_no_boards": ("jira_project",),
+    "jira_project_no_issue_types": ("jira_project",),
+    "jira_project_no_lead": ("jira_project",),
+    "jira_board_unknown_type_category": ("jira_board",),
+    "jira_board_unknown_location_type": ("jira_board",),
+    "jira_board_missing_project_link": ("jira_board",),
+    "jira_workflow_no_statuses": ("jira_workflow",),
+    "jira_workflow_no_transitions": ("jira_workflow",),
+    "jira_workflow_excessive_global_transitions": ("jira_workflow",),
+    "jira_workflow_inactive": ("jira_workflow",),
+    "jira_workflow_scheme_unused": ("jira_workflow_scheme",),
+    "jira_workflow_scheme_no_default": ("jira_workflow_scheme",),
+    "jira_permission_scheme_anonymous_grant": ("jira_permission_scheme",),
+    "jira_permission_scheme_anyone_grant": ("jira_permission_scheme",),
+    "jira_permission_scheme_logged_in_grant": ("jira_permission_scheme",),
+    "jira_notification_scheme_no_notifications": ("jira_notification_scheme",),
+    "jira_notification_scheme_email_recipients": ("jira_notification_scheme",),
+    "jira_notification_scheme_group_recipients": ("jira_notification_scheme",),
+    "jira_issue_type_scheme_no_types": ("jira_issue_type_scheme",),
+    "jira_issue_type_scheme_no_default": ("jira_issue_type_scheme",),
+    "jira_field_configuration_scheme_no_configurations": ("jira_field_configuration_scheme",),
+    "jira_field_configuration_scheme_hidden_required_conflict": ("jira_field_configuration_scheme",),
+    "jira_screen_scheme_no_screens": ("jira_screen_scheme",),
+    "jira_screen_scheme_no_fields": ("jira_screen_scheme",),
+    "jira_webhook_disabled": ("jira_webhook",),
+    "jira_webhook_no_secret_indicator": ("jira_webhook",),
+    "jira_webhook_non_https": ("jira_webhook",),
+    "jira_webhook_no_events": ("jira_webhook",),
+    "jira_webhook_no_jql_filter": ("jira_webhook",),
+    "jira_automation_rule_disabled": ("jira_automation_rule",),
+    "jira_automation_rule_unknown_trigger": ("jira_automation_rule",),
+    "jira_automation_rule_global_scope": ("jira_automation_rule",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).
@@ -531,6 +576,20 @@ PROVIDER_SURFACES: dict[str, list[str]] = {
         "Custom views",
         "Active cycles",
         "Integrations",
+    ],
+    "jira": [
+        "Site configuration",
+        "Projects",
+        "Boards",
+        "Workflows",
+        "Workflow schemes",
+        "Permission schemes",
+        "Notification schemes",
+        "Issue type schemes",
+        "Field configuration schemes",
+        "Screen schemes",
+        "Webhook subscriptions",
+        "Automation rules",
     ],
 }
 
@@ -875,6 +934,55 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "linear_integration": {
         "message": "Linear integration metadata was not observed.",
         "hints": ["Verify the Linear API key has access to the integrations query. This surface may be plan-gated or absent if no integrations are configured."],
+    },
+    # Jira — M86B
+    "jira_site": {
+        "message": "Jira site metadata was not observed.",
+        "hints": ["Verify the Jira API credentials can reach the Jira Cloud serverInfo endpoint."],
+    },
+    "jira_project": {
+        "message": "Jira project metadata was not observed.",
+        "hints": ["Verify the Jira API credentials have Browse Projects permission."],
+    },
+    "jira_board": {
+        "message": "Jira board metadata was not observed.",
+        "hints": ["Board metadata requires Jira Software (the agile API). It may be absent if no boards are configured or if the API token lacks board access."],
+    },
+    "jira_workflow": {
+        "message": "Jira workflow metadata was not observed.",
+        "hints": ["Workflow metadata requires Administer Jira global permission on the site."],
+    },
+    "jira_workflow_scheme": {
+        "message": "Jira workflow scheme metadata was not observed.",
+        "hints": ["Workflow scheme metadata requires Administer Jira global permission on the site."],
+    },
+    "jira_permission_scheme": {
+        "message": "Jira permission scheme metadata was not observed.",
+        "hints": ["Permission scheme metadata requires Administer Jira global permission on the site."],
+    },
+    "jira_notification_scheme": {
+        "message": "Jira notification scheme metadata was not observed.",
+        "hints": ["Notification scheme metadata requires Administer Jira global permission on the site."],
+    },
+    "jira_issue_type_scheme": {
+        "message": "Jira issue type scheme metadata was not observed.",
+        "hints": ["Issue type scheme metadata requires Administer Jira global permission on the site."],
+    },
+    "jira_field_configuration_scheme": {
+        "message": "Jira field configuration scheme metadata was not observed.",
+        "hints": ["Field configuration scheme metadata requires Administer Jira global permission on the site."],
+    },
+    "jira_screen_scheme": {
+        "message": "Jira screen scheme metadata was not observed.",
+        "hints": ["Screen scheme metadata requires Administer Jira global permission on the site."],
+    },
+    "jira_webhook": {
+        "message": "Jira webhook metadata was not observed.",
+        "hints": ["Webhook metadata may be absent if no webhooks are configured, or if the API token lacks webhook list access."],
+    },
+    "jira_automation_rule": {
+        "message": "Jira automation rule metadata was not observed.",
+        "hints": ["Automation rule metadata uses the Jira Cloud automation API. It may be plan-gated or absent if no automation rules are configured."],
     },
 }
 

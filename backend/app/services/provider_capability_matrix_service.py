@@ -1109,11 +1109,11 @@ _JIRA = ProviderCapability(
     drift=DriftCapabilities(
         drift_snapshots=True,
         drift_diff=True,
-        drift_risk_classification=False,
+        drift_risk_classification=True,
         drift_review_workflow=False,
     ),
     security=SecurityCapabilities(
-        security_rules=False,
+        security_rules=True,
         activity_ingestion=False,
         activity_signals=False,
         risk_activity_correlations=False,
@@ -1130,10 +1130,14 @@ _JIRA = ProviderCapability(
         "issue type schemes, field configuration schemes, screen schemes, webhook "
         "subscriptions, and automation rules. "
         "M86A adds the connector, schema, and provider registration. "
+        "M86B adds Jira core security rules (configuration posture findings for site, "
+        "project, board, workflow, workflow scheme, permission scheme, notification "
+        "scheme, issue type scheme, field configuration scheme, screen scheme, webhook, "
+        "and automation rule surfaces). "
         "Issue keys, issue titles, issue descriptions, comments, attachments, user names, "
         "user emails, account IDs, and customer data are never fetched or stored. "
         "Authentication uses Jira email + API token (stored encrypted, never returned). "
-        "planned_next_stage: M86B: Jira Core Security Foundation."
+        "planned_next_stage: M86C: Jira Workflow/Webhook Risk Expansion."
     ),
 )
 
