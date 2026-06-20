@@ -280,11 +280,14 @@ from app.services import jira_activity_signal_service
 from app.services import jira_risk_activity_correlation_service
 from app.services import gitlab_activity_ingestion_service
 from app.services import gitlab_activity_signal_service
+from app.services import gitlab_risk_activity_correlation_service
 from app.schemas.security_gitlab_activity import (
     GitLabActivitySyncRequest,
     GitLabActivitySyncResponse,
     GitLabActivitySignalGenerateRequest,
     GitLabActivitySignalGenerateResponse,
+    GitLabRiskActivityCorrelationGenerateRequest,
+    GitLabRiskActivityCorrelationGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -3694,6 +3697,51 @@ def generate_gitlab_activity_signals_endpoint(
         max_signals=max_signals,
     )
     return GitLabActivitySignalGenerateResponse(**summary)
+
+
+@router.post(
+    "/gitlab-activity/generate-correlations",
+    response_model=GitLabRiskActivityCorrelationGenerateResponse,
+)
+def generate_gitlab_risk_activity_correlations(
+    body: Optional[GitLabRiskActivityCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitLabRiskActivityCorrelationGenerateResponse:
+    """Generate GitLab Risk × Activity correlations for a workspace (M87F).
+
+    Admin/owner only. Joins active GitLab configuration-risk findings with
+    GitLab activity signals on the same safe opaque resource_id within a review
+    window. Covers eleven correlation families: public visibility,
+    branch protection, webhook secret/auth, webhook transport, webhook event
+    scope, CI variable, deploy key, runner, merge request approval, public
+    feature, and a generic config fallback.
+
+    Does not confirm breach, compromise, unauthorized access, source-code
+    exposure, repo exposure, secret exposure, token exposure, credential
+    exposure, or data exposure. Idempotent — re-running creates no duplicates.
+
+    GitLab access tokens, OAuth tokens, PRIVATE-TOKEN values, webhook secret
+    tokens, CI/CD variable names/values, deploy key material, SSH keys, runner
+    tokens/IPs, project/group names, namespace paths, repo URLs, raw webhook
+    URLs, branch names, commit messages, merge request titles, issue titles,
+    pipeline/job logs, artifacts, user identities, and PII are NEVER stored.
+
+    Members can read correlations via GET /security/correlations?provider=gitlab.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_correlations = min(body.max_correlations, 1000) if body and body.max_correlations else 100
+    summary = gitlab_risk_activity_correlation_service.generate_gitlab_correlations(
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_correlations=max_correlations,
+    )
+    return GitLabRiskActivityCorrelationGenerateResponse(**summary)
 
 
 @router.post(

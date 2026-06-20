@@ -1117,7 +1117,7 @@ _GITLAB = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -1126,8 +1126,8 @@ _GITLAB = ProviderCapability(
     maturity="partial",
     notes=(
         "GitLab DevOps configuration drift foundation (M87A), core security rules (M87B), "
-        "branch/webhook/CI risk expansion (M87C), activity ingestion (M87D), and activity "
-        "signals (M87E). "
+        "branch/webhook/CI risk expansion (M87C), activity ingestion (M87D), activity "
+        "signals (M87E), and risk × activity correlations (M87F). "
         "Drift snapshots cover 9 safe configuration surfaces from the GitLab REST API v4: "
         "instance posture (version/enterprise/settings — never base URL), "
         "projects (visibility, feature flags, per-project posture counts — never project names, "
@@ -1173,10 +1173,22 @@ _GITLAB = ProviderCapability(
         "runner posture, and merge request approval configuration activity, generated via "
         "POST /security/gitlab-activity/generate-signals and read via "
         "GET /security/signals?provider=gitlab. Idempotent; signals are evidence for review "
-        "and never confirm breach, compromise, unauthorized access, source-code exposure, "
-        "secret exposure, token exposure, credential exposure, or data exposure. "
-        "Correlations and demo planned for M87F–M87G. "
-        "planned_next_stage: M87F: GitLab Risk × Activity Correlations."
+        "and never confirm breach, compromise, or data exposure. "
+        "M87F adds GitLab risk × activity correlations: active GitLab configuration-risk "
+        "findings are joined with GitLab activity signals on the same safe opaque resource "
+        "identifier within a review window across eleven correlation families — "
+        "public visibility, branch protection, webhook secret/auth, webhook transport, "
+        "webhook event scope, CI/CD variable, deploy key, runner, merge request approval, "
+        "public feature, and a generic config fallback. Generated via "
+        "POST /security/gitlab-activity/generate-correlations and read via "
+        "GET /security/correlations?provider=gitlab. Idempotent; correlations are evidence "
+        "for review only and never confirm compromise, unauthorized access, source-code "
+        "exposure, secret exposure, token exposure, credential exposure, or data exposure. "
+        "Only safe opaque identifiers, booleans, counts, and category labels are stored — "
+        "never access tokens, webhook URLs/secrets, CI variable names/values, deploy key "
+        "material, runner tokens/IPs, branch names, user identities, or PII. "
+        "Demo and QA planned for M87G–M87H. "
+        "planned_next_stage: M87G: GitLab Demo + QA."
     ),
 )
 

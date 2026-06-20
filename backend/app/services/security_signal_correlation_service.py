@@ -558,6 +558,55 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "automation_has_email_action",        # bool
         "automation_has_external_action",     # bool
         "automation_has_comment_action",      # bool
+        # GitLab Risk × Activity Correlation metadata (M87F) — safe opaque
+        # resource identifiers, counts, booleans, and category labels only.
+        # NEVER stored: GitLab access tokens, OAuth tokens, PRIVATE-TOKEN values,
+        # webhook secret tokens, CI/CD variable names/values, deploy key material,
+        # SSH keys, deploy key fingerprints, runner tokens/IPs, project/group
+        # names, namespace paths, repo URLs, raw webhook URLs, branch names,
+        # commit messages, merge request titles, issue titles, pipeline/job logs,
+        # artifacts, user emails/names/usernames, customer data, PII, or raw
+        # GitLab API payloads.
+        "project_resource_id",          # opaque GitLab project resource ID (NEVER a name)
+        "owner_resource_id",            # opaque owner (project/group) resource ID
+        "owner_type",                   # "project"/"group" category — never a name
+        "visibility_category",          # "public"/"internal"/"private" — never a name
+        "archived",                     # bool — project archived flag
+        "subgroup_count",               # int — count of subgroups (NEVER names/paths)
+        "two_factor_requirement_enabled",  # bool — group 2FA requirement flag
+        "membership_lock",              # bool — group membership lock flag
+        "pattern_category",             # branch protection pattern category (NEVER names)
+        "allow_force_push",             # bool — branch protection force-push flag
+        "code_owner_approval_required", # bool — code-owner approval requirement
+        "push_access_level_category",   # branch push access level category
+        "merge_access_level_category",  # branch merge access level category
+        "allowed_to_push_count",        # int — push allowances count (NEVER identities)
+        "allowed_to_merge_count",       # int — merge allowances count (NEVER identities)
+        "ssl_verification_enabled",     # bool — webhook SSL verification flag
+        "webhook_scheme_category",      # webhook URL scheme category — never the URL
+        "webhook_secret_present",       # bool — webhook signing secret present
+        "push_events",                  # bool — webhook push events enabled
+        "pipeline_events",              # bool — webhook pipeline events enabled
+        "job_events",                   # bool — webhook job events enabled
+        "variable_count",               # int — count of CI/CD variables (NEVER names/values)
+        "protected_variable_count",     # int — count of protected CI/CD variables
+        "masked_variable_count",        # int — count of masked CI/CD variables
+        "unprotected_unmasked_count",   # int — count of unprotected+unmasked CI/CD vars
+        "write_enabled_count",          # int — count of write-enabled deploy keys
+        "read_only_count",              # int — count of read-only deploy keys
+        "enabled_count",                # int — count of enabled deploy keys
+        "runner_count",                 # int — count of runners (NEVER tokens/IPs)
+        "shared_runner_enabled",        # bool — shared runner enabled posture
+        "untagged_runner_count",        # int — count of untagged runners
+        "approvals_required",           # int — MR approvals required count
+        "reset_approvals_on_push",      # bool — MR reset-approvals-on-push posture
+        "override_approvers_disabled",  # bool — MR per-request approver override
+        "wiki_enabled",                 # bool — project wiki feature flag
+        "snippets_enabled",             # bool — project snippets feature flag
+        "container_registry_enabled",   # bool — project container registry flag
+        "packages_enabled",             # bool — project packages feature flag
+        "shared_runners_enabled",       # bool — project shared runners flag
+        "protected_branch_count",       # int — count of protected branches (NEVER names)
     }
 )
 

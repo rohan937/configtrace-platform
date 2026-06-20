@@ -904,7 +904,8 @@ class TestCapabilityMatrix:
         # activity_signals was False at M87B; M87E promoted it to True.
         assert cap.security.activity_ingestion is True
         assert cap.security.activity_signals is True
-        assert cap.security.risk_activity_correlations is False
+        # risk_activity_correlations was False at M87B; M87F promoted it to True.
+        assert cap.security.risk_activity_correlations is True
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
         assert cap.security.evidence_timeline is False
@@ -941,10 +942,11 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        # M87C→M87D→M87E→M87F: accept any later GitLab arc stage
+        # M87C→M87D→M87E→M87F→M87G: accept any later GitLab arc stage
         assert ("M87C" in planned or "GitLab Branch" in planned or "CI Risk" in planned
                 or "M87D" in planned or "GitLab Activity" in planned
-                or "M87E" in planned or "M87F" in planned or "Correlations" in planned), (
+                or "M87E" in planned or "M87F" in planned or "Correlations" in planned
+                or "M87G" in planned or "Demo" in planned), (
             f"planned_next_stage should reference M87C or later; got: {planned!r}"
         )
 

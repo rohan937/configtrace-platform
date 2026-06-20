@@ -457,9 +457,9 @@ class TestCapabilityMatrix:
 
     def test_later_stages_still_false(self) -> None:
         cap = get_provider_capability("gitlab")
-        # activity_signals landed in M87E.
+        # activity_signals landed in M87E; risk_activity_correlations landed in M87F.
         assert cap.security.activity_signals is True
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True
         assert cap.security.demo_seed_clear is False
         assert cap.security.case_report is False
         assert cap.security.evidence_timeline is False
@@ -467,17 +467,18 @@ class TestCapabilityMatrix:
 
     def test_planned_next_stage_m87e(self) -> None:
         cap = get_provider_capability("gitlab")
-        # M87E landed and notes now reference M87E and M87F.
+        # M87F landed; notes reference M87D through M87F.
         assert "M87D" in cap.notes
-        assert "M87E" in cap.notes or "M87F" in cap.notes
+        assert "M87E" in cap.notes or "M87F" in cap.notes or "M87G" in cap.notes
 
 
 class TestExpansionFramework:
     def test_planned_next_stage_points_to_m87e(self) -> None:
         planned = get_framework().get("summary", {}).get("planned_next_stage", "")
-        # M87E landed and advanced planned_next_stage to M87F.
+        # M87F landed and advanced planned_next_stage to M87G.
         assert ("M87E" in planned or "GitLab Activity Signals" in planned
-                or "M87F" in planned or "Correlations" in planned)
+                or "M87F" in planned or "Correlations" in planned
+                or "M87G" in planned or "Demo" in planned)
 
     def test_terraform_cloud_remains_in_queue(self) -> None:
         recs = get_framework().get("recommended_next_providers", [])

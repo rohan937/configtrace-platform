@@ -1001,6 +1001,26 @@ export async function generateGitlabActivitySignals(
 }
 
 /**
+ * generateGitlabRiskActivityCorrelations — POST /security/gitlab-activity/generate-correlations
+ * Admin only. Joins active GitLab configuration-risk findings with GitLab
+ * activity signals on the same safe opaque resource_id within a review window.
+ * Does not confirm breach, compromise, unauthorized access, source-code
+ * exposure, repo exposure, secret exposure, token exposure, credential exposure,
+ * or data exposure. No access tokens, webhook URLs/secrets, CI variable
+ * names/values, deploy key material, runner tokens/IPs, branch names, user
+ * identities, or PII are stored.
+ */
+export async function generateGitlabRiskActivityCorrelations(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").GitLabRiskActivityCorrelationGenerateResponse> {
+  return apiFetch<import("@/types").GitLabRiskActivityCorrelationGenerateResponse>(
+    "/security/gitlab-activity/generate-correlations",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.

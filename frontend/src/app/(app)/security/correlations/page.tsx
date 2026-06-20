@@ -25,8 +25,9 @@ import type {
   PagerDutyCorrelationGenerateResponse,
   LinearCorrelationGenerateResponse,
   JiraRiskActivityCorrelationGenerateResponse,
+  GitLabRiskActivityCorrelationGenerateResponse,
 } from "@/types";
-import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations, generatePagerDutyCorrelations, generateLinearCorrelations, generateJiraRiskActivityCorrelations } from "@/lib/api";
+import { getSecurityCorrelations, generateSecurityCorrelations, generateTwilioCorrelations, generateSendGridCorrelations, generateAuth0Correlations, generateDatadogCorrelations, generateClerkCorrelations, generatePagerDutyCorrelations, generateLinearCorrelations, generateJiraRiskActivityCorrelations, generateGitlabRiskActivityCorrelations } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
 
@@ -39,7 +40,7 @@ import { SignalStatusBadge } from "@/components/security/signalDisplay";
 
 const SEVERITY_OPTIONS = ["critical", "high", "medium", "low", "info"];
 const STATUS_OPTIONS = ["open", "acknowledged", "dismissed", "resolved"];
-const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira"];
+const PROVIDER_OPTIONS = ["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira", "gitlab"];
 const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
   github: [
     "webhook_change",
@@ -253,6 +254,20 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "linear_cycle_risk_activity_correlation",
     "linear_integration_risk_activity_correlation",
   ],
+  // M87F — GitLab risk × activity correlation types.
+  gitlab: [
+    "gitlab_public_visibility_with_activity",
+    "gitlab_branch_protection_risk_with_activity",
+    "gitlab_webhook_secret_risk_with_activity",
+    "gitlab_webhook_transport_risk_with_activity",
+    "gitlab_webhook_event_scope_risk_with_activity",
+    "gitlab_ci_variable_risk_with_activity",
+    "gitlab_deploy_key_risk_with_activity",
+    "gitlab_runner_risk_with_activity",
+    "gitlab_merge_request_approval_risk_with_activity",
+    "gitlab_public_feature_risk_with_activity",
+    "gitlab_configuration_risk_with_activity",
+  ],
   // M86F — Jira risk x activity correlation types.
   jira: [
     "jira_permission_scheme_risk_with_activity",
@@ -289,7 +304,7 @@ export default function CorrelationsPage() {
   const typeOptions = TYPE_OPTIONS_BY_PROVIDER[provider] ?? [];
 
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse | LinearCorrelationGenerateResponse | JiraRiskActivityCorrelationGenerateResponse) | null>(null);
+  const [genResult, setGenResult] = useState<(SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse | LinearCorrelationGenerateResponse | JiraRiskActivityCorrelationGenerateResponse | GitLabRiskActivityCorrelationGenerateResponse) | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -349,6 +364,9 @@ export default function CorrelationsPage() {
         setGenResult(r);
       } else if (provider === "jira") {
         const r = await generateJiraRiskActivityCorrelations(token);
+        setGenResult(r);
+      } else if (provider === "gitlab") {
+        const r = await generateGitlabRiskActivityCorrelations(token);
         setGenResult(r);
       } else {
         const res = await generateSecurityCorrelations({ provider }, token);
@@ -484,7 +502,7 @@ function GenerateBar({
   isAdmin: boolean;
   roleLoaded: boolean;
   generating: boolean;
-  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse | LinearCorrelationGenerateResponse | JiraRiskActivityCorrelationGenerateResponse) | null;
+  genResult: (SecurityCorrelationGenerateResponse | TwilioCorrelationGenerateResponse | Auth0CorrelationGenerateResponse | DatadogCorrelationGenerateResponse | ClerkCorrelationGenerateResponse | PagerDutyCorrelationGenerateResponse | LinearCorrelationGenerateResponse | JiraRiskActivityCorrelationGenerateResponse | GitLabRiskActivityCorrelationGenerateResponse) | null;
   genError: string | null;
   onGenerate: () => void;
 }) {
@@ -523,6 +541,8 @@ function GenerateBar({
                                     ? "Generate review-safe Linear correlations between configuration findings and recent Linear configuration activity. Stores rule keys, signal types, opaque resource IDs, counts, and timing evidence only — never Linear API keys, OAuth tokens, webhook secrets, issue content, comment bodies, user emails, user IDs, team member identities, raw webhook payloads, or PII."
                                     : provider === "jira"
                                       ? "Generate review-safe Jira correlations between configuration findings and related Jira configuration activity. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
+                                      : provider === "gitlab"
+                                      ? "Generate GitLab risk × activity correlations from safe GitLab security findings, activity events, and activity signals. No GitLab issue content, merge request titles, commit messages, branch names, CI variable names/values, webhook URLs, tokens, user identities, logs, artifacts, or PII are stored."
                                       : "Matches GitHub configuration risks — including ruleset and automation-permission risks — to audit activity, secret-scanning, code-scanning, and Dependabot alert evidence on the same repository within the review window.";
   return (
     <div
@@ -723,6 +743,8 @@ function EmptyState({ isAdmin, provider }: { isAdmin: boolean; provider: string 
                                     ? "the same Linear resource (workspace / team / project / workflow state / label / webhook / view / cycle / integration). Sync Linear activity, generate Linear signals, then generate Linear correlations to align project-management configuration risks with activity evidence on the same Linear surface."
                                     : provider === "jira"
                                       ? "the same Jira resource (permission scheme / webhook / workflow / workflow scheme / automation rule / board / notification scheme / screen scheme / field configuration scheme / issue type scheme / project / site). Sync Jira activity, generate Jira signals, then generate Jira correlations to align project-management configuration risks with activity evidence on the same Jira surface."
+                                      : provider === "gitlab"
+                                      ? "the same GitLab resource (project / group / branch protection rule / webhook / CI/CD variable summary / deploy key summary / runner summary / MR approval summary). Sync GitLab activity, generate GitLab signals, then generate GitLab correlations to align DevOps configuration risks with activity evidence on the same GitLab surface. No issue content, merge request titles, branch names, CI variable names/values, webhook URLs, tokens, user identities, or PII are stored."
                                       : "the same GitHub repository";
   return (
     <div className="bg-surface1 border border-border" style={{ borderRadius: "12px", padding: "32px 24px", textAlign: "center" }}>

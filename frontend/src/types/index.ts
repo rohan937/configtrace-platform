@@ -2244,6 +2244,19 @@ export interface GitLabActivitySyncResponse {
   max_events: number;
 }
 
+// M87F — GitLab Risk × Activity correlation generation summary.
+export interface GitLabRiskActivityCorrelationGenerateResponse {
+  provider: string;
+  findings_scanned: number;
+  signals_scanned: number;
+  events_scanned: number;
+  correlations_created: number;
+  correlations_skipped: number;
+  groups_scanned: number;
+  lookback_hours: number;
+  max_correlations: number;
+}
+
 // M87E — GitLab activity signal generation summary.
 export interface GitLabActivitySignalGenerateResponse {
   provider: string;
