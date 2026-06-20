@@ -37,6 +37,8 @@ import LinearIntegrationForm from "@/components/integrations/LinearIntegrationFo
 import JiraIntegrationForm from "@/components/integrations/JiraIntegrationForm";
 // ── M87A — GitLab drift provider foundation ───────────────────────────────────
 import GitLabIntegrationForm from "@/components/integrations/GitLabIntegrationForm";
+// ── M88A — Terraform Cloud drift provider foundation ──────────────────────────
+import TerraformCloudIntegrationForm from "@/components/integrations/TerraformCloudIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -956,6 +958,50 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M88A — Terraform Cloud setup guide ────────────────────────────────────
+
+  if (provider === "terraform_cloud") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a Terraform Cloud organization
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Sign in to Terraform Cloud.",
+            body: <>Go to <strong style={{ color: "#e8eaf0" }}>app.terraform.io</strong> and sign in
+              to the organization you want to connect.</>,
+          },
+          {
+            heading: "Create an API token.",
+            body: <>Open <strong style={{ color: "#e8eaf0" }}>User Settings → Tokens</strong>{" "}
+              (or a team token under your organization settings) and click &ldquo;Create an API
+              token&rdquo;. Copy the token — it is only shown once.</>,
+          },
+          {
+            heading: "Enter your organization name.",
+            body: <>This is your organization&apos;s URL slug (e.g.{" "}
+              <strong style={{ color: "#e8eaf0" }}>app.terraform.io/app/your-org</strong>{" "}
+              → enter <strong style={{ color: "#e8eaf0" }}>your-org</strong>). It is used only as
+              an API path parameter and never stored in configuration records.</>,
+          },
+          {
+            heading: "Optional: enter your Terraform Enterprise URL.",
+            body: <>Leave blank for Terraform Cloud. For Terraform Enterprise or self-managed,
+              enter your instance base URL.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace uses a read-only token to snapshot configuration metadata only. It does
+          not store organization names, workspace names, variable names or values, state file
+          contents, plan/apply logs, VCS URLs, team names, user emails, or customer
+          infrastructure data. Terraform Cloud drift snapshots and risk classification are in
+          foundation stage. Security rules planned next.
+        </p>
+      </>
+    );
+  }
+
   // ── M87A — GitLab setup guide ──────────────────────────────────────────────
 
   if (provider === "gitlab") {
@@ -1201,6 +1247,10 @@ export default function IntegrationsPage() {
     // ── M87A — GitLab ────────────────────────────────────────────────────────────
     if (selectedProvider === "gitlab") {
       return <GitLabIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M88A — Terraform Cloud ───────────────────────────────────────────────────
+    if (selectedProvider === "terraform_cloud") {
+      return <TerraformCloudIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

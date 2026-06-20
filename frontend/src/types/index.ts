@@ -182,7 +182,9 @@ export interface IntegrationCreateRequest {
     // ── M86A — Jira drift provider foundation ─────────────────────────────────
     | "jira"
     // ── M87A — GitLab drift provider foundation ───────────────────────────────
-    | "gitlab";
+    | "gitlab"
+    // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
+    | "terraform_cloud";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -376,6 +378,21 @@ export interface IntegrationCreateRequest {
    * Defaults to https://gitlab.com if omitted.
    */
   gitlab_base_url?: string;
+  // ── Terraform Cloud fields (M88A) ─────────────────────────────────────────
+  /**
+   * Terraform Cloud team or user API token.
+   * Required for the terraform_cloud provider. Sent to backend once; never
+   * stored in frontend state after submission.
+   * Stored encrypted server-side — NEVER returned in API responses.
+   */
+  terraform_cloud_api_token?: string;
+  /** Terraform Cloud organization name slug. Required for terraform_cloud. */
+  terraform_cloud_organization?: string;
+  /**
+   * Optional Terraform Enterprise or self-managed base URL.
+   * Defaults to https://app.terraform.io if omitted.
+   */
+  terraform_cloud_base_url?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

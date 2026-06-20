@@ -342,6 +342,13 @@ def sync_integration(
 
                 connector = GitLabConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "terraform_cloud":
+                # SECURITY: api_token is NEVER logged. Organization name is used
+                # as an API path parameter and never stored in normalized records.
+                from app.connectors.terraform_cloud import TerraformCloudConnector
+
+                connector = TerraformCloudConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

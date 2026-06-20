@@ -1333,6 +1333,65 @@ _JIRA = ProviderCapability(
 
 
 # Partial / in-progress providers — not counted in the canonical 8-provider matrix.
+_TERRAFORM_CLOUD = ProviderCapability(
+    provider="terraform_cloud",
+    label="Terraform Cloud",
+    category="devops",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=True,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "Terraform Cloud DevOps configuration drift foundation (M88A). "
+        "Drift snapshots cover 10 safe configuration surfaces from the Terraform Cloud API v2: "
+        "organization posture (workspace/project/policy-set/variable-set counts, SSO, 2FA, "
+        "cost estimation, collaborator auth policy — never organization name), "
+        "workspaces (execution mode, auto-apply, VCS connection presence, variable counts, "
+        "notification/team-access counts, run status category — never workspace name, variable "
+        "names/values, VCS URLs, branch names, state file content, plan/apply logs), "
+        "projects (workspace count, team access count — never project name), "
+        "variable sets (scope, counts only — never variable set name, variable names or values), "
+        "workspace variable summaries (counts only — never variable names or values), "
+        "policy sets (global scope, policy count, enforcement level, VCS connection presence — "
+        "never policy names, code, or VCS details), "
+        "notification configurations (enabled status, destination type, trigger count, URL scheme — "
+        "never webhook URLs, tokens, or email recipients), "
+        "team access summaries (access-level counts per workspace — never team names), "
+        "run triggers (sourceable type category — never source workspace name), "
+        "state version summaries (presence boolean only — raw state file NEVER fetched or stored). "
+        "Drift risk classification covers: workspace auto_apply enabled → high; "
+        "global_remote_state enabled → high; notification webhook HTTP → high; "
+        "admin/write/apply access count increased → high; sensitive variable count decreased → high; "
+        "VCS connection removed → medium; queue_all_runs disabled → medium; "
+        "speculative planning disabled → medium; run trigger count increased → medium; "
+        "policy set enforcement level weakened → high/medium; policy set global scope removed → high. "
+        "Authentication uses a Terraform Cloud team or user API token (stored encrypted, never "
+        "returned). Organization name is used as an API path parameter and never stored in "
+        "normalized records — only an opaque SHA-256 hash of the organization name is stored. "
+        "Never stores: organization names, workspace names, project names, variable set names, "
+        "variable names, variable values, HCL content, state file JSON, plan output, apply logs, "
+        "cost-estimation data, resource addresses, VCS repository URLs, branch names, commit SHAs, "
+        "team names, user emails, usernames, webhook URLs, notification tokens, or customer PII. "
+        "Security rules planned for M88B. "
+        "planned_next_stage: M88B: Terraform Cloud Core Security Foundation."
+    ),
+)
+
+
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
@@ -1345,6 +1404,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _LINEAR,
     _JIRA,
     _GITLAB,
+    _TERRAFORM_CLOUD,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

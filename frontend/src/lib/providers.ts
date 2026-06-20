@@ -38,7 +38,9 @@ export type ProviderId =
   // ── M86A — Jira drift provider foundation ─────────────────────────────────
   | "jira"
   // ── M87A — GitLab drift provider foundation ───────────────────────────────
-  | "gitlab";
+  | "gitlab"
+  // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
+  | "terraform_cloud";
 
 // ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
 export type ProviderCategory =
@@ -502,6 +504,33 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     borderColor: "rgba(0,82,204,0.25)",
   },
 
+  // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
+  terraform_cloud: {
+    id: "terraform_cloud",
+    label: "Terraform Cloud",
+    shortLabel: "Terraform Cloud",
+    category: "devops",
+    description:
+      "Track Terraform Cloud organization and workspace configuration including execution modes, auto-apply settings, VCS connections, variable set scopes, team access levels, policy set enforcement, notification postures, and run trigger counts. Snapshot-only — no workspace names, variable names or values, state file contents, plan/apply logs, VCS URLs, team names, user emails, or customer infrastructure data are ever stored.",
+    monitoredSurfaces: [
+      "Organization posture (workspace/project counts, SSO, 2FA, cost estimation — no organization name)",
+      "Workspaces (execution mode, auto-apply, VCS connection presence, variable counts — no workspace name, variable names/values, state files, or logs)",
+      "Projects (workspace count, team access count — no project name)",
+      "Variable sets (global scope, variable count categories — no variable names or values)",
+      "Workspace variable summaries (counts only — no variable names or values)",
+      "Policy sets (global scope, policy count, enforcement level — no policy names or code)",
+      "Notification configurations (enabled status, destination type, trigger count, URL scheme — no URLs, tokens, or email recipients)",
+      "Team access summaries (access-level counts per workspace — no team names)",
+      "Run triggers (sourceable type category — no source workspace names)",
+      "State version summaries (presence boolean only — raw state file never fetched or stored)",
+    ],
+    trustNote:
+      "ConfigTrace stores Terraform Cloud credentials encrypted and uses them only to read selected configuration metadata. It does not store API token values, organization names, workspace names, project names, variable set names, variable names, variable values, HCL content, state file JSON, plan output, apply logs, cost-estimation data, resource addresses, VCS repository URLs, branch names, commit SHAs, team names, user emails, usernames, webhook URLs, notification tokens, or customer PII. Terraform Cloud drift snapshots and risk classification are in foundation stage. Security rules planned next (M88B).",
+    color: "#7B42BC",
+    bgColor: "rgba(123,66,188,0.10)",
+    borderColor: "rgba(123,66,188,0.25)",
+  },
+
   // ── M87A — GitLab drift provider foundation ────────────────────────────────
   gitlab: {
     id: "gitlab",
@@ -556,6 +585,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "jira",
   // ── M87A — GitLab drift provider foundation ───────────────────────────────
   "gitlab",
+  // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
+  "terraform_cloud",
 ];
 
 /**
@@ -592,6 +623,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "jira",
   // ── M87A — GitLab drift provider foundation ───────────────────────────────
   "gitlab",
+  // ── M88A — Terraform Cloud drift provider foundation ──────────────────────
+  "terraform_cloud",
 ];
 
 /**

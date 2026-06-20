@@ -80,6 +80,8 @@ class IntegrationCreateRequest(BaseModel):
         "jira",
         # M87A — GitLab drift provider foundation.
         "gitlab",
+        # M88A — Terraform Cloud drift provider foundation.
+        "terraform_cloud",
     ] = Field(
         ...,
         description=(
@@ -526,6 +528,35 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Terraform Cloud fields (M88A) ──────────────────────────────────────────
+    terraform_cloud_api_token: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='terraform_cloud'. "
+            "Terraform Cloud team or user API token. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "SECURITY: never logged, never returned to the frontend, "
+            "never stored in plaintext or resource metadata."
+        ),
+    )
+    terraform_cloud_organization: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='terraform_cloud'. "
+            "Terraform Cloud organization name slug. "
+            "Used as an API path parameter — never stored in normalized records."
+        ),
+    )
+    terraform_cloud_base_url: Optional[str] = Field(
+        None,
+        description=(
+            "Optional when provider='terraform_cloud'. "
+            "Base URL for Terraform Enterprise or self-managed Terraform Cloud. "
+            "Defaults to https://app.terraform.io if omitted. "
+            "Never stored as a raw URL in resource metadata."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -715,6 +746,16 @@ class IntegrationCreateRequest(BaseModel):
             if not self.gitlab_access_token:
                 raise ValueError(
                     "gitlab_access_token is required for GitLab integrations."
+                )
+        # ── M88A — Terraform Cloud drift provider ─────────────────────────────
+        elif self.provider == "terraform_cloud":
+            if not self.terraform_cloud_api_token:
+                raise ValueError(
+                    "terraform_cloud_api_token is required for Terraform Cloud integrations."
+                )
+            if not self.terraform_cloud_organization:
+                raise ValueError(
+                    "terraform_cloud_organization is required for Terraform Cloud integrations."
                 )
         return self
 
