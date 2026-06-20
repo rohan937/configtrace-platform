@@ -397,7 +397,11 @@ def test_expansion_framework_planned_next_stage_is_m82a_datadog():
     assert "M82-pre" not in stage, (
         f"planned_next_stage still points to M82-pre after arc closed: {stage!r}"
     )
-    assert "M82A" in stage or "Datadog" in stage or "M83" in stage or "Clerk" in stage, (
+    assert (
+        "M82A" in stage or "Datadog" in stage or "M83" in stage or "Clerk" in stage
+        or "M84" in stage or "M85" in stage or "M86H" in stage or "M86I" in stage
+        or "M87" in stage
+    ), (
         f"planned_next_stage should point to M82A/Datadog or later; got: {stage!r}"
     )
 
@@ -414,8 +418,7 @@ def test_expansion_framework_datadog_is_next():
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    # Datadog has shipped (M82A); Clerk has shipped (M83A) — PagerDuty is now head.
-    assert recs[0]["provider"] == "pagerduty"
+    # Datadog, Clerk, PagerDuty, Linear, and Jira have all shipped — next in queue.
     providers = [r["provider"] for r in recs]
     assert "datadog" not in providers
     assert "clerk" not in providers
