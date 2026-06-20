@@ -43,6 +43,7 @@ import {
   syncClerkActivity,
   syncPagerDutyActivity,
   syncLinearActivity,
+  syncJiraActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -52,7 +53,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -437,9 +438,28 @@ const LINEAR_EVENT_TYPES = [
   "linear.config.event",
 ];
 
+// M86D — Jira configuration-state events (synthesized from safe drift surfaces;
+// Jira audit/issue/user APIs are never ingested due to actor emails, account
+// IDs, IP addresses, and issue content).
+const JIRA_EVENT_TYPES = [
+  "jira.site.updated",
+  "jira.project.updated",
+  "jira.board.updated",
+  "jira.workflow.updated",
+  "jira.workflow_scheme.updated",
+  "jira.permission_scheme.updated",
+  "jira.notification_scheme.updated",
+  "jira.issue_type_scheme.updated",
+  "jira.field_configuration_scheme.updated",
+  "jira.screen_scheme.updated",
+  "jira.webhook.updated",
+  "jira.automation_rule.updated",
+  "jira.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -622,6 +642,12 @@ export default function ActivityEventsPage() {
             `Seen ${r.events_seen} · inserted ${r.events_inserted} · skipped ${r.events_skipped}.` +
             `${r.error_message ? ` (${r.error_message})` : ""}`,
         );
+      } else if (provider === "jira") {
+        const r = await syncJiraActivity(token);
+        setSyncWarn(false);
+        setSyncNote(
+          `Scanned ${r.events_scanned} · created ${r.events_created} · skipped ${r.events_skipped}.`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -666,7 +692,9 @@ export default function ActivityEventsPage() {
                                       ? "Could not sync PagerDuty activity. Please try again."
                                       : provider === "linear"
                                         ? "Could not sync Linear activity. Please try again."
-                                        : "Could not sync GitHub activity. Please try again.",
+                                        : provider === "jira"
+                                          ? "Could not sync Jira activity. Please try again."
+                                          : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -827,6 +855,7 @@ export default function ActivityEventsPage() {
     : provider === "clerk" ? CLERK_EVENT_TYPES
     : provider === "pagerduty" ? PAGERDUTY_EVENT_TYPES
     : provider === "linear" ? LINEAR_EVENT_TYPES
+    : provider === "jira" ? JIRA_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -869,7 +898,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -992,6 +1021,7 @@ function SyncBar({
   const isClerk = provider === "clerk";
   const isPagerDuty = provider === "pagerduty";
   const isLinear = provider === "linear";
+  const isJira = provider === "jira";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -1009,6 +1039,7 @@ function SyncBar({
     : isClerk ? "Sync Clerk activity"
     : isPagerDuty ? "Sync PagerDuty activity"
     : isLinear ? "Sync Linear activity"
+    : isJira ? "Sync Jira activity"
     : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
@@ -1042,7 +1073,9 @@ function SyncBar({
                                 ? "Sync review-safe PagerDuty configuration activity from service, escalation policy, schedule, integration, webhook, orchestration, business service, and response play configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API tokens, routing keys, integration keys, webhook secrets, raw URLs, user contact data, incident payloads, alert payloads, IP addresses, user agents, or PII."
                                 : isLinear
                                   ? "Sync review-safe Linear configuration activity from workspace, team, project, workflow state, label, webhook, view, cycle, and integration configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API keys, OAuth tokens, webhook secrets, raw URLs, issue content, comments, attachments, user identities, customer names, IP addresses, user agents, or PII."
-                                  : "Ingests recent GitHub audit-log activity into normalized events.";
+                                  : isJira
+                                    ? "Sync review-safe Jira configuration activity from existing Jira configuration snapshots. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
+                                    : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1152,7 +1185,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && !isJira && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -1176,7 +1209,7 @@ function SyncBar({
             Sync GitHub secret scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && !isJira && (
           <button
             onClick={onSyncGithubCodeScanning}
             disabled={!isAdmin || syncing}
@@ -1200,7 +1233,7 @@ function SyncBar({
             Sync GitHub code scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isJira && (
           <button
             onClick={onSyncGithubDependabot}
             disabled={!isAdmin || syncing}
@@ -1430,6 +1463,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync Linear activity first to collect review-safe configuration-state evidence — workspace, team, project, workflow state, label, webhook, view, cycle, and integration posture summaries. Linear audit logs are never ingested. API keys, OAuth tokens, webhook secrets, raw URLs, issue content, comments, attachments, user identities, customer names, IP addresses, user agents, and raw audit payloads are never stored."
                 : "An admin can sync Linear activity to collect review-safe configuration-state evidence."
+            : provider === "jira"
+              ? isAdmin
+                ? "Sync Jira activity first to collect review-safe configuration-state evidence from existing Jira configuration snapshots — site, project, board, workflow, workflow scheme, permission scheme, notification scheme, issue type scheme, field configuration scheme, screen scheme, webhook, and automation rule posture summaries. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
+                : "An admin can sync Jira activity to collect review-safe configuration-state evidence."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

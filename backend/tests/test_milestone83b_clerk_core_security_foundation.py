@@ -1258,6 +1258,8 @@ class TestCapabilityMatrix:
             "M86A: Jira Drift Provider Foundation",
             "M86B: Jira Core Security Foundation",
             "M86C: Jira Workflow/Webhook Risk Expansion",
+            "M86D: Jira Activity/Event Ingestion",
+            "M86E: Jira Activity Signals",
             "M87A: GitLab Drift Provider Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"

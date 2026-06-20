@@ -939,6 +939,27 @@ export async function syncAuth0Activity(
 }
 
 /**
+ * syncJiraActivity — POST /security/jira-activity/sync
+ * Admin only. Synthesizes review-safe Jira configuration-state activity events
+ * from the same safe drift surfaces the connector reads (site, projects, boards,
+ * workflows, workflow schemes, permission schemes, notification schemes, issue
+ * type schemes, field configuration schemes, screen schemes, webhooks, and
+ * automation rules). Jira audit/issue/user APIs are never ingested. API tokens,
+ * OAuth tokens, webhook secrets, raw URLs, site base URLs, JQL, issue keys,
+ * issue content, comments, attachments, user emails, account IDs, IP addresses,
+ * user agents, raw audit payloads, and PII are never stored.
+ */
+export async function syncJiraActivity(
+  token?: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").JiraActivitySyncResponse> {
+  return apiFetch<import("@/types").JiraActivitySyncResponse>(
+    "/security/jira-activity/sync",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.

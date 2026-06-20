@@ -661,6 +661,100 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "integration_enabled",         # bool — integration is active/enabled
         "integration_count",           # int — count of workspace integrations
         "label_count",                 # int — count of labels for a team
+        # Jira configuration activity fields (M86D) — config-state observation
+        # events synthesized from 12 safe drift surfaces (M86A–M86C). Events are
+        # synthesized from ConfigTrace's stored Jira posture records, NEVER from
+        # Jira audit logs, issue APIs, or user activity feeds. NEVER stored:
+        # Jira API tokens, OAuth tokens, webhook secrets, raw webhook/delivery
+        # URLs, site base URLs, JQL, filter expressions, issue keys, issue
+        # titles, issue descriptions, comment bodies, attachment content,
+        # customer names, user emails, user names, account IDs, IP addresses,
+        # user agents, raw audit payloads, raw API response dicts, or PII.
+        "jira_event_id",               # stable synthetic event identifier (day-scoped)
+        "site_id",                     # opaque site resource identifier ("site")
+        "board_id",                    # Jira board id (opaque identifier)
+        "workflow_id",                 # Jira workflow id (opaque identifier)
+        "workflow_scheme_id",          # workflow scheme id (opaque identifier)
+        "permission_scheme_id",        # permission scheme id (opaque identifier)
+        "notification_scheme_id",      # notification scheme id (opaque identifier)
+        "issue_type_scheme_id",        # issue type scheme id (opaque identifier)
+        "field_configuration_scheme_id",  # field config scheme id (opaque identifier)
+        "screen_scheme_id",            # screen scheme id (opaque identifier)
+        "automation_rule_id",          # automation rule id (opaque identifier)
+        "deployment_type",             # "cloud"/"server"/"unknown" (never base URL)
+        "major_version",               # int — major version posture (never build string)
+        "build_number",                # int — build number posture
+        "scm_info_present",            # bool — whether scmInfo is present
+        "has_key",                     # bool — project has a key (NEVER the key value)
+        "project_type_key",            # project type category (software/business/…)
+        "style",                       # project style category (classic/next-gen)
+        "is_private",                  # bool — project privacy flag
+        "is_archived",                 # bool — project archived flag
+        "is_deleted",                  # bool — project deleted flag
+        "is_simplified",               # bool — project simplified (team-managed) flag
+        "board_type",                  # board type category (scrum/kanban/simple)
+        "location_present",            # bool — board has a location (NEVER the location)
+        "board_filter_present",        # bool — board scoped to a saved filter
+        "board_jql_filter_broad",      # bool — broad/unbounded filter heuristic (NEVER JQL)
+        "board_column_count",          # int — count of board columns (NEVER names)
+        "board_quick_filter_count",    # int — count of quick filters (NEVER names/JQL)
+        "board_swimlane_strategy_category",  # safe swimlane strategy enum
+        "is_default",                  # bool — default scheme/workflow flag
+        "transition_count",            # int — count of workflow transitions
+        "status_count",                # int — count of workflow statuses
+        "has_description",             # bool — scheme/workflow has a description
+        "workflow_global_transition_count",  # int — count of global transitions
+        "workflow_active",             # bool — workflow active flag
+        "workflow_draft",              # bool — workflow draft flag
+        "workflow_has_done_status",    # bool — has a "done" category status
+        "workflow_has_in_progress_status",  # bool — has an in-progress category status
+        "workflow_transition_rule_count",   # int — total validators+conditions+post-functions
+        "workflow_validator_count",    # int — count of transition validators
+        "workflow_condition_count",    # int — count of transition conditions
+        "workflow_post_function_count",  # int — count of transition post-functions
+        "workflow_orphan_status_count",  # int — count of orphaned statuses
+        "workflow_status_category_count",  # int — count of distinct status categories
+        "issue_type_mapping_count",    # int — count of scheme issue-type mappings
+        "has_draft",                   # bool — workflow scheme has a draft
+        "workflow_scheme_workflow_count",  # int — distinct workflows in a scheme
+        "workflow_scheme_issue_type_mapping_count",  # int — issue-type mapping count
+        "workflow_scheme_unmapped_issue_type_count", # int — unmapped issue types
+        "permission_grant_count",      # int — count of permission grants
+        "permission_public_browse_projects",     # bool — public holder can browse
+        "permission_public_administer_projects",  # bool — public holder can administer
+        "permission_public_manage_sprints",       # bool — public holder can manage sprints
+        "permission_public_create_issues",        # bool — public holder can create issues
+        "permission_public_transition_issues",    # bool — public holder can transition issues
+        "permission_unknown_holder_count",  # int — count of unrecognised holder types
+        "permission_high_privilege_grant_count",  # int — public high-privilege grants
+        "permission_public_grant_count",  # int — count of grants to public holders
+        "notification_all_watchers_recipient_count",  # int — all-watcher recipient count
+        "notification_unknown_recipient_count",  # int — unrecognised recipient-type count
+        "notification_event_count",    # int — count of notification scheme events
+        "has_default_issue_type",      # bool — issue type scheme has a default
+        "screen_mapping_count",        # int — count of screen mappings
+        "has_default_screen",          # bool — screen scheme has a default screen
+        "screen_tab_count",            # int — count of screen tabs (NEVER names)
+        "screen_unmapped_screen_count",  # int — count of unmapped operation slots
+        "has_filter",                  # bool — webhook has a JQL filter (NEVER the JQL)
+        "webhook_has_issue_events",    # bool — webhook subscribes to issue events
+        "webhook_has_comment_events",  # bool — webhook subscribes to comment events
+        "webhook_has_attachment_events",  # bool — webhook subscribes to attachment events
+        "webhook_has_project_events",  # bool — webhook subscribes to project events
+        "webhook_has_sprint_events",   # bool — webhook subscribes to sprint events
+        "webhook_has_worklog_events",  # bool — webhook subscribes to worklog events
+        "webhook_all_issue_events",    # bool — subscribes to all issue lifecycle events
+        "webhook_jql_empty_or_broad",  # bool — webhook filter empty/broad (NEVER JQL)
+        "webhook_event_scope_category",  # safe scope enum (narrow/medium/broad/unknown)
+        "component_count",             # int — count of automation rule components
+        "automation_action_count",     # int — count of automation action components
+        "automation_condition_count",  # int — count of automation condition components
+        "automation_branch_count",     # int — count of automation branch components
+        "automation_scope_category",   # safe scope enum (global/multi-project/project)
+        "automation_has_web_request_action",  # bool — rule sends an outgoing web request
+        "automation_has_email_action",  # bool — rule sends email (NEVER addresses)
+        "automation_has_external_action",  # bool — rule posts to an external service
+        "automation_has_comment_action",   # bool — rule adds a comment (NEVER content)
     }
 )
 

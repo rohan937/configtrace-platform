@@ -1114,7 +1114,7 @@ _JIRA = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -1152,8 +1152,16 @@ _JIRA = ProviderCapability(
         "webhook URLs, or grant holder identities. "
         "Issue keys, issue titles, issue descriptions, comments, attachments, user names, "
         "user emails, account IDs, and customer data are never fetched or stored. "
+        "M86D adds Jira activity ingestion: review-safe configuration-state activity "
+        "events synthesized from the same stored Jira configuration snapshots (site, "
+        "project, board, workflow, workflow scheme, permission scheme, notification "
+        "scheme, issue type scheme, field configuration scheme, screen scheme, webhook, "
+        "and automation rule surfaces), surfaced via "
+        "GET /security/activity/events?provider=jira. Jira's audit log / issue / user "
+        "activity APIs are never ingested — only safe counts, categories, booleans, and "
+        "opaque resource identifiers are stored. "
         "Authentication uses Jira email + API token (stored encrypted, never returned). "
-        "planned_next_stage: M86D: Jira Activity/Event Ingestion."
+        "planned_next_stage: M86E: Jira Activity Signals."
     ),
 )
 

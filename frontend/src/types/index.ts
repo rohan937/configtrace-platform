@@ -2199,6 +2199,23 @@ export interface LinearActivitySyncResponse {
   permission_limited: boolean;
   error_message: string | null;
 }
+// M86D — Jira configuration activity ingestion (synthesized from safe drift
+// surfaces; Jira audit/issue/user APIs are never ingested due to actor
+// emails, account IDs, IP addresses, and issue content).
+export interface JiraActivitySyncRequest {
+  lookback_hours: number;
+  max_events: number;
+}
+export interface JiraActivitySyncResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  events_created: number;
+  events_skipped: number;
+  groups_scanned: number;
+  lookback_hours: number;
+  max_events: number;
+}
 
 export interface LinearActivitySignalGenerateResponse {
   provider: string;
