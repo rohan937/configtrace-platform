@@ -1,0 +1,23 @@
+{
+  "name": "configtrace-marketing-video",
+  "version": "1.0.0",
+  "description": "ConfigTrace — Configuration Security & Drift Intelligence Walkthrough (Remotion, mock-UI only)",
+  "private": true,
+  "scripts": {
+    "preview": "remotion studio",
+    "typecheck": "tsc --noEmit",
+    "render": "remotion render ConfigTraceSecurityExposureWalkthroughV2 out/configtrace-security-exposure-walkthrough-v2.mp4",
+    "still": "remotion still ConfigTraceSecurityExposureWalkthroughV2 out/still.png"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.290",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.290"
+  },
+  "devDependencies": {
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "typescript": "5.6.3"
+  }
+}
