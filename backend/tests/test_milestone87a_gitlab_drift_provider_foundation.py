@@ -1008,14 +1008,15 @@ class TestExpansionFramework:
     def test_planned_next_stage_references_m87b(self) -> None:
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        # M87B→…→M87G→M87H: accept any GitLab arc stage pointer
+        # M87B→…→M87H→M87I: accept any GitLab arc stage pointer
         assert ("M87B" in planned or "GitLab Core" in planned
                 or "M87C" in planned or "GitLab Branch" in planned
                 or "M87D" in planned or "GitLab Activity" in planned
                 or "M87E" in planned or "M87F" in planned
                 or "Correlations" in planned or "M87G" in planned
                 or "Demo" in planned or "M87H" in planned
-                or "Provider Depth" in planned), (
+                or "Provider Depth" in planned
+                or "M87I" in planned or "Cross-Cloud" in planned), (
             f"planned_next_stage should reference M87B or later GitLab arc stage; got: {planned!r}"
         )
 

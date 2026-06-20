@@ -512,7 +512,7 @@ class TestExpansionFramework:
         planned = get_framework().get("summary", {}).get("planned_next_stage", "")
         # M87G landed; planned now points to M87H.
         assert ("M87G" in planned or "Demo" in planned
-                or "M87H" in planned or "Provider Depth" in planned)
+                or "M87H" in planned or "Provider Depth" in planned or "M87I" in planned or "Cross-Cloud" in planned)
 
     def test_terraform_cloud_remains_in_queue(self) -> None:
         recs = get_framework().get("recommended_next_providers", [])

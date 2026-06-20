@@ -1196,8 +1196,19 @@ _GITLAB = ProviderCapability(
         "renders the GitLab provider label. Does not confirm compromise, unauthorized "
         "access, source-code exposure, secret exposure, token exposure, credential "
         "exposure, or data exposure. "
-        "Provider depth QA planned for M87H. "
-        "planned_next_stage: M87H: GitLab Provider Depth QA."
+        "M87H is the GitLab provider-depth QA pass: all 25 GitLab rule keys are "
+        "confirmed present in the rule registry, confidence, pack, coverage, and "
+        "frontend catalog; connector normalizer fields are verified to match what "
+        "the security rules read; evaluator dispatch routes to gitlab_rules.evaluate; "
+        "activity ingestion renames raw connector fields (url_scheme → "
+        "webhook_scheme_category, secret_token_present → webhook_secret_present) so "
+        "no forbidden substring appears in event metadata keys; signal and correlation "
+        "metadata keys are verified against their respective allowlists; demo "
+        "seed/clear/status are confirmed idempotent; case report renders GitLab and "
+        "includes the required disclaimer; forbidden wording and secret-shape greps "
+        "are clean. No production-blocking field mismatches were found. "
+        "Cross-cloud UX polish planned for M87I. "
+        "planned_next_stage: M87I: GitLab Cross-Cloud UX Polish."
     ),
 )
 

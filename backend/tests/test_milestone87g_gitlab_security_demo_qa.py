@@ -569,7 +569,11 @@ def test_capability_matrix_planned_next_stage_m87h() -> None:
 
 def test_expansion_framework_planned_next_stage_m87h() -> None:
     planned = get_framework().get("summary", {}).get("planned_next_stage", "")
-    assert "M87H" in planned or "Provider Depth" in planned
+    # Rolled forward in M87H: depth-QA complete, next stage is M87I.
+    assert (
+        "M87H" in planned or "Provider Depth" in planned
+        or "M87I" in planned or "Cross-Cloud" in planned
+    )
 
 
 def test_terraform_cloud_remains_in_queue() -> None:
