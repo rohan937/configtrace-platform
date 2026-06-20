@@ -290,9 +290,12 @@ from app.schemas.security_gitlab_activity import (
     GitLabRiskActivityCorrelationGenerateResponse,
 )
 from app.services import terraform_cloud_activity_ingestion_service
+from app.services import terraform_cloud_activity_signal_service
 from app.schemas.security_terraform_cloud_activity import (
     TerraformCloudActivitySyncRequest,
     TerraformCloudActivitySyncResponse,
+    TerraformCloudActivitySignalGenerateRequest,
+    TerraformCloudActivitySignalGenerateResponse,
 )
 from app.models.integration import Integration
 from app.services import security_finding_service
@@ -3721,6 +3724,48 @@ def sync_terraform_cloud_activity_events(
         db=db,
     )
     return TerraformCloudActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/terraform-cloud-activity/generate-signals",
+    response_model=TerraformCloudActivitySignalGenerateResponse,
+)
+def generate_terraform_cloud_activity_signals_endpoint(
+    body: Optional[TerraformCloudActivitySignalGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> TerraformCloudActivitySignalGenerateResponse:
+    """Generate Incident Signals from safe Terraform Cloud configuration activity events (M88E).
+
+    Admin/owner only. Promotes ingested terraform_cloud/terraform_cloud_activity_event
+    config-state events into review-priority Incident Signals grouped by resource
+    identity. Idempotent — re-running creates no duplicates. Review signals only.
+
+    Does not confirm breach, compromise, unauthorized access, state exposure,
+    secret exposure, token exposure, credential exposure, infrastructure exposure,
+    or data exposure.
+
+    Terraform Cloud API tokens, OAuth tokens, VCS tokens, variable names/values,
+    state files, state outputs, plan/apply logs, webhook URLs, notification tokens,
+    organization names, workspace names, project names, VCS URLs, branch names,
+    team names, user emails, customer infrastructure data, PII, and raw API
+    payloads are NEVER stored.
+
+    Members can read signals via GET /security/signals?provider=terraform_cloud.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_signals = min(body.max_signals, 1000) if body and body.max_signals else 100
+    summary = terraform_cloud_activity_signal_service.generate_terraform_cloud_activity_signals(
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_signals=max_signals,
+    )
+    return TerraformCloudActivitySignalGenerateResponse(**summary)
 
 
 @router.post(

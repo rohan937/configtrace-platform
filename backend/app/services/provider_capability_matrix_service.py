@@ -1347,7 +1347,7 @@ _TERRAFORM_CLOUD = ProviderCapability(
     security=SecurityCapabilities(
         security_rules=True,
         activity_ingestion=True,
-        activity_signals=False,
+        activity_signals=True,
         risk_activity_correlations=False,
         demo_seed_clear=False,
         case_report=False,
@@ -1397,8 +1397,13 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "from drift records across 9 Terraform Cloud record surfaces. Events use only "
         "opaque IDs, booleans, counts, and category labels — never variable values, "
         "state files, tokens, URLs, names, or customer data. "
-        "Activity signals, correlations, demo, and case report planned for M88E+. "
-        "planned_next_stage: M88E: Terraform Cloud Activity Signals."
+        "M88E adds activity signal generation: promotes M88D config-state events into "
+        "17 review-priority Incident Signal types covering organization access posture, "
+        "workspace execution, VCS, run control, variable posture, variable set scope, "
+        "policy set enforcement, notification transport, run triggers, team access, and "
+        "state version metadata. All signal metadata is allowlisted and flat. "
+        "Correlations, demo, and case report planned for M88F+. "
+        "planned_next_stage: M88F: Terraform Cloud Risk x Activity Correlations."
     ),
 )
 

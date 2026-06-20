@@ -963,11 +963,12 @@ def test_capability_matrix_activity_ingestion_true() -> None:
     assert cap.security.activity_ingestion is True
 
 
-def test_capability_matrix_no_activity_signals() -> None:
+def test_capability_matrix_activity_signals_true() -> None:
     from app.services.provider_capability_matrix_service import get_provider_capability
     cap = get_provider_capability("terraform_cloud")
     assert cap is not None
-    assert cap.security.activity_signals is False
+    # M88E set activity_signals=True
+    assert cap.security.activity_signals is True
 
 
 def test_capability_matrix_no_correlations() -> None:
@@ -1014,12 +1015,16 @@ def test_capability_matrix_planned_next_stage_is_m88d() -> None:
     assert "M88D" in cap.notes or "Activity" in cap.notes
 
 
-def test_expansion_framework_planned_next_stage_is_m88d() -> None:
+def test_expansion_framework_planned_next_stage_is_m88d_or_later() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M88D" in planned or "Activity" in planned or "Event Ingestion" in planned, (
-        f"planned_next_stage should point to M88D; got: {planned!r}"
+    assert (
+        "M88D" in planned or "Activity" in planned or "Event Ingestion" in planned
+        or "M88E" in planned or "Signals" in planned
+        or "M88F" in planned or "Correlations" in planned
+    ), (
+        f"planned_next_stage should point to M88D or later; got: {planned!r}"
     )
 
 

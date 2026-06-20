@@ -1004,6 +1004,28 @@ export async function syncTerraformCloudActivity(
 }
 
 /**
+ * generateTerraformCloudActivitySignals — POST /security/terraform-cloud-activity/generate-signals
+ * Admin only. Promotes ingested Terraform Cloud configuration-state activity events
+ * (provider=terraform_cloud, source=terraform_cloud_activity_event) into review-priority
+ * Incident Signals. Idempotent — re-running creates no duplicates. Does not confirm
+ * breach, compromise, unauthorized access, state exposure, secret exposure, token
+ * exposure, credential exposure, infrastructure exposure, or data exposure.
+ * API tokens, OAuth tokens, VCS tokens, variable names/values, state files, state
+ * outputs, plan/apply logs, webhook URLs, tokens, team names, user emails, organization
+ * names, workspace names, project names, customer infrastructure data, and PII are
+ * never stored.
+ */
+export async function generateTerraformCloudActivitySignals(
+  token?: string | null,
+  opts?: { lookback_hours?: number; max_signals?: number },
+): Promise<import("@/types").TerraformCloudActivitySignalGenerateResponse> {
+  return apiFetch<import("@/types").TerraformCloudActivitySignalGenerateResponse>(
+    "/security/terraform-cloud-activity/generate-signals",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * generateGitlabActivitySignals — POST /security/gitlab-activity/generate-signals
  * Admin only. Promotes ingested GitLab configuration-state activity events
  * (provider=gitlab, source=gitlab_activity_event) into review-priority Incident

@@ -2261,7 +2261,7 @@ export interface GitLabActivitySyncResponse {
   max_events: number;
 }
 
-// M88D — Terraform Cloud configuration activity ingestion summary.
+// M88D/E — Terraform Cloud configuration activity ingestion and signal summary.
 export interface TerraformCloudActivitySyncResponse {
   provider: string;
   source: string;
@@ -2271,6 +2271,18 @@ export interface TerraformCloudActivitySyncResponse {
   groups_scanned: number;
   lookback_hours: number;
   max_events: number;
+}
+
+// M88E — Terraform Cloud activity signal generation summary.
+export interface TerraformCloudActivitySignalGenerateResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  groups_scanned: number;
+  signals_created: number;
+  signals_skipped: number;
+  lookback_hours: number;
+  max_signals: number;
 }
 
 // M87F — GitLab Risk × Activity correlation generation summary.

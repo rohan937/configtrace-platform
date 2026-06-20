@@ -385,10 +385,10 @@ _ACTIVITY_PROVIDERS = [
 # and correlations selectors.
 # GitLab activity ingestion landed in M87D; signals landed in M87E;
 # correlations landed in M87F. GitLab now appears in all three selectors.
-# Terraform Cloud activity ingestion landed in M88D. Signals (M88E) and
-# correlations (M88F) are not yet implemented — terraform_cloud is NOT in
-# the signals or correlations selectors yet.
-_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "terraform_cloud"]
+# Terraform Cloud activity ingestion landed in M88D; signals landed in M88E.
+# Correlations (M88F) are not yet implemented — terraform_cloud is NOT in
+# the correlations selector yet.
+_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)  # terraform_cloud added in M88E
 _CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "terraform_cloud"]
 
 

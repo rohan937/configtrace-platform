@@ -742,6 +742,62 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "approvals_required",          # int — MR approvals required count
         "reset_approvals_on_push",     # bool — MR reset-approvals-on-push posture
         "override_approvers_disabled", # bool — per-request approver override disabled
+        # Terraform Cloud configuration activity signal fields (M88E) — synthesized
+        # from 9 safe Terraform Cloud drift surfaces (M88A–M88D). Terraform Cloud
+        # audit-log APIs are NEVER ingested. NEVER stored: API tokens, OAuth tokens,
+        # VCS tokens, variable names/values, state files, state outputs, plan/apply
+        # logs, webhook URLs, notification tokens, organization names, workspace
+        # names, project names, VCS URLs, branch names, commit SHAs, team names,
+        # user emails, customer infrastructure data, PII, or raw API payloads.
+        "terraform_cloud_event_id",    # stable synthetic event identifier (opaque)
+        "organization_resource_id",    # opaque org resource identifier
+        "workspace_resource_id",       # opaque workspace resource identifier
+        "variable_set_resource_id",    # opaque variable set resource identifier
+        "policy_set_resource_id",      # opaque policy set resource identifier
+        "notification_resource_id",    # opaque notification config resource identifier
+        "run_trigger_resource_id",     # opaque run trigger resource identifier
+        "execution_mode_category",     # workspace execution mode ("remote"/"local"/"agent")
+        "terraform_version_category",  # Terraform version category ("pinned"/"latest"/"unknown")
+        "auto_apply",                  # bool — workspace auto-apply enabled
+        "global_remote_state",         # bool — workspace global remote state sharing
+        "vcs_connected",               # bool — workspace VCS connection present
+        "queue_all_runs",              # bool — workspace queue-all-runs enabled
+        "file_triggers_enabled",       # bool — workspace file-based run triggers enabled
+        "speculative_enabled",         # bool — workspace speculative plans enabled
+        "run_trigger_count",           # int — count of run triggers on workspace
+        "latest_run_status_category",  # workspace latest run status category (safe enum)
+        "sensitive_variable_count",    # int — count of sensitive variables
+        "non_sensitive_variable_count", # int — count of non-sensitive variables
+        "environment_variable_count",  # int — count of environment-category variables
+        "terraform_variable_count",    # int — count of Terraform-category variables
+        "raw_value_never_read",        # bool — variable raw values are never fetched
+        "global_scope",                # bool — variable set / policy set global scope flag
+        "workspace_count",             # int — count of workspaces in scope
+        "policy_set_count",            # int — count of policy sets in org
+        "variable_set_count",          # int — count of variable sets in org
+        "policy_count",                # int — count of policies in a policy set
+        "enforcement_level_category",  # policy set enforcement level category
+        "destination_type_category",   # notification destination type category
+        "trigger_count",               # int — count of notification trigger subscriptions
+        "token_present",               # bool — webhook notification token present
+        "webhook_url_scheme_category", # notification webhook URL scheme category — never the URL
+        "sourceable_type_category",    # run trigger sourceable type category
+        "team_access_count",           # int — count of team access entries
+        "admin_access_count",          # int — count of teams with admin access
+        "write_access_count",          # int — count of teams with write access
+        "read_access_count",           # int — count of teams with read access
+        "apply_access_count",          # int — count of teams with apply access
+        "custom_permission_count",     # int — count of teams with custom permissions
+        "state_version_present",       # bool — workspace has a current state version
+        "state_version_count_category", # state version count category
+        "raw_state_never_fetched",     # bool — raw state files are never fetched
+        "sso_enabled",                 # bool — organization SSO enabled flag
+        "cost_estimation_enabled",     # bool — organization cost estimation flag
+        "notification_count",          # int — count of notification configurations
+        # Signal-level cross-provider fields used in TC signal metadata
+        "signal_type",                 # the signal type label (stable string)
+        "record_type",                 # source record type label
+        "event_source",                # originating activity source
     }
 )
 
