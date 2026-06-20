@@ -7083,37 +7083,41 @@ def seed_clerk(
 
     # Link findings.
     for f in clerk_findings:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="finding",
-            linked_finding_id=f.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="finding",
+            object_id=f.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     # Link activity events.
     for ev in clerk_events:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="activity_event",
-            linked_activity_event_id=ev.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="activity_event",
+            object_id=ev.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     # Link signals.
     for sig in clerk_signals:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="signal",
-            linked_signal_id=sig.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="signal",
+            object_id=sig.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     # Link correlations.
     for corr in clerk_correlations:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="correlation",
-            linked_correlation_id=corr.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="correlation",
+            object_id=corr.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
@@ -7552,36 +7556,40 @@ def seed_pagerduty(
     db.flush()
 
     for f in pagerduty_findings:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="finding",
-            linked_finding_id=f.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="finding",
+            object_id=f.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     for ev in pagerduty_events:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="activity_event",
-            linked_activity_event_id=ev.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="activity_event",
+            object_id=ev.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     seen_signal_ids_pd: set = set()
     for sig in pagerduty_signals:
         seen_signal_ids_pd.add(sig.id)
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="signal",
-            linked_signal_id=sig.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="signal",
+            object_id=sig.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     for corr in pagerduty_correlations:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="correlation",
-            linked_correlation_id=corr.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="correlation",
+            object_id=corr.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
         if (
@@ -7589,10 +7597,11 @@ def seed_pagerduty(
             and corr.linked_signal_id not in seen_signal_ids_pd
         ):
             seen_signal_ids_pd.add(corr.linked_signal_id)
-            case_svc.add_link(
-                case_id=case.id,
-                link_type="signal",
-                linked_signal_id=corr.linked_signal_id,
+            case_svc.link_object_to_case(
+                case=case,
+                object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id,
                 db=db,
             )
 
@@ -8023,36 +8032,40 @@ def seed_linear(
     db.flush()
 
     for f in linear_findings:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="finding",
-            linked_finding_id=f.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="finding",
+            object_id=f.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     for ev in linear_events:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="activity_event",
-            linked_activity_event_id=ev.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="activity_event",
+            object_id=ev.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     seen_signal_ids_linear: set = set()
     for sig in linear_signals:
         seen_signal_ids_linear.add(sig.id)
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="signal",
-            linked_signal_id=sig.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="signal",
+            object_id=sig.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
 
     for corr in linear_correlations:
-        case_svc.add_link(
-            case_id=case.id,
-            link_type="correlation",
-            linked_correlation_id=corr.id,
+        case_svc.link_object_to_case(
+            case=case,
+            object_type="correlation",
+            object_id=corr.id,
+            actor_user_id=actor_user_id,
             db=db,
         )
         if (
@@ -8060,10 +8073,11 @@ def seed_linear(
             and corr.linked_signal_id not in seen_signal_ids_linear
         ):
             seen_signal_ids_linear.add(corr.linked_signal_id)
-            case_svc.add_link(
-                case_id=case.id,
-                link_type="signal",
-                linked_signal_id=corr.linked_signal_id,
+            case_svc.link_object_to_case(
+                case=case,
+                object_type="signal",
+                object_id=corr.linked_signal_id,
+                actor_user_id=actor_user_id,
                 db=db,
             )
 
