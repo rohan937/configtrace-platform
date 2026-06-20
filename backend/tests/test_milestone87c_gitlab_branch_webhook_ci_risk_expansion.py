@@ -880,7 +880,8 @@ class TestCapabilityMatrix:
     def test_activity_ingestion_still_false(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("gitlab")
-        assert cap.security.activity_ingestion is False
+        # activity_ingestion landed in M87D; demo remains a later stage.
+        assert cap.security.activity_ingestion is True
         assert cap.security.demo_seed_clear is False
 
 

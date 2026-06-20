@@ -793,6 +793,67 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "automation_enabled",          # bool — automation rule enabled flag
         "automation_trigger_type_category",  # automation trigger enum (issue/scheduled/…)
         "automation_component_count",  # int — count of automation rule components
+        # GitLab configuration activity fields (M87D) — config-state observation
+        # events synthesized from 9 safe GitLab drift surfaces (M87A–M87C).
+        # GitLab audit-event APIs (actor user IDs, emails, IPs, user agents) are
+        # NEVER ingested. NEVER stored: GitLab access tokens, OAuth tokens,
+        # PRIVATE-TOKEN values, authorization headers, webhook secret tokens,
+        # webhook URLs, CI/CD variable names/values, deploy key material, SSH
+        # keys, deploy key fingerprints, runner tokens, runner IPs, project/group
+        # names, namespace paths, repo URLs, branch names, commit messages, merge
+        # request titles, issue titles, pipeline/job logs, artifacts, user
+        # emails/names/usernames, customer data, PII, or raw GitLab API payloads.
+        "gitlab_event_id",             # stable synthetic event identifier (record+type+observed-at)
+        "project_resource_id",         # opaque GitLab project resource identifier
+        "owner_resource_id",           # opaque owner (project/group) resource identifier
+        "owner_type",                  # owner category ("project"/"group") — never a name
+        "visibility_category",         # "public"/"internal"/"private" — never a name/path
+        "archived",                    # bool — project archived flag
+        "default_branch_present",      # bool — default branch present (NEVER the branch name)
+        "issues_enabled",              # bool — project issues feature flag
+        "wiki_enabled",                # bool — project wiki feature flag
+        "snippets_enabled",            # bool — project snippets feature flag
+        "container_registry_enabled",  # bool — project container registry feature flag
+        "packages_enabled",            # bool — project packages feature flag
+        "shared_runners_enabled",      # bool — project shared runners flag
+        "protected_branch_count",      # int — count of protected branches (NEVER names)
+        "ci_variable_count",           # int — count of CI/CD variables (NEVER names/values)
+        "deploy_key_count",            # int — count of deploy keys (NEVER material/fingerprints)
+        "approval_rule_count",         # int — count of MR approval rules
+        "subgroup_count",              # int — count of subgroups (NEVER names/paths)
+        "two_factor_requirement_enabled",  # bool — group 2FA requirement flag
+        "membership_lock",             # bool — group membership lock flag
+        "shared_runners_setting_category",  # group shared-runner setting category
+        "pattern_category",            # branch protection pattern category (NEVER branch names)
+        "allow_force_push",            # bool — branch protection force-push flag
+        "code_owner_approval_required",  # bool — code-owner approval requirement
+        "push_access_level_category",  # branch push access level category
+        "merge_access_level_category", # branch merge access level category
+        "allowed_to_push_count",       # int — count of push allowances (NEVER identities)
+        "allowed_to_merge_count",      # int — count of merge allowances (NEVER identities)
+        "ssl_verification_enabled",    # bool — webhook SSL verification flag
+        "webhook_scheme_category",     # webhook URL scheme category ("http"/"https") — never the URL
+        "webhook_host_category",       # webhook host category — never the hostname or URL
+        "push_events",                 # bool — webhook subscribes to push events
+        "pipeline_events",             # bool — webhook subscribes to pipeline events
+        "job_events",                  # bool — webhook subscribes to job events
+        "variable_count",              # int — count of CI/CD variables (NEVER names/values)
+        "protected_variable_count",    # int — count of protected CI/CD variables
+        "masked_variable_count",       # int — count of masked CI/CD variables
+        "environment_scoped_count",    # int — count of environment-scoped CI/CD variables
+        "unprotected_unmasked_count",  # int — count of unprotected+unmasked CI/CD variables
+        "write_enabled_count",         # int — count of write-enabled deploy keys
+        "read_only_count",             # int — count of read-only deploy keys
+        "enabled_count",               # int — count of enabled deploy keys
+        "runner_count",                # int — count of runners (NEVER tokens/IPs/descriptions)
+        "shared_runner_enabled",       # bool — shared runner enabled posture
+        "locked_runner_count",         # int — count of locked runners
+        "paused_runner_count",         # int — count of paused runners
+        "tagged_runner_count",         # int — count of tagged runners
+        "untagged_runner_count",       # int — count of untagged runners
+        "approvals_required",          # int — MR approvals required count
+        "reset_approvals_on_push",     # bool — MR reset-approvals-on-push posture
+        "override_approvers_disabled", # bool — MR per-request approver override disabled posture
     }
 )
 

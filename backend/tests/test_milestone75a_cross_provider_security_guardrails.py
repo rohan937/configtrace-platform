@@ -369,6 +369,9 @@ _ACTIVITY_PROVIDERS = [
     "linear",
     # M86D added Jira config-state activity ingestion.
     "jira",
+    # M87D added GitLab config-state activity ingestion (activity only — no
+    # signals or correlations yet; those are planned for M87E/M87F).
+    "gitlab",
 ]
 # Datadog activity signals landed in M82E; correlations landed in M82F.
 # Clerk activity signals landed in M83E; correlations landed in M83F.
@@ -377,8 +380,11 @@ _ACTIVITY_PROVIDERS = [
 # Jira activity ingestion landed in M86D; Jira signals landed in M86E; Jira
 # correlations landed in M86F, so jira now appears in the activity, signals,
 # and correlations selectors.
-_SIGNALS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
-_CORRELATIONS_PROVIDERS = list(_ACTIVITY_PROVIDERS)
+# GitLab activity ingestion landed in M87D, but GitLab signals (M87E) and
+# correlations (M87F) have NOT shipped yet, so gitlab appears only in the
+# activity selector — not in the signals or correlations selectors.
+_SIGNALS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "gitlab"]
+_CORRELATIONS_PROVIDERS = [p for p in _ACTIVITY_PROVIDERS if p != "gitlab"]
 
 
 def _provider_selector_array(text: str) -> list[str] | None:

@@ -1115,7 +1115,7 @@ _GITLAB = ProviderCapability(
     ),
     security=SecurityCapabilities(
         security_rules=True,
-        activity_ingestion=False,
+        activity_ingestion=True,
         activity_signals=False,
         risk_activity_correlations=False,
         demo_seed_clear=False,
@@ -1126,7 +1126,7 @@ _GITLAB = ProviderCapability(
     maturity="partial",
     notes=(
         "GitLab DevOps configuration drift foundation (M87A), core security rules (M87B), "
-        "and branch/webhook/CI risk expansion (M87C). "
+        "branch/webhook/CI risk expansion (M87C), and activity ingestion (M87D). "
         "Drift snapshots cover 9 safe configuration surfaces from the GitLab REST API v4: "
         "instance posture (version/enterprise/settings — never base URL), "
         "projects (visibility, feature flags, per-project posture counts — never project names, "
@@ -1154,8 +1154,20 @@ _GITLAB = ProviderCapability(
         "Never stores access tokens, webhook URLs, CI variable names/values, deploy key "
         "material, runner tokens/IPs, branch names, user emails, or customer PII. "
         "Authentication uses a GitLab personal access token (stored encrypted, never returned). "
-        "Activity ingestion, signals, correlations, and demo planned for M87D–M87G. "
-        "planned_next_stage: M87D: GitLab Activity/Event Ingestion."
+        "M87D adds GitLab activity ingestion: review-safe configuration-state activity events "
+        "synthesized from the same stored GitLab configuration snapshots (projects, groups, "
+        "branch protection rules, webhooks, CI/CD variable summaries, deploy key summaries, "
+        "runner summaries, and MR approval summaries), surfaced via "
+        "GET /security/activity/events?provider=gitlab and generated via "
+        "POST /security/gitlab-activity/sync. GitLab's audit-event APIs are never ingested — "
+        "only safe counts, categories, booleans, and opaque resource identifiers are stored, "
+        "never access tokens, webhook URLs/secrets, CI variable names/values, deploy key "
+        "material, runner tokens/IPs, branch names, user identities, or PII. Events are "
+        "configuration evidence for review and never confirm breach, compromise, unauthorized "
+        "access, source-code exposure, secret exposure, token exposure, credential exposure, "
+        "or data exposure. "
+        "Activity signals, correlations, and demo planned for M87E–M87G. "
+        "planned_next_stage: M87E: GitLab Activity Signals."
     ),
 )
 

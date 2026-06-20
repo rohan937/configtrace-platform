@@ -900,7 +900,9 @@ class TestCapabilityMatrix:
     def test_gitlab_activity_ingestion_still_false(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("gitlab")
-        assert cap.security.activity_ingestion is False
+        # activity_ingestion was False at M87B; M87D promoted it to True. The
+        # later-stage capabilities remain False until their own milestones.
+        assert cap.security.activity_ingestion is True
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False
@@ -1071,7 +1073,8 @@ class TestNoCapsNotClaimed:
     def test_gitlab_no_activity_router_endpoint(self) -> None:
         from app.services.provider_capability_matrix_service import get_provider_capability
         cap = get_provider_capability("gitlab")
-        assert cap.security.activity_ingestion is False
+        # activity_ingestion landed in M87D; activity_signals remains a later stage.
+        assert cap.security.activity_ingestion is True
         assert cap.security.activity_signals is False
 
     def test_capability_matrix_demo_false(self) -> None:

@@ -44,6 +44,7 @@ import {
   syncPagerDutyActivity,
   syncLinearActivity,
   syncJiraActivity,
+  syncGitlabActivity,
 } from "@/lib/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { formatRelativeTime } from "@/lib/utils";
@@ -53,7 +54,7 @@ import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import { SectionLabel } from "@/components/security/previews";
 
-type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira";
+type Provider = "github" | "aws" | "cloudflare" | "vercel" | "supabase" | "firebase" | "stripe" | "shopify" | "azure" | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk" | "pagerduty" | "linear" | "jira" | "gitlab";
 
 // M73B — Stripe Events API configuration-change events (strict allowlist).
 const STRIPE_EVENT_TYPES = [
@@ -457,9 +458,33 @@ const JIRA_EVENT_TYPES = [
   "jira.config.event",
 ];
 
+// M87D — GitLab configuration-state events (synthesized from safe drift
+// surfaces; GitLab audit-event APIs are never ingested due to actor user IDs,
+// emails, IP addresses, and user agents).
+const GITLAB_EVENT_TYPES = [
+  "gitlab.project.visibility_changed",
+  "gitlab.project_feature.public_feature_enabled",
+  "gitlab.group.visibility_changed",
+  "gitlab.branch_protection.updated",
+  "gitlab.branch_protection.force_push_enabled",
+  "gitlab.webhook.updated",
+  "gitlab.webhook.secret_removed",
+  "gitlab.webhook.ssl_verification_disabled",
+  "gitlab.webhook.http_scheme_detected",
+  "gitlab.ci_variables.posture_changed",
+  "gitlab.ci_variables.unprotected_unmasked_detected",
+  "gitlab.deploy_key.posture_changed",
+  "gitlab.deploy_key.write_enabled_detected",
+  "gitlab.runner.posture_changed",
+  "gitlab.runner.shared_enabled",
+  "gitlab.merge_request_approval.updated",
+  "gitlab.merge_request_approval.requirement_reduced",
+  "gitlab.config.event",
+];
+
 const LIMIT_OPTIONS = [25, 50, 100];
 
-const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira" };
+const PROVIDER_LABEL: Record<Provider, string> = { github: "GitHub", aws: "AWS", cloudflare: "Cloudflare", vercel: "Vercel", supabase: "Supabase", firebase: "Firebase", stripe: "Stripe", shopify: "Shopify", azure: "Azure", google_cloud: "Google Cloud", twilio: "Twilio", sendgrid: "SendGrid", auth0: "Auth0", datadog: "Datadog", clerk: "Clerk", pagerduty: "PagerDuty", linear: "Linear", jira: "Jira", gitlab: "GitLab" };
 
 export default function ActivityEventsPage() {
   const { getToken } = useAuth();
@@ -648,6 +673,12 @@ export default function ActivityEventsPage() {
         setSyncNote(
           `Scanned ${r.events_scanned} · created ${r.events_created} · skipped ${r.events_skipped}.`,
         );
+      } else if (provider === "gitlab") {
+        const r = await syncGitlabActivity(token);
+        setSyncWarn(false);
+        setSyncNote(
+          `Scanned ${r.events_scanned} · created ${r.events_created} · skipped ${r.events_skipped}.`,
+        );
       } else {
         const r = await syncSecurityActivity(token);
         setSyncWarn(r.permission_limited);
@@ -694,7 +725,9 @@ export default function ActivityEventsPage() {
                                         ? "Could not sync Linear activity. Please try again."
                                         : provider === "jira"
                                           ? "Could not sync Jira activity. Please try again."
-                                          : "Could not sync GitHub activity. Please try again.",
+                                          : provider === "gitlab"
+                                            ? "Could not sync GitLab activity. Please try again."
+                                            : "Could not sync GitHub activity. Please try again.",
       );
     } finally {
       setSyncing(false);
@@ -856,6 +889,7 @@ export default function ActivityEventsPage() {
     : provider === "pagerduty" ? PAGERDUTY_EVENT_TYPES
     : provider === "linear" ? LINEAR_EVENT_TYPES
     : provider === "jira" ? JIRA_EVENT_TYPES
+    : provider === "gitlab" ? GITLAB_EVENT_TYPES
     : GITHUB_EVENT_TYPES;
 
   return (
@@ -898,7 +932,7 @@ export default function ActivityEventsPage() {
       </div>
 
       <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", alignItems: "center", marginBottom: "18px" }}>
-        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira"]} allowAll={false} />
+        <Select label="Provider" value={provider} onChange={onProviderChange} options={["github", "aws", "cloudflare", "vercel", "supabase", "firebase", "stripe", "shopify", "azure", "google_cloud", "twilio", "sendgrid", "auth0", "datadog", "clerk", "pagerduty", "linear", "jira", "gitlab"]} allowAll={false} />
         <Select label="Event type" value={eventType} onChange={setEventType} options={eventTypeOptions} />
         <label style={{ fontSize: "12px", color: "#8b90a0", display: "flex", alignItems: "center", gap: "6px" }}>
           Limit
@@ -1022,6 +1056,7 @@ function SyncBar({
   const isPagerDuty = provider === "pagerduty";
   const isLinear = provider === "linear";
   const isJira = provider === "jira";
+  const isGitlab = provider === "gitlab";
   const label = isCloudflare
     ? "Sync Cloudflare security activity"
     : isAws ? "Sync AWS security alerts"
@@ -1040,6 +1075,7 @@ function SyncBar({
     : isPagerDuty ? "Sync PagerDuty activity"
     : isLinear ? "Sync Linear activity"
     : isJira ? "Sync Jira activity"
+    : isGitlab ? "Sync GitLab activity"
     : "Sync GitHub activity";
   const desc = isCloudflare
     ? "Sync Cloudflare audit activity (DNS, WAF/firewall, SSL/TLS, Access, zone settings) and WAF/security events when available. Audit logs need a token with Audit Logs Read; WAF/security events need GraphQL Analytics access and an eligible plan."
@@ -1075,7 +1111,9 @@ function SyncBar({
                                   ? "Sync review-safe Linear configuration activity from workspace, team, project, workflow state, label, webhook, view, cycle, and integration configuration state. ConfigTrace stores only opaque IDs, booleans, counts, and categories — never API keys, OAuth tokens, webhook secrets, raw URLs, issue content, comments, attachments, user identities, customer names, IP addresses, user agents, or PII."
                                   : isJira
                                     ? "Sync review-safe Jira configuration activity from existing Jira configuration snapshots. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
-                                    : "Ingests recent GitHub audit-log activity into normalized events.";
+                                    : isGitlab
+                                      ? "Generate GitLab configuration activity events from safe drift/configuration evidence. No GitLab issue content, merge request titles, commit messages, branch names, CI variable names/values, webhook URLs, tokens, user identities, logs, artifacts, or PII are stored."
+                                      : "Ingests recent GitHub audit-log activity into normalized events.";
   return (
     <div
       className="bg-surface1 border border-border"
@@ -1185,7 +1223,7 @@ function SyncBar({
             Sync Cloudflare WAF events
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && !isJira && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isGoogleCloud && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && !isJira && !isGitlab && (
           <button
             onClick={onSyncGithubSecretScanning}
             disabled={!isAdmin || syncing}
@@ -1209,7 +1247,7 @@ function SyncBar({
             Sync GitHub secret scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && !isJira && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isPagerDuty && !isLinear && !isJira && !isGitlab && (
           <button
             onClick={onSyncGithubCodeScanning}
             disabled={!isAdmin || syncing}
@@ -1233,7 +1271,7 @@ function SyncBar({
             Sync GitHub code scanning alerts
           </button>
         )}
-        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isJira && (
+        {!isAws && !isCloudflare && !isSupabase && !isFirebase && !isTwilio && !isSendGrid && !isAuth0 && !isDatadog && !isClerk && !isJira && !isGitlab && (
           <button
             onClick={onSyncGithubDependabot}
             disabled={!isAdmin || syncing}
@@ -1467,6 +1505,10 @@ function EmptyState({ provider, isAdmin }: { provider: Provider; isAdmin: boolea
               ? isAdmin
                 ? "Sync Jira activity first to collect review-safe configuration-state evidence from existing Jira configuration snapshots — site, project, board, workflow, workflow scheme, permission scheme, notification scheme, issue type scheme, field configuration scheme, screen scheme, webhook, and automation rule posture summaries. ConfigTrace stores only safe counts, categories, booleans, and opaque resource identifiers, not Jira issue content, comments, attachments, user identities, tokens, raw URLs, JQL text, audit payloads, IP addresses, user agents, or PII."
                 : "An admin can sync Jira activity to collect review-safe configuration-state evidence."
+            : provider === "gitlab"
+              ? isAdmin
+                ? "Generate GitLab configuration activity events from safe drift/configuration evidence — project and group visibility, branch protection, webhook, CI/CD variable posture, deploy key, runner, and merge request approval configuration state. No GitLab issue content, merge request titles, commit messages, branch names, CI variable names/values, webhook URLs, tokens, user identities, logs, artifacts, or PII are stored."
+                : "An admin can generate GitLab configuration activity events from safe drift/configuration evidence."
             : isAdmin
               ? "Run GitHub activity sync above to ingest recent audit activity and security-alert evidence."
               : "An admin can run GitHub activity sync to ingest recent audit activity and security-alert evidence.";

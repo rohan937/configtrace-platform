@@ -2232,6 +2232,18 @@ export interface JiraActivitySyncResponse {
   max_events: number;
 }
 
+// M87D — GitLab configuration activity ingestion summary.
+export interface GitLabActivitySyncResponse {
+  provider: string;
+  source: string;
+  events_scanned: number;
+  events_created: number;
+  events_skipped: number;
+  groups_scanned: number;
+  lookback_hours: number;
+  max_events: number;
+}
+
 export interface JiraActivitySignalGenerateRequest {
   lookback_hours: number;
   max_signals: number;

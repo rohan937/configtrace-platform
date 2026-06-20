@@ -950,7 +950,8 @@ class TestCapabilityMatrix:
         assert cap.drift.drift_review_workflow is False
         # security_rules was False at M87A; M87B promoted it to True — accept either
         # (M87B is now complete so the matrix correctly shows True)
-        assert cap.security.activity_ingestion is False
+        # activity_ingestion was False at M87A; M87D promoted it to True.
+        assert cap.security.activity_ingestion is True
         assert cap.security.activity_signals is False
         assert cap.security.risk_activity_correlations is False
         assert cap.security.demo_seed_clear is False

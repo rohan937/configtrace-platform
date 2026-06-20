@@ -278,6 +278,11 @@ from app.services import linear_risk_activity_correlation_service
 from app.services import jira_activity_ingestion_service
 from app.services import jira_activity_signal_service
 from app.services import jira_risk_activity_correlation_service
+from app.services import gitlab_activity_ingestion_service
+from app.schemas.security_gitlab_activity import (
+    GitLabActivitySyncRequest,
+    GitLabActivitySyncResponse,
+)
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3593,6 +3598,57 @@ def sync_jira_activity_events(
         db=db,
     )
     return JiraActivitySyncResponse(**summary)
+
+
+@router.post(
+    "/gitlab-activity/sync",
+    response_model=GitLabActivitySyncResponse,
+)
+def sync_gitlab_activity_events(
+    body: Optional[GitLabActivitySyncRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> GitLabActivitySyncResponse:
+    """Sync review-safe GitLab configuration activity events (M87D).
+
+    Admin/owner only. Synthesizes config-state events from the same safe GitLab
+    configuration posture summaries the drift connector already stores
+    (projects, groups, branch protection rules, webhooks, CI/CD variable
+    summaries, deploy key summaries, runner summaries, and MR approval
+    summaries). GitLab's audit-event APIs are NEVER ingested — they contain
+    actor user IDs, emails, IP addresses, and user agents in every entry.
+
+    GitLab access tokens, OAuth tokens, PRIVATE-TOKEN values, authorization
+    headers, webhook secret tokens, webhook URLs, CI/CD variable names/values,
+    deploy key material, SSH keys, runner tokens, runner IPs, project/group
+    names, namespace paths, repo URLs, branch names, commit messages, merge
+    request titles, issue titles, pipeline/job logs, artifacts, user identities,
+    and PII are NEVER stored.
+
+    Evidence is configuration-state metadata only. Does not confirm breach,
+    compromise, unauthorized access, source-code exposure, secret exposure,
+    token exposure, credential exposure, or data exposure.
+
+    Members can read ingested events via
+    GET /security/activity/events?provider=gitlab.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+
+    integration_id = body.integration_id if body else None
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_events = min(body.max_events, 1000) if body and body.max_events else 100
+
+    summary = gitlab_activity_ingestion_service.sync_gitlab_activity(
+        workspace_id=workspace_id,
+        integration_id=integration_id,
+        lookback_hours=lookback_hours,
+        max_events=max_events,
+        db=db,
+    )
+    return GitLabActivitySyncResponse(**summary)
 
 
 @router.post(

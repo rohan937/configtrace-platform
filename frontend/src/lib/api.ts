@@ -960,6 +960,27 @@ export async function syncJiraActivity(
 }
 
 /**
+ * syncGitlabActivity — POST /security/gitlab-activity/sync
+ * Admin only. Synthesizes review-safe GitLab configuration-state activity
+ * events from the same safe drift surfaces the connector reads (projects,
+ * groups, branch protection rules, webhooks, CI/CD variable summaries, deploy
+ * key summaries, runner summaries, and MR approval summaries). GitLab
+ * audit-event APIs are never ingested. Access tokens, OAuth tokens,
+ * PRIVATE-TOKEN values, webhook URLs/secrets, CI/CD variable names/values,
+ * deploy key material, runner tokens/IPs, branch names, commit messages, merge
+ * request titles, user identities, and PII are never stored.
+ */
+export async function syncGitlabActivity(
+  token?: string | null,
+  opts?: { integration_id?: string; lookback_hours?: number; max_events?: number },
+): Promise<import("@/types").GitLabActivitySyncResponse> {
+  return apiFetch<import("@/types").GitLabActivitySyncResponse>(
+    "/security/gitlab-activity/sync",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * Fetch the provider capability matrix (M75C). Read access — any workspace
  * member may call this. Returns static metadata only; never evaluates live
  * provider state, calls external APIs, or exposes secrets.
