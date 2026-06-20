@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [{ "type": "host", "value": "www.configtrace.org" }],
+      "destination": "https://configtrace.org/$1",
+      "permanent": true
+    }
+  ]
+}

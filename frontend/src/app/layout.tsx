@@ -4,8 +4,23 @@ import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://configtrace.org"),
   title: "ConfigTrace",
   description: "Configuration change intelligence for production systems.",
+  alternates: {
+    canonical: "https://configtrace.org/",
+  },
+  openGraph: {
+    url: "https://configtrace.org/",
+    title: "ConfigTrace",
+    description: "Configuration change intelligence for production systems.",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ConfigTrace",
+    description: "Configuration change intelligence for production systems.",
+  },
 };
 
 /**
