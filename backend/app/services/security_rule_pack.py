@@ -510,6 +510,20 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "gitlab_deploy_key_write_enabled": ("gitlab", "high", "Deploy key posture"),
     "gitlab_runner_untagged": ("gitlab", "medium", "Runner security posture"),
     "gitlab_merge_request_approval_not_required": ("gitlab", "medium", "Merge request approval posture"),
+    # GitLab — M87C branch/webhook/CI risk expansion
+    "gitlab_webhook_http_scheme": ("gitlab", "high", "Webhook security posture"),
+    "gitlab_webhook_broad_event_scope": ("gitlab", "medium", "Webhook security posture"),
+    "gitlab_webhook_pipeline_job_events": ("gitlab", "medium", "Webhook security posture"),
+    "gitlab_branch_push_access_broad": ("gitlab", "medium", "Branch protection posture"),
+    "gitlab_branch_merge_access_broad": ("gitlab", "medium", "Branch protection posture"),
+    "gitlab_ci_variables_unprotected": ("gitlab", "medium", "CI/CD variable posture"),
+    "gitlab_ci_variables_unmasked": ("gitlab", "medium", "CI/CD variable posture"),
+    "gitlab_runner_shared_enabled": ("gitlab", "medium", "Runner security posture"),
+    "gitlab_mr_approval_reset_disabled": ("gitlab", "medium", "Merge request approval posture"),
+    "gitlab_mr_approver_override_allowed": ("gitlab", "medium", "Merge request approval posture"),
+    "gitlab_project_wiki_enabled_public": ("gitlab", "low", "Project feature posture"),
+    "gitlab_project_packages_enabled_public": ("gitlab", "low", "Project feature posture"),
+    "gitlab_project_container_registry_enabled_public": ("gitlab", "medium", "Project feature posture"),
 }
 
 

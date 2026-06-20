@@ -528,6 +528,20 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "gitlab_deploy_key_write_enabled": ("gitlab_deploy_key_summary",),
     "gitlab_runner_untagged": ("gitlab_runner_summary",),
     "gitlab_merge_request_approval_not_required": ("gitlab_merge_request_approval_summary",),
+    # GitLab — M87C branch/webhook/CI risk expansion
+    "gitlab_webhook_http_scheme": ("gitlab_webhook",),
+    "gitlab_webhook_broad_event_scope": ("gitlab_webhook",),
+    "gitlab_webhook_pipeline_job_events": ("gitlab_webhook",),
+    "gitlab_branch_push_access_broad": ("gitlab_branch_protection",),
+    "gitlab_branch_merge_access_broad": ("gitlab_branch_protection",),
+    "gitlab_ci_variables_unprotected": ("gitlab_ci_variable_summary",),
+    "gitlab_ci_variables_unmasked": ("gitlab_ci_variable_summary",),
+    "gitlab_runner_shared_enabled": ("gitlab_runner_summary",),
+    "gitlab_mr_approval_reset_disabled": ("gitlab_merge_request_approval_summary",),
+    "gitlab_mr_approver_override_allowed": ("gitlab_merge_request_approval_summary",),
+    "gitlab_project_wiki_enabled_public": ("gitlab_project",),
+    "gitlab_project_packages_enabled_public": ("gitlab_project",),
+    "gitlab_project_container_registry_enabled_public": ("gitlab_project",),
 }
 
 # Friendly, human surfaces per provider for display (no internal jargon).

@@ -266,16 +266,20 @@ class TestModuleImports:
 
     def test_gitlab_rule_keys_count(self) -> None:
         from app.services.security_rules.gitlab import GITLAB_RULE_KEYS
-        assert len(GITLAB_RULE_KEYS) == 12, (
-            f"Expected 12 rule keys, got {len(GITLAB_RULE_KEYS)}: {sorted(GITLAB_RULE_KEYS)}"
+        # M87B: 12 rules; M87C added 13 more → total 25
+        assert len(GITLAB_RULE_KEYS) >= 12, (
+            f"Expected at least 12 rule keys, got {len(GITLAB_RULE_KEYS)}: {sorted(GITLAB_RULE_KEYS)}"
         )
 
     def test_gitlab_rule_keys_match_expected(self) -> None:
         from app.services.security_rules.gitlab import GITLAB_RULE_KEYS
+        # M87C added 13 more keys; verify all M87B keys are still present
         missing = EXPECTED_GITLAB_RULE_KEYS - GITLAB_RULE_KEYS
+        assert not missing, f"M87B keys missing from GITLAB_RULE_KEYS: {missing}"
+        # Extra keys from M87C are expected and acceptable
         extra = GITLAB_RULE_KEYS - EXPECTED_GITLAB_RULE_KEYS
-        assert not missing, f"Missing rule keys: {missing}"
-        assert not extra, f"Unexpected extra rule keys: {extra}"
+        for k in extra:
+            assert k.startswith("gitlab_"), f"Non-gitlab extra key: {k!r}"
 
     def test_all_rule_keys_have_gitlab_prefix(self) -> None:
         from app.services.security_rules.gitlab import GITLAB_RULE_KEYS
@@ -694,7 +698,9 @@ class TestRegistry:
     def test_all_gitlab_rule_keys_start_with_gitlab(self) -> None:
         from app.services.security_rule_registry import KNOWN_RULE_KEYS
         gitlab_keys = {k for k in KNOWN_RULE_KEYS if k.startswith("gitlab_")}
-        assert gitlab_keys == EXPECTED_GITLAB_RULE_KEYS
+        # M87B keys must all be present (M87C may add more)
+        missing = EXPECTED_GITLAB_RULE_KEYS - gitlab_keys
+        assert not missing, f"M87B rule keys missing from registry: {missing}"
 
 
 # ── H. Confidence ─────────────────────────────────────────────────────────────
@@ -933,8 +939,10 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M87C" in planned or "GitLab Branch" in planned or "CI Risk" in planned, (
-            f"planned_next_stage should reference M87C after M87B; got: {planned!r}"
+        # M87C landed and advanced this to M87D — accept M87C or later
+        assert ("M87C" in planned or "GitLab Branch" in planned or "CI Risk" in planned
+                or "M87D" in planned or "GitLab Activity" in planned), (
+            f"planned_next_stage should reference M87C or later; got: {planned!r}"
         )
 
     def test_terraform_cloud_still_in_recommended_queue(self) -> None:

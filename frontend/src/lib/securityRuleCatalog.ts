@@ -7472,6 +7472,260 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires on public projects with snippets_enabled=true. Open-source projects may intentionally share code snippets alongside the project.",
   },
+
+  // ── GitLab M87C branch/webhook/CI risk expansion ─────────────────────────
+  {
+    key: "gitlab_webhook_http_scheme",
+    provider: "gitlab",
+    severity: "high",
+    title: "GitLab webhook uses plain HTTP endpoint",
+    category: "Webhook security posture",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "An active GitLab webhook is configured with a plain HTTP endpoint URL scheme. Event payloads may be transmitted unencrypted over the network. Webhook security posture evidence may require review. This does not confirm compromise, unauthorized access, or data exposure.",
+    whatItChecks: "The url_scheme field on active (enabled=true) gitlab_webhook records.",
+    whyItMatters:
+      "Webhook payloads delivered over HTTP may be observable in transit. Using HTTPS ensures delivery is encrypted end-to-end.",
+    evidence: "Webhook resource ID (opaque), owner type, owner resource ID (opaque), url_scheme, event count. Raw webhook URL is never stored.",
+    remediation:
+      "Update the webhook endpoint to use HTTPS and re-save the webhook in GitLab Settings → Webhooks.",
+    falsePositiveGuard:
+      "Only fires for active webhooks where url_scheme is 'http'. The raw webhook URL is never stored — only the scheme category.",
+  },
+  {
+    key: "gitlab_webhook_broad_event_scope",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab webhook has broad event scope",
+    category: "Webhook security posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "An active GitLab webhook is subscribed to 6 or more event types. Webhooks with broad event subscriptions deliver many categories of project activity to the endpoint. Webhook security posture evidence may require review.",
+    whatItChecks: "The event_count field on active gitlab_webhook records (threshold: ≥ 6 event types).",
+    whyItMatters:
+      "Broad event subscriptions increase the volume and variety of data delivered to the webhook endpoint. Reduce event scope to only the types required by the receiving application.",
+    evidence: "Webhook resource ID (opaque), owner type, event count, push/MR/pipeline/job event booleans, secret token presence.",
+    remediation:
+      "Review the webhook event subscriptions in GitLab Settings → Webhooks and disable event types not required by the receiving application.",
+    falsePositiveGuard:
+      "Fires when event_count >= 6. Integrations that legitimately require broad event coverage (e.g. audit logging, security monitoring) may intentionally subscribe to many event types.",
+  },
+  {
+    key: "gitlab_webhook_pipeline_job_events",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab webhook receives CI/CD pipeline or job events",
+    category: "Webhook security posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "An active GitLab webhook is subscribed to pipeline or job events. CI/CD event payloads include build status, pipeline metadata, and job identifiers. Verify the receiving endpoint handles this CI/CD event data appropriately. Webhook security posture evidence may require review.",
+    whatItChecks: "The pipeline_events and job_events fields on active gitlab_webhook records.",
+    whyItMatters:
+      "Pipeline and job events may include CI/CD run metadata. Confirm the webhook endpoint is a trusted integration that requires these events.",
+    evidence: "Webhook resource ID (opaque), owner type, pipeline_events flag, job_events flag, secret token presence, SSL verification status.",
+    remediation:
+      "Verify the webhook endpoint is a trusted system that requires CI/CD events. If not needed, disable pipeline_events and job_events in the webhook configuration.",
+    falsePositiveGuard:
+      "Fires when pipeline_events or job_events is true. CI/CD monitoring and deployment integrations commonly require these event types.",
+  },
+  {
+    key: "gitlab_branch_push_access_broad",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab protected branch allows broad push access",
+    category: "Branch protection posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "A GitLab branch protection rule grants push access at developer, reporter, or guest level on a significant branch pattern. Broad push access allows a wide set of project members to push directly to protected branches. Branch protection configuration evidence may require review.",
+    whatItChecks:
+      "The push_access_level_category field on gitlab_branch_protection records with pattern_category 'protected', 'default', or 'wildcard'.",
+    whyItMatters:
+      "Developer-level push access on protected branches means any developer can bypass merge request workflows and push directly. Consider restricting push access to maintainers.",
+    evidence: "Branch protection rule ID (opaque), project resource ID (opaque), pattern category, push access level category.",
+    remediation:
+      "Change the push access level to 'maintainer' or higher in GitLab Repository → Protected branches.",
+    falsePositiveGuard:
+      "Fires when push_access_level_category is developer/reporter/guest on protected/default/wildcard branch patterns. Some open development workflows intentionally permit developer-level direct push.",
+  },
+  {
+    key: "gitlab_branch_merge_access_broad",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab protected branch allows broad merge access",
+    category: "Branch protection posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "A GitLab branch protection rule grants merge access at developer, reporter, or guest level on a significant branch pattern. Broad merge access allows a wide set of project members to merge merge requests without maintainer review. Branch protection configuration evidence may require review.",
+    whatItChecks:
+      "The merge_access_level_category field on gitlab_branch_protection records with pattern_category 'protected', 'default', or 'wildcard'.",
+    whyItMatters:
+      "Developer-level merge access means any developer can approve their own merge requests or those of others. Consider restricting merge access to maintainers for sensitive branches.",
+    evidence: "Branch protection rule ID (opaque), project resource ID (opaque), pattern category, merge access level category.",
+    remediation:
+      "Change the merge access level to 'maintainer' or higher in GitLab Repository → Protected branches, or use approval rules to enforce peer review.",
+    falsePositiveGuard:
+      "Fires when merge_access_level_category is developer/reporter/guest on protected/default/wildcard branch patterns. Teams using merge trains or feature-branch workflows may intentionally allow developer-level merge.",
+  },
+  {
+    key: "gitlab_ci_variables_unprotected",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab CI/CD variables have no protected variables",
+    category: "CI/CD variable posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This GitLab project or group has CI/CD variables but none are protected. Unprotected variables are available in all pipeline contexts including non-protected branches and fork pipelines. CI/CD variable posture evidence may require review. Variable names and values are never stored.",
+    whatItChecks:
+      "The protected_variable_count field on gitlab_ci_variable_summary records where variable_count > 0.",
+    whyItMatters:
+      "Unprotected CI/CD variables can be accessed by any pipeline, including those run on forked repositories. Sensitive variables should be marked protected to restrict them to protected branches.",
+    evidence: "CI variable summary resource ID (opaque), owner type, owner resource ID (opaque), variable count, protected variable count.",
+    remediation:
+      "Enable the 'Protected' flag on sensitive CI/CD variables in GitLab Settings → CI/CD → Variables to restrict them to protected branches. Variable names and values are never stored by ConfigTrace.",
+    falsePositiveGuard:
+      "Fires when protected_variable_count is 0 with at least one variable present. Projects with only non-sensitive configuration variables (e.g. public API endpoints) may intentionally leave all variables unprotected.",
+  },
+  {
+    key: "gitlab_ci_variables_unmasked",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab CI/CD variables have no masked variables",
+    category: "CI/CD variable posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This GitLab project or group has CI/CD variables but none are masked. Unmasked variables may appear in plain text in CI/CD job logs. CI/CD variable posture evidence may require review. Variable names and values are never stored.",
+    whatItChecks:
+      "The masked_variable_count field on gitlab_ci_variable_summary records where variable_count > 0.",
+    whyItMatters:
+      "Unmasked CI/CD variables may appear in job output if they are echoed or logged by pipeline scripts. Masking prevents variable values from appearing in job logs.",
+    evidence: "CI variable summary resource ID (opaque), owner type, owner resource ID (opaque), variable count, masked variable count.",
+    remediation:
+      "Enable the 'Masked' flag on sensitive CI/CD variables in GitLab Settings → CI/CD → Variables. Note: GitLab requires values to meet masking criteria (minimum length, no special characters). Variable names and values are never stored by ConfigTrace.",
+    falsePositiveGuard:
+      "Fires when masked_variable_count is 0 with at least one variable present. Variables that don't meet GitLab's masking criteria (e.g. too short) cannot be masked and this finding would be a false positive in those cases.",
+  },
+  {
+    key: "gitlab_runner_shared_enabled",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab runner set includes shared runners",
+    category: "Runner security posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "Shared runners are present and active in this GitLab project or group runner configuration. Shared runners execute CI/CD jobs on infrastructure shared across multiple GitLab projects or organizations. Runner configuration evidence may require review.",
+    whatItChecks: "The shared_runner_enabled field on gitlab_runner_summary records where runner_count > 0.",
+    whyItMatters:
+      "Shared runners execute jobs on shared infrastructure. For projects with sensitive build artifacts or CI/CD variables, dedicated or group-specific runners provide better isolation.",
+    evidence: "Runner summary resource ID (opaque), owner type, owner resource ID (opaque), runner count, shared_runner_enabled flag.",
+    remediation:
+      "Evaluate whether shared runners meet your isolation requirements. If needed, disable shared runners and configure dedicated project or group runners in GitLab Settings → CI/CD → Runners.",
+    falsePositiveGuard:
+      "Fires when shared_runner_enabled=true with at least one runner present. Shared runners are appropriate for many projects, especially open-source or low-sensitivity workloads.",
+  },
+  {
+    key: "gitlab_mr_approval_reset_disabled",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab project does not reset approvals on new push",
+    category: "Merge request approval posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This GitLab project does not reset merge request approvals when new commits are pushed. An approved merge request can receive additional commits after approval and still merge without re-approval of those changes. Merge request approval configuration evidence may require review.",
+    whatItChecks: "The reset_approvals_on_push field on gitlab_merge_request_approval_summary records.",
+    whyItMatters:
+      "Without approval reset on push, approved merge requests can include changes that were not reviewed by approvers. Enabling reset ensures the final state of the merge request is always reviewed.",
+    evidence: "MR approval summary resource ID (opaque), project resource ID (opaque), approval rule count, approvals required, reset_approvals_on_push flag.",
+    remediation:
+      "Enable 'Reset approvals when new commits are pushed' in GitLab Settings → General → Merge request approvals.",
+    falsePositiveGuard:
+      "Only fires when reset_approvals_on_push is explicitly false. Some teams intentionally skip approval reset for efficiency in rapid iteration workflows.",
+  },
+  {
+    key: "gitlab_mr_approver_override_allowed",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab project allows per-merge-request approver override",
+    category: "Merge request approval posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "This GitLab project allows individual merge request authors or maintainers to override the configured approval rules on a per-merge-request basis. This can weaken the enforcement of approval policies. Merge request approval configuration evidence may require review.",
+    whatItChecks:
+      "The disable_overriding_approvers_per_merge_request field on gitlab_merge_request_approval_summary records.",
+    whyItMatters:
+      "When approvers can be overridden per merge request, the project's approval policy can be bypassed on individual merges. Disabling this override enforces consistent approval requirements.",
+    evidence: "MR approval summary resource ID (opaque), project resource ID (opaque), approval rule count, approvals required, disable_overriding_approvers_per_merge_request flag.",
+    remediation:
+      "Enable 'Prevent approval rule changes by the merge request author or committers' in GitLab Settings → General → Merge request approvals.",
+    falsePositiveGuard:
+      "Only fires when disable_overriding_approvers_per_merge_request is explicitly false. Some teams intentionally allow per-MR approver customization for specific approval workflows.",
+  },
+  {
+    key: "gitlab_project_wiki_enabled_public",
+    provider: "gitlab",
+    severity: "low",
+    title: "GitLab public project has wiki enabled",
+    category: "Project feature posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The project wiki is enabled on a public GitLab project. Wiki pages are visible to unauthenticated visitors alongside the project. GitLab project configuration evidence may require review.",
+    whatItChecks: "The wiki_enabled field on gitlab_project records with visibility_category 'public'.",
+    whyItMatters:
+      "Wikis on public projects are fully visible to unauthenticated users. Verify that wiki content is appropriate for public access and does not contain internal documentation.",
+    evidence: "Project resource ID (opaque), visibility category, wiki_enabled flag.",
+    remediation:
+      "Disable the project wiki in GitLab Settings → General → Visibility, project features, permissions if wiki content is not intended for public access.",
+    falsePositiveGuard:
+      "Only fires on public projects with wiki_enabled=true. Open-source projects commonly use public wikis for documentation.",
+  },
+  {
+    key: "gitlab_project_packages_enabled_public",
+    provider: "gitlab",
+    severity: "low",
+    title: "GitLab public project has package registry enabled",
+    category: "Project feature posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The package registry is enabled on a public GitLab project. Published packages and their metadata are accessible to unauthenticated users. GitLab project configuration evidence may require review.",
+    whatItChecks: "The packages_enabled field on gitlab_project records with visibility_category 'public'.",
+    whyItMatters:
+      "Packages published to a public project's registry are downloadable by anyone. Verify that published packages are intended for public distribution.",
+    evidence: "Project resource ID (opaque), visibility category, packages_enabled flag.",
+    remediation:
+      "Disable the package registry in GitLab Settings → General → Visibility, project features, permissions if packages are not intended for public distribution.",
+    falsePositiveGuard:
+      "Only fires on public projects with packages_enabled=true. Open-source projects commonly publish packages to a public registry.",
+  },
+  {
+    key: "gitlab_project_container_registry_enabled_public",
+    provider: "gitlab",
+    severity: "medium",
+    title: "GitLab public project has container registry enabled",
+    category: "Project feature posture",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "The container registry is enabled on a public GitLab project. Container images published to this registry may be pullable by anyone without authentication. GitLab project configuration evidence may require review.",
+    whatItChecks: "The container_registry_enabled field on gitlab_project records with visibility_category 'public'.",
+    whyItMatters:
+      "Container images in a public project's registry may be publicly pullable. Images may contain build artifacts or configuration that was not intended for public distribution.",
+    evidence: "Project resource ID (opaque), visibility category, container_registry_enabled flag.",
+    remediation:
+      "Disable the container registry in GitLab Settings → General → Visibility, project features, permissions if container images are not intended for public access, or restrict registry visibility separately.",
+    falsePositiveGuard:
+      "Only fires on public projects with container_registry_enabled=true. Open-source projects may intentionally publish public container images.",
+  },
 ];
 
 // ── Deferred / planned coverage (clearly NOT active) ─────────────────────────
@@ -7691,13 +7945,14 @@ export const PROVIDER_COVERAGE: ProviderCoverage[] = [
     provider: "gitlab",
     surfaces: [
       "Project visibility posture",
+      "Project feature posture (wiki, packages, container registry)",
       "Group visibility posture",
-      "Branch protection posture",
-      "Webhook security posture",
-      "CI/CD variable posture",
+      "Branch protection posture (force push, code owner, access levels)",
+      "Webhook security posture (secret, SSL, HTTP scheme, event scope)",
+      "CI/CD variable posture (protection and masking)",
       "Deploy key posture",
-      "Runner security posture",
-      "Merge request approval posture",
+      "Runner security posture (untagged, shared runners)",
+      "Merge request approval posture (required, reset, override)",
     ],
   },
 ];

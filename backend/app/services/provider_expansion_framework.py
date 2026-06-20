@@ -667,6 +667,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M87C: GitLab Branch/Webhook/CI Risk Expansion",
+            "planned_next_stage": "M87D: GitLab Activity/Event Ingestion",
         },
     }

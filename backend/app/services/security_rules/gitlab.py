@@ -1,4 +1,4 @@
-"""GitLab configuration-risk security rules — M87B.
+"""GitLab configuration-risk security rules — M87B, expanded M87C.
 
 Every rule fires only on explicit, reliable normalized fields produced by the
 GitLab connector (app/connectors/gitlab.py + gitlab_schema.py, M87A). Evidence
@@ -36,6 +36,17 @@ Record types evaluated (M87A)
   gitlab_deploy_key_summary           — deploy key write-access posture
   gitlab_runner_summary               — runner tag/locking posture
   gitlab_merge_request_approval_summary — MR approval requirement posture
+
+Rules skipped (fields not in M87A schema)
+-----------------------------------------
+  gitlab_runner_unprotected_runners
+    — requires protected_runner_count which is not emitted by the M87A
+      GitLabRunnerSummaryRecord; the runner normalizer tracks tagged/untagged/
+      locked/paused counts but not a "protected" indicator per runner.
+  gitlab_deploy_key_stale_or_expired
+    — requires expired_or_stale_count which is not emitted by the M87A
+      GitLabDeployKeySummaryRecord; the connector normalizes creation dates
+      as a count but does not derive a staleness count from API dates.
 """
 
 from __future__ import annotations
@@ -96,9 +107,40 @@ RULE_RUNNER_UNTAGGED = "gitlab_runner_untagged"
 # MR approval rules (M87B)
 RULE_MR_APPROVAL_NOT_REQUIRED = "gitlab_merge_request_approval_not_required"
 
+# ── M87C rule key constants ────────────────────────────────────────────────────
+
+# Webhook rules (M87C)
+RULE_WEBHOOK_HTTP_SCHEME = "gitlab_webhook_http_scheme"
+RULE_WEBHOOK_BROAD_EVENT_SCOPE = "gitlab_webhook_broad_event_scope"
+RULE_WEBHOOK_PIPELINE_JOB_EVENTS = "gitlab_webhook_pipeline_job_events"
+
+# Branch protection rules (M87C)
+RULE_BRANCH_PUSH_ACCESS_BROAD = "gitlab_branch_push_access_broad"
+RULE_BRANCH_MERGE_ACCESS_BROAD = "gitlab_branch_merge_access_broad"
+
+# CI variable rules (M87C)
+RULE_CI_VARIABLES_UNPROTECTED = "gitlab_ci_variables_unprotected"
+RULE_CI_VARIABLES_UNMASKED = "gitlab_ci_variables_unmasked"
+
+# Runner rules (M87C)
+RULE_RUNNER_SHARED_ENABLED = "gitlab_runner_shared_enabled"
+
+# MR approval rules (M87C)
+RULE_MR_APPROVAL_RESET_DISABLED = "gitlab_mr_approval_reset_disabled"
+RULE_MR_APPROVER_OVERRIDE_ALLOWED = "gitlab_mr_approver_override_allowed"
+
+# Project feature rules (M87C)
+RULE_PROJECT_WIKI_ENABLED_PUBLIC = "gitlab_project_wiki_enabled_public"
+RULE_PROJECT_PACKAGES_ENABLED_PUBLIC = "gitlab_project_packages_enabled_public"
+RULE_PROJECT_CONTAINER_REGISTRY_ENABLED_PUBLIC = "gitlab_project_container_registry_enabled_public"
+
+# Broadcast threshold for webhook event scope
+_WEBHOOK_BROAD_EVENT_THRESHOLD = 6
+
 
 # Exported set of all rule keys in this module
 GITLAB_RULE_KEYS: frozenset[str] = frozenset({
+    # M87B rules
     RULE_PROJECT_PUBLIC_VISIBILITY,
     RULE_PROJECT_SHARED_RUNNERS_ENABLED,
     RULE_PROJECT_SNIPPETS_ENABLED_PUBLIC,
@@ -111,6 +153,20 @@ GITLAB_RULE_KEYS: frozenset[str] = frozenset({
     RULE_DEPLOY_KEY_WRITE_ENABLED,
     RULE_RUNNER_UNTAGGED,
     RULE_MR_APPROVAL_NOT_REQUIRED,
+    # M87C rules
+    RULE_WEBHOOK_HTTP_SCHEME,
+    RULE_WEBHOOK_BROAD_EVENT_SCOPE,
+    RULE_WEBHOOK_PIPELINE_JOB_EVENTS,
+    RULE_BRANCH_PUSH_ACCESS_BROAD,
+    RULE_BRANCH_MERGE_ACCESS_BROAD,
+    RULE_CI_VARIABLES_UNPROTECTED,
+    RULE_CI_VARIABLES_UNMASKED,
+    RULE_RUNNER_SHARED_ENABLED,
+    RULE_MR_APPROVAL_RESET_DISABLED,
+    RULE_MR_APPROVER_OVERRIDE_ALLOWED,
+    RULE_PROJECT_WIKI_ENABLED_PUBLIC,
+    RULE_PROJECT_PACKAGES_ENABLED_PUBLIC,
+    RULE_PROJECT_CONTAINER_REGISTRY_ENABLED_PUBLIC,
 })
 
 
@@ -242,6 +298,82 @@ def _eval_project(record: dict[str, Any]) -> list[FindingCandidate]:
             )
         )
 
+    # ── M87C project feature exposure rules ──────────────────────────────────
+
+    # Rule 11 (M87C): wiki enabled on public project
+    wiki = _get_bool(record, "wiki_enabled")
+    if wiki is True and visibility == "public":
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_PROJECT_WIKI_ENABLED_PUBLIC,
+                finding_key=make_finding_key(RULE_PROJECT_WIKI_ENABLED_PUBLIC, record_id),
+                severity="low",
+                title="GitLab public project has wiki enabled",
+                description=(
+                    "The project wiki is enabled on a public GitLab project. "
+                    "Wiki pages are visible to unauthenticated visitors alongside "
+                    "the project. Review whether wiki content is appropriate for "
+                    "public access. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "visibility_category", "wiki_enabled",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule 12 (M87C): packages enabled on public project
+    packages = _get_bool(record, "packages_enabled")
+    if packages is True and visibility == "public":
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_PROJECT_PACKAGES_ENABLED_PUBLIC,
+                finding_key=make_finding_key(RULE_PROJECT_PACKAGES_ENABLED_PUBLIC, record_id),
+                severity="low",
+                title="GitLab public project has package registry enabled",
+                description=(
+                    "The package registry is enabled on a public GitLab project. "
+                    "Published packages and their metadata are accessible to "
+                    "unauthenticated users. Verify that published packages are "
+                    "intended for public distribution. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "visibility_category", "packages_enabled",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule 13 (M87C): container registry enabled on public project
+    container_registry = _get_bool(record, "container_registry_enabled")
+    if container_registry is True and visibility == "public":
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_PROJECT_CONTAINER_REGISTRY_ENABLED_PUBLIC,
+                finding_key=make_finding_key(
+                    RULE_PROJECT_CONTAINER_REGISTRY_ENABLED_PUBLIC, record_id
+                ),
+                severity="medium",
+                title="GitLab public project has container registry enabled",
+                description=(
+                    "The container registry is enabled on a public GitLab project. "
+                    "Container images in this registry may be pullable by anyone "
+                    "without authentication. Review whether published images are "
+                    "intended for public access. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "visibility_category", "container_registry_enabled",
+                ),
+                record_id=record_id,
+            )
+        )
+
     return candidates
 
 
@@ -342,6 +474,69 @@ def _eval_branch_protection(record: dict[str, Any]) -> list[FindingCandidate]:
             )
         )
 
+    # ── M87C branch protection depth rules ───────────────────────────────────
+
+    push_access = get_str(record, "push_access_level_category")
+    merge_access = get_str(record, "merge_access_level_category")
+    _broad_access_levels = {"developer", "reporter", "guest"}
+
+    # Rule 4 (M87C): broad push access on significant branches
+    if (
+        push_access in _broad_access_levels
+        and pattern_category in ("protected", "default", "wildcard")
+    ):
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_BRANCH_PUSH_ACCESS_BROAD,
+                finding_key=make_finding_key(RULE_BRANCH_PUSH_ACCESS_BROAD, record_id),
+                severity="medium",
+                title="GitLab protected branch allows broad push access",
+                description=(
+                    f"A GitLab branch protection rule grants push access at the "
+                    f"'{push_access}' level on a {pattern_category} branch pattern. "
+                    "Broad push access allows a wide set of project members to push "
+                    "directly to protected branches. Branch protection configuration "
+                    "evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "project_resource_id", "pattern_category",
+                    "push_access_level_category", "allowed_to_push_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule 5 (M87C): broad merge access on significant branches
+    if (
+        merge_access in _broad_access_levels
+        and pattern_category in ("protected", "default", "wildcard")
+    ):
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_BRANCH_MERGE_ACCESS_BROAD,
+                finding_key=make_finding_key(RULE_BRANCH_MERGE_ACCESS_BROAD, record_id),
+                severity="medium",
+                title="GitLab protected branch allows broad merge access",
+                description=(
+                    f"A GitLab branch protection rule grants merge access at the "
+                    f"'{merge_access}' level on a {pattern_category} branch pattern. "
+                    "Broad merge access allows a wide set of project members to merge "
+                    "merge requests into protected branches without maintainer review. "
+                    "Branch protection configuration evidence may require review. "
+                    + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "project_resource_id", "pattern_category",
+                    "merge_access_level_category", "allowed_to_merge_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
     return candidates
 
 
@@ -409,6 +604,92 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
             )
         )
 
+    # ── M87C webhook expansion rules ─────────────────────────────────────────
+
+    url_scheme = get_str(record, "url_scheme")
+    event_count_val = _get_int(record, "event_count")
+    pipeline_events = _get_bool(record, "pipeline_events")
+    job_events = _get_bool(record, "job_events")
+
+    # Rule 1 (M87C): webhook using plain HTTP
+    if url_scheme == "http":
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_WEBHOOK_HTTP_SCHEME,
+                finding_key=make_finding_key(RULE_WEBHOOK_HTTP_SCHEME, record_id),
+                severity="high",
+                title="GitLab webhook uses plain HTTP endpoint",
+                description=(
+                    "An active GitLab webhook is configured with a plain HTTP "
+                    "endpoint URL scheme. Event payloads may be transmitted "
+                    "unencrypted over the network. Webhook security posture "
+                    "evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "owner_type", "owner_resource_id",
+                    "enabled", "url_scheme", "event_count",
+                    "secret_token_present", "ssl_verification_enabled",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule 2 (M87C): broad event scope
+    if event_count_val is not None and event_count_val >= _WEBHOOK_BROAD_EVENT_THRESHOLD:
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_WEBHOOK_BROAD_EVENT_SCOPE,
+                finding_key=make_finding_key(RULE_WEBHOOK_BROAD_EVENT_SCOPE, record_id),
+                severity="medium",
+                title="GitLab webhook has broad event scope",
+                description=(
+                    f"An active GitLab webhook is subscribed to {event_count_val} "
+                    f"event types. Webhooks with broad event subscriptions deliver "
+                    "many categories of project activity to the endpoint. Review "
+                    "whether all subscribed event types are required. Webhook "
+                    "security posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "owner_type", "owner_resource_id",
+                    "enabled", "event_count", "push_events",
+                    "merge_requests_events", "pipeline_events", "job_events",
+                    "secret_token_present",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule 3 (M87C): pipeline or job events enabled
+    if pipeline_events is True or job_events is True:
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_WEBHOOK_PIPELINE_JOB_EVENTS,
+                finding_key=make_finding_key(RULE_WEBHOOK_PIPELINE_JOB_EVENTS, record_id),
+                severity="medium",
+                title="GitLab webhook receives CI/CD pipeline or job events",
+                description=(
+                    "An active GitLab webhook is subscribed to pipeline or job "
+                    "events. CI/CD event payloads may include build status, "
+                    "pipeline metadata, and job identifiers. Verify the receiving "
+                    "endpoint handles this CI/CD event data appropriately. "
+                    "Webhook security posture evidence may require review. "
+                    + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "owner_type", "owner_resource_id",
+                    "enabled", "pipeline_events", "job_events",
+                    "secret_token_present", "ssl_verification_enabled",
+                ),
+                record_id=record_id,
+            )
+        )
+
     return candidates
 
 
@@ -442,6 +723,73 @@ def _eval_ci_variable_summary(record: dict[str, Any]) -> list[FindingCandidate]:
                     "variable_count", "unprotected_unmasked_count",
                     "protected_variable_count", "masked_variable_count",
                     "environment_scoped_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # ── M87C CI variable expansion rules ─────────────────────────────────────
+
+    variable_count = _get_int(record, "variable_count")
+    protected_count = _get_int(record, "protected_variable_count")
+    masked_count = _get_int(record, "masked_variable_count")
+
+    # Rule 6 (M87C): all variables are unprotected
+    if (
+        variable_count is not None
+        and variable_count > 0
+        and protected_count is not None
+        and protected_count == 0
+    ):
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_CI_VARIABLES_UNPROTECTED,
+                finding_key=make_finding_key(RULE_CI_VARIABLES_UNPROTECTED, record_id),
+                severity="medium",
+                title="GitLab CI/CD variables have no protected variables",
+                description=(
+                    f"This GitLab project or group has {variable_count} CI/CD "
+                    "variable(s) but none are protected. Unprotected variables "
+                    "are available in all branches and forks, not only protected "
+                    "branches. CI/CD variable posture evidence may require review. "
+                    + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "owner_type", "owner_resource_id",
+                    "variable_count", "protected_variable_count",
+                    "masked_variable_count", "unprotected_unmasked_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule 7 (M87C): all variables are unmasked
+    if (
+        variable_count is not None
+        and variable_count > 0
+        and masked_count is not None
+        and masked_count == 0
+    ):
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_CI_VARIABLES_UNMASKED,
+                finding_key=make_finding_key(RULE_CI_VARIABLES_UNMASKED, record_id),
+                severity="medium",
+                title="GitLab CI/CD variables have no masked variables",
+                description=(
+                    f"This GitLab project or group has {variable_count} CI/CD "
+                    "variable(s) but none are masked. Unmasked variables may "
+                    "appear in plain text in CI/CD job logs. CI/CD variable "
+                    "posture evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "owner_type", "owner_resource_id",
+                    "variable_count", "masked_variable_count",
+                    "protected_variable_count", "unprotected_unmasked_count",
                 ),
                 record_id=record_id,
             )
@@ -521,6 +869,43 @@ def _eval_runner_summary(record: dict[str, Any]) -> list[FindingCandidate]:
             )
         )
 
+    # ── M87C runner expansion rule ────────────────────────────────────────────
+
+    runner_count = _get_int(record, "runner_count")
+    shared_runner_enabled = _get_bool(record, "shared_runner_enabled")
+
+    # Rule 8 (M87C): shared runners are active
+    if (
+        shared_runner_enabled is True
+        and runner_count is not None
+        and runner_count > 0
+    ):
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_RUNNER_SHARED_ENABLED,
+                finding_key=make_finding_key(RULE_RUNNER_SHARED_ENABLED, record_id),
+                severity="medium",
+                title="GitLab runner set includes shared runners",
+                description=(
+                    "Shared runners are present and active in this GitLab project "
+                    "or group runner configuration. Shared runners execute jobs on "
+                    "infrastructure shared across multiple GitLab projects. Verify "
+                    "that shared runner use is appropriate for your isolation "
+                    "requirements. Runner configuration evidence may require review. "
+                    + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "owner_type", "owner_resource_id",
+                    "runner_count", "shared_runner_enabled",
+                    "tagged_runner_count", "untagged_runner_count",
+                    "locked_runner_count",
+                ),
+                record_id=record_id,
+            )
+        )
+
     return candidates
 
 
@@ -552,6 +937,64 @@ def _eval_mr_approval_summary(record: dict[str, Any]) -> list[FindingCandidate]:
                     "resource_id", "project_resource_id",
                     "approval_rule_count", "approvals_required",
                     "code_owner_approval_required", "reset_approvals_on_push",
+                    "disable_overriding_approvers_per_merge_request",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # ── M87C MR approval hardening rules ─────────────────────────────────────
+
+    reset_on_push = _get_bool(record, "reset_approvals_on_push")
+    disable_override = _get_bool(record, "disable_overriding_approvers_per_merge_request")
+
+    # Rule 9 (M87C): approval reset on push disabled
+    if reset_on_push is False:
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_MR_APPROVAL_RESET_DISABLED,
+                finding_key=make_finding_key(RULE_MR_APPROVAL_RESET_DISABLED, record_id),
+                severity="medium",
+                title="GitLab project does not reset approvals on new push",
+                description=(
+                    "This GitLab project is configured so that merge request "
+                    "approvals are not reset when new commits are pushed. An "
+                    "approved merge request could be merged after additional "
+                    "commits are pushed without requiring re-approval of those "
+                    "new changes. Merge request approval configuration evidence "
+                    "may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "project_resource_id",
+                    "approval_rule_count", "approvals_required",
+                    "reset_approvals_on_push",
+                ),
+                record_id=record_id,
+            )
+        )
+
+    # Rule 10 (M87C): approvers can be overridden per merge request
+    if disable_override is False:
+        candidates.append(
+            FindingCandidate(
+                provider="gitlab",
+                rule_key=RULE_MR_APPROVER_OVERRIDE_ALLOWED,
+                finding_key=make_finding_key(RULE_MR_APPROVER_OVERRIDE_ALLOWED, record_id),
+                severity="medium",
+                title="GitLab project allows approver override per merge request",
+                description=(
+                    "This GitLab project allows individual merge request authors "
+                    "or maintainers to override the configured approval rules on "
+                    "a per-merge-request basis. This weakens the enforcement of "
+                    "approval policies. Merge request approval configuration "
+                    "evidence may require review. " + _DISCLAIMER
+                ),
+                evidence=_safe_evidence(
+                    record,
+                    "resource_id", "project_resource_id",
+                    "approval_rule_count", "approvals_required",
                     "disable_overriding_approvers_per_merge_request",
                 ),
                 record_id=record_id,
@@ -597,5 +1040,5 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
     if rtype == GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY:
         return _eval_mr_approval_summary(record)
 
-    # gitlab_instance: no security rules at M87B; covered in M87C
+    # gitlab_instance: no security rules at M87B/M87C; deferred to M87C+ scope
     return []

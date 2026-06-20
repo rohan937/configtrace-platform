@@ -482,6 +482,20 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "gitlab_deploy_key_write_enabled",
         "gitlab_runner_untagged",
         "gitlab_merge_request_approval_not_required",
+        # GitLab — M87C branch/webhook/CI risk expansion
+        "gitlab_webhook_http_scheme",
+        "gitlab_webhook_broad_event_scope",
+        "gitlab_webhook_pipeline_job_events",
+        "gitlab_branch_push_access_broad",
+        "gitlab_branch_merge_access_broad",
+        "gitlab_ci_variables_unprotected",
+        "gitlab_ci_variables_unmasked",
+        "gitlab_runner_shared_enabled",
+        "gitlab_mr_approval_reset_disabled",
+        "gitlab_mr_approver_override_allowed",
+        "gitlab_project_wiki_enabled_public",
+        "gitlab_project_packages_enabled_public",
+        "gitlab_project_container_registry_enabled_public",
     }
 )
 

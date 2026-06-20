@@ -510,6 +510,20 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "gitlab_deploy_key_write_enabled": (HIGH, "Only fires when write_enabled_count > 0 on a gitlab_deploy_key_summary record — a direct count. Deploy key titles, fingerprints, and key material are never stored."),
     "gitlab_runner_untagged": (MEDIUM, "Fires when untagged_runner_count > 0 on a gitlab_runner_summary record; untagged runners may be intentional for some CI/CD configurations."),
     "gitlab_merge_request_approval_not_required": (MEDIUM, "Fires when approvals_required == 0 on a gitlab_merge_request_approval_summary record; some projects intentionally allow unreviewed merges."),
+    # GitLab — M87C branch/webhook/CI risk expansion
+    "gitlab_webhook_http_scheme": (HIGH, "Only fires when url_scheme is 'http' on an active gitlab_webhook record — a direct category derived from the webhook URL scheme in the connector. The raw URL is never stored."),
+    "gitlab_webhook_broad_event_scope": (MEDIUM, "Fires when event_count >= 6 on an active gitlab_webhook record; some integrations legitimately subscribe to many event types."),
+    "gitlab_webhook_pipeline_job_events": (MEDIUM, "Fires when pipeline_events or job_events is True on an active gitlab_webhook record; CI/CD event delivery is intentional for many webhook integrations."),
+    "gitlab_branch_push_access_broad": (MEDIUM, "Fires when push_access_level_category is developer/reporter/guest on a protected/default/wildcard branch pattern; broad push access may be intentional for open development workflows."),
+    "gitlab_branch_merge_access_broad": (MEDIUM, "Fires when merge_access_level_category is developer/reporter/guest on a protected/default/wildcard branch pattern; broad merge access may be intentional for teams using merge trains or specific workflows."),
+    "gitlab_ci_variables_unprotected": (MEDIUM, "Fires when variable_count > 0 and protected_variable_count == 0 on a gitlab_ci_variable_summary record; some projects intentionally scope all variables to all branches. CI variable names and values are never stored."),
+    "gitlab_ci_variables_unmasked": (MEDIUM, "Fires when variable_count > 0 and masked_variable_count == 0 on a gitlab_ci_variable_summary record; some variables that do not meet masking criteria (e.g. too short) may intentionally remain unmasked. CI variable names and values are never stored."),
+    "gitlab_runner_shared_enabled": (MEDIUM, "Fires when shared_runner_enabled=True and runner_count > 0 on a gitlab_runner_summary record; shared runners are commonly used for open or public projects and may be intentional."),
+    "gitlab_mr_approval_reset_disabled": (MEDIUM, "Fires when reset_approvals_on_push is explicitly False on a gitlab_merge_request_approval_summary record; some teams trust approvers to re-review manually after new pushes."),
+    "gitlab_mr_approver_override_allowed": (MEDIUM, "Fires when disable_overriding_approvers_per_merge_request is explicitly False on a gitlab_merge_request_approval_summary record; some teams allow per-MR approval rule customization intentionally."),
+    "gitlab_project_wiki_enabled_public": (MEDIUM, "Fires when wiki_enabled=True on a public gitlab_project record; public wikis are intentional for open-source projects that use them for documentation."),
+    "gitlab_project_packages_enabled_public": (MEDIUM, "Fires when packages_enabled=True on a public gitlab_project record; public package registries are intentional for open-source distribution."),
+    "gitlab_project_container_registry_enabled_public": (MEDIUM, "Fires when container_registry_enabled=True on a public gitlab_project record; public container registries may be intentional for public image distribution."),
 }
 
 
