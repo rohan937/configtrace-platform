@@ -899,9 +899,10 @@ class TestCapabilityMatrixAndFramework:
         assert cap.security.activity_signals is True
 
     def test_jira_risk_activity_correlations_false(self):
+        # M86F advanced risk_activity_correlations to True.
         cap = get_provider_capability("jira")
         assert cap is not None
-        assert cap.security.risk_activity_correlations is False
+        assert cap.security.risk_activity_correlations is True
 
     def test_jira_demo_seed_clear_false(self):
         cap = get_provider_capability("jira")
@@ -934,12 +935,12 @@ class TestCapabilityMatrixAndFramework:
         assert "M86B" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m86c(self):
-        # M86C–M86E have since landed — planned_next_stage now points to M86F.
+        # M86C–M86F have since landed — planned_next_stage now points to M86G.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
         assert (
             "M86C" in planned or "M86D" in planned or "M86E" in planned
-            or "M86F" in planned
+            or "M86F" in planned or "M86G" in planned
         ), (
             f"planned_next_stage should reference M86C or later; got {planned!r}"
         )

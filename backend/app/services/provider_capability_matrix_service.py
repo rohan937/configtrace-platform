@@ -1116,7 +1116,7 @@ _JIRA = ProviderCapability(
         security_rules=True,
         activity_ingestion=True,
         activity_signals=True,
-        risk_activity_correlations=False,
+        risk_activity_correlations=True,
         demo_seed_clear=False,
         case_report=False,
         evidence_timeline=False,
@@ -1124,7 +1124,7 @@ _JIRA = ProviderCapability(
     ),
     maturity="partial",
     notes=(
-        "Jira project management configuration drift foundation (M86A). "
+        "Jira project management configuration drift foundation (M86A–M86F). "
         "Drift snapshots cover Jira Cloud configuration surfaces: projects, boards, "
         "workflows, workflow schemes, permission schemes, notification schemes, "
         "issue type schemes, field configuration schemes, screen schemes, webhook "
@@ -1166,8 +1166,22 @@ _JIRA = ProviderCapability(
         "via GET /security/signals?provider=jira. Idempotent; review signals only — "
         "never confirms breach, compromise, or unauthorized access. Only safe counts, "
         "categories, booleans, and opaque resource identifiers are stored. "
+        "M86F adds Jira risk × activity correlations: active Jira configuration-risk "
+        "findings are joined with Jira activity signals on the same safe opaque "
+        "resource identifier within a review window (falling back to record-type / "
+        "signal-type family matching) across thirteen correlation families — "
+        "permission scheme, webhook, workflow, workflow scheme, automation rule, board, "
+        "notification scheme, screen scheme, field configuration scheme, issue type "
+        "scheme, project, site, and a generic config fallback. Generated via "
+        "POST /security/jira-activity/generate-correlations and read via "
+        "GET /security/correlations?provider=jira. Idempotent; correlations are evidence "
+        "for review only and never confirm compromise, unauthorized access, or data "
+        "exposure. Only safe counts, categories, booleans, and opaque resource "
+        "identifiers are stored — never API tokens, OAuth tokens, webhook secrets, raw "
+        "URLs, JQL text, issue content, comments, attachments, user identities, IP "
+        "addresses, user agents, raw audit payloads, or PII. "
         "Authentication uses Jira email + API token (stored encrypted, never returned). "
-        "planned_next_stage: M86F: Jira Risk × Activity Correlations."
+        "planned_next_stage: M86G: Jira Demo + QA."
     ),
 )
 

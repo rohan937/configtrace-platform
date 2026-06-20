@@ -449,6 +449,115 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "webhook_count",
         "integration_count",
         "member_count_category",
+        # Jira Risk × Activity Correlation metadata (M86F) — safe opaque
+        # resource identifiers, counts, booleans, and category labels only.
+        # NEVER stored: Jira API tokens, OAuth tokens, webhook secrets,
+        # integration secrets, raw webhook / delivery URLs, site base URLs,
+        # redirect URLs, JQL, filter expressions, board column / quick-filter /
+        # swimlane names, issue keys, issue titles, issue descriptions, comment
+        # bodies, attachment content, customer names, user emails, user names,
+        # account IDs, member identities, IP addresses, user agents,
+        # request/response payloads, raw audit payloads, raw API response dicts,
+        # or PII of any kind.
+        "correlation_type",            # correlation family key (e.g. jira_webhook_risk_with_activity)
+        "finding_id",                  # source finding opaque ID
+        "finding_rule_key",            # base rule key label (e.g. jira_webhook_disabled)
+        "finding_record_type",         # finding record type label (e.g. jira_webhook)
+        "finding_resource_type",       # finding resource type label
+        "finding_resource_id",         # finding resource opaque ID (NEVER a URL/JQL/email)
+        "signal_id",                   # correlated signal opaque ID
+        "activity_count",              # int — count of activity events behind the signal
+        "risk_count",                  # int — count of risks in the correlation window
+        "matched_on",                  # which join key matched (e.g. "resource_id")
+        "match_confidence",            # human label for join confidence ("high"/"medium"/"low")
+        "lookback_hours",              # review-window size in hours
+        # Jira config-object opaque identifiers (NEVER secrets / URLs / JQL)
+        "site_id",                     # Jira site opaque ID
+        "board_id",                    # Jira board opaque ID
+        "workflow_id",                 # Jira workflow opaque ID
+        "workflow_scheme_id",          # Jira workflow scheme opaque ID
+        "permission_scheme_id",        # Jira permission scheme opaque ID
+        "notification_scheme_id",      # Jira notification scheme opaque ID
+        "issue_type_scheme_id",        # Jira issue type scheme opaque ID
+        "field_configuration_scheme_id",  # Jira field configuration scheme opaque ID
+        "screen_scheme_id",            # Jira screen scheme opaque ID
+        "automation_rule_id",          # Jira automation rule opaque ID
+        # Jira safe count / boolean / category posture fields
+        "has_key",                     # bool — project has a key
+        "project_type_key",            # category — project type
+        "style",                       # category — project style
+        "is_private",                  # bool — project privacy
+        "is_archived",                 # bool — project archived
+        "is_deleted",                  # bool — project deleted
+        "is_simplified",               # bool — simplified (team-managed) project
+        "is_default",                  # bool — default scheme/workflow
+        "deployment_type",             # category — site deployment type
+        "board_type",                  # category — board type
+        "location_present",            # bool — board location present
+        "board_filter_present",        # bool — board filter present
+        "board_jql_filter_broad",      # bool — board JQL filter is broad
+        "board_column_count",          # int — board column count
+        "board_quick_filter_count",    # int — board quick filter count
+        "board_swimlane_strategy_category",  # category — swimlane strategy
+        "transition_count",            # int — workflow transition count
+        "status_count",                # int — workflow status count
+        "has_description",             # bool — object has a description
+        "workflow_active",             # bool — workflow active
+        "workflow_draft",              # bool — workflow draft
+        "workflow_has_done_status",    # bool — workflow has a done status
+        "workflow_has_in_progress_status",  # bool — workflow has in-progress status
+        "workflow_transition_rule_count",   # int
+        "workflow_validator_count",         # int
+        "workflow_condition_count",         # int
+        "workflow_post_function_count",     # int
+        "workflow_orphan_status_count",     # int
+        "workflow_status_category_count",   # int
+        "workflow_global_transition_count", # int
+        "issue_type_mapping_count",         # int — workflow/issue-type scheme mapping count
+        "has_draft",                        # bool — scheme has a draft
+        "workflow_scheme_workflow_count",   # int
+        "workflow_scheme_issue_type_mapping_count",  # int
+        "workflow_scheme_unmapped_issue_type_count", # int
+        "permission_grant_count",           # int — permission scheme grant count
+        "permission_public_browse_projects",        # bool
+        "permission_public_administer_projects",     # bool
+        "permission_public_manage_sprints",          # bool
+        "permission_public_create_issues",           # bool
+        "permission_public_transition_issues",       # bool
+        "permission_unknown_holder_count",           # int
+        "permission_high_privilege_grant_count",     # int
+        "permission_public_grant_count",             # int
+        "notification_count",               # int — notification scheme notification count
+        "notification_all_watchers_recipient_count", # int
+        "notification_unknown_recipient_count",      # int
+        "notification_event_count",                  # int
+        "has_default_issue_type",           # bool — issue type scheme default present
+        "screen_mapping_count",             # int — screen scheme mapping count
+        "has_default_screen",               # bool
+        "screen_tab_count",                 # int
+        "screen_unmapped_screen_count",     # int
+        "enabled",                          # bool — webhook / automation rule enabled
+        "webhook_url_present",              # bool — webhook URL present (NEVER the URL)
+        "webhook_url_scheme_category",      # category — webhook URL scheme (https/non-https)
+        "has_filter",                       # bool — webhook has a filter
+        "webhook_has_issue_events",         # bool
+        "webhook_has_comment_events",       # bool
+        "webhook_has_attachment_events",    # bool
+        "webhook_has_project_events",       # bool
+        "webhook_has_sprint_events",        # bool
+        "webhook_has_worklog_events",       # bool
+        "webhook_all_issue_events",         # bool
+        "webhook_jql_empty_or_broad",       # bool
+        "webhook_event_scope_category",     # category — webhook event scope
+        "component_count",                  # int — automation rule component count
+        "automation_action_count",          # int
+        "automation_condition_count",       # int
+        "automation_branch_count",          # int
+        "automation_scope_category",        # category — automation rule scope
+        "automation_has_web_request_action",  # bool
+        "automation_has_email_action",        # bool
+        "automation_has_external_action",     # bool
+        "automation_has_comment_action",      # bool
     }
 )
 

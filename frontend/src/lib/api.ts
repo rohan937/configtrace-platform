@@ -2545,6 +2545,26 @@ export async function generateLinearCorrelations(
 }
 
 /**
+ * generateJiraRiskActivityCorrelations — POST /security/jira-activity/generate-correlations
+ * Admin only. Joins active Jira configuration-risk findings with Jira activity
+ * signals on the same safe opaque resource_id. Stores rule keys, signal types,
+ * opaque resource IDs, safe counts, categories, booleans, and timing evidence
+ * only — never Jira API tokens, OAuth tokens, webhook secrets, raw URLs, site
+ * base URLs, JQL text, issue content, comments, attachments, user identities,
+ * IP addresses, user agents, raw audit payloads, or PII. Does not confirm
+ * compromise or unauthorized access.
+ */
+export async function generateJiraRiskActivityCorrelations(
+  token: string | null | undefined,
+  opts?: { lookback_hours?: number; max_correlations?: number },
+): Promise<import("@/types").JiraRiskActivityCorrelationGenerateResponse> {
+  return apiFetch<import("@/types").JiraRiskActivityCorrelationGenerateResponse>(
+    "/security/jira-activity/generate-correlations",
+    { method: "POST", body: JSON.stringify(opts ?? {}), token },
+  );
+}
+
+/**
  * generatePagerDutyActivitySignals — POST /security/pagerduty-activity/generate-signals
  * Admin only. Generates review-priority Incident Signals from safe PagerDuty
  * configuration-state activity events. Promotes service, escalation policy,

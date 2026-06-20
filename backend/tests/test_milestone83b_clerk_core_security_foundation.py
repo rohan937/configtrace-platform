@@ -1261,6 +1261,7 @@ class TestCapabilityMatrix:
             "M86D: Jira Activity/Event Ingestion",
             "M86E: Jira Activity Signals",
             "M86F: Jira Risk × Activity Correlations",
+            "M86G: Jira Demo + QA",
             "M87A: GitLab Drift Provider Foundation",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"

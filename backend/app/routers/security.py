@@ -265,6 +265,8 @@ from app.schemas.security_jira_activity import (
     JiraActivitySyncResponse,
     JiraActivitySignalGenerateRequest,
     JiraActivitySignalGenerateResponse,
+    JiraRiskActivityCorrelationGenerateRequest,
+    JiraRiskActivityCorrelationGenerateResponse,
 )
 from app.services import clerk_activity_ingestion_service
 from app.services import clerk_activity_signal_service
@@ -275,6 +277,7 @@ from app.services import linear_activity_signal_service
 from app.services import linear_risk_activity_correlation_service
 from app.services import jira_activity_ingestion_service
 from app.services import jira_activity_signal_service
+from app.services import jira_risk_activity_correlation_service
 from app.models.integration import Integration
 from app.services import security_finding_service
 from app.services import security_finding_note_service
@@ -3682,6 +3685,51 @@ def generate_linear_risk_activity_correlations(
         max_correlations=max_correlations,
     )
     return LinearCorrelationGenerateResponse(**summary)
+
+
+@router.post(
+    "/jira-activity/generate-correlations",
+    response_model=JiraRiskActivityCorrelationGenerateResponse,
+)
+def generate_jira_risk_activity_correlations(
+    body: Optional[JiraRiskActivityCorrelationGenerateRequest] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> JiraRiskActivityCorrelationGenerateResponse:
+    """Generate Jira Risk x Activity correlations for a workspace (M86F).
+
+    Admin/owner only. Joins active Jira configuration-risk findings with Jira
+    activity signals on the same safe opaque resource_id within a review window,
+    falling back to record_type -> signal_type family matching. Covers thirteen
+    correlation families: permission_scheme, webhook, workflow, workflow_scheme,
+    automation_rule, board, notification_scheme, screen_scheme,
+    field_configuration_scheme, issue_type_scheme, project, site, and a generic
+    config fallback.
+
+    Jira API tokens, OAuth tokens, webhook secrets, integration secrets, raw
+    webhook/delivery URLs, site base URLs, redirect URLs, JQL, filter
+    expressions, board column / quick-filter / swimlane names, issue keys, issue
+    titles, issue descriptions, comment bodies, attachment content, customer
+    names, user emails, user names, account IDs, member identities, IP addresses,
+    user agents, request/response payloads, raw audit payloads, and PII are never
+    used or stored. Does not confirm compromise, unauthorized access, or data
+    exposure. Idempotent — re-running creates no duplicates.
+
+    Members can read correlations via GET /security/correlations?provider=jira.
+    """
+    workspace_id = _current_workspace_id(current_user, db)
+    workspace_permission_service.require_workspace_admin(
+        workspace_id, current_user.id, db
+    )
+    lookback_hours = min(body.lookback_hours, 168) if body and body.lookback_hours else 24
+    max_correlations = min(body.max_correlations, 1000) if body and body.max_correlations else 100
+    summary = jira_risk_activity_correlation_service.generate_jira_correlations(
+        workspace_id=workspace_id,
+        db=db,
+        lookback_hours=lookback_hours,
+        max_correlations=max_correlations,
+    )
+    return JiraRiskActivityCorrelationGenerateResponse(**summary)
 
 
 @router.post(

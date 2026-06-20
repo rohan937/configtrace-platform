@@ -610,10 +610,13 @@ def test_m86c_capability_matrix_points_to_m86d():
 
 
 def test_m86c_expansion_framework_points_to_m86d():
-    # M86D/M86E have since landed — planned_next_stage now points to M86F.
+    # M86D–M86F have since landed — planned_next_stage now points to M86G.
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M86D" in planned or "M86E" in planned or "M86F" in planned, (
+    assert (
+        "M86D" in planned or "M86E" in planned or "M86F" in planned
+        or "M86G" in planned
+    ), (
         f"planned_next_stage should reference M86D or later; got {planned!r}"
     )
 
