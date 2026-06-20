@@ -91,6 +91,48 @@ _SENSITIVE_TOKENS = frozenset({
     "signing", "credential", "credentials", "private", "dsn", "auth", "cert",
 })
 
+# Public/benign key prefixes. Variables whose name starts with one of these is
+# treated as public-by-convention and is NOT flagged as a high-severity secret —
+# these prefixes are the framework-standard markers for values that are
+# deliberately inlined into client bundles (so they cannot be secrets).
+#
+# DECISION: the prefix is authoritative. A name like ``NEXT_PUBLIC_SECRET_KEY``
+# is NOT treated as sensitive — the framework would expose its value to the
+# browser regardless of the substring, so flagging it as a broadly-scoped secret
+# would be a false positive. We err toward NOT flagging only for these explicit
+# public-by-convention prefixes; every other name keeps the conservative
+# substring/token check.
+_PUBLIC_KEY_PREFIXES = (
+    "NEXT_PUBLIC_",
+    "PUBLIC_",
+    "VITE_",
+    "REACT_APP_",
+)
+
+# Benign exact prefixes for clearly non-credential metadata (caching / redirect
+# URLs). Kept narrow on purpose — see the carve-outs below.
+_BENIGN_KEY_PREFIXES = (
+    "AUTH_REDIRECT_",   # clearly a URL, not a credential
+    "AUTH_CALLBACK_",   # clearly a URL, not a credential
+)
+
+
+def _is_public_or_benign_key(key: str) -> bool:
+    """Return True when *key* is a public/benign name that must not be treated
+    as a sensitive secret for the high-severity env-var finding."""
+    ku = key.upper()
+    if any(ku.startswith(p) for p in _PUBLIC_KEY_PREFIXES):
+        return True
+    if any(ku.startswith(p) for p in _BENIGN_KEY_PREFIXES):
+        return True
+    # CACHE_* is benign caching metadata, EXCEPT when it carries an explicit
+    # credential token (e.g. CACHE_SECRET, CACHE_KEY used for auth).
+    if ku.startswith("CACHE_"):
+        rest = ku[len("CACHE_"):]
+        if not any(t in rest for t in ("SECRET", "KEY", "TOKEN", "PASSWORD")):
+            return True
+    return False
+
 
 def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
     if not isinstance(record, dict):
@@ -253,7 +295,12 @@ def _eval_domain(record: dict[str, Any]) -> list[FindingCandidate]:
     # Only an explicit verified=False fires; verified or unknown is skipped.
     if record.get("verified") is not False:
         return []
-    # Redirect-only domains are aliases, not a production-serving surface.
+    # Redirect-only domains are aliases, not a production-serving surface, so an
+    # unverified redirect alias is not a reviewable exposure. Only skip on an
+    # explicit redirect_only=True; a missing field falls through and fires
+    # (conservative — err toward detection when redirect status is unknown).
+    if record.get("redirect_only") is True:
+        return []
     record_id = get_str(record, "record_id") or None
     domain = get_str(record, "name") or record_id or "a domain"
 
@@ -300,6 +347,10 @@ def _targets(record: dict[str, Any]) -> set[str]:
 
 
 def _is_sensitive_key(key: str) -> bool:
+    # Public/benign prefixes short-circuit the sensitivity check so names like
+    # NEXT_PUBLIC_KEY / PUBLIC_SITE_URL / VITE_API_URL are not flagged.
+    if _is_public_or_benign_key(key):
+        return False
     kl = key.lower()
     if any(s in kl for s in _SENSITIVE_SUBSTRINGS):
         return True

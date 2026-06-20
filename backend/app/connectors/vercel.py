@@ -42,6 +42,7 @@ from app.connectors.exceptions import (
 )
 from app.connectors.vercel_schema import (
     VERCEL_DEPLOY_HOOK_METADATA,
+    VERCEL_DEPLOYMENT_PROTECTION,
     VERCEL_DOMAIN,
     VERCEL_ENV_VAR,
     VERCEL_PROJECT,
@@ -124,6 +125,14 @@ class VercelConnector(BaseConnector):
         #       SECURITY: hook URLs (auth tokens) are NEVER stored.
         hook_records = _extract_deploy_hooks(raw_project, project_id)
         records.extend(hook_records)
+
+        # ── 5. Deployment-protection posture — extracted from the same project
+        #       response (no extra API call). This guarantees the core sync path
+        #       emits a vercel_deployment_protection record so the
+        #       vercel_preview_unprotected security rule has a reachable
+        #       production record source even when the drift/expansion ingestion
+        #       path is not wired to the evaluator.
+        records.append(_extract_deployment_protection(raw_project, project_id))
 
         logger.info(
             "vercel connector fetch  project=%s  total_records=%d  "
@@ -435,17 +444,86 @@ def _normalize_env_var(raw: dict) -> dict:
 
 
 def _normalize_domain(raw: dict) -> dict:
-    """Map a raw Vercel domain API record to a ``VercelDomainRecord``."""
+    """Map a raw Vercel domain API record to a ``VercelDomainRecord``.
+
+    SECURITY: the raw redirect TARGET URL is recorded in ``redirect`` for diff
+    tracking, but security rules only consume the normalized ``redirect_only``
+    boolean (derived below) so a finding never surfaces the target URL.
+    """
+    redirect = raw.get("redirect")
     return {
         "record_id":   raw.get("name", ""),
         "record_type": VERCEL_DOMAIN,
         "name":        raw.get("name", ""),
         "verified":    raw.get("verified", False),
         "git_branch":  raw.get("gitBranch"),
-        "redirect":    raw.get("redirect"),
+        "redirect":    redirect,
+        # Normalized boolean: this domain only redirects elsewhere (it is an
+        # alias, not a production-serving surface). Derived purely from whether
+        # a redirect target is present — the target URL itself never reaches a
+        # finding.
+        "redirect_only": bool(redirect),
         "created_at":  raw.get("createdAt"),
         "updated_at":  raw.get("updatedAt"),
     }
+
+
+def _extract_deployment_protection(raw_project: dict, project_id: str) -> dict:
+    """Build a ``vercel_deployment_protection`` record from the project response.
+
+    Vercel's ``GET /v9/projects/{id}`` response carries the deployment-protection
+    posture inline (``ssoProtection`` / ``passwordProtection``), so no extra API
+    call is needed. Emitting this record from the core sync path guarantees the
+    ``vercel_preview_unprotected`` rule has a reachable production record source.
+
+    Protection mapping
+    ------------------
+    Each protection setting is ``null`` when disabled, or an object with a
+    ``deploymentType`` (``"all"`` / ``"preview"`` / ``"prod_deployment_urls_…"``)
+    when enabled. A protection mechanism is considered to cover previews when its
+    deployment type is ``"all"`` or ``"preview"``. ``preview_deployments_protected``
+    is True when either SSO or password protection covers previews.
+
+    SECURITY: no secrets, trusted-IP lists, or URLs are read here — only the
+    presence/scope of each protection toggle.
+    """
+    sso_protected, sso_covers_preview = _protection_state(raw_project.get("ssoProtection"))
+    pw_protected, pw_covers_preview = _protection_state(raw_project.get("passwordProtection"))
+
+    preview_protected = sso_covers_preview or pw_covers_preview
+
+    return {
+        "record_id":   raw_project.get("id") or project_id,
+        "record_type": VERCEL_DEPLOYMENT_PROTECTION,
+        "name":        raw_project.get("name", "") or project_id,
+        "sso_enabled":      sso_protected,
+        "password_enabled": pw_protected,
+        "preview_deployments_protected": preview_protected,
+    }
+
+
+def _protection_state(raw: object) -> tuple[bool, bool]:
+    """Return ``(enabled, covers_preview)`` for a Vercel protection setting.
+
+    ``enabled`` is True when the setting is present (non-null). ``covers_preview``
+    is True when the deployment scope includes preview deployments
+    (``deploymentType`` of ``"all"`` or ``"preview"``). A bare/unknown enabled
+    shape is treated conservatively as covering previews so protection is not
+    under-reported.
+    """
+    if not raw:
+        return (False, False)
+    if isinstance(raw, dict):
+        deployment_type = str(raw.get("deploymentType") or "").lower()
+        if deployment_type in ("all", "preview"):
+            return (True, True)
+        if deployment_type:
+            # Enabled but scoped to production-only URLs → does not cover preview.
+            return (True, False)
+        # Enabled with an unknown/blank scope — treat as covering previews.
+        return (True, True)
+    # Unexpected truthy shape — treat as enabled and preview-covering.
+    return (True, True)
 
 
 def _extract_deploy_hooks(raw_project: dict, project_id: str) -> list[dict]:

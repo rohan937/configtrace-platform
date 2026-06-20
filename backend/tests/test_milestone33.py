@@ -41,7 +41,12 @@ from app.connectors.vercel import (
     _normalize_env_var,
     _normalize_project,
 )
-from app.connectors.vercel_schema import VERCEL_DOMAIN, VERCEL_ENV_VAR, VERCEL_PROJECT
+from app.connectors.vercel_schema import (
+    VERCEL_DEPLOYMENT_PROTECTION,
+    VERCEL_DOMAIN,
+    VERCEL_ENV_VAR,
+    VERCEL_PROJECT,
+)
 from app.services.risk_rules.vercel import classify_vercel_change
 
 
@@ -258,15 +263,23 @@ class TestVercelConnectorFetch:
     def test_fetch_returns_correct_record_count(self, mock_get):
         mock_get.side_effect = self._mock_responses()
         records = self._make_connector().fetch(CREDS)
-        # 1 project + 2 env vars + 1 domain = 4
-        assert len(records) == 4
+        # 1 project + 2 env vars + 1 domain + 1 deployment-protection = 5.
+        # The deployment-protection record is derived from the project response
+        # (no extra API call) so vercel_preview_unprotected has a reachable
+        # production record source.
+        assert len(records) == 5
 
     @patch("httpx.get")
     def test_fetch_record_types(self, mock_get):
         mock_get.side_effect = self._mock_responses()
         records = self._make_connector().fetch(CREDS)
         types = {r["record_type"] for r in records}
-        assert types == {VERCEL_PROJECT, VERCEL_ENV_VAR, VERCEL_DOMAIN}
+        assert types == {
+            VERCEL_PROJECT,
+            VERCEL_ENV_VAR,
+            VERCEL_DOMAIN,
+            VERCEL_DEPLOYMENT_PROTECTION,
+        }
 
     @patch("httpx.get")
     def test_fetch_no_value_in_any_record(self, mock_get):

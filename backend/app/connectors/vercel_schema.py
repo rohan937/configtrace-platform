@@ -133,6 +133,10 @@ class VercelDomainRecord(TypedDict):
     verified: bool           # whether Vercel has verified domain ownership
     git_branch: Optional[str]    # branch-specific domain (preview only)
     redirect: Optional[str]      # redirect target if this domain redirects
+    # Normalized boolean derived from ``redirect``: True when this domain only
+    # redirects elsewhere (an alias, not a production-serving surface). Security
+    # rules consume this flag instead of the raw target URL.
+    redirect_only: bool
     created_at: Optional[int]    # Unix ms timestamp
     updated_at: Optional[int]    # Unix ms timestamp
 
