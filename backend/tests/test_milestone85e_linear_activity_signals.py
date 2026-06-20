@@ -689,12 +689,12 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m85f(self) -> None:
-        # M85G is complete; framework now points to M85H.
+        # M85H is complete; framework now points to M85I.
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M85H" in planned, (
-            f"planned_next_stage should reference M85H; got: {planned!r}"
+        assert "M85I" in planned, (
+            f"planned_next_stage should reference M85I; got: {planned!r}"
         )
 
     def test_planned_next_stage_not_m85e(self) -> None:

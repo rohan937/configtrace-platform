@@ -1090,12 +1090,13 @@ _LINEAR = ProviderCapability(
         "signals derived from ingested activity events. M85F adds Linear Risk x Activity "
         "Correlations, linking security rule violations to proximate activity events. "
         "M85G adds Linear demo and QA. "
+        "M85H adds Linear provider depth QA. "
         "Authentication uses a Linear API key (read-only). API key is stored encrypted "
         "and never returned in API responses, never logged, and never copied to resource "
         "metadata. Issue titles, descriptions, comments, attachments, user emails, user "
         "names, member identities, raw URLs, webhook secrets, and customer data are "
         "never fetched or stored. "
-        "planned_next_stage: M85H: Linear Provider Depth QA."
+        "planned_next_stage: M85I: Linear Cross-Cloud UX Polish."
     ),
 )
 

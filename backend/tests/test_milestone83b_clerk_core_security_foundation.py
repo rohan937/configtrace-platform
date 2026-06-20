@@ -1253,6 +1253,7 @@ class TestCapabilityMatrix:
             "M85F: Linear Risk × Activity Correlations",
             "M85G: Linear Demo + QA",
             "M85H: Linear Provider Depth QA",
+            "M85I: Linear Cross-Cloud UX Polish",
         ), (
             f"Unexpected planned_next_stage value: {stage!r}"
         )

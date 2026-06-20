@@ -652,12 +652,12 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m85g(self) -> None:
-        # M85G is complete; framework now points to M85H.
+        # M85H is complete; framework now points to M85I.
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M85H" in planned, (
-            f"planned_next_stage should reference M85H; got: {planned!r}"
+        assert "M85I" in planned, (
+            f"planned_next_stage should reference M85I; got: {planned!r}"
         )
         assert "M85F" not in planned, (
             f"planned_next_stage should no longer reference M85F; got: {planned!r}"
@@ -692,7 +692,8 @@ class TestFrontend:
     def test_linear_correlation_types_in_page(self, correlations_page: str) -> None:
         # Page uses TYPE_OPTIONS_BY_PROVIDER dict pattern; correlation types are
         # embedded under the "linear" key rather than a named constant.
-        assert "linear_config_activity_correlation" in correlations_page
+        # linear_config_activity_correlation removed in M85H (not a backend type).
+        assert "linear_config_activity_correlation" not in correlations_page
         for ct in [
             "linear_workspace_risk_activity_correlation",
             "linear_webhook_risk_activity_correlation",

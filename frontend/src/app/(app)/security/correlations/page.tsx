@@ -251,7 +251,6 @@ const TYPE_OPTIONS_BY_PROVIDER: Record<string, string[]> = {
     "linear_view_risk_activity_correlation",
     "linear_cycle_risk_activity_correlation",
     "linear_integration_risk_activity_correlation",
-    "linear_config_activity_correlation",
   ],
 };
 const HIGH = new Set(["critical", "high"]);

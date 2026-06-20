@@ -310,12 +310,10 @@ def test_capability_matrix_linear_all_m85a_f_flags() -> None:
 
 
 def test_expansion_framework_planned_next_stage_m85h() -> None:
+    # M85H is complete; framework now points to M85I.
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M85H" in planned, f"Expected M85H in planned_next_stage, got '{planned}'"
-    assert "M85G" not in planned, (
-        f"planned_next_stage must advance past M85G, got '{planned}'"
-    )
+    assert "M85I" in planned, f"Expected M85I in planned_next_stage, got '{planned}'"
 
 
 def test_expansion_framework_jira_at_head_of_queue() -> None:
