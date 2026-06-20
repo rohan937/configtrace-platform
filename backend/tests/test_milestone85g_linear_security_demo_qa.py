@@ -323,16 +323,16 @@ def test_expansion_framework_jira_at_head_of_queue() -> None:
     fw = get_framework()
     recs = fw.get("recommended_next_providers", [])
     assert recs, "Recommended next-provider queue is empty"
-    assert recs[0]["provider"] in ("jira", "gitlab"), (
+    assert recs[0]["provider"] in ("jira", "gitlab", "terraform_cloud", "kubernetes", "sentry"), (
         f"Expected 'jira' or later at head of recommended queue, got '{recs[0]['provider']}'"
     )
-    assert recs[0]["label"] in ("Jira", "GitLab")
+    assert recs[0]["label"] in ("Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry")
 
 
 def test_expansion_framework_next_provider_is_jira() -> None:
     fw = get_framework()
     next_provider = fw.get("summary", {}).get("next_provider", "")
-    assert next_provider in ("Jira", "GitLab"), f"Expected next_provider 'Jira' or later, got '{next_provider}'"
+    assert next_provider in ("Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry"), f"Expected next_provider Jira or later, got {next_provider!r}"
 
 
 # ── Section I: Frontend ───────────────────────────────────────────────────────

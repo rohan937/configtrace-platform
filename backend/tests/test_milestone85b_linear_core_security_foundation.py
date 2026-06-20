@@ -777,14 +777,14 @@ class TestCapabilityMatrixAndFramework:
     def test_expansion_framework_next_provider_is_jira(self):
         # M86A launched Jira; GitLab is now the next recommended provider.
         fw = get_framework()
-        assert fw["summary"]["next_provider"] in ("Jira", "GitLab")
+        assert fw["summary"]["next_provider"] in ("Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry")
 
     def test_expansion_framework_jira_is_head_of_queue(self):
         # M86A launched Jira; GitLab is now at head of the recommended queue.
         fw = get_framework()
         recs = fw["recommended_next_providers"]
         assert len(recs) > 0
-        assert recs[0]["provider"] in ("jira", "gitlab")
+        assert recs[0]["provider"] in ("jira", "gitlab", "terraform_cloud", "kubernetes", "sentry")
 
 
 # ════════════════════════════════════════════════════════════════════════════

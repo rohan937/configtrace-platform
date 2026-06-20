@@ -36,8 +36,11 @@ export type ProviderId =
   // ── M85A — Linear drift provider foundation ───────────────────────────────
   | "linear"
   // ── M86A — Jira drift provider foundation ─────────────────────────────────
-  | "jira";
+  | "jira"
+  // ── M87A — GitLab drift provider foundation ───────────────────────────────
+  | "gitlab";
 
+// ProviderCategory already has "devops" from M85A; no new category needed for GitLab.
 export type ProviderCategory =
   | "cdn_dns"
   | "developer"
@@ -475,6 +478,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   // ── M86A — Jira drift provider foundation ──────────────────────────────────
   jira: {
     id: "jira",
+
     label: "Jira",
     shortLabel: "Jira",
     category: "devops",
@@ -496,6 +500,31 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     color: "#0052CC",
     bgColor: "rgba(0,82,204,0.10)",
     borderColor: "rgba(0,82,204,0.25)",
+  },
+
+  // ── M87A — GitLab drift provider foundation ────────────────────────────────
+  gitlab: {
+    id: "gitlab",
+    label: "GitLab",
+    shortLabel: "GitLab",
+    category: "devops",
+    description:
+      "Track GitLab project configuration, group settings, branch protection rules, webhooks, CI/CD variable posture, deploy keys, runners, and MR approval configuration. Snapshot-only — no project names, paths, issue titles, MR content, CI variable values, deploy key material, or user identities are ever stored.",
+    monitoredSurfaces: [
+      "Projects (visibility, feature flags, posture counts — no project names, paths, or repo content)",
+      "Groups (visibility, member count category — no group names or member identities)",
+      "Branch protection rules (access level categories, force-push flag — no branch names)",
+      "Webhooks (scheme, SSL verification, secret presence — never raw URL or secret value)",
+      "CI/CD variable summaries (counts only — never variable names or values)",
+      "Deploy key summaries (counts only — never key titles, fingerprints, or key material)",
+      "Runner summaries (posture counts — never runner tokens, IPs, or descriptions)",
+      "MR approval summaries (approval posture booleans/counts — never approver identities)",
+    ],
+    trustNote:
+      "ConfigTrace stores GitLab credentials encrypted and uses them only to read selected configuration metadata. It does not store GitLab access token values, project names, namespace paths, web/ssh/http URLs, branch names, issue titles, MR titles, commit messages, CI variable names or values, deploy key titles or fingerprints, webhook URLs or secrets, runner tokens or IPs, user emails, usernames, member identities, pipeline logs, artifacts, or customer PII. GitLab drift snapshots and risk classification are in foundation stage. Security rules planned next (M87B).",
+    color: "#fc6d26",
+    bgColor: "rgba(252,109,38,0.10)",
+    borderColor: "rgba(252,109,38,0.25)",
   },
 };
 
@@ -525,6 +554,8 @@ export const PROVIDER_IDS: ProviderId[] = [
   "linear",
   // ── M86A — Jira drift provider foundation ─────────────────────────────────
   "jira",
+  // ── M87A — GitLab drift provider foundation ───────────────────────────────
+  "gitlab",
 ];
 
 /**
@@ -559,6 +590,8 @@ export const CONNECTABLE_PROVIDER_IDS: ProviderId[] = [
   "linear",
   // ── M86A — Jira drift provider foundation ─────────────────────────────────
   "jira",
+  // ── M87A — GitLab drift provider foundation ───────────────────────────────
+  "gitlab",
 ];
 
 /**

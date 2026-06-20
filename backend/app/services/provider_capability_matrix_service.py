@@ -1102,6 +1102,53 @@ _LINEAR = ProviderCapability(
 )
 
 
+_GITLAB = ProviderCapability(
+    provider="gitlab",
+    label="GitLab",
+    category="devops",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=True,
+        drift_risk_classification=True,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="partial",
+    notes=(
+        "GitLab DevOps configuration drift foundation (M87A). "
+        "Drift snapshots cover 9 safe configuration surfaces from the GitLab REST API v4: "
+        "instance posture (version/enterprise/settings — never base URL), "
+        "projects (visibility, feature flags, per-project posture counts — never project names, "
+        "paths, web_url, ssh_url, http_url, or repository content), "
+        "groups (visibility, member count category, subgroup counts — never group names or paths), "
+        "branch protection rules (access level categories, force-push flag — never branch names), "
+        "webhooks (scheme, SSL verification, secret presence — never raw URL or secret), "
+        "CI variable summaries (counts only — never variable names or values), "
+        "deploy key summaries (counts only — never key titles, fingerprints, or key material), "
+        "runner summaries (posture counts — never runner tokens, IPs, or descriptions), "
+        "and MR approval summaries (approval posture booleans/counts — never approver identities). "
+        "Drift risk classification (M87A): high for public visibility changes, force-push enabled, "
+        "webhook SSL disabled, webhook secret removed, unprotected/unmasked CI variable increase, "
+        "deploy key write-count increase; medium for approval reductions, code-owner approval "
+        "disabled, event scope broadening; low for count-only metadata changes. "
+        "Authentication uses a GitLab personal access token (stored encrypted, never returned). "
+        "Security rules planned for M87B. Activity ingestion, signals, correlations, "
+        "and demo planned for M87C–M87G. "
+        "planned_next_stage: M87B: GitLab Core Security Foundation."
+    ),
+)
+
+
 _JIRA = ProviderCapability(
     provider="jira",
     label="Jira",
@@ -1224,6 +1271,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _PAGERDUTY,
     _LINEAR,
     _JIRA,
+    _GITLAB,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

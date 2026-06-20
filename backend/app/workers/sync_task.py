@@ -336,6 +336,12 @@ def sync_integration(
 
                 connector = JiraConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "gitlab":
+                # SECURITY: access_token is NEVER logged.
+                from app.connectors.gitlab import GitLabConnector
+
+                connector = GitLabConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

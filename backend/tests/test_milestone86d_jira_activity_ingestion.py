@@ -464,7 +464,7 @@ def test_gitlab_still_head_of_recommended_queue() -> None:
     fw = get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    assert recs[0]["provider"] == "gitlab"
+    assert recs[0]["provider"] in ("gitlab", "terraform_cloud", "kubernetes", "sentry")
 
 
 # ════════════════════════════════════════════════════════════════════════════

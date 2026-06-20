@@ -180,9 +180,9 @@ def test_expansion_framework_pagerduty_first_recommended():
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
-    # After M84A, PagerDuty launched and Linear moved to head.
-    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab")
-    assert recs[0]["label"] in ("PagerDuty", "Linear", "Jira", "GitLab")
+    # After M87A, GitLab launched and Terraform Cloud moved to head.
+    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab", "terraform_cloud", "kubernetes", "sentry")
+    assert recs[0]["label"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Terraform Cloud", "Kubernetes", "Sentry")
 
 
 def test_expansion_framework_datadog_not_in_recommended():

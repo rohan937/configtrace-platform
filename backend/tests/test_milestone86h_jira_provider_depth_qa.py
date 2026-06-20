@@ -637,8 +637,9 @@ def test_gitlab_head_of_recommended_queue() -> None:
     fw = get_framework()
     recs = fw.get("recommended_next_providers", [])
     assert recs, "Recommended next-provider queue is empty"
-    assert recs[0]["provider"] == "gitlab", (
-        f"Expected 'gitlab' at head of recommended queue, got '{recs[0]['provider']}'"
+    # M87A launched GitLab; Terraform Cloud is now head. Accept GitLab or later.
+    assert recs[0]["provider"] in ("gitlab", "terraform_cloud", "kubernetes", "sentry"), (
+        f"Expected GitLab or later at head of recommended queue, got '{recs[0]['provider']}'"
     )
     providers = [r["provider"] for r in recs]
     assert "jira" not in providers, "Jira should not be in the recommended queue (launched M86A)"

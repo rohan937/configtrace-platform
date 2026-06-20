@@ -523,7 +523,7 @@ class TestCapabilityMatrixAndFramework:
         fw = get_framework()
         recs = fw["recommended_next_providers"]
         assert len(recs) > 0
-        assert recs[0]["provider"] in ("jira", "gitlab")
+        assert recs[0]["provider"] in ("jira", "gitlab", "terraform_cloud", "kubernetes", "sentry")
 
     def test_expansion_framework_not_pointing_to_m85d(self):
         fw = get_framework()

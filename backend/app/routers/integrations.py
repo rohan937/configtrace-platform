@@ -249,6 +249,13 @@ def _build_credentials(body: IntegrationCreateRequest) -> dict:
             "email": body.jira_email,
             "api_token": body.jira_api_token,
         }
+    # ── M87A — GitLab drift provider ─────────────────────────────────────────
+    elif body.provider == "gitlab":
+        # SECURITY: gitlab_access_token is NEVER logged here or in the service.
+        creds: dict = {"access_token": body.gitlab_access_token}
+        if body.gitlab_base_url:
+            creds["base_url"] = body.gitlab_base_url
+        return creds
     return {}
 
 

@@ -608,7 +608,7 @@ def test_gitlab_still_head_of_recommended_queue() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     recs = fw.get("recommended_next_providers", [])
-    assert recs and recs[0]["provider"] in ("gitlab", "jira")
+    assert recs and recs[0]["provider"] in ("gitlab", "jira", "terraform_cloud", "kubernetes", "sentry")
 
 
 # ── 38. Wording test ───────────────────────────────────────────────────────────

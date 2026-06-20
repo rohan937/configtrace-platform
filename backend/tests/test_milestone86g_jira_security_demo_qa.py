@@ -475,14 +475,14 @@ def test_expansion_framework_jira_points_to_m86i() -> None:
 
 
 def test_gitlab_still_head_of_recommended_queue() -> None:
-    """GitLab must be the head of the recommended next-provider queue."""
+    """At M86G, GitLab was head. M87A launched GitLab; Terraform Cloud is now head."""
     fw = get_framework()
     recs = fw.get("recommended_next_providers", [])
     assert recs, "Recommended next-provider queue is empty"
-    assert recs[0]["provider"] == "gitlab", (
-        f"Expected 'gitlab' at head of recommended queue, got '{recs[0]['provider']}'"
+    # Accept GitLab or any later provider (GitLab launched in M87A).
+    assert recs[0]["provider"] in ("gitlab", "terraform_cloud", "kubernetes", "sentry"), (
+        f"Expected GitLab or later at head of recommended queue, got '{recs[0]['provider']}'"
     )
-    assert recs[0]["label"] == "GitLab"
 
 
 def test_marketing_video_untouched() -> None:

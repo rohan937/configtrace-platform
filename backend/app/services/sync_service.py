@@ -267,6 +267,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "pagerduty",
         "linear",
         "jira",
+        "gitlab",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

@@ -167,14 +167,16 @@ def test_expansion_framework_jira_arc_complete() -> None:
 
 
 def test_expansion_framework_gitlab_is_next() -> None:
-    """GitLab is the head of the recommended-next-providers queue."""
+    """GitLab was the head of the recommended queue at M86I; M87A launched it.
+    Now Terraform Cloud is head. Accept GitLab or any later provider."""
     fw = get_framework()
     recommended = fw.get("recommended_next_providers", [])
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    assert "gitlab" in provider.lower() or "GitLab" in str(first), (
-        f"GitLab should be head of recommended_next_providers; got: {provider!r}"
+    # GitLab launched in M87A — Terraform Cloud is now head; accept either.
+    assert "gitlab" in provider.lower() or "terraform" in provider.lower() or "GitLab" in str(first) or "Terraform" in str(first), (
+        f"Head of recommended_next_providers should be GitLab or later; got: {provider!r}"
     )
 
 
@@ -318,14 +320,16 @@ def test_jira_not_starting_gitlab() -> None:
 
 
 def test_jira_gitlab_remains_planned_next_provider() -> None:
-    """The expansion-framework recommended queue still has GitLab present."""
+    """GitLab launched in M87A; the queue now contains Terraform Cloud and later.
+    Accept GitLab (still in queue at pre-M87A) or later providers."""
     fw = get_framework()
     recommended = fw.get("recommended_next_providers", [])
     provider_keys = [
         r.get("provider", "").lower() for r in recommended if isinstance(r, dict)
     ]
-    assert "gitlab" in provider_keys, (
-        f"GitLab should be in recommended_next_providers; got: {provider_keys}"
+    # After M87A, GitLab launched; Terraform Cloud is now the head. Accept either.
+    assert "gitlab" in provider_keys or "terraform_cloud" in provider_keys, (
+        f"Recommended queue should contain GitLab or Terraform Cloud; got: {provider_keys}"
     )
 
 

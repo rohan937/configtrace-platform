@@ -474,48 +474,128 @@ class RecommendedProvider:
 # launched in M84A and is no longer in the recommended queue. Linear
 # launched in M85A and is no longer in the recommended queue. Jira
 # launched in M86A and completed its arc in M86I; Jira is no longer in
-# the recommended queue. GitLab is now the head of the recommended queue
-# (GitLab → Terraform Cloud → Kubernetes → Sentry).
+# the recommended queue. GitLab launched in M87A and is no longer in the
+# recommended queue. Terraform Cloud is now the head of the recommended
+# queue (Terraform Cloud → Kubernetes → Sentry).
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
     RecommendedProvider(
-        provider="gitlab",
-        label="GitLab",
+        provider="terraform_cloud",
+        label="Terraform Cloud",
         category="devops",
         why_high_fit=(
-            "GitLab webhook configuration, CI/CD pipeline security settings, "
-            "project access controls, and deploy token posture are common "
-            "DevOps configuration surfaces. Branch protection drift and "
-            "overly-broad access-level changes are reviewable security signals."
+            "Terraform Cloud workspace variable sets, team access levels, "
+            "and run policies are infrastructure configuration surfaces with "
+            "well-defined drift patterns. Variable set scope changes and "
+            "workspace execution mode changes are reviewable security signals."
         ),
         drift_surfaces=(
-            "webhook_endpoints",
-            "project_access_controls",
-            "branch_protection_rules",
-            "deploy_tokens",
-            "ci_cd_settings",
+            "workspace_variable_sets",
+            "team_access_levels",
+            "run_policies",
+            "workspace_execution_mode",
+            "organization_settings",
         ),
         security_surfaces=(
-            "webhook_http_endpoint",
-            "overly_broad_project_access",
-            "branch_protection_missing",
-            "deploy_token_posture",
+            "overly_broad_team_access",
+            "unprotected_variable_set",
+            "run_policy_weakened",
+            "workspace_execution_mode_change",
         ),
         sensitive_data_to_avoid=(
-            "issue_summaries_or_descriptions",
+            "variable_values_or_env_secrets",
             "user_emails_unless_safe",
-            "auth_tokens_or_api_keys",
-            "raw_webhook_payloads",
-            "ci_cd_variable_values",
-            "repository_content",
-            "merge_request_content",
+            "oauth_tokens_or_api_keys",
+            "state_file_contents",
+            "plan_output_or_logs",
+            "run_payload_contents",
         ),
-        first_milestone_name="M87A: GitLab Drift Provider Foundation",
+        first_milestone_name="M88A: Terraform Cloud Drift Provider Foundation",
         notes=(
-            "Use the GitLab REST API v4. Focus on /api/v4/hooks (group/system "
-            "webhook endpoint URLs and triggers), /api/v4/projects/:id/protected_branches "
-            "(branch protection rules), and /api/v4/projects/:id/deploy_tokens "
-            "(token metadata — never the token value). Never store issue content, "
-            "MR content, CI/CD variable values, or user emails."
+            "Use the Terraform Cloud REST API. Focus on workspace variable sets "
+            "(scope and category — never variable values), team access levels "
+            "(access category — never member identities), and run policy settings "
+            "(enforcement level — never policy code). Never store state files, "
+            "plan output, run logs, variable values, or user emails."
+        ),
+    ),
+    RecommendedProvider(
+        provider="kubernetes",
+        label="Kubernetes",
+        category="devops",
+        why_high_fit=(
+            "Kubernetes RBAC, NetworkPolicy, PodSecurityPolicy/Admission, "
+            "and ServiceAccount posture are common cluster configuration surfaces "
+            "with high-impact drift patterns. Overly broad ClusterRole bindings "
+            "and missing NetworkPolicies are reviewable security signals."
+        ),
+        drift_surfaces=(
+            "rbac_roles_and_bindings",
+            "network_policies",
+            "service_accounts",
+            "pod_security_admission",
+            "namespace_resource_quotas",
+        ),
+        security_surfaces=(
+            "overly_broad_cluster_role",
+            "missing_network_policy",
+            "service_account_secret_posture",
+            "pod_security_admission_weakened",
+        ),
+        sensitive_data_to_avoid=(
+            "secret_values_or_data",
+            "config_map_values_if_sensitive",
+            "kubeconfig_credentials",
+            "service_account_tokens",
+            "pod_environment_variable_values",
+            "container_image_registry_credentials",
+        ),
+        first_milestone_name="M89A: Kubernetes Drift Provider Foundation",
+        notes=(
+            "Use the Kubernetes API (in-cluster or kubeconfig). Focus on RBAC "
+            "ClusterRoles and bindings (count and category — never raw rule expressions), "
+            "NetworkPolicies (count and presence — never raw selectors), and "
+            "ServiceAccount posture (token automount flag). Never store Secret values, "
+            "ConfigMap values, kubeconfig credentials, or pod environment variable values."
+        ),
+    ),
+    RecommendedProvider(
+        provider="sentry",
+        label="Sentry",
+        category="observability",
+        why_high_fit=(
+            "Sentry project DSN exposure, internal integration token posture, "
+            "data scrubbing settings, and alert rule scope are common DevOps "
+            "configuration surfaces with reviewable drift patterns. "
+            "DSN oversharing and disabled data scrubbing are security signals."
+        ),
+        drift_surfaces=(
+            "project_dsn_posture",
+            "internal_integration_tokens",
+            "data_scrubbing_settings",
+            "alert_rule_scope",
+            "team_access_settings",
+        ),
+        security_surfaces=(
+            "project_dsn_broad_scope",
+            "data_scrubbing_disabled",
+            "internal_integration_broad_scope",
+            "alert_rule_scope_expanded",
+        ),
+        sensitive_data_to_avoid=(
+            "dsn_values_or_tokens",
+            "event_payload_contents",
+            "user_emails_or_identities",
+            "stack_trace_contents",
+            "raw_alert_payloads",
+            "internal_integration_secrets",
+        ),
+        first_milestone_name="M90A: Sentry Drift Provider Foundation",
+        notes=(
+            "Use the Sentry REST API. Focus on project settings (data scrubbing booleans — "
+            "never DSN values), internal integrations (scope category — never token values), "
+            "and alert rules (event type category — never raw alert payloads). "
+            "Never store DSN values, event payloads, stack traces, user identities, or "
+            "internal integration secrets."
         ),
     ),
 ]
@@ -587,6 +667,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M87A: GitLab Drift Provider Foundation",
+            "planned_next_stage": "M87B: GitLab Core Security Foundation",
         },
     }

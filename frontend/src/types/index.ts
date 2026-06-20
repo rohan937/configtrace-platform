@@ -180,7 +180,9 @@ export interface IntegrationCreateRequest {
     // ── M85A — Linear drift provider foundation ───────────────────────────────
     | "linear"
     // ── M86A — Jira drift provider foundation ─────────────────────────────────
-    | "jira";
+    | "jira"
+    // ── M87A — GitLab drift provider foundation ───────────────────────────────
+    | "gitlab";
   display_name: string;
   // ── Cloudflare fields ──────────────────────────────────────────────────────
   /** Sent to backend once; never stored in frontend state after submission. */
@@ -361,6 +363,19 @@ export interface IntegrationCreateRequest {
    * Stored encrypted server-side — NEVER returned in API responses.
    */
   jira_api_token?: string;
+  // ── GitLab fields (M87A) ─────────────────────────────────────────────────
+  /**
+   * GitLab personal access token with read_api or api scope.
+   * Required for the gitlab provider. Sent to backend once; never stored in
+   * frontend state after submission.
+   * Stored encrypted server-side — NEVER returned in API responses.
+   */
+  gitlab_access_token?: string;
+  /**
+   * Optional: base URL for self-managed GitLab instances.
+   * Defaults to https://gitlab.com if omitted.
+   */
+  gitlab_base_url?: string;
 }
 
 /** Matches backend IntegrationResponse schema (no user_id, no updated_at). */

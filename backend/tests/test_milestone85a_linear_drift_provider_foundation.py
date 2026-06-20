@@ -837,10 +837,11 @@ def test_i5_first_recommended_provider_is_jira() -> None:
     assert len(recs) > 0, "recommended_next_providers is empty"
     first_provider = recs[0]["provider"].lower()
     first_label = recs[0]["label"].lower()
-    # After M86A launched Jira, GitLab became the first recommended provider.
+    # After M87A launched GitLab, Terraform Cloud became the first recommended provider.
     assert ("jira" in first_provider or "jira" in first_label
-            or "gitlab" in first_provider or "gitlab" in first_label), (
-        f"First recommended provider should be Jira or GitLab, got {recs[0]['provider']!r}"
+            or "gitlab" in first_provider or "gitlab" in first_label
+            or "terraform" in first_provider or "terraform" in first_label), (
+        f"First recommended provider should be Jira, GitLab, or later, got {recs[0]['provider']!r}"
     )
 
 

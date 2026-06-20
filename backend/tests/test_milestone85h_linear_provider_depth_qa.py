@@ -770,7 +770,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
-        assert recs and recs[0]["provider"] in ("jira", "linear", "gitlab"), (
+        assert recs and recs[0]["provider"] in ("jira", "linear", "gitlab", "terraform_cloud", "kubernetes", "sentry"), (
             f"Jira should be head of recommended queue; got {recs[0]['provider'] if recs else None!r}"
         )
 

@@ -35,6 +35,8 @@ import PagerDutyIntegrationForm from "@/components/integrations/PagerDutyIntegra
 import LinearIntegrationForm from "@/components/integrations/LinearIntegrationForm";
 // ── M86A — Jira drift provider foundation ────────────────────────────────────
 import JiraIntegrationForm from "@/components/integrations/JiraIntegrationForm";
+// ── M87A — GitLab drift provider foundation ───────────────────────────────────
+import GitLabIntegrationForm from "@/components/integrations/GitLabIntegrationForm";
 import LoadingState from "@/components/common/LoadingState";
 import ErrorState from "@/components/common/ErrorState";
 import {
@@ -954,6 +956,48 @@ function ProviderSetupGuide({ provider, githubMode }: { provider: Provider; gith
     );
   }
 
+  // ── M87A — GitLab setup guide ──────────────────────────────────────────────
+
+  if (provider === "gitlab") {
+    return (
+      <>
+        <p style={{ margin: "0 0 14px", fontSize: "13px", fontWeight: 600, color: "#e8eaf0" }}>
+          How to connect a GitLab instance
+        </p>
+        <SetupSteps steps={[
+          {
+            heading: "Sign in to your GitLab account.",
+            body: <>Go to <strong style={{ color: "#e8eaf0" }}>gitlab.com</strong> (or your
+              self-managed instance) and sign in.</>,
+          },
+          {
+            heading: "Create a personal access token.",
+            body: <>Open <strong style={{ color: "#e8eaf0" }}>User Settings → Access Tokens</strong>{" "}
+              and click &ldquo;Add new token&rdquo;. Select the{" "}
+              <strong style={{ color: "#e8eaf0" }}>read_api</strong> scope. Copy the token — it is
+              only shown once.</>,
+          },
+          {
+            heading: "Paste the token in the field below.",
+            body: <>The token is stored encrypted and never returned in any API response.</>,
+          },
+          {
+            heading: "Optional: enter your self-managed GitLab URL.",
+            body: <>Leave blank to connect to gitlab.com. For self-managed GitLab, enter your
+              instance base URL.</>,
+          },
+        ]} />
+        <p style={{ margin: "12px 0 0", fontSize: "12px", color: "#3a3d4a", lineHeight: 1.6 }}>
+          ConfigTrace uses a read-only token to snapshot configuration metadata only. It does
+          not read project names, branch names, issue titles, MR content, CI variable values,
+          deploy key material, webhook URLs, user emails, or customer data.
+          GitLab drift snapshots and risk classification are in foundation stage.
+          Security rules planned next.
+        </p>
+      </>
+    );
+  }
+
   // ── M86A — Jira setup guide ───────────────────────────────────────────────
 
   if (provider === "jira") {
@@ -1153,6 +1197,10 @@ export default function IntegrationsPage() {
     // ── M86A — Jira ─────────────────────────────────────────────────────────────
     if (selectedProvider === "jira") {
       return <JiraIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
+    }
+    // ── M87A — GitLab ────────────────────────────────────────────────────────────
+    if (selectedProvider === "gitlab") {
+      return <GitLabIntegrationForm onCreated={handleCreated} onCancel={handleCancel} />;
     }
     // GitHub — two sub-modes
     if (githubMode === "app") {

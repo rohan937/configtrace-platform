@@ -104,6 +104,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.shopify import classify_shopify_change
         return classify_shopify_change(change)
 
+    if record_type.startswith("gitlab_"):
+        from app.services.risk_rules.gitlab import classify_gitlab_change
+        return classify_gitlab_change(change)
+
     if record_type == "cloudflare_ruleset":
         from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change
         return classify_cloudflare_ruleset_change(change)

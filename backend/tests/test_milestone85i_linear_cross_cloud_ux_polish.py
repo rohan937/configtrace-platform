@@ -250,8 +250,11 @@ def test_b1_expansion_framework_planned_next_stage_m86a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
-    assert "M86A" in planned or "Jira" in planned, (
-        f"After M85I, planned_next_stage should point to M86A Jira; got: {planned!r}"
+    # The Jira arc (M86A–M86I) has since completed; the framework's single
+    # global planned_next_stage now advances to M87A: GitLab.
+    assert ("M86A" in planned or "Jira" in planned
+            or "M87A" in planned or "GitLab" in planned), (
+        f"After M85I, planned_next_stage should point to M86A/Jira or later; got: {planned!r}"
     )
 
 
@@ -281,10 +284,11 @@ def test_b4_jira_head_of_recommended_next_providers() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    # After M86A launched Jira, GitLab became the new head.
+    # After M87A launched GitLab, Terraform Cloud became the new head.
     assert ("jira" in provider.lower() or "Jira" in str(first)
-            or "gitlab" in provider.lower() or "GitLab" in str(first)), (
-        f"Jira or GitLab should be head of recommended_next_providers; got: {provider!r}"
+            or "gitlab" in provider.lower() or "GitLab" in str(first)
+            or "terraform" in provider.lower() or "Terraform" in str(first)), (
+        f"Jira, GitLab, or later should be head of recommended_next_providers; got: {provider!r}"
     )
 
 
@@ -292,11 +296,12 @@ def test_b5_expansion_framework_next_milestone_m86a() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_ms = summary.get("next_milestone", "") or ""
-    # After M86A launched Jira, M86B or M87A/GitLab is next.
+    # After M87A launched GitLab, M88A/Terraform Cloud is next.
     assert ("M86A" in next_ms or "Jira" in next_ms
             or "M86B" in next_ms
-            or "M87A" in next_ms or "GitLab" in next_ms), (
-        f"next_milestone should reference M86A/Jira, M86B, or M87A/GitLab; got: {next_ms!r}"
+            or "M87A" in next_ms or "GitLab" in next_ms
+            or "M88A" in next_ms or "Terraform" in next_ms), (
+        f"next_milestone should reference M86A/Jira, M87A/GitLab, or M88A/Terraform; got: {next_ms!r}"
     )
 
 
@@ -304,10 +309,11 @@ def test_b6_expansion_framework_next_provider_jira() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_prov = summary.get("next_provider", "") or ""
-    # After M86A launched Jira, GitLab is now next_provider.
+    # After M87A launched GitLab, Terraform Cloud is now next_provider.
     assert ("Jira" in next_prov or "jira" in next_prov.lower()
-            or "GitLab" in next_prov or "gitlab" in next_prov.lower()), (
-        f"next_provider should be Jira or GitLab; got: {next_prov!r}"
+            or "GitLab" in next_prov or "gitlab" in next_prov.lower()
+            or "Terraform" in next_prov or "terraform" in next_prov.lower()), (
+        f"next_provider should be Jira, GitLab, or Terraform Cloud; got: {next_prov!r}"
     )
 
 

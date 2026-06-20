@@ -78,6 +78,8 @@ class IntegrationCreateRequest(BaseModel):
         "linear",
         # M86A — Jira drift provider foundation.
         "jira",
+        # M87A — GitLab drift provider foundation.
+        "gitlab",
     ] = Field(
         ...,
         description=(
@@ -503,6 +505,27 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── GitLab fields (M87A) ────────────────────────────────────────────────
+    gitlab_access_token: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='gitlab'. "
+            "GitLab personal access token with read_api or api scope. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "SECURITY: never logged, never returned to the frontend, "
+            "never stored in plaintext or resource metadata."
+        ),
+    )
+    gitlab_base_url: Optional[str] = Field(
+        None,
+        description=(
+            "Optional when provider='gitlab'. "
+            "Base URL for self-managed GitLab instances (e.g. https://gitlab.example.com). "
+            "Defaults to https://gitlab.com if omitted. "
+            "Never stored as a raw URL in resource metadata."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -687,6 +710,11 @@ class IntegrationCreateRequest(BaseModel):
             if not self.jira_api_token:
                 raise ValueError(
                     "jira_api_token is required for Jira integrations."
+                )
+        elif self.provider == "gitlab":
+            if not self.gitlab_access_token:
+                raise ValueError(
+                    "gitlab_access_token is required for GitLab integrations."
                 )
         return self
 
