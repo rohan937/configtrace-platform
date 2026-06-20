@@ -64,8 +64,8 @@ EXPECTED_NEXT_PROVIDER_ORDER = [
     # M79A launched Twilio. M80A launched SendGrid. M81A launched Auth0
     # (moved into PROVIDER_CAPABILITIES_PARTIAL). M82A launched Datadog.
     # M83A launched Clerk. M84A launched PagerDuty. M85A launched Linear.
-    # M86A launched Jira. M87A launched GitLab. Terraform Cloud is now the head.
-    "terraform_cloud",
+    # M86A launched Jira. M87A launched GitLab. M88A launched Terraform Cloud.
+    # M88I completed the Terraform Cloud arc; Kubernetes is now the head.
     "kubernetes",
     "sentry",
 ]
@@ -279,6 +279,8 @@ def test_get_framework_structure():
         or "GitLab" in summary["planned_next_stage"]
         or "M88A" in summary["planned_next_stage"]
         or "Terraform" in summary["planned_next_stage"]
+        or "M89A" in summary["planned_next_stage"]
+        or "Kubernetes" in summary["planned_next_stage"]
     )
 
 
@@ -352,7 +354,8 @@ def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
     assert "Linear" not in labels  # Linear launched in M85A
     assert "Jira" not in labels  # Jira launched in M86A
     assert "GitLab" not in labels  # GitLab launched in M87A
-    assert "Terraform Cloud" in labels  # Terraform Cloud is now head after M87A
+    assert "Terraform Cloud" not in labels  # Terraform Cloud launched in M88A and arc completed M88I
+    assert "Kubernetes" in labels  # Kubernetes is now head after M88I
 
 
 def test_endpoint_unauthenticated_rejected():

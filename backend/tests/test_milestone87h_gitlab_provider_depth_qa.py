@@ -945,14 +945,15 @@ def test_expansion_framework_planned_next_stage_m87i() -> None:
     from app.services.provider_expansion_framework import get_framework
     planned = get_framework().get("summary", {}).get("planned_next_stage", "")
     assert ("M87I" in planned or "Cross-Cloud" in planned
-            or "M88A" in planned or "Terraform" in planned)
+            or "M88A" in planned or "Terraform" in planned
+            or "M89A" in planned or "Kubernetes" in planned)
 
 
 def test_expansion_framework_terraform_cloud_in_queue() -> None:
     from app.services.provider_expansion_framework import get_framework
     recs = get_framework().get("recommended_next_providers", [])
     provider_keys = [r.get("provider") for r in recs]
-    assert "terraform_cloud" in provider_keys or "terraform" in str(provider_keys)
+    assert "terraform_cloud" in provider_keys or "kubernetes" in provider_keys or "terraform" in str(provider_keys)
 
 
 def test_expansion_framework_gitlab_not_in_recommended_queue() -> None:

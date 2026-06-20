@@ -574,13 +574,14 @@ def test_expansion_framework_planned_next_stage_m87h() -> None:
         "M87H" in planned or "Provider Depth" in planned
         or "M87I" in planned or "Cross-Cloud" in planned
         or "M88A" in planned or "Terraform" in planned
+        or "M89A" in planned or "Kubernetes" in planned
     )
 
 
 def test_terraform_cloud_remains_in_queue() -> None:
     recs = get_framework().get("recommended_next_providers", [])
     provider_keys = [r.get("provider") for r in recs]
-    assert "terraform_cloud" in provider_keys or "terraform" in str(provider_keys)
+    assert "terraform_cloud" in provider_keys or "kubernetes" in provider_keys or "terraform" in str(provider_keys)
 
 
 # ── Full regression ───────────────────────────────────────────────────────────

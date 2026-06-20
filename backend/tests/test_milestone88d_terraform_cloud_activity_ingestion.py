@@ -1149,6 +1149,8 @@ def test_expansion_framework_planned_next_stage_is_m88e_or_later() -> None:
         or "M88F" in planned or "Correlations" in planned
         or "M88G" in planned or "Demo" in planned
         or "M88H" in planned or "Provider Depth QA" in planned
+        or "M88I" in planned or "Cross-Cloud" in planned
+        or "M89A" in planned or "Kubernetes" in planned
     ), f"planned_next_stage should point to M88E or later; got: {planned!r}"
 
 
@@ -1165,7 +1167,10 @@ def test_expansion_framework_terraform_cloud_in_queue() -> None:
     fw = get_framework()
     recommended = fw.get("recommended_next_providers", [])
     providers = [r.get("provider", "") for r in recommended if isinstance(r, dict)]
-    assert "terraform_cloud" in providers
+    # M88I complete — TC arc done; kubernetes is now head of queue
+    assert "terraform_cloud" in providers or "kubernetes" in providers, (
+        "Terraform Cloud or Kubernetes should be in the recommended queue"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

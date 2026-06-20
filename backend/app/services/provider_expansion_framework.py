@@ -474,50 +474,12 @@ class RecommendedProvider:
 # launched in M84A and is no longer in the recommended queue. Linear
 # launched in M85A and is no longer in the recommended queue. Jira
 # launched in M86A and completed its arc in M86I; Jira is no longer in
-# the recommended queue. GitLab launched in M87A and is no longer in the
-# recommended queue. Terraform Cloud is now the head of the recommended
-# queue (Terraform Cloud → Kubernetes → Sentry).
+# the recommended queue. GitLab launched in M87A and completed its arc in
+# M87I; GitLab is no longer in the recommended queue. Terraform Cloud
+# launched in M88A and completed its arc in M88I; Terraform Cloud is no
+# longer in the recommended queue. Kubernetes is now the head of the
+# recommended queue (Kubernetes → Sentry).
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="terraform_cloud",
-        label="Terraform Cloud",
-        category="devops",
-        why_high_fit=(
-            "Terraform Cloud workspace variable sets, team access levels, "
-            "and run policies are infrastructure configuration surfaces with "
-            "well-defined drift patterns. Variable set scope changes and "
-            "workspace execution mode changes are reviewable security signals."
-        ),
-        drift_surfaces=(
-            "workspace_variable_sets",
-            "team_access_levels",
-            "run_policies",
-            "workspace_execution_mode",
-            "organization_settings",
-        ),
-        security_surfaces=(
-            "overly_broad_team_access",
-            "unprotected_variable_set",
-            "run_policy_weakened",
-            "workspace_execution_mode_change",
-        ),
-        sensitive_data_to_avoid=(
-            "variable_values_or_env_secrets",
-            "user_emails_unless_safe",
-            "oauth_tokens_or_api_keys",
-            "state_file_contents",
-            "plan_output_or_logs",
-            "run_payload_contents",
-        ),
-        first_milestone_name="M88A: Terraform Cloud Drift Provider Foundation",
-        notes=(
-            "Use the Terraform Cloud REST API. Focus on workspace variable sets "
-            "(scope and category — never variable values), team access levels "
-            "(access category — never member identities), and run policy settings "
-            "(enforcement level — never policy code). Never store state files, "
-            "plan output, run logs, variable values, or user emails."
-        ),
-    ),
     RecommendedProvider(
         provider="kubernetes",
         label="Kubernetes",
@@ -667,6 +629,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M88H: Terraform Cloud Provider Depth QA",
+            "planned_next_stage": "M89A: Kubernetes Drift Provider Foundation",
         },
     }

@@ -49,7 +49,7 @@ type DemoProvider =
   | "github" | "aws" | "cloudflare" | "vercel"
   | "supabase" | "firebase" | "stripe" | "shopify" | "azure"
   | "google_cloud" | "twilio" | "sendgrid" | "auth0" | "datadog" | "clerk"
-  | "pagerduty" | "linear" | "jira" | "gitlab";
+  | "pagerduty" | "linear" | "jira" | "gitlab" | "terraform_cloud";
 
 interface ProviderDemoCard {
   provider: DemoProvider;

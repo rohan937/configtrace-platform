@@ -945,6 +945,8 @@ def test_expansion_framework_planned_next_stage_is_m88f_or_later() -> None:
         "M88F" in planned or "Correlations" in planned or "Risk" in planned
         or "M88G" in planned or "Demo" in planned or "QA" in planned
         or "M88H" in planned or "Provider Depth" in planned
+        or "M88I" in planned or "Cross-Cloud" in planned
+        or "M89A" in planned or "Kubernetes" in planned
     ), f"planned_next_stage should point to M88F or later; got: {planned!r}"
 
 

@@ -793,7 +793,9 @@ def test_expansion_framework_planned_next_stage_m88h() -> None:
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     assert (
         "M88H" in planned or "Provider Depth QA" in planned
-    ), f"planned_next_stage should point to M88H; got: {planned!r}"
+        or "M88I" in planned or "Cross-Cloud" in planned
+        or "M89A" in planned or "Kubernetes" in planned
+    ), f"planned_next_stage should point to M88H or later; got: {planned!r}"
 
 
 def test_expansion_framework_kubernetes_in_queue() -> None:

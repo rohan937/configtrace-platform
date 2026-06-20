@@ -831,6 +831,8 @@ def test_expansion_framework_planned_next_stage_is_m88g() -> None:
     assert (
         "M88G" in planned or "Demo" in planned or "QA" in planned
         or "M88H" in planned or "Provider Depth" in planned
+        or "M88I" in planned or "Cross-Cloud" in planned
+        or "M89A" in planned or "Kubernetes" in planned
     ), f"planned_next_stage should point to M88G or later; got: {planned!r}"
 
 

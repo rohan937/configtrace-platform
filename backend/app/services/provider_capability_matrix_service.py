@@ -1420,7 +1420,13 @@ _TERRAFORM_CLOUD = ProviderCapability(
         "signal/correlation/case-report layers), claim discipline (forbidden-phrase scan "
         "across all TC modules), false-positive behavior pins, demo isolation "
         "(seed/clear idempotency), router admin guards, and frontend consistency. "
-        "planned_next_stage: M88H: Terraform Cloud Provider Depth QA."
+        "M88I completes the Terraform Cloud arc with cross-cloud UX polish: Terraform "
+        "Cloud is a first-class completed provider across the internal security UX "
+        "surfaces (activity, signals, correlations, cases, rules), the provider "
+        "capability table, case-report/timeline labels, and the demo script, with "
+        "the roadmap handoff advancing to Kubernetes (M89A). Terraform Cloud arc "
+        "M88A–M88I complete. "
+        "planned_next_stage: M89A: Kubernetes Drift Provider Foundation."
     ),
 )
 

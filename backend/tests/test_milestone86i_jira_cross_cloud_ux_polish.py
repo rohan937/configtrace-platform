@@ -150,7 +150,8 @@ def test_jira_planned_next_stage_reflects_completion() -> None:
         f"planned_next_stage should have advanced past M86I; got: {planned!r}"
     )
     assert (planned in (None, "", "complete") or "M87A" in planned or "GitLab" in planned
-            or "M88A" in planned or "Terraform" in planned), (
+            or "M88A" in planned or "Terraform" in planned
+            or "M89A" in planned or "Kubernetes" in planned), (
         f"planned_next_stage should be None/''/'complete' or M87A/GitLab or later; got: {planned!r}"
     )
 
@@ -176,8 +177,10 @@ def test_expansion_framework_gitlab_is_next() -> None:
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
     # GitLab launched in M87A — Terraform Cloud is now head; accept either.
-    assert "gitlab" in provider.lower() or "terraform" in provider.lower() or "GitLab" in str(first) or "Terraform" in str(first), (
-        f"Head of recommended_next_providers should be GitLab or later; got: {provider!r}"
+    assert ("gitlab" in provider.lower() or "terraform" in provider.lower()
+            or "GitLab" in str(first) or "Terraform" in str(first)
+            or "kubernetes" in provider.lower() or "Kubernetes" in str(first)), (
+        f"Head of recommended_next_providers should be GitLab, Terraform, or Kubernetes; got: {provider!r}"
     )
 
 
@@ -330,8 +333,10 @@ def test_jira_gitlab_remains_planned_next_provider() -> None:
         r.get("provider", "").lower() for r in recommended if isinstance(r, dict)
     ]
     # After M87A, GitLab launched; Terraform Cloud is now the head. Accept either.
-    assert "gitlab" in provider_keys or "terraform_cloud" in provider_keys, (
-        f"Recommended queue should contain GitLab or Terraform Cloud; got: {provider_keys}"
+    # After M88I, Terraform Cloud arc is complete; kubernetes is now head
+    assert ("gitlab" in provider_keys or "terraform_cloud" in provider_keys
+            or "kubernetes" in provider_keys), (
+        f"Recommended queue should contain GitLab, Terraform Cloud, or Kubernetes; got: {provider_keys}"
     )
 
 

@@ -234,7 +234,8 @@ def test_b1_expansion_framework_planned_next_stage_m84a() -> None:
             or "M85A" in planned or "Linear" in planned
             or "M86A" in planned or "Jira" in planned
             or "M87A" in planned or "GitLab" in planned
-            or "M88A" in planned or "Terraform" in planned), (
+            or "M88A" in planned or "Terraform" in planned
+            or "M89A" in planned or "Kubernetes" in planned), (
         f"planned_next_stage should point to M84A+/PagerDuty/Linear/Jira/GitLab or later; got: {planned!r}"
     )
 
@@ -270,8 +271,9 @@ def test_b4_pagerduty_head_of_recommended_next_providers() -> None:
             or "linear" in provider.lower() or "Linear" in str(first)
             or "jira" in provider.lower() or "Jira" in str(first)
             or "gitlab" in provider.lower() or "GitLab" in str(first)
-            or "terraform" in provider.lower() or "Terraform" in str(first)), (
-        f"PagerDuty, Linear, Jira, GitLab, or later should be head of recommended_next_providers; got: {provider!r}"
+            or "terraform" in provider.lower() or "Terraform" in str(first)
+            or "kubernetes" in provider.lower() or "Kubernetes" in str(first)), (
+        f"PagerDuty, Linear, Jira, GitLab, Terraform, or Kubernetes should be head; got: {provider!r}"
     )
 
 
@@ -283,8 +285,9 @@ def test_b5_expansion_framework_next_milestone_m84a() -> None:
     assert ("M84A" in next_ms or "PagerDuty" in next_ms or "Linear" in next_ms
             or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms
             or "M87A" in next_ms or "GitLab" in next_ms
-            or "M88A" in next_ms or "Terraform" in next_ms), (
-        f"next_milestone should reference M84A/PagerDuty, Linear/M85A, Jira/M86A, GitLab/M87A, or Terraform/M88A; got: {next_ms!r}"
+            or "M88A" in next_ms or "Terraform" in next_ms
+            or "M89A" in next_ms or "Kubernetes" in next_ms), (
+        f"next_milestone should reference M84A+ through M89A/Kubernetes; got: {next_ms!r}"
     )
 
 
@@ -298,8 +301,9 @@ def test_b6_expansion_framework_next_provider_pagerduty() -> None:
             or "Linear" in next_prov or "linear" in next_prov.lower()
             or "Jira" in next_prov or "jira" in next_prov.lower()
             or "GitLab" in next_prov or "gitlab" in next_prov.lower()
-            or "Terraform" in next_prov or "terraform" in next_prov.lower()), (
-        f"next_provider should be PagerDuty, Linear, Jira, GitLab, or Terraform Cloud; got: {next_prov!r}"
+            or "Terraform" in next_prov or "terraform" in next_prov.lower()
+            or "Kubernetes" in next_prov or "kubernetes" in next_prov.lower()), (
+        f"next_provider should be PagerDuty, Linear, Jira, GitLab, Terraform, or Kubernetes; got: {next_prov!r}"
     )
 
 
@@ -548,8 +552,8 @@ def test_d15_pagerduty_in_next_providers_brief() -> None:
     # M85I complete; Linear arc done, Jira is now at head of NEXT_PROVIDERS_BRIEF.
     assert ("PagerDuty" in brief_block or "Linear" in brief_block
             or "Jira" in brief_block or "GitLab" in brief_block
-            or "Terraform" in brief_block), (
-        "NEXT_PROVIDERS_BRIEF should contain PagerDuty, Linear, Jira, or a later provider"
+            or "Terraform" in brief_block or "Kubernetes" in brief_block), (
+        "NEXT_PROVIDERS_BRIEF should contain PagerDuty, Linear, Jira, GitLab, Terraform, or Kubernetes"
     )
 
 

@@ -951,7 +951,8 @@ class TestExpansionFramework:
                 or "M87D" in planned or "GitLab Activity" in planned
                 or "M87E" in planned or "M87F" in planned or "Correlations" in planned
                 or "M87G" in planned or "Demo" in planned or "M87H" in planned or "M87I" in planned or "Cross-Cloud" in planned
-                or "M88A" in planned or "Terraform" in planned), (
+                or "M88A" in planned or "Terraform" in planned
+                or "M89A" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M87C or later; got: {planned!r}"
         )
 
@@ -960,7 +961,7 @@ class TestExpansionFramework:
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
         provider_keys = [r.get("provider") for r in recs]
-        assert "terraform_cloud" in provider_keys, (
+        assert "terraform_cloud" in provider_keys or "kubernetes" in provider_keys, (
             "Terraform Cloud should remain in recommended_next_providers"
         )
 

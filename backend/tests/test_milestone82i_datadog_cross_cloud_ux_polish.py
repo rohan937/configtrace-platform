@@ -162,7 +162,8 @@ def test_expansion_framework_planned_next_stage_is_m83a():
             or "M85A" in stage or "Linear" in stage
             or "M86A" in stage or "M86B" in stage or "Jira" in stage
             or "M87A" in stage or "GitLab" in stage
-            or "M88A" in stage or "Terraform" in stage), (
+            or "M88A" in stage or "Terraform" in stage
+            or "M89A" in stage or "Kubernetes" in stage), (
         f"planned_next_stage should reference M83A/Clerk or later; got {stage!r}"
     )
 

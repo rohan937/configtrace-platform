@@ -231,7 +231,8 @@ def test_b1_expansion_framework_planned_next_stage_m85a() -> None:
     assert ("M85A" in planned or "Linear" in planned
             or "M86A" in planned or "Jira" in planned
             or "M87A" in planned or "GitLab" in planned
-            or "M88A" in planned or "Terraform" in planned), (
+            or "M88A" in planned or "Terraform" in planned
+            or "M89A" in planned or "Kubernetes" in planned), (
         f"After M84I, planned_next_stage should point to M85A/Linear or later; got: {planned!r}"
     )
 
@@ -266,8 +267,9 @@ def test_b4_linear_head_of_recommended_next_providers() -> None:
     assert ("linear" in provider.lower() or "Linear" in str(first)
             or "jira" in provider.lower() or "Jira" in str(first)
             or "gitlab" in provider.lower() or "GitLab" in str(first)
-            or "terraform" in provider.lower() or "Terraform" in str(first)), (
-        f"Linear, Jira, GitLab, or later should be head of recommended_next_providers; got: {provider!r}"
+            or "terraform" in provider.lower() or "Terraform" in str(first)
+            or "kubernetes" in provider.lower() or "Kubernetes" in str(first)), (
+        f"Linear, Jira, GitLab, Terraform, or Kubernetes should be head; got: {provider!r}"
     )
 
 
@@ -279,8 +281,9 @@ def test_b5_expansion_framework_next_milestone_m85a() -> None:
     assert ("M85A" in next_ms or "Linear" in next_ms
             or "M86A" in next_ms or "Jira" in next_ms
             or "M87A" in next_ms or "GitLab" in next_ms
-            or "M88A" in next_ms or "Terraform" in next_ms), (
-        f"next_milestone should reference M85A/Linear, M86A/Jira, M87A/GitLab, or M88A/Terraform; got: {next_ms!r}"
+            or "M88A" in next_ms or "Terraform" in next_ms
+            or "M89A" in next_ms or "Kubernetes" in next_ms), (
+        f"next_milestone should reference M85A/Linear through M89A/Kubernetes; got: {next_ms!r}"
     )
 
 
@@ -292,8 +295,9 @@ def test_b6_expansion_framework_next_provider_linear() -> None:
     assert ("Linear" in next_prov or "linear" in next_prov.lower()
             or "Jira" in next_prov or "jira" in next_prov.lower()
             or "GitLab" in next_prov or "gitlab" in next_prov.lower()
-            or "Terraform" in next_prov or "terraform" in next_prov.lower()), (
-        f"next_provider should be Linear, Jira, GitLab, or Terraform Cloud; got: {next_prov!r}"
+            or "Terraform" in next_prov or "terraform" in next_prov.lower()
+            or "Kubernetes" in next_prov or "kubernetes" in next_prov.lower()), (
+        f"next_provider should be Linear, Jira, GitLab, Terraform, or Kubernetes; got: {next_prov!r}"
     )
 
 
@@ -539,8 +543,8 @@ def test_d15_linear_is_head_of_next_providers_brief() -> None:
     if block_start == -1 or block_end == -1:
         return
     brief_block = text[block_start:block_end]
-    assert ("Linear" in brief_block or "Jira" in brief_block or "Terraform" in brief_block or "GitLab" in brief_block), (
-        "NEXT_PROVIDERS_BRIEF should contain Linear, Jira, or a later provider after PagerDuty arc complete"
+    assert ("Linear" in brief_block or "Jira" in brief_block or "Terraform" in brief_block or "GitLab" in brief_block or "Kubernetes" in brief_block), (
+        "NEXT_PROVIDERS_BRIEF should contain Linear, Jira, GitLab, Terraform, or Kubernetes after PagerDuty arc complete"
     )
 
 

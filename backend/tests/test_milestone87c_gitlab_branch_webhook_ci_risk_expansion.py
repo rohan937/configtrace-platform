@@ -896,7 +896,8 @@ class TestExpansionFramework:
         assert ("M87D" in planned or "GitLab Activity" in planned or "Ingestion" in planned
                 or "M87E" in planned or "M87F" in planned or "Correlations" in planned
                 or "M87G" in planned or "Demo" in planned or "M87H" in planned or "M87I" in planned or "Cross-Cloud" in planned
-                or "M88A" in planned or "Terraform" in planned), (
+                or "M88A" in planned or "Terraform" in planned
+                or "M89A" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M87D or later after M87C; got: {planned!r}"
         )
 
@@ -904,7 +905,7 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         provider_keys = [r.get("provider") for r in fw.get("recommended_next_providers", [])]
-        assert "terraform_cloud" in provider_keys
+        assert "terraform_cloud" in provider_keys or "kubernetes" in provider_keys
 
     def test_gitlab_not_in_recommended_queue(self) -> None:
         from app.services.provider_expansion_framework import get_framework

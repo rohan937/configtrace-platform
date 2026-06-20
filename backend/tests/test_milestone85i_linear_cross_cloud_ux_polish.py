@@ -254,7 +254,8 @@ def test_b1_expansion_framework_planned_next_stage_m86a() -> None:
     # global planned_next_stage now advances to M87A: GitLab.
     assert ("M86A" in planned or "Jira" in planned
             or "M87A" in planned or "GitLab" in planned
-            or "M88A" in planned or "Terraform" in planned), (
+            or "M88A" in planned or "Terraform" in planned
+            or "M89A" in planned or "Kubernetes" in planned), (
         f"After M85I, planned_next_stage should point to M86A/Jira or later; got: {planned!r}"
     )
 
@@ -288,8 +289,9 @@ def test_b4_jira_head_of_recommended_next_providers() -> None:
     # After M87A launched GitLab, Terraform Cloud became the new head.
     assert ("jira" in provider.lower() or "Jira" in str(first)
             or "gitlab" in provider.lower() or "GitLab" in str(first)
-            or "terraform" in provider.lower() or "Terraform" in str(first)), (
-        f"Jira, GitLab, or later should be head of recommended_next_providers; got: {provider!r}"
+            or "terraform" in provider.lower() or "Terraform" in str(first)
+            or "kubernetes" in provider.lower() or "Kubernetes" in str(first)), (
+        f"Jira, GitLab, Terraform, or Kubernetes should be head; got: {provider!r}"
     )
 
 
@@ -301,8 +303,9 @@ def test_b5_expansion_framework_next_milestone_m86a() -> None:
     assert ("M86A" in next_ms or "Jira" in next_ms
             or "M86B" in next_ms
             or "M87A" in next_ms or "GitLab" in next_ms
-            or "M88A" in next_ms or "Terraform" in next_ms), (
-        f"next_milestone should reference M86A/Jira, M87A/GitLab, or M88A/Terraform; got: {next_ms!r}"
+            or "M88A" in next_ms or "Terraform" in next_ms
+            or "M89A" in next_ms or "Kubernetes" in next_ms), (
+        f"next_milestone should reference M86A/Jira through M89A/Kubernetes; got: {next_ms!r}"
     )
 
 
@@ -313,8 +316,9 @@ def test_b6_expansion_framework_next_provider_jira() -> None:
     # After M87A launched GitLab, Terraform Cloud is now next_provider.
     assert ("Jira" in next_prov or "jira" in next_prov.lower()
             or "GitLab" in next_prov or "gitlab" in next_prov.lower()
-            or "Terraform" in next_prov or "terraform" in next_prov.lower()), (
-        f"next_provider should be Jira, GitLab, or Terraform Cloud; got: {next_prov!r}"
+            or "Terraform" in next_prov or "terraform" in next_prov.lower()
+            or "Kubernetes" in next_prov or "kubernetes" in next_prov.lower()), (
+        f"next_provider should be Jira, GitLab, Terraform, or Kubernetes; got: {next_prov!r}"
     )
 
 
@@ -560,8 +564,9 @@ def test_d15_jira_is_head_of_next_providers_brief() -> None:
     if block_start == -1 or block_end == -1:
         return
     brief_block = text[block_start:block_end]
-    assert "Jira" in brief_block or "Terraform" in brief_block or "GitLab" in brief_block, (
-        "NEXT_PROVIDERS_BRIEF should contain Jira or a later provider after Linear arc complete"
+    assert ("Jira" in brief_block or "Terraform" in brief_block or "GitLab" in brief_block
+            or "Kubernetes" in brief_block), (
+        "NEXT_PROVIDERS_BRIEF should contain Jira, GitLab, Terraform, or Kubernetes after Linear arc complete"
     )
 
 

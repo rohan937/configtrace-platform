@@ -483,12 +483,13 @@ class TestExpansionFramework:
         assert ("M87E" in planned or "GitLab Activity Signals" in planned
                 or "M87F" in planned or "Correlations" in planned
                 or "M87G" in planned or "Demo" in planned or "M87H" in planned or "M87I" in planned or "Cross-Cloud" in planned
-                or "M88A" in planned or "Terraform" in planned)
+                or "M88A" in planned or "Terraform" in planned
+                or "M89A" in planned or "Kubernetes" in planned)
 
     def test_terraform_cloud_remains_in_queue(self) -> None:
         recs = get_framework().get("recommended_next_providers", [])
         provider_keys = [r.get("provider") for r in recs]
-        assert "terraform_cloud" in provider_keys or "terraform" in str(provider_keys)
+        assert "terraform_cloud" in provider_keys or "kubernetes" in provider_keys or "terraform" in str(provider_keys)
 
 
 # ════════════════════════════════════════════════════════════════════════════

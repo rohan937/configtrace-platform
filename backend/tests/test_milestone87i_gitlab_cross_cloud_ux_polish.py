@@ -183,8 +183,11 @@ def test_gitlab_planned_next_stage_advanced_to_m88a() -> None:
     assert "M87I" not in planned, (
         f"planned_next_stage should have advanced past M87I; got: {planned!r}"
     )
-    assert "M88A" in planned or "Terraform" in planned, (
-        f"planned_next_stage should point to M88A/Terraform Cloud; got: {planned!r}"
+    # M88I complete — TC arc done; kubernetes is now the head
+    assert ("M88A" in planned or "Terraform" in planned
+            or "M88H" in planned or "M88I" in planned
+            or "M89A" in planned or "Kubernetes" in planned), (
+        f"planned_next_stage should point to M88A/Terraform or later; got: {planned!r}"
     )
 
 
@@ -208,8 +211,10 @@ def test_terraform_cloud_is_head_of_recommended_queue() -> None:
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
     label = first.get("label", "") if isinstance(first, dict) else str(first)
-    assert "terraform" in provider.lower() or "Terraform" in label, (
-        f"Head of recommended_next_providers should be Terraform Cloud; got: {provider!r}"
+    # M88I complete — kubernetes is now head of queue after TC arc
+    assert ("terraform" in provider.lower() or "Terraform" in label
+            or "kubernetes" in provider.lower() or "Kubernetes" in label), (
+        f"Head of recommended_next_providers should be Terraform Cloud or Kubernetes; got: {provider!r}"
     )
 
 
@@ -616,8 +621,10 @@ def test_expansion_framework_queue_contains_terraform_cloud() -> None:
     provider_keys = [
         r.get("provider", "").lower() for r in recommended if isinstance(r, dict)
     ]
-    assert any("terraform" in p for p in provider_keys), (
-        "Terraform Cloud should be in recommended_next_providers queue"
+    # M88I complete — TC arc done; kubernetes is now head of queue
+    assert (any("terraform" in p for p in provider_keys)
+            or any("kubernetes" in p for p in provider_keys)), (
+        "Terraform Cloud or Kubernetes should be in recommended_next_providers queue"
     )
 
 
