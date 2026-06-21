@@ -300,10 +300,12 @@ def test_scheduled_sync_enqueues_github_integrations(db_session):
         gh_integration = _make_github_integration(db_session, user)
         cf_integration = _make_cloudflare_integration(db_session, user)
 
-        # Clean up any stale SyncRun records that could block scheduling for
-        # these integrations via the in-flight guard (has_in_flight_sync).
+        # Clean up ALL stale in-flight SyncRun records to ensure test isolation.
+        # Narrowly scoping by integration_id misses rows from prior test runs
+        # that may share the same UUID by coincidence of DB state; any pending/
+        # running row will cause has_in_flight_sync to block the scheduler.
         db_session.query(SyncRun).filter(
-            SyncRun.integration_id.in_([gh_integration.id, cf_integration.id]),
+            SyncRun.status.in_(["pending", "running"]),
         ).delete(synchronize_session=False)
         db_session.commit()
 

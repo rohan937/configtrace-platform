@@ -151,7 +151,7 @@ def test_webhook_secret_missing_creates_finding():
     cands = github_rules.evaluate(_webhook(secret_configured=False))
     assert "github_webhook_secret_missing" in _keys(cands)
     s = [c for c in cands if c.rule_key == "github_webhook_secret_missing"][0]
-    assert s.severity == "medium"
+    assert s.severity == "high"
     # Only the presence boolean is stored — never a secret value.
     assert s.evidence.get("webhook_secret_configured") is False
     assert set(s.evidence.keys()) == {"rule", "webhook_secret_configured"}
