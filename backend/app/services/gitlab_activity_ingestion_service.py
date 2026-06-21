@@ -203,7 +203,7 @@ _SAFE_FIELDS_BY_RECORD_TYPE: dict[str, tuple[str, ...]] = {
         "project_resource_id",
         "approval_rule_count",
         "approvals_required",
-        "code_owner_approval_required",
+        "author_approval_allowed",
         "reset_approvals_on_push",
     ),
 }

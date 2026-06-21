@@ -416,7 +416,7 @@ _SAFE_SIGNAL_FIELDS: dict[str, tuple[str, ...]] = {
     "gitlab_merge_request_approval_weakened": (
         "project_resource_id",
         "approvals_required",
-        "code_owner_approval_required",
+        "author_approval_allowed",
         "reset_approvals_on_push",
         "override_approvers_disabled",
     ),

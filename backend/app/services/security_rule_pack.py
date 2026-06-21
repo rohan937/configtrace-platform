@@ -535,7 +535,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "gitlab_ci_variables_unmasked": ("gitlab", "medium", "CI/CD variable posture"),
     "gitlab_runner_shared_enabled": ("gitlab", "medium", "Runner security posture"),
     "gitlab_mr_approval_reset_disabled": ("gitlab", "medium", "Merge request approval posture"),
-    "gitlab_mr_approver_override_allowed": ("gitlab", "medium", "Merge request approval posture"),
+    "gitlab_mr_approver_override_allowed": ("gitlab", "low", "Merge request approval posture"),
     "gitlab_project_wiki_enabled_public": ("gitlab", "low", "Project feature posture"),
     "gitlab_project_packages_enabled_public": ("gitlab", "low", "Project feature posture"),
     "gitlab_project_container_registry_enabled_public": ("gitlab", "medium", "Project feature posture"),

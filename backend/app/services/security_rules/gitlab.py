@@ -936,7 +936,7 @@ def _eval_mr_approval_summary(record: dict[str, Any]) -> list[FindingCandidate]:
                     record,
                     "resource_id", "project_resource_id",
                     "approval_rule_count", "approvals_required",
-                    "code_owner_approval_required", "reset_approvals_on_push",
+                    "author_approval_allowed", "reset_approvals_on_push",
                     "disable_overriding_approvers_per_merge_request",
                 ),
                 record_id=record_id,
@@ -982,14 +982,16 @@ def _eval_mr_approval_summary(record: dict[str, Any]) -> list[FindingCandidate]:
                 provider="gitlab",
                 rule_key=RULE_MR_APPROVER_OVERRIDE_ALLOWED,
                 finding_key=make_finding_key(RULE_MR_APPROVER_OVERRIDE_ALLOWED, record_id),
-                severity="medium",
+                severity="low",
                 title="GitLab project allows approver override per merge request",
                 description=(
-                    "This GitLab project allows individual merge request authors "
-                    "or maintainers to override the configured approval rules on "
-                    "a per-merge-request basis. This weakens the enforcement of "
-                    "approval policies. Merge request approval configuration "
-                    "evidence may require review. " + _DISCLAIMER
+                    "This GitLab project keeps GitLab's default setting that lets "
+                    "merge request authors or maintainers adjust the configured "
+                    "approval rules on a per-merge-request basis. This is a review "
+                    "hygiene observation rather than a strong risk signal: teams "
+                    "that want stricter, uniformly enforced approval policies can "
+                    "disable per-merge-request overrides. Merge request approval "
+                    "configuration evidence may require review. " + _DISCLAIMER
                 ),
                 evidence=_safe_evidence(
                     record,

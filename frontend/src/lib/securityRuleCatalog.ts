@@ -7615,7 +7615,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     whatItChecks: "The approvals_required field on gitlab_merge_request_approval_summary records.",
     whyItMatters:
       "Without required approvals, any developer with merge permissions can merge changes without peer review. Approval requirements help enforce code quality and change control.",
-    evidence: "MR approval summary resource ID (opaque), project resource ID (opaque), approval rule count, approvals_required, code_owner_approval_required.",
+    evidence: "MR approval summary resource ID (opaque), project resource ID (opaque), approval rule count, approvals_required, author_approval_allowed.",
     remediation:
       "Enable merge request approvals in GitLab Settings → General → Merge request approvals and set a minimum required approver count.",
     falsePositiveGuard:
@@ -7839,13 +7839,13 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
   {
     key: "gitlab_mr_approver_override_allowed",
     provider: "gitlab",
-    severity: "medium",
+    severity: "low",
     title: "GitLab project allows per-merge-request approver override",
     category: "Merge request approval posture",
     confidence: "medium",
     metadataOnly: true,
     description:
-      "This GitLab project allows individual merge request authors or maintainers to override the configured approval rules on a per-merge-request basis. This can weaken the enforcement of approval policies. Merge request approval configuration evidence may require review.",
+      "This GitLab project keeps GitLab's default setting that lets merge request authors or maintainers adjust the configured approval rules on a per-merge-request basis. This is a review hygiene observation rather than a strong risk signal: teams that want stricter, uniformly enforced approval policies can disable per-merge-request overrides. Merge request approval configuration evidence may require review.",
     whatItChecks:
       "The disable_overriding_approvers_per_merge_request field on gitlab_merge_request_approval_summary records.",
     whyItMatters:

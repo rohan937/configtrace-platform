@@ -854,6 +854,7 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "tagged_runner_count",         # int — count of tagged runners
         "untagged_runner_count",       # int — count of untagged runners
         "approvals_required",          # int — MR approvals required count
+        "author_approval_allowed",     # bool — MR author self-approval posture
         "reset_approvals_on_push",     # bool — MR reset-approvals-on-push posture
         "override_approvers_disabled", # bool — MR per-request approver override disabled posture
         # Terraform Cloud configuration activity fields (M88D) — config-state

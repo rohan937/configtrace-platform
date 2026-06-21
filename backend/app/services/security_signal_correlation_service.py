@@ -599,6 +599,7 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "shared_runner_enabled",        # bool — shared runner enabled posture
         "untagged_runner_count",        # int — count of untagged runners
         "approvals_required",           # int — MR approvals required count
+        "author_approval_allowed",      # bool — MR author self-approval posture
         "reset_approvals_on_push",      # bool — MR reset-approvals-on-push posture
         "override_approvers_disabled",  # bool — MR per-request approver override
         "wiki_enabled",                 # bool — project wiki feature flag

@@ -168,6 +168,6 @@ class GitLabMRApprovalSummaryRecord(TypedDict):
     project_resource_id: str
     approval_rule_count: int
     approvals_required: Optional[int]
-    code_owner_approval_required: Optional[bool]
+    author_approval_allowed: Optional[bool]
     reset_approvals_on_push: Optional[bool]
     disable_overriding_approvers_per_merge_request: Optional[bool]

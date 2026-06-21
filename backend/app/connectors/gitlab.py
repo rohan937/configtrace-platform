@@ -553,7 +553,12 @@ class GitLabConnector(BaseConnector):
             "resource_id": resource_id,
             "owner_resource_id": owner_resource_id,
             "owner_type": owner_type,
-            "enabled": _bool(raw.get("enable_ssl_verification"), default=True),
+            # The GitLab Hooks API has no general "active/disabled" flag analogous
+            # to GitHub webhooks. Every hook returned by the API is an active
+            # configuration object, so `enabled` is always True. (Previously this
+            # was incorrectly derived from `enable_ssl_verification`, which caused
+            # SSL-disabled webhooks to be skipped entirely by the rule evaluator.)
+            "enabled": True,
             "url_scheme": _url_scheme(raw_url),
             "url_host_category": _host_category(raw_url),
             "ssl_verification_enabled": _bool(
@@ -696,7 +701,12 @@ class GitLabConnector(BaseConnector):
                 if approvals.get("approvals_required") is not None
                 else None
             ),
-            "code_owner_approval_required": (
+            # Raw field `merge_requests_author_approval` indicates whether MR
+            # authors may approve their own merge requests. This is distinct from
+            # code-owner approval (a branch-protection concept); the GitLab
+            # approvals API does not expose a project-level code-owner requirement
+            # here, so we surface only what the raw field actually means.
+            "author_approval_allowed": (
                 _bool(approvals.get("merge_requests_author_approval"))
                 if approvals.get("merge_requests_author_approval") is not None
                 else None

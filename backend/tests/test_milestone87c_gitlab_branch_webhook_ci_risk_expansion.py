@@ -421,10 +421,10 @@ class TestPositiveCases:
         record = _mr_approval({"disable_overriding_approvers_per_merge_request": False})
         assert "gitlab_mr_approver_override_allowed" in _rule_keys(record)
 
-    def test_mr_approver_override_severity_medium(self) -> None:
+    def test_mr_approver_override_severity_low(self) -> None:
         record = _mr_approval({"disable_overriding_approvers_per_merge_request": False})
         findings = [c for c in _evaluate(record) if c.rule_key == "gitlab_mr_approver_override_allowed"]
-        assert findings and findings[0].severity == "medium"
+        assert findings and findings[0].severity == "low"
 
     # ── Project feature M87C ──────────────────────────────────────────────────
 
@@ -988,7 +988,7 @@ class TestSeverityParity:
             "gitlab_ci_variables_unmasked": "medium",
             "gitlab_runner_shared_enabled": "medium",
             "gitlab_mr_approval_reset_disabled": "medium",
-            "gitlab_mr_approver_override_allowed": "medium",
+            "gitlab_mr_approver_override_allowed": "low",
             "gitlab_project_wiki_enabled_public": "low",
             "gitlab_project_packages_enabled_public": "low",
             "gitlab_project_container_registry_enabled_public": "medium",
