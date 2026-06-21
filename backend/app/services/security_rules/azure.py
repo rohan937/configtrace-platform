@@ -1002,7 +1002,7 @@ def _eval_app_service(record: dict[str, Any]) -> list[FindingCandidate]:
             description=(
                 f"App Service '{app_name}' in resource group '{resource_group}' "
                 f"has public network access enabled. This may broaden the network "
-                f"attack surface and may require review. "
+                f"exposure and may require review. "
                 f"{_common_disclaimer()}"
             ),
             evidence=_base_ev(
@@ -1117,6 +1117,9 @@ def _eval_aks_cluster(record: dict[str, Any]) -> list[FindingCandidate]:
     network_policy = get_str(record, "network_policy")
     ip_range_count_raw = record.get("api_server_authorized_ip_range_count")
     ip_range_count = ip_range_count_raw if isinstance(ip_range_count_raw, int) else None
+    # Default True for older records that predate this field, so existing
+    # public-API findings are preserved; only suppress when explicitly absent.
+    authorized_ip_ranges_configured = record.get("authorized_ip_ranges_configured", True)
 
     def _base_ev(**extra: Any) -> dict[str, Any]:
         ev: dict[str, Any] = {"cluster_name": cluster_name, "resource_group": resource_group, "location": location}
@@ -1148,7 +1151,7 @@ def _eval_aks_cluster(record: dict[str, Any]) -> list[FindingCandidate]:
             record_id=record_id,
         ))
 
-    if private_cluster_enabled is False and ip_range_count == 0:
+    if private_cluster_enabled is False and ip_range_count == 0 and authorized_ip_ranges_configured is not False:
         out.append(FindingCandidate(
             provider="azure",
             rule_key=_RULE_AKS_PUBLIC_API_ACCESS,

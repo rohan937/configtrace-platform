@@ -662,11 +662,11 @@ class TestProviderCapabilityMatrix:
 
 class TestProviderExpansionFramework:
     def test_planned_next_stage_points_to_m77c(self):
-        """Rolled forward in M79A: Twilio launched → M79B Twilio Core Security Foundation."""
+        """Rolled forward: next stage is M89A Kubernetes Drift Provider Foundation."""
         framework = get_framework()
         stage = framework["summary"]["planned_next_stage"]
-        assert "M79B" in stage, (
-            f"planned_next_stage should be M79B (Twilio arc open), got: {stage!r}"
+        assert "M89A" in stage, (
+            f"planned_next_stage should be M89A, got: {stage!r}"
         )
 
 

@@ -880,6 +880,9 @@ class AzureConnector(BaseConnector):
         )
         private_cluster_enabled: bool | None = api_profile.get("enablePrivateCluster")
         authorized_ranges = api_profile.get("authorizedIPRanges")
+        # Distinguish "key absent" (ARM did not return the field — posture unknown)
+        # from "explicitly configured" (present as a list, possibly empty).
+        authorized_ip_ranges_configured: bool = "authorizedIPRanges" in api_profile
         ip_range_count = len(authorized_ranges) if isinstance(authorized_ranges, list) else 0
 
         # AAD / RBAC profile
@@ -918,6 +921,7 @@ class AzureConnector(BaseConnector):
             "network_policy": network_policy,
             "public_network_access": public_network_access,
             "api_server_authorized_ip_range_count": ip_range_count,
+            "authorized_ip_ranges_configured": authorized_ip_ranges_configured,
         }
 
     # ── Activity Log (M77D) ───────────────────────────────────────────────────

@@ -1117,24 +1117,24 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
-    """Rolled forward in M79A: Twilio launched; next stage is M79B: Twilio Core Security Foundation."""
+    """Rolled forward: next stage is M89A: Kubernetes Drift Provider Foundation."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M79B" in planned, (
-        f"planned_next_stage should be M79B after M79A, got: {planned!r}"
+    assert "M89A" in planned, (
+        f"planned_next_stage should be M89A, got: {planned!r}"
     )
 
 
 def test_expansion_framework_planned_next_stage_mentions_azure():
-    """Rolled forward in M79A: next stage is M79B: Twilio Core Security Foundation."""
+    """Rolled forward: next stage is M89A: Kubernetes Drift Provider Foundation."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "Twilio" in planned, (
-        f"planned_next_stage should reference Twilio after M79A, "
+    assert "Kubernetes" in planned, (
+        f"planned_next_stage should reference Kubernetes, "
         f"got: {planned!r}"
     )
 
