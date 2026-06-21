@@ -18,7 +18,9 @@ Record types consumed
 ---------------------
 - ``aws_security_group_rule``   → public ingress to admin / database / all ports
 - ``aws_s3_bucket``             → public bucket policy / public ACL grants
-- ``aws_iam_policy_attachment`` → AWS-managed AdministratorAccess attached
+- ``aws_iam_policy_attachment`` → AWS-managed AdministratorAccess /
+                                  PowerUserAccess / IAMFullAccess attached
+- ``aws_iam_account_summary``   → root account MFA not enabled
 - ``aws_iam_access_key``        → active key unused for a long time
 
 Deferred AWS rules (intentionally NOT implemented — see report)
@@ -37,6 +39,12 @@ Deferred AWS rules (intentionally NOT implemented — see report)
   (never used vs. last-used fetch failed), so we only flag a concrete stale age.
 * S3 Block-Public-Access-not-configured on its own: weaker/noisier than the
   authoritative ``policy_status_is_public`` / ACL public-grant signals we use.
+* Per-user IAM MFA disabled: the ``aws_iam_user`` record has ``mfa_enabled`` but
+  NO console/login-profile or ``password_enabled`` field, so we cannot tell a
+  service principal (legitimately MFA-less) from a console user. Firing on
+  ``mfa_enabled=False`` alone would be noise, so this per-user rule is deferred
+  until the connector emits console-access state. Root MFA (an unambiguous,
+  always-console identity) is covered by ``aws_root_mfa_disabled``.
 """
 
 from __future__ import annotations
@@ -45,6 +53,7 @@ from typing import Any
 
 from app.connectors.aws_schema import (
     AWS_IAM_ACCESS_KEY,
+    AWS_IAM_ACCOUNT_SUMMARY,
     AWS_IAM_POLICY_ATTACHMENT,
     AWS_S3_BUCKET,
     AWS_SECURITY_GROUP_RULE,
@@ -66,10 +75,19 @@ _RULE_PUBLIC_ALL = "aws_public_all_ports"
 _RULE_S3_PUBLIC_POLICY = "aws_s3_public_policy"
 _RULE_S3_PUBLIC_ACL = "aws_s3_public_acl"
 _RULE_IAM_ADMIN_ATTACHED = "aws_iam_admin_policy_attached"
+_RULE_IAM_BROAD_ATTACHED = "aws_iam_broad_policy_attached"
+_RULE_ROOT_MFA_DISABLED = "aws_root_mfa_disabled"
 _RULE_ACCESS_KEY_STALE = "aws_access_key_unused"
 
 # AWS-managed AdministratorAccess policy — exact ARN, not a keyword guess.
 _ADMIN_POLICY_ARN = "arn:aws:iam::aws:policy/AdministratorAccess"
+
+# AWS-managed policies that grant broad (non-AdministratorAccess) privilege.
+# Exact ARN match → short policy name. Not keyword guesses.
+_BROAD_AWS_MANAGED_POLICIES = {
+    "arn:aws:iam::aws:policy/PowerUserAccess": "PowerUserAccess",
+    "arn:aws:iam::aws:policy/IAMFullAccess": "IAMFullAccess",
+}
 
 # Admin port → human label (the connector's admin category = {22,3389,5985,5986}).
 _ADMIN_PORT_LABELS = {22: "SSH", 3389: "RDP", 5985: "WinRM", 5986: "WinRM"}
@@ -89,6 +107,8 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
         return _eval_s3_bucket(record)
     if rtype == AWS_IAM_POLICY_ATTACHMENT:
         return _eval_iam_attachment(record)
+    if rtype == AWS_IAM_ACCOUNT_SUMMARY:
+        return _eval_iam_account_summary(record)
     if rtype == AWS_IAM_ACCESS_KEY:
         return _eval_access_key(record)
     return []
@@ -275,38 +295,115 @@ def _eval_s3_bucket(record: dict[str, Any]) -> list[FindingCandidate]:
 
 
 def _eval_iam_attachment(record: dict[str, Any]) -> list[FindingCandidate]:
-    if get_str(record, "policy_arn") != _ADMIN_POLICY_ARN:
-        return []
-
+    policy_arn = get_str(record, "policy_arn")
     record_id = get_str(record, "record_id") or None
     ptype = get_str(record, "principal_type") or "principal"
     pname = get_str(record, "principal_name") or "an IAM principal"
 
+    if policy_arn == _ADMIN_POLICY_ARN:
+        return [
+            FindingCandidate(
+                provider="aws",
+                rule_key=_RULE_IAM_ADMIN_ATTACHED,
+                finding_key=make_finding_key(_RULE_IAM_ADMIN_ATTACHED, record_id),
+                severity="high",
+                title="AWS AdministratorAccess attached to an IAM principal",
+                description=(
+                    f"The AWS-managed AdministratorAccess policy is attached to the "
+                    f"{ptype} '{pname}', granting full control over the account. "
+                    f"Over-broad admin grants increase blast radius if the principal "
+                    f"is compromised."
+                ),
+                evidence={
+                    "rule": _RULE_IAM_ADMIN_ATTACHED,
+                    "principal_type": ptype,
+                    "principal_name": pname,
+                    "policy_name": get_str(record, "policy_name") or "AdministratorAccess",
+                },
+                remediation={
+                    "summary": "Replace AdministratorAccess with least-privilege policies.",
+                    "steps": [
+                        "Scope permissions to only what the principal needs.",
+                        "Use permission boundaries / SCPs to cap privilege.",
+                        "Reserve AdministratorAccess for break-glass roles with MFA.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        ]
+
+    # Other AWS-managed broad policies (PowerUserAccess, IAMFullAccess). Exact
+    # ARN match against an allowlist — never a substring/keyword guess.
+    short_name = _BROAD_AWS_MANAGED_POLICIES.get(policy_arn)
+    if short_name is not None:
+        return [
+            FindingCandidate(
+                provider="aws",
+                rule_key=_RULE_IAM_BROAD_ATTACHED,
+                finding_key=make_finding_key(_RULE_IAM_BROAD_ATTACHED, record_id),
+                severity="high",
+                title="Broad AWS managed policy attached",
+                description=(
+                    "An AWS managed policy with broad permissions is attached to a "
+                    "principal. This configuration may require review."
+                ),
+                evidence={
+                    "rule": _RULE_IAM_BROAD_ATTACHED,
+                    "principal_type": ptype,
+                    "policy_name": short_name,
+                    "broad_policy_category": "aws_managed_broad",
+                },
+                remediation={
+                    "summary": "Replace broad managed policies with least-privilege grants.",
+                    "steps": [
+                        "Scope permissions to only what the principal needs.",
+                        "Use permission boundaries / SCPs to cap privilege.",
+                        "Reserve broad grants for narrowly scoped, audited roles.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        ]
+
+    return []
+
+
+# ── Root account MFA posture (M60.4.x QA) ────────────────────────────────────
+
+
+def _eval_iam_account_summary(record: dict[str, Any]) -> list[FindingCandidate]:
+    """Flag the AWS root account when MFA is explicitly not enabled.
+
+    Fires only on an explicit ``mfa_enabled_for_root is False``. ``None`` (could
+    not determine) is never treated as disabled. Account-level posture only — no
+    account id or username is emitted in evidence.
+    """
+    if record.get("mfa_enabled_for_root") is not False:
+        return []
+
+    record_id = get_str(record, "record_id") or None
+
     return [
         FindingCandidate(
             provider="aws",
-            rule_key=_RULE_IAM_ADMIN_ATTACHED,
-            finding_key=make_finding_key(_RULE_IAM_ADMIN_ATTACHED, record_id),
+            rule_key=_RULE_ROOT_MFA_DISABLED,
+            finding_key=make_finding_key(_RULE_ROOT_MFA_DISABLED, record_id),
             severity="high",
-            title="AWS AdministratorAccess attached to an IAM principal",
+            title="Root account MFA not enabled",
             description=(
-                f"The AWS-managed AdministratorAccess policy is attached to the "
-                f"{ptype} '{pname}', granting full control over the account. "
-                f"Over-broad admin grants increase blast radius if the principal "
-                f"is compromised."
+                "The AWS root account does not have MFA enabled. This "
+                "configuration may require review."
             ),
             evidence={
-                "rule": _RULE_IAM_ADMIN_ATTACHED,
-                "principal_type": ptype,
-                "principal_name": pname,
-                "policy_name": get_str(record, "policy_name") or "AdministratorAccess",
+                "rule": _RULE_ROOT_MFA_DISABLED,
+                "root_mfa_enabled": False,
             },
             remediation={
-                "summary": "Replace AdministratorAccess with least-privilege policies.",
+                "summary": "Enable MFA on the AWS root account.",
                 "steps": [
-                    "Scope permissions to only what the principal needs.",
-                    "Use permission boundaries / SCPs to cap privilege.",
-                    "Reserve AdministratorAccess for break-glass roles with MFA.",
+                    "Sign in as the root user and register a hardware or virtual MFA device.",
+                    "Avoid using the root account for day-to-day operations.",
+                    "Store root credentials and MFA securely as break-glass only.",
                 ],
             },
             record_id=record_id,

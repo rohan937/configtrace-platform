@@ -69,6 +69,8 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "aws_s3_public_policy": ("aws", "critical", "S3 public access"),
     "aws_s3_public_acl": ("aws", "critical", "S3 public access"),
     "aws_iam_admin_policy_attached": ("aws", "high", "IAM"),
+    "aws_iam_broad_policy_attached": ("aws", "high", "IAM"),
+    "aws_root_mfa_disabled": ("aws", "high", "IAM"),
     "aws_access_key_unused": ("aws", "medium", "IAM access keys"),
     # Cloudflare
     "cloudflare_ssl_mode_weak": ("cloudflare", "high", "SSL/TLS"),

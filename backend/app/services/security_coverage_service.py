@@ -88,6 +88,8 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "aws_s3_public_policy": ("aws_s3_bucket",),
     "aws_s3_public_acl": ("aws_s3_bucket",),
     "aws_iam_admin_policy_attached": ("aws_iam_policy_attachment",),
+    "aws_iam_broad_policy_attached": ("aws_iam_policy_attachment",),
+    "aws_root_mfa_disabled": ("aws_iam_account_summary",),
     "aws_access_key_unused": ("aws_iam_access_key",),
     # Cloudflare
     "cloudflare_ssl_mode_weak": ("cloudflare_zone_setting",),

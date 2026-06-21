@@ -45,6 +45,8 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "aws_s3_public_policy",
         "aws_s3_public_acl",
         "aws_iam_admin_policy_attached",
+        "aws_iam_broad_policy_attached",
+        "aws_root_mfa_disabled",
         "aws_access_key_unused",
         # Cloudflare
         "cloudflare_ssl_mode_weak",

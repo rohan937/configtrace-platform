@@ -321,14 +321,24 @@ def _port_category(
 
     Returns one of: "all", "admin", "database", "web", "other".
 
-    "all" is returned for protocol "-1" (all-traffic rules).
-    Admin, database, and web categories are detected by checking whether
+    "all" is returned for protocol "-1" (all-traffic rules) OR for a TCP/UDP
+    rule whose port range spans the entire port space (0/1–65535). The wide-range
+    check runs BEFORE the admin/database/web sentinel checks: a range such as
+    1–65535 covers admin ports too, so it must classify as the more severe
+    "all" category rather than being mislabeled "admin". Only a genuinely full
+    range (or protocol "-1") qualifies as "all" — narrow admin/db ranges do not.
+    Admin, database, and web categories are then detected by checking whether
     any sentinel port from the respective set falls within [from_port, to_port].
     """
     if protocol == "-1":
         return "all"
     if from_port is None or to_port is None:
         return "other"
+    # Full-range TCP/UDP rule (e.g. 0-65535 or 1-65535) → "all" (most severe).
+    # Checked first so a wide range that also covers admin/db ports is not
+    # mislabeled as the lower-severity "admin"/"database" category.
+    if from_port <= 1 and to_port >= 65535:
+        return "all"
     for p in _SG_ADMIN_PORTS:
         if from_port <= p <= to_port:
             return "admin"

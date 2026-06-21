@@ -69,6 +69,8 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "aws_s3_public_policy": (HIGH, "Only an explicit public flag fires; an unknown state is never treated as public."),
     "aws_s3_public_acl": (HIGH, "Only an explicit public grant fires; an unknown state is never treated as public."),
     "aws_iam_admin_policy_attached": (HIGH, "Exact AdministratorAccess ARN match, not a keyword guess."),
+    "aws_iam_broad_policy_attached": (HIGH, "Exact match against an allowlist of broad AWS-managed policy ARNs, not a keyword guess."),
+    "aws_root_mfa_disabled": (HIGH, "Only an explicit mfa_enabled_for_root=False fires; an unknown state is never treated as disabled."),
     "aws_access_key_unused": (HIGH, "An unknown last-used age (never-used vs fetch-failed) is not flagged."),
     # Cloudflare
     "cloudflare_ssl_mode_weak": (HIGH, "Only off/flexible fire; full/strict are treated as safe."),

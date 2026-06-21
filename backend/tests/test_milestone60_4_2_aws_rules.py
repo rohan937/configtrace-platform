@@ -144,6 +144,52 @@ def test_public_all_ports_fires_critical():
     assert out[0].severity == "critical"
 
 
+def test_public_wide_tcp_range_fires_all_ports_not_admin():
+    """Wide TCP range 1-65535 must fire aws_public_all_ports (critical), not
+    aws_public_admin_port (high). Regression for port-category ordering."""
+    from app.connectors.aws import _port_category
+
+    cat = _port_category(1, 65535, "tcp")
+    assert cat == "all"
+    out = aws_rules.evaluate(
+        _sg_rule(protocol="tcp", from_port=1, to_port=65535, port_category=cat)
+    )
+    assert out[0].rule_key == "aws_public_all_ports"
+    assert out[0].severity == "critical"
+
+
+def test_public_tcp_0_to_65535_fires_all_ports():
+    from app.connectors.aws import _port_category
+
+    cat = _port_category(0, 65535, "tcp")
+    assert cat == "all"
+    out = aws_rules.evaluate(
+        _sg_rule(protocol="tcp", from_port=0, to_port=65535, port_category=cat)
+    )
+    assert out[0].rule_key == "aws_public_all_ports"
+    assert out[0].severity == "critical"
+
+
+def test_protocol_minus1_fires_all_ports_critical():
+    from app.connectors.aws import _port_category
+
+    cat = _port_category(None, None, "-1")
+    assert cat == "all"
+    out = aws_rules.evaluate(
+        _sg_rule(protocol="-1", from_port=None, to_port=None, port_category=cat)
+    )
+    assert out[0].rule_key == "aws_public_all_ports"
+    assert out[0].severity == "critical"
+
+
+def test_single_admin_port_still_admin_not_all():
+    """A narrow admin range must remain 'admin', not be promoted to 'all'."""
+    from app.connectors.aws import _port_category
+
+    assert _port_category(22, 22, "tcp") == "admin"
+    assert _port_category(3389, 3389, "tcp") == "admin"
+
+
 def test_public_web_ports_not_flagged():
     # Public 443 (web) must NOT create a finding — avoids normal web-traffic noise.
     out = aws_rules.evaluate(
