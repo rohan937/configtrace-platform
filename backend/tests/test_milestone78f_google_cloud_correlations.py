@@ -1022,17 +1022,17 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m78h(self):
-        """Rolled forward in M79A: Twilio launched → M79B Twilio Core Security Foundation."""
+        """Planned next stage has advanced to M89A: Kubernetes Drift Provider Foundation."""
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M79B" in planned
-        assert "Twilio" in planned
+        assert "M89A" in planned
+        assert "Kubernetes" in planned
 
     def test_planned_next_stage_mentions_polish_or_ux(self):
-        """After M79A, next stage is M79B: Twilio Core Security Foundation."""
+        """The next stage is M89A: Kubernetes Drift Provider Foundation."""
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M79B" in planned or "Twilio" in planned
+        assert "M89A" in planned or "Kubernetes" in planned
 
     def test_m78f_not_in_planned_next_stage(self):
         fw = get_framework()

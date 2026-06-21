@@ -481,12 +481,12 @@ def test_capability_matrix_marks_google_cloud_demo_ready():
 
 
 def test_expansion_framework_next_stage_is_m78h():
-    """Rolled forward in M79B: Twilio Core Security Foundation complete → M79C."""
+    """Planned next stage has advanced to M89A: Kubernetes Drift Provider Foundation."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M79C" in stage
-    assert "Twilio" in stage
+    assert "M89A" in stage
+    assert "Kubernetes" in stage
     # Google Cloud arc is closed; no M78x in planned_next_stage.
     assert "M78G" not in stage
     assert "M78I" not in stage

@@ -1598,7 +1598,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     key: "google_cloud_iam_broad_privileged_role",
     provider: "google_cloud",
     severity: "high",
-    title: "Google Cloud IAM policy grants broad privileged roles",
+    title: "Google Cloud IAM policy includes broad privileged roles",
     category: "IAM policies",
     confidence: "high",
     metadataOnly: true,

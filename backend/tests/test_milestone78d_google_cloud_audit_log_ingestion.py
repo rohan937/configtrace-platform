@@ -1110,23 +1110,23 @@ class TestExpansionFramework:
     """Verify planned_next_stage points to M78G after M78F is complete."""
 
     def test_planned_next_stage_is_m78h(self):
-        """Rolled forward in M79A: Twilio launched → M79B Twilio Core Security Foundation."""
+        """Planned next stage has advanced to M89A: Kubernetes Drift Provider Foundation."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M79B" in planned, (
-            f"planned_next_stage should be M79B (Twilio arc open), got: {planned!r}"
+        assert "M89A" in planned, (
+            f"planned_next_stage should be M89A (Kubernetes arc open), got: {planned!r}"
         )
-        assert "Twilio" in planned
+        assert "Kubernetes" in planned
 
     def test_planned_next_stage_mentions_polish_or_ux(self):
-        """After M79A, the next stage is M79B: Twilio Core Security Foundation."""
+        """The next stage is M89A: Kubernetes Drift Provider Foundation."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        # M79A launched; next is M79B Core Security Foundation.
-        assert "M79B" in planned or "Twilio" in planned, (
-            f"planned_next_stage should point to M79B, got: {planned!r}"
+        # Kubernetes arc is open; next is M89A Drift Provider Foundation.
+        assert "M89A" in planned or "Kubernetes" in planned, (
+            f"planned_next_stage should point to M89A, got: {planned!r}"
         )
 
     def test_m78f_not_in_planned_next_stage(self):

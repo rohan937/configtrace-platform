@@ -171,29 +171,24 @@ def test_capability_matrix_google_cloud_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78i():
-    """After M80C, planned_next_stage points to M80D (SendGrid Activity/Event Ingestion)."""
+    """Planned next stage points to M89A (Kubernetes Drift Provider Foundation)."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M78I" not in stage, (
         f"planned_next_stage still points to M78I after arc closed: {stage!r}"
     )
-    assert ("M81B" in stage or "Auth0" in stage or "Datadog" in stage
-            or "M82" in stage or "M83" in stage or "Clerk" in stage
-            or "M84" in stage or "PagerDuty" in stage
-                or "M85A" in stage or "Linear" in stage
-                or "M86A" in stage or "M86B" in stage or "Jira" in stage
-                or "M87A" in stage or "GitLab" in stage)
+    assert "M89A" in stage or "Kubernetes" in stage
 
 
 def test_expansion_framework_top_recommendation_is_twilio():
-    """Auth0 is now the head of the recommended queue (SendGrid launched in M80A)."""
+    """Kubernetes is now the head of the recommended queue."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    # After M84A, PagerDuty launched; Linear is now at head.
-    assert top["provider"] in ("pagerduty", "linear", "jira", "gitlab")
-    assert top["label"] in ("PagerDuty", "Linear", "Jira", "GitLab")
+    # Terraform Cloud completed its arc; Kubernetes is now at head.
+    assert top["provider"] == "kubernetes"
+    assert top["label"] == "Kubernetes"
 
 
 def test_expansion_framework_google_cloud_not_in_recommended_queue():
@@ -204,12 +199,12 @@ def test_expansion_framework_google_cloud_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_and_milestone():
-    """Framework summary next_provider = Auth0 (SendGrid launched M80A); next_milestone mentions M80B."""
+    """Framework summary next_provider = Kubernetes; next_milestone mentions M89A."""
     fw = exp_svc.get_framework()
-    # After M84A, PagerDuty launched; Linear is now head.
-    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab")
+    # Terraform Cloud completed its arc; Kubernetes is now head.
+    assert fw["summary"]["next_provider"] == "Kubernetes"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms or "M86B" in next_ms or "M87A" in next_ms or "GitLab" in next_ms
+    assert "M89A" in next_ms or "Kubernetes" in next_ms
 
 
 def test_expansion_framework_twilio_first_milestone_is_m79a():
