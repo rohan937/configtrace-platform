@@ -82,6 +82,8 @@ def _make_github_integration(
         encrypted_credentials=ciphertext,
         credential_iv=iv,
         status=status,
+        scheduled_sync_enabled=True,
+        sync_interval_minutes=60,
     )
     db_session.add(integration)
     db_session.flush()
@@ -116,6 +118,8 @@ def _make_cloudflare_integration(
         encrypted_credentials=ciphertext,
         credential_iv=iv,
         status=status,
+        scheduled_sync_enabled=True,
+        sync_interval_minutes=60,
     )
     db_session.add(integration)
     db_session.flush()
