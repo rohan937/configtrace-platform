@@ -55,6 +55,7 @@ from app.services.security_rules import linear as linear_rules
 from app.services.security_rules import jira as jira_rules
 from app.services.security_rules import gitlab as gitlab_rules
 from app.services.security_rules import terraform_cloud as terraform_cloud_rules
+from app.services.security_rules import twilio as twilio_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,8 @@ _PROVIDER_RULES = {
     "gitlab": [gitlab_rules.evaluate],
     # M88B: Terraform Cloud core security rules
     "terraform_cloud": [terraform_cloud_rules.evaluate],
+    # M79B/M79C: Twilio core security rules
+    "twilio": [twilio_rules.evaluate],
 }
 
 

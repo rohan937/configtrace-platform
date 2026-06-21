@@ -640,16 +640,16 @@ class TestCapabilityMatrixAndExpansion:
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M80B" in stage, (
-            f"expected 'M80B' in planned_next_stage (M80A complete), got: {stage!r}"
+        assert "M89A" in stage, (
+            f"expected 'M89A' in planned_next_stage (current roadmap), got: {stage!r}"
         )
 
     def test_planned_next_stage_contains_twilio_or_signal(self):
         from app.services import provider_expansion_framework as svc
         fw = svc.get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M80A" in stage or "SendGrid" in stage, (
-            f"expected 'M80A'/'SendGrid' in planned_next_stage (M79I complete), got: {stage!r}"
+        assert "M89A" in stage or "Kubernetes" in stage, (
+            f"expected 'M89A'/'Kubernetes' in planned_next_stage, got: {stage!r}"
         )
 
     def test_planned_next_stage_does_not_contain_m79c(self):

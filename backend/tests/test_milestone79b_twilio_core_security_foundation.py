@@ -639,13 +639,13 @@ class TestExpansionFramework:
         self.stage = self.fw["summary"]["planned_next_stage"]
 
     def test_planned_next_stage_contains_m79e(self):
-        assert "M80B" in self.stage, (
-            f"expected 'M80B' in planned_next_stage (M80A complete), got: {self.stage!r}"
+        assert "M89A" in self.stage, (
+            f"expected 'M89A' in planned_next_stage (current roadmap), got: {self.stage!r}"
         )
 
     def test_planned_next_stage_contains_twilio(self):
-        assert "M80A" in self.stage or "SendGrid" in self.stage, (
-            f"expected 'M80A'/'SendGrid' in planned_next_stage (M79I complete), got: {self.stage!r}"
+        assert "M89A" in self.stage or "Kubernetes" in self.stage, (
+            f"expected 'M89A'/'Kubernetes' in planned_next_stage, got: {self.stage!r}"
         )
 
     def test_planned_next_stage_does_not_contain_m79b(self):

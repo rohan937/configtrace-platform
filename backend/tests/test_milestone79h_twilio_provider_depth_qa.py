@@ -351,25 +351,18 @@ def test_capability_matrix_pins_twilio_partial_demo_ready():
 
 
 def test_expansion_framework_points_to_m79i():
-    """M80C complete — planned_next_stage must advance to M80D."""
+    """Current roadmap — planned_next_stage points to M89A Kubernetes."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M80I" not in planned or "M81A" in planned or "Auth0" in planned, (
-        f"planned_next_stage should be past M79H; got: {planned!r}"
-    )
     assert "M79H" not in planned, (
         f"M79H is done; pointer must advance past it (got: {planned!r})"
     )
     assert "M79I" not in planned, (
         f"M79I is done; stale reference (got: {planned!r})"
     )
-    # At M80I complete, the pointer is M81A (Auth0); either M81A or Auth0 is fine.
-    assert (
-        "SendGrid" in planned
-        or "M80" in planned
-        or "M81A" in planned
-        or "Auth0" in planned
-    ), f"planned_next_stage should reference SendGrid arc or Auth0; got: {planned!r}"
+    assert "M89A" in planned or "Kubernetes" in planned, (
+        f"planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
+    )
 
 
 def test_twilio_not_in_canonical_eight_provider_matrix():
@@ -1500,17 +1493,11 @@ def test_correlation_five_families_cover_all_match_keys():
 
 
 def test_expansion_framework_sendgrid_correctly_follows_m79i():
-    """After M80I, SendGrid arc is complete and Auth0 (M81A) is next."""
+    """Current roadmap position — the next stage is M89A Kubernetes."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    # SendGrid arc complete in M80I: planned_next_stage is now M81A/Auth0.
-    assert (
-        "SendGrid" in planned
-        or "M80" in planned
-        or "M81A" in planned
-        or "Auth0" in planned
-    ), (
-        f"planned_next_stage should reference SendGrid arc or Auth0 (M81A); got: {planned!r}"
+    assert "M89A" in planned or "Kubernetes" in planned, (
+        f"planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
     )
 
 
@@ -1540,3 +1527,68 @@ def test_match_strength_returns_medium_for_family_aggregate():
     assert twilio_corr._match_strength("phone_number_family") == "medium"
     assert twilio_corr._match_strength("messaging_service_family") == "medium"
     assert twilio_corr._match_strength("account_level") == "medium"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Section I — Central evaluator dispatch (P0 wiring regression)
+#
+# Twilio rules must be reachable through the central evaluator dispatch
+# (_PROVIDER_RULES), not only via the rule module directly. These tests fail
+# if Twilio is ever removed from the evaluator's provider mapping.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def test_evaluator_dispatch_includes_twilio():
+    """'twilio' must be wired into the central evaluator's provider mapping."""
+    from app.services.security_finding_evaluator import _PROVIDER_RULES
+    assert "twilio" in _PROVIDER_RULES, (
+        "twilio missing from security_finding_evaluator._PROVIDER_RULES; "
+        "Twilio rules would never fire during real snapshot evaluation"
+    )
+    assert _PROVIDER_RULES["twilio"], "twilio dispatch list is empty"
+
+
+def test_central_evaluator_fires_twilio_phone_sms_webhook_missing():
+    """A representative incoming-phone-number record (sms_url_configured=False)
+    must produce a finding via the CENTRAL evaluator dispatch, not the rule
+    module directly."""
+    from app.services.security_finding_evaluator import evaluate_record
+    rec = {
+        "record_type": TWILIO_INCOMING_PHONE_NUMBER,
+        "record_id": "PNdispatch01",
+        "phone_number_sid": "PNdispatch01",
+        "friendly_name": "Dispatch Test Number",
+        "phone_number_last4": "4321",
+        "iso_country": "US",
+        "capability_sms": True,
+        "capability_voice": False,
+        "sms_url_configured": False,
+        "voice_url_configured": True,
+        "status_callback_configured": True,
+    }
+    candidates = evaluate_record(rec, "twilio")
+    keys = {c.rule_key for c in candidates}
+    assert "twilio_phone_number_sms_webhook_missing" in keys, (
+        f"central evaluator did not produce the expected Twilio finding; got {keys}"
+    )
+
+
+def test_central_evaluator_fires_twilio_messaging_inbound_webhook_missing():
+    """A messaging-service record (inbound_request_url_configured=False) must
+    produce a finding through the central evaluator dispatch."""
+    from app.services.security_finding_evaluator import evaluate_record
+    rec = {
+        "record_type": TWILIO_MESSAGING_SERVICE,
+        "record_id": "MGdispatch01",
+        "messaging_service_sid": "MGdispatch01",
+        "friendly_name": "Dispatch Test Messaging",
+        "inbound_request_url_configured": False,
+        "use_inbound_webhook_on_number": False,
+        "fallback_url_configured": True,
+        "status_callback_url_configured": True,
+    }
+    candidates = evaluate_record(rec, "twilio")
+    keys = {c.rule_key for c in candidates}
+    assert "twilio_messaging_service_inbound_webhook_missing" in keys, (
+        f"central evaluator did not produce the expected Twilio finding; got {keys}"
+    )

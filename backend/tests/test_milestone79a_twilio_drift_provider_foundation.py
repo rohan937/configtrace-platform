@@ -1078,19 +1078,19 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_planned_next_stage_contains_m79e():
-    """Rolled forward in M79I: Cross-Cloud UX Polish complete; next stage is M80A."""
+    """Rolled forward through the roadmap; next stage is now M89A Kubernetes."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80B" in stage
+    assert "M89A" in stage
 
 
 def test_expansion_framework_planned_next_stage_contains_twilio():
-    """M80A complete — next stage is M80B SendGrid Core Security Foundation."""
+    """Many milestones complete — next stage is M89A Kubernetes Drift Provider Foundation."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80B" in stage or "SendGrid" in stage
+    assert "M89A" in stage or "Kubernetes" in stage
 
 
 def test_expansion_framework_planned_next_stage_does_not_contain_m79a():
@@ -1102,17 +1102,17 @@ def test_expansion_framework_planned_next_stage_does_not_contain_m79a():
 
 
 def test_expansion_framework_next_provider_is_sendgrid():
-    """After SendGrid launched (M80A), Auth0 is the head of the recommended queue."""
+    """Kubernetes is the head of the recommended queue at the current roadmap position."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Auth0"
+    assert fw["summary"]["next_provider"] == "Kubernetes"
 
 
 def test_expansion_framework_next_milestone_references_sendgrid_or_m80a():
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     milestone = fw["summary"]["next_milestone"] or ""
-    assert "Auth0" in milestone or "M80B" in milestone
+    assert "Kubernetes" in milestone or "M89A" in milestone
 
 
 def test_expansion_framework_first_recommended_provider_is_sendgrid():
@@ -1120,8 +1120,8 @@ def test_expansion_framework_first_recommended_provider_is_sendgrid():
     fw = svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    assert recs[0]["provider"] == "auth0"
-    assert recs[0]["label"] == "Auth0"
+    assert recs[0]["provider"] == "kubernetes"
+    assert recs[0]["label"] == "Kubernetes"
 
 
 def test_expansion_framework_google_cloud_not_in_recommended_queue():

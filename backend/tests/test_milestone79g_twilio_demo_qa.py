@@ -967,11 +967,11 @@ def test_l3_twilio_maturity_partial():
 
 
 def test_l4_planned_next_stage_contains_m79h():
-    """L4: planned_next_stage contains 'M80A' (M79I complete)."""
+    """L4: planned_next_stage contains 'M89A' (current roadmap; Kubernetes)."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M80C" in stage
+    assert "M89A" in stage
 
 
 def test_l5_planned_next_stage_does_not_contain_m79g():
