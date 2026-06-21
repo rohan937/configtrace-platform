@@ -549,7 +549,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "terraform_cloud_policy_set_advisory_enforcement": ("terraform_cloud", "medium", "Policy enforcement posture"),
     "terraform_cloud_policy_set_empty": ("terraform_cloud", "low", "Policy enforcement posture"),
     "terraform_cloud_team_admin_access": ("terraform_cloud", "high", "Team access posture"),
-    "terraform_cloud_team_apply_access": ("terraform_cloud", "medium", "Team access posture"),
+    "terraform_cloud_team_plan_access": ("terraform_cloud", "medium", "Team access posture"),
     "terraform_cloud_variable_set_global_scope": ("terraform_cloud", "medium", "Variable set scope posture"),
     "terraform_cloud_state_version_present": ("terraform_cloud", "low", "State version posture"),
     # ── M88C: Terraform Cloud workspace/variable/policy risk expansion ────────

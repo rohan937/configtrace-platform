@@ -8111,23 +8111,23 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
       "Only fires when admin_access_count > 0. Platform and infrastructure teams commonly require admin access.",
   },
   {
-    key: "terraform_cloud_team_apply_access",
+    key: "terraform_cloud_team_plan_access",
     provider: "terraform_cloud",
     severity: "medium",
-    title: "Terraform Cloud workspace has teams with apply access",
+    title: "Terraform Cloud workspace has teams with plan access",
     category: "Team access posture",
     confidence: "medium",
     metadataOnly: true,
     description:
-      "This workspace has one or more teams with apply-level access. Apply access allows team members to approve and apply Terraform runs that make infrastructure changes. Review whether apply access is limited to teams that require it. Team names are never stored by ConfigTrace. Team access posture evidence may require review. This does not confirm compromise or unauthorized access.",
-    whatItChecks: "The apply_access_count field on terraform_cloud_team_access_summary records.",
+      "This workspace has one or more teams with plan-level access. Plan access allows team members to queue Terraform plan runs and view run output for this workspace. Review whether plan access is limited to teams that require it. Team names are never stored by ConfigTrace. Team access posture evidence may require review. This does not confirm compromise or unauthorized access.",
+    whatItChecks: "The plan_access_count field on terraform_cloud_team_access_summary records.",
     whyItMatters:
-      "Apply access allows teams to trigger infrastructure changes. Granting apply access to teams that only need to view runs is a broader permission grant than necessary.",
-    evidence: "Workspace resource ID (opaque), team access count, apply access count, admin access count. Team names are never stored.",
+      "Plan access lets teams queue plan runs and view run output. Granting plan access to teams that do not need visibility into a workspace is a broader permission grant than necessary.",
+    evidence: "Workspace resource ID (opaque), team access count, plan access count, admin access count. Team names are never stored.",
     remediation:
-      "Review team access in Terraform Cloud Workspace Settings → Team Access and reduce apply access to only the deployment teams that require it.",
+      "Review team access in Terraform Cloud Workspace Settings → Team Access and reduce plan access to only the teams that require it.",
     falsePositiveGuard:
-      "Only fires when apply_access_count > 0. Deployment teams commonly require apply access.",
+      "Only fires when plan_access_count > 0. Teams that operate a workspace commonly require plan access.",
   },
   {
     key: "terraform_cloud_variable_set_global_scope",

@@ -52,7 +52,7 @@ ALL_RULE_KEYS = {
     "terraform_cloud_policy_set_advisory_enforcement",
     "terraform_cloud_policy_set_empty",
     "terraform_cloud_team_admin_access",
-    "terraform_cloud_team_apply_access",
+    "terraform_cloud_team_plan_access",
     "terraform_cloud_variable_set_global_scope",
     "terraform_cloud_state_version_present",
     # M88C rules (added in M88C; reflected here for forward-compatibility)
@@ -409,10 +409,18 @@ def test_team_admin_access_fires() -> None:
     assert any(f.rule_key == "terraform_cloud_team_admin_access" for f in findings)
 
 
-def test_team_apply_access_fires() -> None:
+def test_team_plan_access_fires() -> None:
     from app.services.security_rules.terraform_cloud import evaluate
-    findings = evaluate(_team_access({"apply_access_count": 1}))
-    assert any(f.rule_key == "terraform_cloud_team_apply_access" for f in findings)
+    findings = evaluate(_team_access({"plan_access_count": 1}))
+    assert any(f.rule_key == "terraform_cloud_team_plan_access" for f in findings)
+
+
+def test_team_plan_access_zero_does_not_fire() -> None:
+    from app.services.security_rules.terraform_cloud import evaluate
+    findings = evaluate(_team_access({"plan_access_count": 0}))
+    assert not any(
+        f.rule_key == "terraform_cloud_team_plan_access" for f in findings
+    )
 
 
 def test_variable_set_global_scope_fires() -> None:
@@ -459,7 +467,11 @@ def test_healthy_workspace_no_findings() -> None:
 
 def test_healthy_variable_summary_no_findings() -> None:
     from app.services.security_rules.terraform_cloud import evaluate
-    findings = evaluate(_var_summary({"sensitive_variable_count": 3, "non_sensitive_variable_count": 0}))
+    findings = evaluate(_var_summary({
+        "sensitive_variable_count": 3,
+        "non_sensitive_variable_count": 0,
+        "unprotected_non_sensitive_count": 0,
+    }))
     assert not findings
 
 
@@ -510,10 +522,10 @@ def test_healthy_team_access_no_admin_no_apply_no_m88b_findings() -> None:
     from app.services.security_rules.terraform_cloud import evaluate
     # M88C adds write_access and custom_permissions rules; the _team_access builder
     # has write_access_count=1 by default. Only verify M88B rules don't fire here.
-    M88B_TEAM_RULES = {"terraform_cloud_team_admin_access", "terraform_cloud_team_apply_access"}
-    findings = evaluate(_team_access({"admin_access_count": 0, "apply_access_count": 0}))
+    M88B_TEAM_RULES = {"terraform_cloud_team_admin_access", "terraform_cloud_team_plan_access"}
+    findings = evaluate(_team_access({"admin_access_count": 0, "plan_access_count": 0}))
     fired_m88b = {f.rule_key for f in findings} & M88B_TEAM_RULES
-    assert not fired_m88b, f"M88B team rules fired when no admin/apply: {fired_m88b}"
+    assert not fired_m88b, f"M88B team rules fired when no admin/plan: {fired_m88b}"
 
 
 def test_healthy_varset_scoped_no_m88b_findings() -> None:
@@ -642,7 +654,7 @@ def _all_findings() -> list:
     findings.extend(evaluate(_policy_set({
         "enforcement_level_category": "advisory", "policy_count": 0
     })))
-    findings.extend(evaluate(_team_access({"admin_access_count": 2, "apply_access_count": 1})))
+    findings.extend(evaluate(_team_access({"admin_access_count": 2, "plan_access_count": 1})))
     findings.extend(evaluate(_varset({"global_scope": True})))
     findings.extend(evaluate(_state_version({"state_version_present": True})))
     return findings

@@ -549,7 +549,7 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "terraform_cloud_policy_set_advisory_enforcement": (HIGH, "Only fires when enforcement_level_category='advisory'. Some policy sets are intentionally advisory for gradual rollout."),
     "terraform_cloud_policy_set_empty": (HIGH, "Only fires when policy_count==0. An empty policy set may be in setup and not yet populated."),
     "terraform_cloud_team_admin_access": (HIGH, "Only fires when admin_access_count > 0 on a terraform_cloud_team_access_summary record. Admin access may be required for platform teams. Team names are never stored."),
-    "terraform_cloud_team_apply_access": (MEDIUM, "Fires when apply_access_count > 0 on a terraform_cloud_team_access_summary record. Apply access is commonly granted to deployment teams. Team names are never stored."),
+    "terraform_cloud_team_plan_access": (MEDIUM, "Fires when plan_access_count > 0 on a terraform_cloud_team_access_summary record. Plan access lets teams queue plan runs and view run output. Team names are never stored."),
     "terraform_cloud_variable_set_global_scope": (HIGH, "Only fires when global_scope is True on a terraform_cloud_variable_set record. Global scope is sometimes intentional for shared configuration. Variable names and values are never stored."),
     "terraform_cloud_state_version_present": (HIGH, "Only fires when state_version_present is True on a terraform_cloud_state_version_summary record. State presence is expected for active workspaces; this is an informational posture indicator. Raw state is never fetched or stored."),
     # ── M88C: Terraform Cloud workspace/variable/policy risk expansion ────────

@@ -521,7 +521,7 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "terraform_cloud_policy_set_advisory_enforcement",
         "terraform_cloud_policy_set_empty",
         "terraform_cloud_team_admin_access",
-        "terraform_cloud_team_apply_access",
+        "terraform_cloud_team_plan_access",
         "terraform_cloud_variable_set_global_scope",
         "terraform_cloud_state_version_present",
         # ── M88C: Terraform Cloud workspace/variable/policy risk expansion ────

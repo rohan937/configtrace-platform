@@ -119,7 +119,7 @@ FAMILY_TO_RULE_KEYS: dict[str, list[str]] = {
     ],
     "terraform_cloud_team_access_risk_with_activity": [
         "terraform_cloud_team_admin_access",
-        "terraform_cloud_team_apply_access",
+        "terraform_cloud_team_plan_access",
         "terraform_cloud_team_write_access",
         "terraform_cloud_team_custom_permissions",
     ],

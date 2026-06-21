@@ -100,7 +100,7 @@ RULE_POLICY_EMPTY = "terraform_cloud_policy_set_empty"
 
 # Team access rules (M88B)
 RULE_TEAM_ADMIN_ACCESS = "terraform_cloud_team_admin_access"
-RULE_TEAM_APPLY_ACCESS = "terraform_cloud_team_apply_access"
+RULE_TEAM_PLAN_ACCESS = "terraform_cloud_team_plan_access"
 
 # Variable set rules (M88B)
 RULE_VARIABLE_SET_GLOBAL = "terraform_cloud_variable_set_global_scope"
@@ -167,7 +167,7 @@ TERRAFORM_CLOUD_RULE_KEYS: frozenset[str] = frozenset(
         RULE_POLICY_ADVISORY,
         RULE_POLICY_EMPTY,
         RULE_TEAM_ADMIN_ACCESS,
-        RULE_TEAM_APPLY_ACCESS,
+        RULE_TEAM_PLAN_ACCESS,
         RULE_VARIABLE_SET_GLOBAL,
         RULE_STATE_VERSION_PRESENT,
         # M88C rules
@@ -708,7 +708,10 @@ def _eval_team_access_summary(record: dict[str, Any]) -> list[FindingCandidate]:
     workspace_resource_id = get_str(record, "workspace_resource_id")
 
     admin_count = _get_int(record, "admin_access_count")
-    apply_count = _get_int(record, "apply_access_count")
+    # Terraform Cloud's workspace access-level model is admin/write/plan/read
+    # (plus custom). There is no "apply" access level — the connector emits
+    # plan_access_count from team-access records, never apply_access_count.
+    plan_count = _get_int(record, "plan_access_count")
 
     # Rule 15: admin team access
     if admin_count is not None and admin_count > 0:
@@ -737,27 +740,27 @@ def _eval_team_access_summary(record: dict[str, Any]) -> list[FindingCandidate]:
             )
         )
 
-    # Rule 16: apply team access
-    if apply_count is not None and apply_count > 0:
+    # Rule 16: plan team access
+    if plan_count is not None and plan_count > 0:
         candidates.append(
             FindingCandidate(
                 provider="terraform_cloud",
-                rule_key=RULE_TEAM_APPLY_ACCESS,
-                finding_key=make_finding_key(RULE_TEAM_APPLY_ACCESS, record_id),
+                rule_key=RULE_TEAM_PLAN_ACCESS,
+                finding_key=make_finding_key(RULE_TEAM_PLAN_ACCESS, record_id),
                 severity="medium",
-                title="Terraform Cloud workspace has teams with apply access",
+                title="Terraform Cloud workspace has teams with plan access",
                 description=(
-                    f"This workspace has {apply_count} team(s) with apply-level access. "
-                    "Apply access allows team members to approve and apply Terraform "
-                    "runs that make infrastructure changes. Review whether apply access "
-                    "is limited to teams that require it. Team names are never stored "
-                    "by ConfigTrace. Team access posture evidence may require review. "
+                    f"This workspace has {plan_count} team(s) with plan-level access. "
+                    "Plan access allows team members to queue Terraform plan runs and "
+                    "view run output for this workspace. Review whether plan access is "
+                    "limited to teams that require it. Team names are never stored by "
+                    "ConfigTrace. Team access posture evidence may require review. "
                     + _DISCLAIMER
                 ),
                 evidence=_safe_evidence(
                     record,
                     "workspace_resource_id",
-                    "team_access_count", "apply_access_count",
+                    "team_access_count", "plan_access_count",
                     "admin_access_count",
                 ),
                 record_id=record_id,
@@ -1034,12 +1037,29 @@ def _eval_workspace_variable_summary_m88c(
     non_sensitive_count = _get_int(record, "non_sensitive_variable_count")
     env_count = _get_int(record, "environment_variable_count")
     tf_count = _get_int(record, "terraform_variable_count")
+    # P3 fix: the connector emits unprotected_non_sensitive_count, which counts
+    # ONLY env-category variables that are not marked sensitive. The earlier
+    # implementation gated on env_count > 0 AND non_sensitive_variable_count > 0,
+    # where non_sensitive_variable_count mixes env + terraform categories — so a
+    # workspace with sensitive env vars but non-sensitive *terraform* vars could
+    # fire this env-specific rule (cross-category false positive). We now use the
+    # per-category unprotected_non_sensitive_count and fall back to the legacy
+    # heuristic only when that field is absent (older snapshots).
+    unprotected_env_non_sensitive = _get_int(record, "unprotected_non_sensitive_count")
 
     if variable_count is None or variable_count == 0:
         return []
 
     # Rule M88C-7: environment variables that are non-sensitive
-    if env_count is not None and env_count > 0 and non_sensitive_count is not None and non_sensitive_count > 0:
+    if unprotected_env_non_sensitive is not None:
+        env_non_sensitive_present = unprotected_env_non_sensitive > 0
+    else:
+        # Legacy fallback: per-category count unavailable on this record.
+        env_non_sensitive_present = (
+            env_count is not None and env_count > 0
+            and non_sensitive_count is not None and non_sensitive_count > 0
+        )
+    if env_non_sensitive_present:
         candidates.append(
             FindingCandidate(
                 provider="terraform_cloud",
@@ -1059,7 +1079,8 @@ def _eval_workspace_variable_summary_m88c(
                 evidence=_safe_evidence(
                     record, "workspace_resource_id",
                     "variable_count", "environment_variable_count",
-                    "non_sensitive_variable_count", "raw_value_never_read",
+                    "non_sensitive_variable_count",
+                    "unprotected_non_sensitive_count", "raw_value_never_read",
                 ),
                 record_id=record_id,
             )

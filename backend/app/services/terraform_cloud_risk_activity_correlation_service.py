@@ -126,7 +126,7 @@ TERRAFORM_CLOUD_RULE_KEY_TO_SIGNAL_TYPE: dict[str, str] = {
     "terraform_cloud_run_trigger_enabled": "terraform_cloud_run_trigger_signal",
     # Team access posture
     "terraform_cloud_team_admin_access": "terraform_cloud_team_access_posture_signal",
-    "terraform_cloud_team_apply_access": "terraform_cloud_team_access_posture_signal",
+    "terraform_cloud_team_plan_access": "terraform_cloud_team_access_posture_signal",
     "terraform_cloud_team_write_access": "terraform_cloud_team_access_posture_signal",
     "terraform_cloud_team_custom_permissions": "terraform_cloud_team_access_posture_signal",
     # State version metadata
@@ -293,7 +293,7 @@ TERRAFORM_CLOUD_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     "terraform_cloud_team_access_risk_with_activity": _family(
         rule_keys={
             "terraform_cloud_team_admin_access",
-            "terraform_cloud_team_apply_access",
+            "terraform_cloud_team_plan_access",
             "terraform_cloud_team_write_access",
             "terraform_cloud_team_custom_permissions",
         },

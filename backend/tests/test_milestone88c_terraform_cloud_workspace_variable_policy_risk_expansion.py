@@ -53,7 +53,7 @@ M88B_RULE_KEYS = {
     "terraform_cloud_policy_set_advisory_enforcement",
     "terraform_cloud_policy_set_empty",
     "terraform_cloud_team_admin_access",
-    "terraform_cloud_team_apply_access",
+    "terraform_cloud_team_plan_access",
     "terraform_cloud_variable_set_global_scope",
     "terraform_cloud_state_version_present",
 }
@@ -358,6 +358,7 @@ def test_env_vars_non_sensitive_fires() -> None:
         terraform_variable_count=1,
         non_sensitive_variable_count=2,
         sensitive_variable_count=1,
+        unprotected_non_sensitive_count=2,
     )
     keys = _rule_keys(evaluate(record))
     assert "terraform_cloud_workspace_environment_variables_non_sensitive" in keys
