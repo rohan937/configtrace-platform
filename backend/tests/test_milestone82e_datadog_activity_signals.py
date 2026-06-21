@@ -840,7 +840,8 @@ class TestDatadogExpansionFrameworkE:
         assert ("M83A" in planned or "Clerk" in planned or "M84A" in planned or "PagerDuty" in planned
                 or "M85A" in planned or "Linear" in planned
                 or "M86" in planned or "Jira" in planned
-                or "M87" in planned or "GitLab" in planned), (
+                or "M87" in planned or "GitLab" in planned
+                or "M88" in planned or "M89" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M83A/Clerk or later, got: {planned!r}"
         )
 

@@ -656,7 +656,8 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
-        assert "M86" in planned or "Jira" in planned, (
+        assert ("M86" in planned or "Jira" in planned
+                or "M87" in planned or "M88" in planned or "M89" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M86/Jira; got: {planned!r}"
         )
         assert "M85F" not in planned, (

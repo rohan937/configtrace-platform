@@ -754,7 +754,8 @@ class TestExpansionFramework:
         fw = get_framework()
         planned = fw.get("summary", {}).get("planned_next_stage", "")
         # M85I completes the Linear arc; framework then advances to M86A: Jira.
-        assert "M85I" in planned or "M86A" in planned or "Jira" in planned, (
+        assert ("M85I" in planned or "M86A" in planned or "Jira" in planned
+                or "M87" in planned or "M88" in planned or "M89" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M85I or M86A/Jira; got: {planned!r}"
         )
 

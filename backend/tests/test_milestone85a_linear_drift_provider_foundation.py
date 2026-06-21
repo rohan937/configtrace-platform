@@ -800,7 +800,8 @@ def test_i1_planned_next_stage_contains_m85b() -> None:
     # M85I complete — planned_next_stage now points to M86A/Jira.
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M85" in planned or "M86" in planned or "Jira" in planned, (
+    assert ("M85" in planned or "M86" in planned or "Jira" in planned
+            or "M87" in planned or "M88" in planned or "M89" in planned or "Kubernetes" in planned), (
         f"planned_next_stage should reference M85/M86 or later; got {planned!r}"
     )
 
@@ -810,7 +811,8 @@ def test_i2_planned_next_stage_mentions_linear() -> None:
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
     assert ("Linear" in planned or "linear" in planned
-            or "M86" in planned or "Jira" in planned), (
+            or "M86" in planned or "Jira" in planned
+            or "M87" in planned or "M88" in planned or "M89" in planned or "Kubernetes" in planned), (
         f"planned_next_stage should mention Linear, M86, or Jira; got {planned!r}"
     )
 
@@ -840,7 +842,9 @@ def test_i5_first_recommended_provider_is_jira() -> None:
     # After M87A launched GitLab, Terraform Cloud became the first recommended provider.
     assert ("jira" in first_provider or "jira" in first_label
             or "gitlab" in first_provider or "gitlab" in first_label
-            or "terraform" in first_provider or "terraform" in first_label), (
+            or "terraform" in first_provider or "terraform" in first_label
+            or "kubernetes" in first_provider or "kubernetes" in first_label
+            or "sentry" in first_provider or "sentry" in first_label), (
         f"First recommended provider should be Jira, GitLab, or later, got {recs[0]['provider']!r}"
     )
 

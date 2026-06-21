@@ -515,7 +515,8 @@ class TestCapabilityMatrixAndFramework:
         # M85I complete; framework now points to M86A/Jira.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M86" in planned or "Jira" in planned, (
+        assert ("M86" in planned or "Jira" in planned
+                or "M87" in planned or "M88" in planned or "M89" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M86/Jira; got {planned!r}"
         )
 

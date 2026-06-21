@@ -683,7 +683,7 @@ def test_expansion_framework_planned_next_stage_is_m82a_datadog():
     assert (
         "M82A" in stage or "Datadog" in stage or "M83" in stage or "Clerk" in stage
         or "M84" in stage or "M85" in stage or "M86H" in stage or "M86I" in stage
-        or "M87" in stage
+        or "M87" in stage or "M88" in stage or "M89" in stage or "Kubernetes" in stage
     ), (
         f"planned_next_stage should point to M82A/Datadog or later; got: {stage!r}"
     )

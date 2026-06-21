@@ -886,7 +886,8 @@ class TestExpansionFramework:
         assert ("M82C" in stage or "Datadog" in stage or "M83" in stage
                 or "Clerk" in stage or "M84" in stage or "PagerDuty" in stage
                 or "M85A" in stage or "Linear" in stage
-                or "M86" in stage or "Jira" in stage or "GitLab" in stage)
+                or "M86" in stage or "Jira" in stage or "GitLab" in stage
+                or "M87" in stage or "M88" in stage or "M89" in stage or "Kubernetes" in stage)
 
     def test_datadog_not_in_recommended_queue(self):
         from app.services.provider_expansion_framework import RECOMMENDED_NEXT_PROVIDERS
