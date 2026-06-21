@@ -737,7 +737,8 @@ class TestExpansionFramework:
         # M84I completes the PagerDuty arc; framework then advances to M85A: Linear.
         assert ("M84I" in planned or "M85A" in planned or "Linear" in planned
                 or "M86" in planned or "Jira" in planned
-                or "M87" in planned or "GitLab" in planned), (
+                or "M87" in planned or "GitLab" in planned
+                or "M89A" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M84I or M85A/Linear or beyond; got: {planned!r}"
         )
 
@@ -753,8 +754,8 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw.get("recommended_next_providers", [])
-        assert recs and recs[0]["provider"] in ("linear", "jira", "gitlab"), (
-            f"Linear should be head of recommended queue; got {recs[0]['provider'] if recs else None!r}"
+        assert recs and recs[0]["provider"] in ("kubernetes", "linear", "jira", "gitlab"), (
+            f"Kubernetes should be head of recommended queue; got {recs[0]['provider'] if recs else None!r}"
         )
 
 
@@ -1021,7 +1022,9 @@ class TestForbiddenWording:
 class TestRegressionSmoke:
     def test_evaluator_dispatch_for_pagerduty(self) -> None:
         from app.services.security_finding_evaluator import evaluate_record
-        # A healthy pagerduty_service record should not raise
+        # A healthy pagerduty_service record should not raise.
+        # NOTE: real signature is evaluate_record(record, provider) — arguments
+        # must NOT be reversed, or this becomes a false-passing no-op.
         record = {
             "record_type": "pagerduty_service",
             "record_id": "PAGERDUTY_TEST_SERVICE_ID",
@@ -1033,8 +1036,32 @@ class TestRegressionSmoke:
             "team_count": 1,
             "status_category": "active",
         }
-        findings = evaluate_record("pagerduty", record)
+        findings = evaluate_record(record, "pagerduty")
         assert isinstance(findings, list)
+
+    def test_evaluator_central_dispatch_produces_pagerduty_finding(self) -> None:
+        """Risky record routed through the central evaluator must yield a
+        specific PagerDuty rule. This FAILS if "pagerduty" is removed from
+        _PROVIDER_RULES, or if the argument order is reversed.
+        """
+        from app.services.security_finding_evaluator import evaluate_record
+        record = {
+            "record_type": "pagerduty_service",
+            "resource_id": "SVC-TEST-001",
+            "record_id": "SVC-TEST-001",
+            "provider": "pagerduty",
+            "escalation_policy_id": "",  # empty = no escalation policy = HIGH risk
+            "active": True,
+            "integration_count": 2,
+            "status_category": "active",
+            "type_category": "service",
+        }
+        findings = evaluate_record(record, "pagerduty")
+        rule_keys = {f.rule_key for f in findings}
+        assert "pagerduty_service_no_escalation_policy" in rule_keys, (
+            f"expected pagerduty_service_no_escalation_policy via central dispatch; "
+            f"got {sorted(rule_keys)!r}"
+        )
 
     def test_pagerduty_service_no_escalation_policy_fires(self) -> None:
         from app.services.security_rules.pagerduty import evaluate

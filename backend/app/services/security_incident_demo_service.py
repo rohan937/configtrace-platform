@@ -7413,13 +7413,12 @@ def seed_pagerduty(
             "record_type": "pagerduty_webhook_subscription",
             "resource_name": "PagerDuty webhook subscription review",
             "active": True,
-            "secret_present": False,
-            "description_present": True,
+            "has_custom_headers": False,
         },
         remediation={
             "summary": (
-                "Configure a shared secret for the PagerDuty webhook subscription "
-                "to allow receivers to verify event authenticity."
+                "Configure custom authentication headers for the PagerDuty webhook "
+                "subscription so receivers can verify event authenticity."
             ),
         },
     )
@@ -7475,8 +7474,8 @@ def seed_pagerduty(
             "event_count": 20,
             "subscribed_event_count": 20,
             "event_scope_category": "broad",
-            "secret_present": False,
-            "description_present": True,
+            "custom_headers_present": False,
+            "point_of_contact_present": True,
             "has_custom_headers": False,
         },
     )

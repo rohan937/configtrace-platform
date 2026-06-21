@@ -1115,13 +1115,16 @@ def _eval_webhook_subscription(record: dict[str, Any]) -> list[FindingCandidate]
             rule_key=_RULE_WEBHOOK_SECRET_NOT_INDICATED,
             finding_key=make_finding_key(_RULE_WEBHOOK_SECRET_NOT_INDICATED, record_id),
             severity="medium",
-            title="PagerDuty webhook subscription has no custom authentication headers",
+            title="PagerDuty webhook subscription lacks custom header authentication evidence",
             description=(
-                "An active PagerDuty V3 webhook subscription does not have any custom "
-                "headers configured. Without custom authentication headers, the endpoint "
-                "receiving this webhook cannot verify that events originate from PagerDuty. "
-                "This webhook configuration evidence may require review. Custom header "
-                "values are never stored by ConfigTrace."
+                "An active PagerDuty V3 webhook subscription has no custom headers visible "
+                "in its configuration. ConfigTrace observes custom delivery headers but "
+                "cannot observe PagerDuty's native V3 signing secret, so this finding "
+                "indicates only that no custom header authentication evidence is present — "
+                "it does not confirm the webhook is unsigned. Reviewing how the receiving "
+                "endpoint verifies event authenticity may be worthwhile. This webhook "
+                "configuration evidence may require review. Custom header values are never "
+                "stored by ConfigTrace."
             ),
             evidence={
                 "rule": _RULE_WEBHOOK_SECRET_NOT_INDICATED,

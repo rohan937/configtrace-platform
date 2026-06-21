@@ -611,6 +611,8 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "key_present",               # bool — whether an integration key is present (NEVER the key)
         "routing_key_present",       # bool — whether a routing key is present (NEVER the key)
         "event_scope_category",      # safe category for webhook filter scope
+        "custom_headers_present",    # bool — whether webhook custom headers are present (NEVER values)
+        "point_of_contact_present",  # bool — whether a business-service point of contact is configured (NEVER identity)
         "runnable",                  # safe runnability label ("owner"/"team"/"any"/"unknown")
         "conference_present",        # bool — whether conference number is configured (NEVER the number)
         "schedule_target_count",     # int — count of schedule targets (never identities)

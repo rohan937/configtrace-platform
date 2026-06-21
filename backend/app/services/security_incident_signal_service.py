@@ -527,6 +527,7 @@ ALLOWED_METADATA_KEYS: frozenset[str] = frozenset(
         "runnable",                  # safe runnability label ("owner"/"team"/"any"/"unknown")
         "conference_present",        # bool — whether conference number is configured (NEVER the number)
         "description_present",       # bool — whether a point-of-contact / description is set
+        "point_of_contact_present",  # bool — whether a business-service point of contact is configured (NEVER identity)
         # Linear configuration activity signal fields (M85E) — safe control-plane
         # config-state change summary ONLY. NEVER stored: Linear API keys, OAuth
         # tokens, webhook secrets, raw webhook URLs, issue titles, issue descriptions,

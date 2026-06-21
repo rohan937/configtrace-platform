@@ -673,7 +673,8 @@ def test_g_expansion_framework_planned_next_stage_m84c() -> None:
             or "M84I" in planned or "Cross-Cloud" in planned
             or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned
-            or "M87" in planned or "GitLab" in planned), (
+            or "M87" in planned or "GitLab" in planned
+            or "M89A" in planned or "Kubernetes" in planned), (
         f"planned_next_stage should reference M84C or beyond; got: {planned!r}"
     )
 
@@ -693,9 +694,9 @@ def test_g_linear_head_of_recommended_next_providers() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    assert ("linear" in provider.lower() or "jira" in provider.lower()
-            or "gitlab" in provider.lower()), (
-        f"Linear, Jira, or GitLab should be head of recommended_next_providers; got: {provider!r}"
+    assert ("kubernetes" in provider.lower() or "linear" in provider.lower()
+            or "jira" in provider.lower() or "gitlab" in provider.lower()), (
+        f"Kubernetes should be head of recommended_next_providers; got: {provider!r}"
     )
 
 

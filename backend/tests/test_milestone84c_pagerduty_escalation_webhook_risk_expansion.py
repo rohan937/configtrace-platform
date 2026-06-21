@@ -656,7 +656,8 @@ class TestExpansionFramework:
                 or "M84I" in planned or "Cross-Cloud" in planned
                 or "M85A" in planned or "Linear" in planned
                 or "M86" in planned or "Jira" in planned
-                or "M87" in planned or "GitLab" in planned), (
+                or "M87" in planned or "GitLab" in planned
+                or "M89A" in planned or "Kubernetes" in planned), (
             f"planned_next_stage should reference M84D or beyond, got: {planned!r}"
         )
 
@@ -664,8 +665,8 @@ class TestExpansionFramework:
         fw = get_framework()
         recommendations = fw.get("recommended_next_providers", [])
         assert recommendations, "No recommended providers"
-        assert recommendations[0]["provider"] in ("linear", "jira", "gitlab"), (
-            f"Expected Linear at head of queue, got {recommendations[0]['provider']!r}"
+        assert recommendations[0]["provider"] in ("kubernetes", "linear", "jira", "gitlab"), (
+            f"Expected Kubernetes at head of queue, got {recommendations[0]['provider']!r}"
         )
 
 

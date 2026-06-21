@@ -883,7 +883,7 @@ class PagerDutyConnector(BaseConnector):
                 "event_count": rec.get("event_count"),
                 "url_scheme_category": rec.get("delivery_url_scheme_category"),
                 "event_scope_category": rec.get("filter_type"),
-                "secret_present": rec.get("has_custom_headers"),
+                "custom_headers_present": rec.get("has_custom_headers"),
                 "pagerduty_event_id": eid,
             }
             events.append({
@@ -935,7 +935,7 @@ class PagerDutyConnector(BaseConnector):
                 "operation_action": "updated",
                 "category": "Business service configuration",
                 "team_present": rec.get("team_present"),
-                "description_present": rec.get("point_of_contact_present"),
+                "point_of_contact_present": rec.get("point_of_contact_present"),
                 "pagerduty_event_id": eid,
             }
             events.append({

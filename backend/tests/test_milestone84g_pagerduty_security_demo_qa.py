@@ -273,7 +273,8 @@ def test_expansion_framework_m84h() -> None:
             or "M84I" in planned or "Cross-Cloud" in planned
             or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned
-            or "M87" in planned or "GitLab" in planned)
+            or "M87" in planned or "GitLab" in planned
+            or "M89A" in planned or "Kubernetes" in planned)
 
 
 # ── Section I: Frontend ───────────────────────────────────────────────────────

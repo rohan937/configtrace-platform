@@ -226,7 +226,7 @@ def _build_signal(group: list[SecurityActivityEvent]) -> Optional[dict[str, Any]
         "event_count": _mdint(anchor, "event_count"),
         "url_scheme_category": _md(anchor, "url_scheme_category"),
         "event_scope_category": _md(anchor, "event_scope_category"),
-        "secret_present": _mdbool(anchor, "secret_present"),
+        "custom_headers_present": _mdbool(anchor, "custom_headers_present"),
         # Safe event orchestration posture fields
         "route_count": _mdint(anchor, "route_count"),
         "team_present": _mdbool(anchor, "team_present"),
@@ -236,7 +236,7 @@ def _build_signal(group: list[SecurityActivityEvent]) -> Optional[dict[str, Any]
         "runnable": _md(anchor, "runnable"),
         "conference_present": _mdbool(anchor, "conference_present"),
         # Safe business service posture field
-        "description_present": _mdbool(anchor, "description_present"),
+        "point_of_contact_present": _mdbool(anchor, "point_of_contact_present"),
     }
 
     metadata = signal_svc.sanitize_signal_metadata(md_raw)
