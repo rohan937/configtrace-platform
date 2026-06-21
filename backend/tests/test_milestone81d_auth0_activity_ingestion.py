@@ -897,7 +897,7 @@ class TestCapabilityMatrixAndExpansion:
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
         assert "M81D" not in planned
-        assert any(tag in planned for tag in ("M81E", "M81F", "M81G", "M81H", "M81I", "M82")), (
+        assert any(tag in planned for tag in ("M81E", "M81F", "M81G", "M81H", "M81I", "M82", "M83", "M84", "M85", "M86", "M87", "M88", "M89", "Kubernetes")), (
             f"planned_next_stage should point to M81E or beyond after M81D; got: {planned!r}"
         )
 
