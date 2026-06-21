@@ -1266,14 +1266,18 @@ def test_expansion_framework_auth0_not_in_recommended_queue():
     )
 
 
-def test_expansion_framework_top_recommendation_is_datadog():
+def test_expansion_framework_top_recommendation_is_kubernetes():
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    # Datadog launched in M82A; the queue head has since advanced. Kubernetes
-    # (M89A) is now at the head of the recommended-next queue.
-    assert recs[0]["provider"] in ("datadog", "clerk", "pagerduty", "linear", "jira", "gitlab", "terraform_cloud", "kubernetes")
+    # Datadog launched in M82A and has fully completed its dual-stack arc, so it
+    # is no longer in the recommended-next queue. The queue head has advanced to
+    # Kubernetes (M89A), which is the provider the framework now actually returns.
+    assert recs[0]["provider"] == "kubernetes", (
+        f"expansion-framework queue head should be kubernetes; got "
+        f"{recs[0]['provider']!r}"
+    )
 
 
 # ════════════════════════════════════════════════════════════════════════════

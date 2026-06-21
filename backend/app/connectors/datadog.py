@@ -896,6 +896,20 @@ class DatadogConnector(BaseConnector):
         if not isinstance(raw, dict):
             return None
 
+        # RECORD_ID STABILITY TRADEOFF (deferred — M82 QA):
+        # The only stable, non-secret identifier Datadog exposes for a cloud
+        # integration is the account ID (AWS account_id / GCP project_id /
+        # Azure tenant). ConfigTrace deliberately treats those as sensitive and
+        # NEVER stores them (account_id_present is a boolean only), so they are
+        # not available to seed a deterministic record_id. cloud_provider is the
+        # only stable category field, but there can be multiple integrations per
+        # provider, so a positional index is unavoidable here. The index is
+        # stable only as long as the Datadog API returns accounts in a stable
+        # order within a single sync; a reordered account list could reassign
+        # record_ids. A deterministic-hash approach is deferred because every
+        # candidate stable input (account_id, ARN, project_id, tenant) is on the
+        # never-store list. Keeping the index keeps this surface privacy-safe at
+        # the cost of perfect cross-sync record_id stability.
         rec_id = f"datadog_cloud_{cloud_provider}_{index}"
         resource_name = f"{cloud_provider.upper()} integration"
 
