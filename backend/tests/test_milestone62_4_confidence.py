@@ -99,7 +99,7 @@ def test_create_persists_confidence(test_user, db_session):
     res = _res(db_session, integ, test_user)
     f = svc.upsert_active_finding(
         db=db_session, workspace_id=ws.id, integration_id=integ.id, provider="github",
-        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="critical",
+        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="high",
         title="GitHub webhook uses plain HTTP", resource_id=res.id,
     )
     assert f.confidence == HIGH
@@ -117,7 +117,7 @@ def test_refresh_keeps_confidence(test_user, db_session):
     res = _res(db_session, integ, test_user)
     kw = dict(
         db=db_session, workspace_id=ws.id, integration_id=integ.id, provider="github",
-        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="critical",
+        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="high",
         title="GitHub webhook uses plain HTTP", resource_id=res.id,
     )
     svc.upsert_active_finding(**kw)
@@ -135,7 +135,7 @@ def test_resolve_preserves_confidence(test_user, db_session):
     res = _res(db_session, integ, test_user)
     f = svc.upsert_active_finding(
         db=db_session, workspace_id=ws.id, integration_id=integ.id, provider="github",
-        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="critical",
+        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="high",
         title="GitHub webhook uses plain HTTP", resource_id=res.id,
     )
     conf = f.confidence
@@ -172,7 +172,7 @@ def test_api_response_includes_confidence(client, test_user, db_session):
     res = _res(db_session, integ, test_user)
     f = svc.upsert_active_finding(
         db=db_session, workspace_id=ws.id, integration_id=integ.id, provider="github",
-        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="critical",
+        finding_key="github_webhook_http:acme/widgets#webhook#1", severity="high",
         title="GitHub webhook uses plain HTTP", resource_id=res.id,
     )
     resp = client.get(f"/security/findings/{f.id}")

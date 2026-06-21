@@ -230,7 +230,7 @@ def test_webhook_risk_also_correlates_to_secret_alert(test_user, db_session):
     ws = _ws(test_user, db_session)
     integ = _integ(db_session, test_user, ws.id)
     res = _repo(db_session, integ, test_user)
-    _finding(db_session, ws, integ, res, "github_webhook_http", severity="critical")
+    _finding(db_session, ws, integ, res, "github_webhook_http", severity="high")
     _ss_event(db_session, ws.id, integ.id, event_type=_OPEN)
     try:
         _gen(db_session, ws.id)
