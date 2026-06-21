@@ -91,6 +91,10 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "supabase_public_write_policy": (HIGH, "Only fires when a public/anon insert/update/delete policy is active on an RLS-enabled table."),
     "supabase_edge_function_jwt_disabled": (HIGH, "Only an explicit verify_jwt=false fires; missing/unknown is skipped."),
     "supabase_auth_protection_missing": (MEDIUM, "Only an explicit leaked-password-protection=false fires; missing/unknown is skipped."),
+    # Supabase — auth-hardening QA
+    "supabase_refresh_token_rotation_disabled": (MEDIUM, "Only an explicit refresh_token_rotation_enabled=false fires; missing/unknown is skipped."),
+    "supabase_captcha_disabled": (MEDIUM, "Only an explicit captcha_enabled=false fires; missing/unknown is skipped. CAPTCHA is optional hardening, so wording stays careful."),
+    "supabase_password_update_reauth_disabled": (MEDIUM, "Only an explicit require_reauthentication_for_password_update=false fires; missing/unknown is skipped."),
     # Firebase
     "firebase_rules_public": (MEDIUM, "Low-confidence ruleset parses are skipped to avoid false positives."),
     "firebase_storage_rules_public": (MEDIUM, "Low-confidence ruleset parses are skipped to avoid false positives."),

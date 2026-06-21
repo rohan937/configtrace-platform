@@ -59,6 +59,10 @@ _RULE_PUBLIC_SELECT_SENSITIVE = "supabase_public_select_sensitive_table"
 _RULE_PUBLIC_WRITE = "supabase_public_write_policy"
 _RULE_EDGE_JWT_DISABLED = "supabase_edge_function_jwt_disabled"
 _RULE_AUTH_PROTECTION_MISSING = "supabase_auth_protection_missing"
+# Steady-state auth-hardening rules (QA) — each fires only on an explicit False.
+_RULE_REFRESH_TOKEN_ROTATION_DISABLED = "supabase_refresh_token_rotation_disabled"
+_RULE_CAPTCHA_DISABLED = "supabase_captcha_disabled"
+_RULE_PASSWORD_UPDATE_REAUTH_DISABLED = "supabase_password_update_reauth_disabled"
 
 # JWT access-token lifetime beyond this (seconds) is treated as too long.
 _JWT_MAX_SECONDS = 86_400
@@ -260,7 +264,10 @@ def _eval_auth_config(record: dict[str, Any]) -> list[FindingCandidate]:
                 description=(
                     f"The JWT access-token lifetime is {jwt_exp} seconds "
                     f"(over a day). Long-lived tokens stay valid well after a "
-                    f"user signs out and widen the impact of a leaked token."
+                    f"user signs out, which widens the window in which a "
+                    f"mishandled token could be reused. This is evidence for "
+                    f"review and does not confirm unauthorized access or data "
+                    f"exposure."
                 ),
                 evidence={"rule": _RULE_JWT_LONG, "jwt_exp_seconds": jwt_exp},
                 remediation={
@@ -287,11 +294,11 @@ def _eval_auth_config(record: dict[str, Any]) -> list[FindingCandidate]:
                 title="Supabase leaked-password protection is disabled",
                 description=(
                     "Leaked-password protection (Have I Been Pwned) is disabled, so "
-                    "users may set passwords known to be compromised"
+                    "users may set passwords already known to be unsafe"
                     + (" and multi-factor authentication is also not enabled" if mfa_off else "")
                     + ". This may increase unauthorized-access risk. This is "
                     "evidence for review and does not confirm unauthorized access "
-                    "or compromise."
+                    "or data exposure."
                 ),
                 evidence={
                     "rule": _RULE_AUTH_PROTECTION_MISSING,
@@ -303,6 +310,100 @@ def _eval_auth_config(record: dict[str, Any]) -> list[FindingCandidate]:
                     "steps": [
                         "Enable the Have I Been Pwned leaked-password check.",
                         "Consider enabling/encouraging multi-factor authentication.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # ── Refresh-token rotation disabled (QA). Only an explicit False fires. ───
+    if record.get("refresh_token_rotation_enabled") is False:
+        out.append(
+            FindingCandidate(
+                provider="supabase",
+                rule_key=_RULE_REFRESH_TOKEN_ROTATION_DISABLED,
+                finding_key=make_finding_key(_RULE_REFRESH_TOKEN_ROTATION_DISABLED, record_id),
+                severity="medium",
+                title="Supabase refresh token rotation disabled",
+                description=(
+                    "Refresh token rotation is disabled, so a refresh token stays "
+                    "valid for reuse rather than being replaced on each use. This is "
+                    "configuration evidence that may require review and may increase "
+                    "unauthorized-access risk. This is evidence for review and does "
+                    "not confirm unauthorized access or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_REFRESH_TOKEN_ROTATION_DISABLED,
+                    "refresh_token_rotation_enabled": False,
+                },
+                remediation={
+                    "summary": "Enable refresh token rotation.",
+                    "steps": [
+                        "Turn on refresh token rotation in the auth settings.",
+                        "Verify clients handle rotated refresh tokens correctly.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # ── CAPTCHA / bot protection disabled (QA). Only an explicit False fires. ─
+    if record.get("captcha_enabled") is False:
+        out.append(
+            FindingCandidate(
+                provider="supabase",
+                rule_key=_RULE_CAPTCHA_DISABLED,
+                finding_key=make_finding_key(_RULE_CAPTCHA_DISABLED, record_id),
+                severity="low",
+                title="Supabase CAPTCHA protection disabled",
+                description=(
+                    "CAPTCHA / bot protection is disabled on the auth endpoints. This "
+                    "is configuration evidence that may require review; CAPTCHA is an "
+                    "optional hardening control that helps slow automated sign-up and "
+                    "credential-stuffing attempts. This is evidence for review and "
+                    "does not confirm unauthorized access or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_CAPTCHA_DISABLED,
+                    "captcha_enabled": False,
+                },
+                remediation={
+                    "summary": "Enable CAPTCHA protection for auth endpoints.",
+                    "steps": [
+                        "Turn on CAPTCHA / bot protection in the auth settings.",
+                        "Configure a supported CAPTCHA provider for sign-in/sign-up.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # ── Password-update reauthentication disabled (QA). Explicit False only. ─
+    if record.get("require_reauthentication_for_password_update") is False:
+        out.append(
+            FindingCandidate(
+                provider="supabase",
+                rule_key=_RULE_PASSWORD_UPDATE_REAUTH_DISABLED,
+                finding_key=make_finding_key(_RULE_PASSWORD_UPDATE_REAUTH_DISABLED, record_id),
+                severity="medium",
+                title="Supabase password update reauthentication disabled",
+                description=(
+                    "Reauthentication is not required before a password update, so an "
+                    "existing session can change the account password without "
+                    "re-entering credentials. This is configuration evidence that may "
+                    "require review and may increase unauthorized-access risk. This is "
+                    "evidence for review and does not confirm unauthorized access or "
+                    "data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_PASSWORD_UPDATE_REAUTH_DISABLED,
+                    "require_reauthentication_for_password_update": False,
+                },
+                remediation={
+                    "summary": "Require reauthentication before password updates.",
+                    "steps": [
+                        "Enable the password-update reauthentication requirement.",
+                        "Confirm the app prompts for credentials before password changes.",
                     ],
                 },
                 record_id=record_id,

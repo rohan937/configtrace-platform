@@ -89,8 +89,12 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "supabase_jwt_expiry_long": ("supabase", "medium", "Auth"),
     "supabase_public_select_sensitive_table": ("supabase", "high", "RLS"),
     "supabase_public_write_policy": ("supabase", "high", "RLS"),
-    "supabase_edge_function_jwt_disabled": ("supabase", "medium", "Edge Functions"),
+    "supabase_edge_function_jwt_disabled": ("supabase", "high", "Edge Functions"),
     "supabase_auth_protection_missing": ("supabase", "medium", "Auth"),
+    # Supabase — auth-hardening QA
+    "supabase_refresh_token_rotation_disabled": ("supabase", "medium", "Auth"),
+    "supabase_captcha_disabled": ("supabase", "low", "Auth"),
+    "supabase_password_update_reauth_disabled": ("supabase", "medium", "Auth"),
     # Firebase
     "firebase_rules_public": ("firebase", "critical", "Security rules"),
     "firebase_storage_rules_public": ("firebase", "critical", "Security rules"),

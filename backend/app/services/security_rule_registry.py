@@ -67,6 +67,10 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "supabase_public_write_policy",
         "supabase_edge_function_jwt_disabled",
         "supabase_auth_protection_missing",
+        # Supabase — auth-hardening QA
+        "supabase_refresh_token_rotation_disabled",
+        "supabase_captcha_disabled",
+        "supabase_password_update_reauth_disabled",
         # Firebase
         "firebase_rules_public",
         "firebase_storage_rules_public",

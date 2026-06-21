@@ -110,6 +110,9 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "supabase_public_write_policy": ("supabase_rls_status",),
     "supabase_edge_function_jwt_disabled": ("supabase_edge_function",),
     "supabase_auth_protection_missing": ("supabase_auth_config",),
+    "supabase_refresh_token_rotation_disabled": ("supabase_auth_config",),
+    "supabase_captcha_disabled": ("supabase_auth_config",),
+    "supabase_password_update_reauth_disabled": ("supabase_auth_config",),
     # Firebase
     "firebase_rules_public": ("firebase_firestore_ruleset",),
     "firebase_storage_rules_public": ("firebase_storage_ruleset",),
