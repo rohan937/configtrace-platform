@@ -75,6 +75,9 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "firebase_database_public_read",
         "firebase_database_public_write",
         "firebase_auth_protection_missing",
+        # Firebase — M72C QA (storage + App Check posture)
+        "firebase_storage_public_access_prevention_disabled",
+        "firebase_app_check_unenforced_services",
         # Stripe
         "stripe_webhook_http",
         # Stripe — M73A (webhook posture + payment links + portal + account)

@@ -99,6 +99,9 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "firebase_database_public_read": (HIGH, "Only an explicit unconditional '.read': true (no auth guard) fires; low-confidence parses are skipped."),
     "firebase_database_public_write": (HIGH, "Only an explicit unconditional '.write': true (no auth guard) fires; low-confidence parses are skipped."),
     "firebase_auth_protection_missing": (MEDIUM, "Only an explicit mfa_enabled=false fires; missing/unknown is skipped."),
+    # Firebase — M72C QA
+    "firebase_storage_public_access_prevention_disabled": (MEDIUM, "Only an explicit 'inherited' (not-enforced) public-access-prevention value fires; missing/unknown is skipped."),
+    "firebase_app_check_unenforced_services": (MEDIUM, "Only an explicit unenforced_service_count > 0 fires; counts only, never service names."),
     # Stripe
     "stripe_webhook_http": (HIGH, "Only an explicit http scheme fires; disabled endpoints are not flagged."),
     # Stripe — M73A

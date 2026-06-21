@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -64,10 +65,19 @@ def _fb_integ(db, user, ws_id):
     return i
 
 
+def _recent_ts() -> str:
+    """A recent UTC timestamp so events fall inside the default lookback window.
+
+    Uses a dynamic (now-relative) timestamp — matching every other provider's
+    activity-signal test — so the fixtures never bit-rot past the 24h window.
+    """
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _entry(insert_id, service, method, *, resource_name="", labels=None):
     return {
         "insertId": insert_id,
-        "timestamp": "2026-06-14T10:00:00Z",
+        "timestamp": _recent_ts(),
         "resource": {"type": "audited_resource", "labels": labels or {"project_id": "demo-fb"}},
         "protoPayload": {
             "@type": "type.googleapis.com/google.cloud.audit.AuditLog",

@@ -118,6 +118,9 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "firebase_database_public_read": ("firebase_database_ruleset",),
     "firebase_database_public_write": ("firebase_database_ruleset",),
     "firebase_auth_protection_missing": ("firebase_auth_config",),
+    # Firebase — M72C QA
+    "firebase_storage_public_access_prevention_disabled": ("firebase_storage_bucket",),
+    "firebase_app_check_unenforced_services": ("firebase_app_check_config",),
     # Stripe
     "stripe_webhook_http": ("stripe_webhook_endpoint",),
     # Stripe — M73A
@@ -819,6 +822,14 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "firebase_auth_config": {
         "message": "Auth configuration metadata was not observed.",
         "hints": [],
+    },
+    "firebase_storage_bucket": {
+        "message": "Storage bucket metadata was not observed.",
+        "hints": ["Grant roles/storage.legacyBucketReader for bucket-metadata-only access."],
+    },
+    "firebase_app_check_config": {
+        "message": "App Check configuration metadata was not observed.",
+        "hints": ["Verify the service account can read App Check service settings."],
     },
     # Stripe
     "stripe_webhook_endpoint": {

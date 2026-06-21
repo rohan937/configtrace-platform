@@ -99,6 +99,9 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "firebase_database_public_read": ("firebase", "high", "Security rules"),
     "firebase_database_public_write": ("firebase", "critical", "Security rules"),
     "firebase_auth_protection_missing": ("firebase", "medium", "Auth"),
+    # Firebase — M72C QA
+    "firebase_storage_public_access_prevention_disabled": ("firebase", "high", "Security configuration"),
+    "firebase_app_check_unenforced_services": ("firebase", "medium", "App security"),
     # Stripe
     "stripe_webhook_http": ("stripe", "critical", "Webhooks"),
     # Stripe — M73A

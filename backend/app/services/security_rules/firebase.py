@@ -36,9 +36,11 @@ from __future__ import annotations
 from typing import Any
 
 from app.connectors.firebase_schema import (
+    FIREBASE_APP_CHECK_CONFIG,
     FIREBASE_AUTH_CONFIG,
     FIREBASE_DATABASE_RULESET,
     FIREBASE_FIRESTORE_RULESET,
+    FIREBASE_STORAGE_BUCKET,
     FIREBASE_STORAGE_RULESET,
 )
 from app.services.security_rules.base import (
@@ -54,6 +56,9 @@ _RULE_ANON_AUTH = "firebase_anonymous_auth_enabled"
 _RULE_DB_PUBLIC_READ = "firebase_database_public_read"
 _RULE_DB_PUBLIC_WRITE = "firebase_database_public_write"
 _RULE_AUTH_PROTECTION_MISSING = "firebase_auth_protection_missing"
+# M72C QA hardening — data-backed config-posture rules.
+_RULE_STORAGE_PAP_DISABLED = "firebase_storage_public_access_prevention_disabled"
+_RULE_APP_CHECK_UNENFORCED = "firebase_app_check_unenforced_services"
 
 
 def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
@@ -68,6 +73,10 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
         return _eval_database_ruleset(record)
     if rtype == FIREBASE_AUTH_CONFIG:
         return _eval_auth_config(record)
+    if rtype == FIREBASE_STORAGE_BUCKET:
+        return _eval_storage_bucket(record)
+    if rtype == FIREBASE_APP_CHECK_CONFIG:
+        return _eval_app_check_config(record)
     return []
 
 
@@ -219,6 +228,104 @@ def _eval_ruleset(
     ]
 
 
+# ── Storage bucket public-access-prevention (M72C QA) ────────────────────────
+
+
+def _eval_storage_bucket(record: dict[str, Any]) -> list[FindingCandidate]:
+    """Flag a storage bucket whose public access prevention is not enforced.
+
+    ``public_access_prevention`` comes straight from the GCS bucket
+    ``iamConfiguration`` (values "enforced" / "inherited"). Only an explicit
+    "inherited" (not-enforced) value fires; a missing/unknown value is skipped to
+    avoid flagging on absent metadata. Evidence is metadata-only — a category
+    string, never the raw bucket name.
+    """
+    pap = get_str(record, "public_access_prevention")
+    if pap is None or pap.lower() == "enforced":
+        return []
+    # Only an explicit "inherited" (the GCS not-enforced value) fires.
+    if pap.lower() != "inherited":
+        return []
+
+    record_id = get_str(record, "record_id") or None
+    return [
+        FindingCandidate(
+            provider="firebase",
+            rule_key=_RULE_STORAGE_PAP_DISABLED,
+            finding_key=make_finding_key(_RULE_STORAGE_PAP_DISABLED, record_id),
+            severity="high",
+            title="Firebase Storage bucket public access prevention is not enabled",
+            description=(
+                "Firebase Storage bucket public access prevention is not enabled. "
+                "This configuration may allow unintended public access to storage "
+                "resources and may require review. This is configuration evidence "
+                "and does not confirm data exposure or unauthorized access."
+            ),
+            evidence={
+                "rule": _RULE_STORAGE_PAP_DISABLED,
+                "public_access_prevention_status": "not_enforced",
+                "uniform_bucket_level_access": record.get("uniform_bucket_level_access"),
+            },
+            remediation={
+                "summary": "Enable public access prevention on the storage bucket.",
+                "steps": [
+                    "Set public access prevention to 'enforced' on the bucket.",
+                    "Enable uniform bucket-level access where appropriate.",
+                    "Review IAM bindings that grant allUsers/allAuthenticatedUsers.",
+                ],
+            },
+            record_id=record_id,
+        )
+    ]
+
+
+# ── App Check enforcement posture (M72C QA) ──────────────────────────────────
+
+
+def _eval_app_check_config(record: dict[str, Any]) -> list[FindingCandidate]:
+    """Flag App Check configs that have one or more unenforced services.
+
+    Counts are reliably emitted by the connector (``unenforced_service_count`` /
+    ``enforced_service_count``). Evidence is counts only — never service names.
+    """
+    raw = record.get("unenforced_service_count")
+    if not isinstance(raw, int) or raw <= 0:
+        return []
+    enforced = record.get("enforced_service_count")
+    enforced_count = enforced if isinstance(enforced, int) else None
+
+    record_id = get_str(record, "record_id") or None
+    return [
+        FindingCandidate(
+            provider="firebase",
+            rule_key=_RULE_APP_CHECK_UNENFORCED,
+            finding_key=make_finding_key(_RULE_APP_CHECK_UNENFORCED, record_id),
+            severity="medium",
+            title="Firebase App Check has unenforced services",
+            description=(
+                "Firebase App Check has unenforced services. App Check enforcement "
+                "is not enabled for all services, which may reduce protection "
+                "against unauthorized API usage. This is configuration evidence and "
+                "may require review."
+            ),
+            evidence={
+                "rule": _RULE_APP_CHECK_UNENFORCED,
+                "unenforced_service_count": raw,
+                "enforced_service_count": enforced_count,
+            },
+            remediation={
+                "summary": "Enable App Check enforcement for all services.",
+                "steps": [
+                    "Turn on App Check enforcement for each unenforced service.",
+                    "Register app attestation providers before enabling enforcement.",
+                    "Monitor request metrics before enforcing to avoid breakage.",
+                ],
+            },
+            record_id=record_id,
+        )
+    ]
+
+
 # ── Auth config (M60.4.4) ────────────────────────────────────────────────────
 
 
@@ -265,13 +372,14 @@ def _eval_auth_config(record: dict[str, Any]) -> list[FindingCandidate]:
                 rule_key=_RULE_AUTH_PROTECTION_MISSING,
                 finding_key=make_finding_key(_RULE_AUTH_PROTECTION_MISSING, record_id),
                 severity="medium",
-                title="Firebase multi-factor authentication is not enabled",
+                title="Firebase Authentication MFA protection is not enabled",
                 description=(
-                    "Multi-factor authentication is not enabled for this Firebase "
-                    "project's Authentication configuration. Without MFA, accounts "
-                    "rely on a single factor, which may increase unauthorized-access "
-                    "risk. This is evidence for review and does not confirm "
-                    "unauthorized access or compromise."
+                    "Firebase Authentication multi-factor authentication (MFA) "
+                    "protection is not enabled for this project's Authentication "
+                    "configuration. This may reduce authentication security posture "
+                    "and may require review. This finding is configuration evidence "
+                    "and does not confirm compromise, unauthorized access, or data "
+                    "exposure."
                 ),
                 evidence={
                     "rule": _RULE_AUTH_PROTECTION_MISSING,
