@@ -568,13 +568,15 @@ def test_capability_matrix_clerk_demo_false():
 
 
 def test_expansion_framework_m83g():
-    """Expansion framework planned_next_stage must reference M83G, Demo, or Clerk."""
+    """Expansion framework planned_next_stage must reference M83G or a later stage."""
     framework = get_framework()
     planned = framework["summary"]["planned_next_stage"]
     assert ("M83G" in planned or "Demo" in planned or "Clerk" in planned or "M84A" in planned
             or "PagerDuty" in planned or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned
-            or "M87" in planned or "GitLab" in planned)
+            or "M87" in planned or "GitLab" in planned
+            or "M88" in planned or "Terraform" in planned
+            or "M89A" in planned or "Kubernetes" in planned)
 
 
 # ── Section L: Frontend + API checks ─────────────────────────────────────────

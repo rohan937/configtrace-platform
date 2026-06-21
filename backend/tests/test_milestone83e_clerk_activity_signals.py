@@ -834,7 +834,7 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         )
 
     def test_expansion_framework_m83f(self):
-        """Expansion framework planned_next_stage must reference M83F, Correlations, or Clerk."""
+        """Expansion framework planned_next_stage must reference M83F or a later stage."""
         framework = get_framework()
         assert isinstance(framework, dict)
         summary = framework.get("summary", {})
@@ -844,8 +844,10 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
                 or "M84A" in planned or "PagerDuty" in planned
                 or "M85A" in planned or "Linear" in planned
                 or "M86" in planned or "Jira" in planned
-                or "M87" in planned or "GitLab" in planned), (
-            f"planned_next_stage must reference M83F, Correlations, or Clerk or later, got: {planned!r}"
+                or "M87" in planned or "GitLab" in planned
+                or "M88" in planned or "Terraform" in planned
+                or "M89A" in planned or "Kubernetes" in planned), (
+            f"planned_next_stage must reference M83F or later, got: {planned!r}"
         )
 
     def test_capability_matrix_clerk_activity_ingestion_still_true(self):

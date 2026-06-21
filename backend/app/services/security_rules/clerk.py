@@ -253,7 +253,7 @@ def _eval_instance_settings(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="clerk",
             rule_key=_RULE_INSTANCE_MFA_DISABLED,
             finding_key=make_finding_key(_RULE_INSTANCE_MFA_DISABLED, record_id),
-            severity="medium",
+            severity="high",
             title="Clerk instance has MFA disabled",
             description=(
                 "The Clerk instance does not have multi-factor authentication (MFA) "
@@ -286,14 +286,14 @@ def _eval_instance_settings(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="clerk",
             rule_key=_RULE_INSTANCE_PASSWORD_WITHOUT_MFA,
             finding_key=make_finding_key(_RULE_INSTANCE_PASSWORD_WITHOUT_MFA, record_id),
-            severity="medium",
+            severity="high",
             title="Clerk instance has password authentication enabled without MFA",
             description=(
                 "The Clerk instance has password-based authentication enabled but "
                 "multi-factor authentication (MFA) is not enabled. Password-only "
                 "authentication provides a single authentication barrier. Enabling "
-                "MFA adds a second factor that may reduce the impact of credential "
-                "compromise. This configuration posture may require review. "
+                "MFA adds a second factor that may reduce the risk of single-factor-only "
+                "authentication. This configuration posture may require review. "
                 "This is configuration evidence — it does not confirm unauthorized access."
             ),
             evidence={
@@ -706,7 +706,9 @@ def _eval_redirect_url(record: dict[str, Any]) -> list[FindingCandidate]:
     url_scheme_cat = get_str(record, "url_scheme_category")
 
     # ── clerk_redirect_url_non_https ──────────────────────────────────────────
-    if url_present and url_scheme_cat and url_scheme_cat != "https":
+    # Fires only for plaintext HTTP — not for custom/deep-link schemes, which
+    # are already captured at medium severity by clerk_redirect_url_custom_scheme_present.
+    if url_present and url_scheme_cat == "http":
         findings.append(FindingCandidate(
             provider="clerk",
             rule_key=_RULE_REDIRECT_URL_NON_HTTPS,
@@ -714,10 +716,9 @@ def _eval_redirect_url(record: dict[str, Any]) -> list[FindingCandidate]:
             severity="high",
             title="Clerk redirect URL uses a non-HTTPS scheme",
             description=(
-                "A Clerk redirect URL is configured with a scheme other than HTTPS. "
+                "A Clerk redirect URL is configured with a plaintext HTTP scheme. "
                 "Redirect URLs that use plain HTTP may expose authorization codes "
-                "or tokens in transit. Custom schemes (deep links) may also require "
-                "review depending on the application's security model. "
+                "in transit without transport-layer encryption. "
                 "This configuration posture may require review. "
                 "Raw redirect URL strings are never stored by ConfigTrace."
             ),
@@ -1730,8 +1731,8 @@ def _eval_session_policy(record: dict[str, Any]) -> list[FindingCandidate]:
                 "The Clerk session policy is configured with an extended session lifetime "
                 "and single-session mode is not enforced. This combination allows a user "
                 "to maintain multiple long-lived concurrent sessions, which may increase "
-                "the exposure window if a session is compromised. This configuration "
-                "posture may require review. "
+                "the window during which an exposed session token remains valid. "
+                "This configuration posture may require review. "
                 "This is configuration evidence — no session token values are stored."
             ),
             evidence={

@@ -880,7 +880,7 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         )
 
     def test_expansion_framework_m83e(self):
-        """Expansion framework planned_next_stage must reference M83E, Activity Signals, or Clerk."""
+        """Expansion framework planned_next_stage must reference M83E or a later stage."""
         from app.services.provider_expansion_framework import get_framework
         framework = get_framework()
         assert isinstance(framework, dict)
@@ -891,9 +891,10 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
         assert any(
             term in planned
             for term in ("M83E", "Activity Signals", "Clerk", "M84A", "PagerDuty",
-                         "M85A", "Linear", "M86", "Jira", "M87", "GitLab")
+                         "M85A", "Linear", "M86", "Jira", "M87", "GitLab",
+                         "M88", "Terraform", "M89A", "Kubernetes")
         ), (
-            f"planned_next_stage must reference M83E/Activity Signals/Clerk or later, got: {planned!r}"
+            f"planned_next_stage must reference M83E or later, got: {planned!r}"
         )
 
 

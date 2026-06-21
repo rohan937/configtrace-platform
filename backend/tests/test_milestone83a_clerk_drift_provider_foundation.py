@@ -874,14 +874,17 @@ def test_capability_matrix_clerk_in_partial_list():
 
 
 def test_expansion_framework_planned_next_stage_is_m83b():
-    # M83B has landed; planned_next_stage now references M83C (Clerk Auth/Application Risk).
+    # M83B and the full Clerk arc are complete. Framework advances through
+    # PagerDuty/Linear/Jira/GitLab/Terraform Cloud and now points to M89A Kubernetes.
     from app.services.provider_expansion_framework import get_framework
     framework = get_framework()
     planned = framework["summary"]["planned_next_stage"]
     assert ("M83B" in planned or "M83C" in planned or "Clerk" in planned
             or "M84A" in planned or "PagerDuty" in planned
             or "M85A" in planned or "Linear" in planned
-            or "M86" in planned or "Jira" in planned or "GitLab" in planned), (
+            or "M86" in planned or "Jira" in planned or "GitLab" in planned
+            or "M88A" in planned or "Terraform" in planned
+            or "M89A" in planned or "Kubernetes" in planned), (
         f"planned_next_stage should reference an M83 Clerk stage or later; got {planned!r}"
     )
 
@@ -900,11 +903,12 @@ def test_expansion_framework_pagerduty_at_head():
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS must not be empty"
-    # After M84A, PagerDuty launched and Linear moved to head.
-    # After M86A, Jira launched and GitLab moved to head.
-    assert recs[0]["provider"] in ("pagerduty", "linear", "jira", "gitlab"), (
-        f"PagerDuty or Linear should be head of recommended queue; "
-        f"got {recs[0]['provider']!r}"
+    # Full provider arc complete through M88I Terraform Cloud.
+    # Kubernetes is now head of the recommended queue.
+    first_provider = recs[0]["provider"] if isinstance(recs[0], dict) else str(recs[0])
+    assert first_provider in ("pagerduty", "linear", "jira", "gitlab", "terraform_cloud", "kubernetes"), (
+        f"PagerDuty/Linear/Jira/GitLab/Terraform/Kubernetes should be head of recommended queue; "
+        f"got {first_provider!r}"
     )
 
 

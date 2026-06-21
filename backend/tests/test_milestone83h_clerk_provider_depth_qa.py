@@ -1281,8 +1281,8 @@ def test_i5_clerk_capability_matrix_notes_mention_m83h() -> None:
 
 def test_i6_expansion_framework_planned_next_stage_is_m83i() -> None:
     fw = get_framework()
-    # planned_next_stage lives in fw["summary"]["planned_next_stage"].
-    # After M83I completes, this advances to M84A (PagerDuty).
+    # The full Clerk arc (M83A–M83I) and subsequent arcs are complete.
+    # Framework now points to M89A: Kubernetes Drift Provider Foundation.
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
     assert (
@@ -1291,8 +1291,10 @@ def test_i6_expansion_framework_planned_next_stage_is_m83i() -> None:
         or "M85A" in planned or "Linear" in planned
         or "M86" in planned or "Jira" in planned
         or "M87" in planned or "GitLab" in planned
+        or "M88" in planned or "Terraform" in planned
+        or "M89A" in planned or "Kubernetes" in planned
     ), (
-        f"planned_next_stage should point to M83I or beyond (M84A/M85A) after M83H QA, got: {planned!r}"
+        f"planned_next_stage should point to M83I or beyond after M83H QA, got: {planned!r}"
     )
 
 
@@ -1319,12 +1321,14 @@ def test_i8_pagerduty_head_of_recommended_next_providers() -> None:
         provider = first.get("provider", "")
     else:
         provider = str(first)
-    # After M84A PagerDuty launched; after M85A Linear launched; Jira is now head.
+    # Full arc through M88I Terraform Cloud complete. Kubernetes is now head.
     assert ("pagerduty" in provider.lower() or "PagerDuty" in provider
             or "linear" in provider.lower() or "Linear" in provider
             or "jira" in provider.lower() or "Jira" in provider
-            or "gitlab" in provider.lower() or "GitLab" in provider), (
-        f"PagerDuty, Linear, or Jira should be head of recommended_next_providers after Clerk arc, got: {provider!r}"
+            or "gitlab" in provider.lower() or "GitLab" in provider
+            or "terraform" in provider.lower() or "Terraform" in provider
+            or "kubernetes" in provider.lower() or "Kubernetes" in provider), (
+        f"PagerDuty/Linear/Jira/GitLab/Terraform/Kubernetes should be head after Clerk arc, got: {provider!r}"
     )
 
 
@@ -1340,7 +1344,8 @@ def test_i9_capability_matrix_notes_no_stale_planned_next_stage_m83h() -> None:
         assert "m83h" not in snippet, (
             f"Notes still say planned_next_stage points to M83H (stale): {snippet!r}"
         )
-    # The expansion framework should point to M83I or beyond (M84A after M83I completes)
+    # The expansion framework should point to M83I or beyond.
+    # Full arc through M88I Terraform Cloud is complete; now points to M89A Kubernetes.
     fw = get_framework()
     summary = fw.get("summary", {})
     planned = summary.get("planned_next_stage", "") or ""
@@ -1350,6 +1355,8 @@ def test_i9_capability_matrix_notes_no_stale_planned_next_stage_m83h() -> None:
         or "M85A" in planned or "Linear" in planned
         or "M86" in planned or "Jira" in planned
         or "M87" in planned or "GitLab" in planned
+        or "M88" in planned or "Terraform" in planned
+        or "M89A" in planned or "Kubernetes" in planned
     ), (
         f"Expansion framework planned_next_stage still points to M83H: {planned!r}"
     )

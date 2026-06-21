@@ -304,8 +304,8 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "datadog_webhook_auth_material_present": ("datadog", "medium", "Webhook posture"),
     "datadog_webhook_non_https_endpoint": ("datadog", "high", "Webhook posture"),
     # Clerk — M83B core security rules
-    "clerk_instance_mfa_disabled": ("clerk", "medium", "Instance MFA posture"),
-    "clerk_instance_password_without_mfa": ("clerk", "medium", "Instance authentication posture"),
+    "clerk_instance_mfa_disabled": ("clerk", "high", "Instance MFA posture"),
+    "clerk_instance_password_without_mfa": ("clerk", "high", "Instance authentication posture"),
     "clerk_instance_sign_up_enabled": ("clerk", "low", "Instance sign-up posture"),
     "clerk_application_mfa_not_required": ("clerk", "medium", "Application MFA posture"),
     "clerk_domain_unverified": ("clerk", "medium", "Domain posture"),

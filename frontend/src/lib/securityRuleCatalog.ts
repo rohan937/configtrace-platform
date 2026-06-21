@@ -4314,7 +4314,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
   {
     key: "clerk_instance_mfa_disabled",
     provider: "clerk",
-    severity: "medium",
+    severity: "high",
     title: "Clerk instance has MFA disabled",
     category: "Instance MFA posture",
     confidence: "high",
@@ -4329,7 +4329,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
   {
     key: "clerk_instance_password_without_mfa",
     provider: "clerk",
-    severity: "medium",
+    severity: "high",
     title: "Clerk instance has password authentication enabled without MFA",
     category: "Instance authentication posture",
     confidence: "high",
@@ -4624,7 +4624,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     whyItMatters: "Without token rotation, session tokens remain valid until they expire or are revoked. No token values are stored.",
     evidence: "Session policy record ID, token_rotation_enabled. No token values are stored.",
     remediation: "Enable session token rotation in the Clerk Dashboard under Sessions.",
-    falsePositiveGuard: "Only fires when token_rotation_enabled is explicitly false on a clerk_session_policy record. No token values are NEVER stored.",
+    falsePositiveGuard: "Only fires when token_rotation_enabled is explicitly false on a clerk_session_policy record. Token values are NEVER stored.",
   },
 
   // ── Clerk — M83C auth/application risk expansion ─────────────────────────
@@ -4686,7 +4686,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     whyItMatters: "SAML-based authentication without required MFA delegates authentication security to the SAML identity provider. No SAML certificates or credentials are stored.",
     evidence: "Application record ID, application name (truncated), saml_enabled, mfa_required. No SAML certificates or credentials are stored.",
     remediation: "Confirm the SAML identity provider enforces MFA, or enable application-level MFA requirements in the Clerk Dashboard.",
-    falsePositiveGuard: "Only fires when saml_enabled=true AND mfa_required=false. No SAML certificates or credentials are NEVER stored.",
+    falsePositiveGuard: "Only fires when saml_enabled=true AND mfa_required=false. SAML certificates or credentials are NEVER stored.",
   },
   {
     key: "clerk_application_many_redirect_urls",
@@ -4836,7 +4836,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     whyItMatters: "Without an admin role, organization management capabilities may not be properly scoped. No member identities are stored.",
     evidence: "Organization settings record ID, organizations_enabled, admin_role_present. No member identities are stored.",
     remediation: "Configure an admin role for organization management in the Clerk Dashboard.",
-    falsePositiveGuard: "Only fires when organizations_enabled=true AND admin_role_present is explicitly false. No member identities are NEVER stored.",
+    falsePositiveGuard: "Only fires when organizations_enabled=true AND admin_role_present is explicitly false. Member identities are NEVER stored.",
   },
   {
     key: "clerk_org_high_role_count",
@@ -4881,7 +4881,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     whyItMatters: "Device tracking allows sessions to be associated with specific devices. This is configuration evidence — no session data is stored.",
     evidence: "Session policy record ID, device_tracking_enabled. No session data is stored.",
     remediation: "Review whether device tracking should be enabled in the Clerk Dashboard under Sessions.",
-    falsePositiveGuard: "Only fires when device_tracking_enabled is explicitly false on a clerk_session_policy record. No session data is NEVER stored.",
+    falsePositiveGuard: "Only fires when device_tracking_enabled is explicitly false on a clerk_session_policy record. Session data is NEVER stored.",
   },
   {
     key: "clerk_session_reverification_disabled",
@@ -4896,7 +4896,7 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     whyItMatters: "Reverification prompts users to re-authenticate before high-risk actions. This is configuration evidence — no session token values are stored.",
     evidence: "Session policy record ID, reverification_required. No session token values are stored.",
     remediation: "Enable reverification for sensitive operations in the Clerk Dashboard under Sessions.",
-    falsePositiveGuard: "Only fires when reverification_required is explicitly false on a clerk_session_policy record. No session token values are NEVER stored.",
+    falsePositiveGuard: "Only fires when reverification_required is explicitly false on a clerk_session_policy record. Session token values are NEVER stored.",
   },
   {
     key: "clerk_session_long_lifetime_without_single_session",

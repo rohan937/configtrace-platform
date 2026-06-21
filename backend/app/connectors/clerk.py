@@ -751,12 +751,20 @@ class ClerkConnector(BaseConnector):
     def _fetch_instance(self, client: httpx.Client) -> list[dict]:
         """Fetch Clerk instance settings (single record).
 
-        Produces:
+        Produces (from a single GET /instance response):
         - One clerk_instance_settings record
         - One clerk_auth_strategy record (derived from user_settings)
         - One clerk_email_sms_settings record
         - One clerk_organization_settings record
         - One clerk_session_policy record
+        - One clerk_application record (M83J: application posture derived from
+          the same /instance response; augmented with social provider count so
+          clerk_application_oauth_without_mfa can fire correctly)
+
+        SECURITY: raw client_id, OAuth client secrets, raw redirect URL lists,
+        raw allowed origins, and all raw application payload are NEVER stored.
+        oauth_provider_count is derived from the count of enabled social
+        connections; raw connection identifiers are discarded.
         """
         try:
             raw = self._get_json(client, "/instance")
@@ -764,12 +772,31 @@ class ClerkConnector(BaseConnector):
             raise
         if not isinstance(raw, dict):
             return []
+
+        # Derive the social (OAuth) provider count from user_settings so that
+        # clerk_application_oauth_without_mfa can fire when OAuth providers are
+        # enabled without required MFA.  Raw provider identities are discarded;
+        # only the integer count is kept.
+        user_settings = raw.get("user_settings") or {}
+        social = user_settings.get("social", {}) if isinstance(user_settings, dict) else {}
+        social_count = (
+            sum(
+                1 for v in social.values()
+                if isinstance(v, dict) and _bool_field(v.get("enabled"))
+            )
+            if isinstance(social, dict)
+            else 0
+        )
+        app_raw = dict(raw)
+        app_raw["oauth_provider_count"] = social_count
+
         records: list[dict] = [
             self._normalize_instance(raw),
             self._normalize_auth_strategy(raw),
             self._normalize_email_sms_settings(raw),
             self._normalize_organization_settings(raw),
             self._normalize_session_policy(raw),
+            self._normalize_application(app_raw),
         ]
         return records
 
@@ -860,7 +887,7 @@ class ClerkConnector(BaseConnector):
     # ── Public API ────────────────────────────────────────────────────────────
 
     def fetch(self, credentials: dict) -> list[dict]:
-        """Fetch all safe Clerk configuration drift surfaces (M83A).
+        """Fetch all safe Clerk configuration drift surfaces (M83A/M83J).
 
         Returns a flat list of normalised record dicts. Each record contains
         only safe boolean/count/category/opaque-ID fields — never raw URLs,
@@ -880,9 +907,10 @@ class ClerkConnector(BaseConnector):
         secret_key = _sanitize_secret_key(credentials.get("secret_key", ""))
         records: list[dict] = []
         with self._make_client(secret_key) as client:
-            # Instance settings produces 5 records (instance + auth_strategy +
-            # email_sms + org_settings + session_policy). Must not fail-soft —
-            # if we can't read the instance we have no useful data.
+            # Instance settings produces 6 records (instance + auth_strategy +
+            # email_sms + org_settings + session_policy + application).
+            # Must not fail-soft — if we can't read the instance we have no
+            # useful data.
             records.extend(self._fetch_instance(client))
 
             # Optional surfaces — fail-soft on 403/404 for permission-limited
