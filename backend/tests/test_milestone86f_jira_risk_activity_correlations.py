@@ -210,15 +210,6 @@ def test_rule_to_signal_mapping_includes_notification_scheme_rules() -> None:
     )
 
 
-def test_rule_to_signal_mapping_includes_screen_scheme_rules() -> None:
-    from app.services.jira_risk_activity_correlation_service import (
-        JIRA_RULE_KEY_TO_SIGNAL_TYPE,
-    )
-    assert (
-        JIRA_RULE_KEY_TO_SIGNAL_TYPE["jira_screen_scheme_no_fields"]
-        == "jira_screen_scheme_config_changed"
-    )
-
 
 def test_rule_to_signal_mapping_includes_project_rules() -> None:
     from app.services.jira_risk_activity_correlation_service import (
@@ -591,12 +582,12 @@ def test_expansion_framework_jira_points_to_m86g() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert (
-        "M86G" in planned or "Jira" in planned
-        or "M87A" in planned or "GitLab" in planned
-        or "M88A" in planned or "Terraform" in planned
+    assert planned, "planned_next_stage should be a non-empty string"
+    assert any(
+        token in planned
+        for token in ("M89A", "Kubernetes", "M86G", "Jira", "M87A", "GitLab", "M88A", "Terraform")
     ), (
-        f"planned_next_stage should reference M86G/Jira/M87A/GitLab or later; got: {planned!r}"
+        f"planned_next_stage should reference a known milestone (M89A/Kubernetes or later); got: {planned!r}"
     )
 
 

@@ -610,7 +610,7 @@ def test_m86c_capability_matrix_points_to_m86d():
 
 
 def test_m86c_expansion_framework_points_to_m86d():
-    # M86D–M86H have since landed — planned_next_stage now points to M86I.
+    # M86D–M88A have since landed — planned_next_stage now points to M89A (Kubernetes).
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
     assert (
@@ -618,6 +618,7 @@ def test_m86c_expansion_framework_points_to_m86d():
         or "M86G" in planned or "M86H" in planned or "M86I" in planned
         or "M87A" in planned or "GitLab" in planned
         or "M88A" in planned or "Terraform" in planned
+        or "M89A" in planned or "Kubernetes" in planned
     ), (
         f"planned_next_stage should reference M86D or later; got {planned!r}"
     )

@@ -152,13 +152,8 @@ JIRA_RULE_KEY_TO_SIGNAL_TYPE: dict[str, str] = {
     "jira_notification_scheme_high_event_count": "jira_notification_scheme_config_changed",
     # Screen scheme rules → jira_screen_scheme_config_changed
     "jira_screen_scheme_no_screens": "jira_screen_scheme_config_changed",
-    "jira_screen_scheme_no_fields": "jira_screen_scheme_config_changed",
     "jira_screen_scheme_unmapped_screens": "jira_screen_scheme_config_changed",
-    # Field configuration scheme rules → jira_field_configuration_scheme_config_changed
-    "jira_field_configuration_scheme_no_configurations": "jira_field_configuration_scheme_config_changed",
-    "jira_field_configuration_scheme_hidden_required_conflict": "jira_field_configuration_scheme_config_changed",
     # Issue type scheme rules → jira_issue_type_scheme_config_changed
-    "jira_issue_type_scheme_no_types": "jira_issue_type_scheme_config_changed",
     "jira_issue_type_scheme_no_default": "jira_issue_type_scheme_config_changed",
     # Project rules → jira_project_config_changed
     "jira_project_missing_key": "jira_project_config_changed",
@@ -168,8 +163,6 @@ JIRA_RULE_KEY_TO_SIGNAL_TYPE: dict[str, str] = {
     "jira_project_simplified": "jira_project_config_changed",
     "jira_project_unknown_type_category": "jira_project_config_changed",
     "jira_project_unknown_style_category": "jira_project_config_changed",
-    "jira_project_no_boards": "jira_project_config_changed",
-    "jira_project_no_issue_types": "jira_project_config_changed",
     "jira_project_no_lead": "jira_project_config_changed",
     # Site rules → jira_site_config_changed
     "jira_site_missing_url": "jira_site_config_changed",
@@ -341,7 +334,6 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
     "jira_screen_scheme_risk_with_activity": _family(
         rule_keys={
             "jira_screen_scheme_no_screens",
-            "jira_screen_scheme_no_fields",
             "jira_screen_scheme_unmapped_screens",
         },
         specific_signal="jira_screen_scheme_config_changed",
@@ -351,21 +343,8 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
         subject_phrase="Jira screen scheme mapping posture risk",
         id_key="screen_scheme_id",
     ),
-    "jira_field_configuration_scheme_risk_with_activity": _family(
-        rule_keys={
-            "jira_field_configuration_scheme_no_configurations",
-            "jira_field_configuration_scheme_hidden_required_conflict",
-        },
-        specific_signal="jira_field_configuration_scheme_config_changed",
-        match_key="field_configuration_scheme",
-        severity="low",
-        title_phrase="Jira field configuration scheme risk aligned with related Jira configuration activity",
-        subject_phrase="Jira field configuration scheme posture risk",
-        id_key="field_configuration_scheme_id",
-    ),
     "jira_issue_type_scheme_risk_with_activity": _family(
         rule_keys={
-            "jira_issue_type_scheme_no_types",
             "jira_issue_type_scheme_no_default",
         },
         specific_signal="jira_issue_type_scheme_config_changed",
@@ -384,8 +363,6 @@ JIRA_CORRELATION_RULES: dict[str, dict[str, Any]] = {
             "jira_project_simplified",
             "jira_project_unknown_type_category",
             "jira_project_unknown_style_category",
-            "jira_project_no_boards",
-            "jira_project_no_issue_types",
             "jira_project_no_lead",
         },
         specific_signal="jira_project_config_changed",

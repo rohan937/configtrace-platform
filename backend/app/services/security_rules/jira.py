@@ -66,7 +66,7 @@ _RULE_SITE_NO_PROJECTS = "jira_site_no_projects"
 _RULE_SITE_NO_WEBHOOKS = "jira_site_no_webhooks"
 _RULE_SITE_NO_AUTOMATION_RULES = "jira_site_no_automation_rules"
 
-# Project (10)
+# Project (8)
 _RULE_PROJECT_MISSING_KEY = "jira_project_missing_key"
 _RULE_PROJECT_PRIVATE = "jira_project_private"
 _RULE_PROJECT_ARCHIVED = "jira_project_archived"
@@ -74,8 +74,6 @@ _RULE_PROJECT_DELETED = "jira_project_deleted"
 _RULE_PROJECT_SIMPLIFIED = "jira_project_simplified"
 _RULE_PROJECT_UNKNOWN_TYPE_CATEGORY = "jira_project_unknown_type_category"
 _RULE_PROJECT_UNKNOWN_STYLE_CATEGORY = "jira_project_unknown_style_category"
-_RULE_PROJECT_NO_BOARDS = "jira_project_no_boards"
-_RULE_PROJECT_NO_ISSUE_TYPES = "jira_project_no_issue_types"
 _RULE_PROJECT_NO_LEAD = "jira_project_no_lead"
 
 # Board (3)
@@ -103,17 +101,11 @@ _RULE_NOTIFICATION_SCHEME_NO_NOTIFICATIONS = "jira_notification_scheme_no_notifi
 _RULE_NOTIFICATION_SCHEME_EMAIL_RECIPIENTS = "jira_notification_scheme_email_recipients"
 _RULE_NOTIFICATION_SCHEME_GROUP_RECIPIENTS = "jira_notification_scheme_group_recipients"
 
-# Issue type scheme (2)
-_RULE_ISSUE_TYPE_SCHEME_NO_TYPES = "jira_issue_type_scheme_no_types"
+# Issue type scheme (1)
 _RULE_ISSUE_TYPE_SCHEME_NO_DEFAULT = "jira_issue_type_scheme_no_default"
 
-# Field configuration scheme (2)
-_RULE_FIELD_CONFIGURATION_SCHEME_NO_CONFIGURATIONS = "jira_field_configuration_scheme_no_configurations"
-_RULE_FIELD_CONFIGURATION_SCHEME_HIDDEN_REQUIRED_CONFLICT = "jira_field_configuration_scheme_hidden_required_conflict"
-
-# Screen scheme (2)
+# Screen scheme (1)
 _RULE_SCREEN_SCHEME_NO_SCREENS = "jira_screen_scheme_no_screens"
-_RULE_SCREEN_SCHEME_NO_FIELDS = "jira_screen_scheme_no_fields"
 
 # Webhook (5)
 _RULE_WEBHOOK_DISABLED = "jira_webhook_disabled"
@@ -200,8 +192,6 @@ JIRA_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_PROJECT_SIMPLIFIED,
     _RULE_PROJECT_UNKNOWN_TYPE_CATEGORY,
     _RULE_PROJECT_UNKNOWN_STYLE_CATEGORY,
-    _RULE_PROJECT_NO_BOARDS,
-    _RULE_PROJECT_NO_ISSUE_TYPES,
     _RULE_PROJECT_NO_LEAD,
     _RULE_BOARD_UNKNOWN_TYPE_CATEGORY,
     _RULE_BOARD_UNKNOWN_LOCATION_TYPE,
@@ -218,12 +208,8 @@ JIRA_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_NOTIFICATION_SCHEME_NO_NOTIFICATIONS,
     _RULE_NOTIFICATION_SCHEME_EMAIL_RECIPIENTS,
     _RULE_NOTIFICATION_SCHEME_GROUP_RECIPIENTS,
-    _RULE_ISSUE_TYPE_SCHEME_NO_TYPES,
     _RULE_ISSUE_TYPE_SCHEME_NO_DEFAULT,
-    _RULE_FIELD_CONFIGURATION_SCHEME_NO_CONFIGURATIONS,
-    _RULE_FIELD_CONFIGURATION_SCHEME_HIDDEN_REQUIRED_CONFLICT,
     _RULE_SCREEN_SCHEME_NO_SCREENS,
-    _RULE_SCREEN_SCHEME_NO_FIELDS,
     _RULE_WEBHOOK_DISABLED,
     _RULE_WEBHOOK_NO_SECRET_INDICATOR,
     _RULE_WEBHOOK_NON_HTTPS,
@@ -420,8 +406,6 @@ def _eval_project(record: dict[str, Any]) -> list[FindingCandidate]:
     project_simplified = _bool(record, "project_simplified")
     project_type_category = get_str(record, "project_type_category")
     project_style_category = get_str(record, "project_style_category")
-    board_count = _int_opt(record, "board_count")
-    issue_type_count = _int_opt(record, "issue_type_count")
     lead_present = _bool(record, "lead_present")
 
     if project_key_present is False:
@@ -508,30 +492,6 @@ def _eval_project(record: dict[str, Any]) -> list[FindingCandidate]:
             ),
             extra_evidence={"project_style_category": project_style_category},
             remediation_summary="Review the project style and confirm it is a supported Jira style.",
-        ))
-
-    if board_count is not None and board_count == 0:
-        findings.append(_fc(
-            rule_key=_RULE_PROJECT_NO_BOARDS, record_id=record_id, record_type=JIRA_PROJECT,
-            severity="low",
-            title="Jira project has no boards",
-            description=(
-                f"This Jira project reports zero boards. This project configuration may require review. {_DOES_NOT_CONFIRM}"
-            ),
-            extra_evidence={"board_count": board_count},
-            remediation_summary="Confirm whether boards are expected; create at least one if needed.",
-        ))
-
-    if issue_type_count is not None and issue_type_count == 0:
-        findings.append(_fc(
-            rule_key=_RULE_PROJECT_NO_ISSUE_TYPES, record_id=record_id, record_type=JIRA_PROJECT,
-            severity="low",
-            title="Jira project has no issue types",
-            description=(
-                f"This Jira project reports zero issue types. This project configuration may require review. {_DOES_NOT_CONFIRM}"
-            ),
-            extra_evidence={"issue_type_count": issue_type_count},
-            remediation_summary="Confirm the project has at least one issue type defined.",
         ))
 
     if lead_present is False:
@@ -1007,7 +967,7 @@ def _eval_permission_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
     if public_transition is True:
         findings.append(_fc(
             rule_key=_RULE_PERMISSION_SCHEME_PUBLIC_TRANSITION_ISSUES, record_id=record_id, record_type=JIRA_PERMISSION_SCHEME,
-            severity="medium",
+            severity="high",
             title="Jira permission scheme grants public transition-issues access",
             description=(
                 "This Jira permission scheme grants transition-issues permission to a public "
@@ -1140,20 +1100,7 @@ def _eval_issue_type_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
     record_id = get_str(record, "record_id") or "jira_issue_type_scheme_unknown"
     findings: list[FindingCandidate] = []
 
-    issue_type_count = _int_opt(record, "issue_type_count")
     default_present = _bool(record, "default_issue_type_present")
-
-    if issue_type_count is not None and issue_type_count == 0:
-        findings.append(_fc(
-            rule_key=_RULE_ISSUE_TYPE_SCHEME_NO_TYPES, record_id=record_id, record_type=JIRA_ISSUE_TYPE_SCHEME,
-            severity="low",
-            title="Jira issue type scheme has no issue types",
-            description=(
-                f"This Jira issue type scheme has zero issue types. This issue type scheme configuration may require review. {_DOES_NOT_CONFIRM}"
-            ),
-            extra_evidence={"issue_type_count": issue_type_count},
-            remediation_summary="Add at least one issue type to the scheme.",
-        ))
 
     if default_present is False:
         findings.append(_fc(
@@ -1174,44 +1121,6 @@ def _eval_field_configuration_scheme(record: dict[str, Any]) -> list[FindingCand
     record_id = get_str(record, "record_id") or "jira_field_configuration_scheme_unknown"
     findings: list[FindingCandidate] = []
 
-    field_config_count = _int_opt(record, "field_configuration_count")
-    required_count = _int_opt(record, "required_field_count")
-    hidden_count = _int_opt(record, "hidden_field_count")
-
-    if field_config_count is not None and field_config_count == 0:
-        findings.append(_fc(
-            rule_key=_RULE_FIELD_CONFIGURATION_SCHEME_NO_CONFIGURATIONS, record_id=record_id, record_type=JIRA_FIELD_CONFIGURATION_SCHEME,
-            severity="low",
-            title="Jira field configuration scheme has no field configurations",
-            description=(
-                f"This Jira field configuration scheme reports zero field configurations. This scheme configuration may require review. {_DOES_NOT_CONFIRM}"
-            ),
-            extra_evidence={"field_configuration_count": field_config_count},
-            remediation_summary="Add at least one field configuration, or remove the empty scheme.",
-        ))
-
-    if (
-        required_count is not None and required_count > 0
-        and hidden_count is not None and hidden_count > 0
-        and hidden_count >= required_count
-    ):
-        findings.append(_fc(
-            rule_key=_RULE_FIELD_CONFIGURATION_SCHEME_HIDDEN_REQUIRED_CONFLICT, record_id=record_id, record_type=JIRA_FIELD_CONFIGURATION_SCHEME,
-            severity="medium",
-            title="Jira field configuration scheme has both required and hidden fields",
-            description=(
-                "This Jira field configuration scheme reports both required and hidden "
-                "field counts greater than zero. A field marked both required and hidden "
-                "creates a misconfiguration where users may be unable to satisfy required "
-                f"input. {_DOES_NOT_CONFIRM}"
-            ),
-            extra_evidence={
-                "required_field_count": required_count,
-                "hidden_field_count": hidden_count,
-            },
-            remediation_summary="Review the scheme so no field is both required and hidden.",
-        ))
-
     return findings
 
 
@@ -1220,7 +1129,6 @@ def _eval_screen_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
     findings: list[FindingCandidate] = []
 
     screen_count = _int_opt(record, "screen_count")
-    field_count = _int_opt(record, "field_count")
 
     if screen_count is not None and screen_count == 0:
         findings.append(_fc(
@@ -1232,18 +1140,6 @@ def _eval_screen_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
             ),
             extra_evidence={"screen_count": screen_count},
             remediation_summary="Add at least one screen to the screen scheme, or remove it.",
-        ))
-
-    if field_count is not None and field_count == 0:
-        findings.append(_fc(
-            rule_key=_RULE_SCREEN_SCHEME_NO_FIELDS, record_id=record_id, record_type=JIRA_SCREEN_SCHEME,
-            severity="low",
-            title="Jira screen scheme has no fields",
-            description=(
-                f"This Jira screen scheme reports zero fields across its screens. This screen scheme configuration may require review. {_DOES_NOT_CONFIRM}"
-            ),
-            extra_evidence={"field_count": field_count},
-            remediation_summary="Add at least one field to the screen scheme.",
         ))
 
     # ── M86C screen scheme mapping posture ─────────────────────────────────

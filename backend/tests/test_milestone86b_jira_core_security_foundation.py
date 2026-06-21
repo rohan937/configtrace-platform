@@ -68,7 +68,7 @@ EXPECTED_RULE_KEYS: frozenset[str] = frozenset({
     "jira_site_no_projects",
     "jira_site_no_webhooks",
     "jira_site_no_automation_rules",
-    # Project (10)
+    # Project (8)
     "jira_project_missing_key",
     "jira_project_private",
     "jira_project_archived",
@@ -76,8 +76,6 @@ EXPECTED_RULE_KEYS: frozenset[str] = frozenset({
     "jira_project_simplified",
     "jira_project_unknown_type_category",
     "jira_project_unknown_style_category",
-    "jira_project_no_boards",
-    "jira_project_no_issue_types",
     "jira_project_no_lead",
     # Board (3)
     "jira_board_unknown_type_category",
@@ -99,15 +97,10 @@ EXPECTED_RULE_KEYS: frozenset[str] = frozenset({
     "jira_notification_scheme_no_notifications",
     "jira_notification_scheme_email_recipients",
     "jira_notification_scheme_group_recipients",
-    # Issue type scheme (2)
-    "jira_issue_type_scheme_no_types",
+    # Issue type scheme (1)
     "jira_issue_type_scheme_no_default",
-    # Field configuration scheme (2)
-    "jira_field_configuration_scheme_no_configurations",
-    "jira_field_configuration_scheme_hidden_required_conflict",
-    # Screen scheme (2)
+    # Screen scheme (1)
     "jira_screen_scheme_no_screens",
-    "jira_screen_scheme_no_fields",
     # Webhook (5)
     "jira_webhook_disabled",
     "jira_webhook_no_secret_indicator",
@@ -389,7 +382,7 @@ def _automation_rule(overrides: dict | None = None) -> dict:
 
 class TestRuleKeyTaxonomy:
     def test_expected_rule_count(self):
-        assert len(EXPECTED_RULE_KEYS) == 43
+        assert len(EXPECTED_RULE_KEYS) == 37
 
     def test_module_exports_expected_keys(self):
         assert EXPECTED_RULE_KEYS.issubset(JIRA_RULE_KEYS)
@@ -455,14 +448,6 @@ class TestRulePositives:
     def test_project_unknown_style_category_fires(self):
         findings = evaluate(_project({"project_style_category": "unknown"}))
         assert "jira_project_unknown_style_category" in _rule_keys(findings)
-
-    def test_project_no_boards_fires(self):
-        findings = evaluate(_project({"board_count": 0}))
-        assert "jira_project_no_boards" in _rule_keys(findings)
-
-    def test_project_no_issue_types_fires(self):
-        findings = evaluate(_project({"issue_type_count": 0}))
-        assert "jira_project_no_issue_types" in _rule_keys(findings)
 
     def test_project_no_lead_fires(self):
         findings = evaluate(_project({"lead_present": False}))
@@ -540,38 +525,15 @@ class TestRulePositives:
 
     # ── Issue type scheme ──────────────────────────────────────────────────
 
-    def test_issue_type_scheme_no_types_fires(self):
-        findings = evaluate(_issue_type_scheme({"issue_type_count": 0}))
-        assert "jira_issue_type_scheme_no_types" in _rule_keys(findings)
-
     def test_issue_type_scheme_no_default_fires(self):
         findings = evaluate(_issue_type_scheme({"default_issue_type_present": False}))
         assert "jira_issue_type_scheme_no_default" in _rule_keys(findings)
-
-    # ── Field configuration scheme ─────────────────────────────────────────
-
-    def test_field_configuration_scheme_no_configurations_fires(self):
-        findings = evaluate(_field_configuration_scheme({"field_configuration_count": 0}))
-        assert "jira_field_configuration_scheme_no_configurations" in _rule_keys(findings)
-
-    def test_field_configuration_scheme_hidden_required_conflict_fires(self):
-        # A hidden field that is required at the same time is a misconfiguration.
-        findings = evaluate(_field_configuration_scheme({
-            "required_field_count": 2,
-            "hidden_field_count": 2,
-        }))
-        # When both required and hidden counts are non-zero we treat as a conflict.
-        assert "jira_field_configuration_scheme_hidden_required_conflict" in _rule_keys(findings)
 
     # ── Screen scheme ──────────────────────────────────────────────────────
 
     def test_screen_scheme_no_screens_fires(self):
         findings = evaluate(_screen_scheme({"screen_count": 0}))
         assert "jira_screen_scheme_no_screens" in _rule_keys(findings)
-
-    def test_screen_scheme_no_fields_fires(self):
-        findings = evaluate(_screen_scheme({"field_count": 0}))
-        assert "jira_screen_scheme_no_fields" in _rule_keys(findings)
 
     # ── Webhook ────────────────────────────────────────────────────────────
 
@@ -939,17 +901,14 @@ class TestCapabilityMatrixAndFramework:
         assert "M86B" in cap.notes
 
     def test_expansion_framework_planned_next_stage_m86c(self):
-        # M86C–M86H have since landed — planned_next_stage now points to M86I.
+        # M89A: Kubernetes Drift Provider Foundation is now the planned next stage.
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert (
-            "M86C" in planned or "M86D" in planned or "M86E" in planned
-            or "M86F" in planned or "M86G" in planned or "M86H" in planned
-            or "M86I" in planned
-            or "M87A" in planned or "GitLab" in planned
-            or "M88A" in planned or "Terraform" in planned
-        ), (
-            f"planned_next_stage should reference M86C or later; got {planned!r}"
+        assert isinstance(planned, str) and len(planned) > 0, (
+            f"planned_next_stage should be a non-empty string; got {planned!r}"
+        )
+        assert "M89A" in planned or "Kubernetes" in planned, (
+            f"planned_next_stage should reference M89A or Kubernetes; got {planned!r}"
         )
 
     def test_expansion_framework_recommended_queue_head_is_gitlab(self):

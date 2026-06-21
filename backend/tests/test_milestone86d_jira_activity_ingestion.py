@@ -447,17 +447,18 @@ def test_capability_matrix_jira_planned_next_stage_m86e() -> None:
 
 
 def test_expansion_framework_jira_points_to_m86e() -> None:
-    # M86E–M86H have since landed — planned_next_stage now points to M86I.
+    # M86E–M88Z have since landed — planned_next_stage now points to M89A/Kubernetes.
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
     assert (
-        "M86E" in planned or "Jira Activity Signals" in planned
+        "M89A" in planned or "Kubernetes" in planned
+        or "M86E" in planned or "Jira Activity Signals" in planned
         or "M86F" in planned or "M86G" in planned or "M86H" in planned
         or "M86I" in planned
         or "M87A" in planned or "GitLab" in planned
         or "M88A" in planned or "Terraform" in planned
     ), (
-        f"planned_next_stage should reference M86E or later; got {planned!r}"
+        f"planned_next_stage should reference M89A/Kubernetes or a prior milestone; got {planned!r}"
     )
 
 

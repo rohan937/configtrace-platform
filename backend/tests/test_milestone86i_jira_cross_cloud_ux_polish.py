@@ -33,7 +33,7 @@ Sections:
      placeholder IDs; Jira evidence allowlist carries no PII keys.
 
   M86A–M86H REGRESSION SPOT-CHECKS
-     82 rules still registered, 13 event types still mapped, demo seed/clear
+     76 rules still registered, 13 event types still mapped, demo seed/clear
      functions still importable.
 
   WORDING
@@ -400,9 +400,9 @@ def test_jira_evidence_no_pii_keys() -> None:
 
 
 def test_m86b_rules_still_registered() -> None:
-    """Spot-check: the Jira rule registry still has its 82 canonical rules."""
-    assert len(JIRA_RULE_KEYS) == 82, (
-        f"Expected 82 Jira rule keys, got {len(JIRA_RULE_KEYS)}"
+    """Spot-check: the Jira rule registry still has its 76 canonical rules."""
+    assert len(JIRA_RULE_KEYS) == 76, (
+        f"Expected 76 Jira rule keys, got {len(JIRA_RULE_KEYS)}"
     )
     from app.services.security_rule_registry import KNOWN_RULE_KEYS
     missing = JIRA_RULE_KEYS - KNOWN_RULE_KEYS
