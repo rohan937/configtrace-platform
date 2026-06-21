@@ -231,9 +231,10 @@ class TestRuleKeyCompleteness:
         assert not missing, f"M80B keys missing from SENDGRID_RULE_KEYS: {sorted(missing)}"
 
     def test_total_key_count(self):
+        """M80C QA added sendgrid_event_webhook_not_signed — total is now 27."""
         from app.services.security_rules.sendgrid import SENDGRID_RULE_KEYS
-        assert len(SENDGRID_RULE_KEYS) == 26, (
-            f"Expected 26 total rule keys (15 M80B + 11 M80C), got {len(SENDGRID_RULE_KEYS)}"
+        assert len(SENDGRID_RULE_KEYS) == 27, (
+            f"Expected 27 total rule keys (15 M80B + 11 M80C + 1 M80C QA), got {len(SENDGRID_RULE_KEYS)}"
         )
 
 
@@ -792,11 +793,12 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m80d(self):
+        """All SendGrid milestones complete — planned_next_stage points to M89A Kubernetes."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M81A" in stage or "Auth0" in stage, (
-            f"Expected M81A/Auth0 in planned_next_stage, got: {stage!r}"
+        assert "M89A" in stage or "Kubernetes" in stage, (
+            f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
         )
 
 

@@ -217,13 +217,18 @@ class TestCorrelationTypeRegistry:
         assert len(SENDGRID_CORRELATION_TYPES) == 7
 
     def test_a4_rules_cover_26_sendgrid_rule_keys(self):
+        """All SendGrid rule keys must appear in at least one correlation config (27 total)."""
         from app.services.sendgrid_risk_activity_correlation_service import SENDGRID_CORRELATION_RULES
+        from app.services.security_rules.sendgrid import SENDGRID_RULE_KEYS
         all_rule_keys = set()
         for rule in SENDGRID_CORRELATION_RULES.values():
             all_rule_keys.update(rule["rule_keys"])
         missing = set(EXPECTED_RULE_FAMILIES.keys()) - all_rule_keys
         assert not missing, f"rule keys not covered: {missing}"
-        assert len(all_rule_keys) == 26
+        assert len(all_rule_keys) == len(SENDGRID_RULE_KEYS), (
+            f"Correlation rule key count ({len(all_rule_keys)}) must match "
+            f"SENDGRID_RULE_KEYS count ({len(SENDGRID_RULE_KEYS)})"
+        )
 
     def test_a5_each_rule_key_maps_to_correct_family(self):
         from app.services.sendgrid_risk_activity_correlation_service import SENDGRID_CORRELATION_RULES
@@ -732,10 +737,10 @@ class TestExpansionFramework:
         return svc.get_framework()
 
     def test_h1_planned_next_stage_contains_m80g(self):
-        # After M81F completes, pointer advances past M81A — any M81x is fine
+        """All SendGrid milestones complete — planned_next_stage points to M89A Kubernetes."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert any(f"M81{x}" in stage for x in "ABCDEFGHI"), (
-            f"expected M81x stage, got {stage!r}"
+        assert "M89A" in stage or "Kubernetes" in stage, (
+            f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
         )
 
     def test_h2_planned_next_stage_not_m80f(self):

@@ -202,6 +202,7 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "sendgrid_inbound_parse_enabled",
         "sendgrid_inbound_parse_raw_email_enabled",
         "sendgrid_inbound_parse_spam_check_disabled",
+        "sendgrid_event_webhook_not_signed",
         # Auth0 — M81B
         "auth0_tenant_session_lifetime_extended",
         "auth0_tenant_idle_session_lifetime_extended",

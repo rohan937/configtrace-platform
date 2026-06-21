@@ -230,6 +230,7 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "sendgrid_inbound_parse_enabled": (HIGH, "Only fires when inbound_parse_enabled=true on a sendgrid_webhook_settings record; hostname, URL, email bodies, and recipient data NEVER stored."),
     "sendgrid_inbound_parse_raw_email_enabled": (HIGH, "Only fires when inbound_parse_enabled=true AND inbound_parse_send_raw_enabled=true; raw email content and recipient data NEVER stored."),
     "sendgrid_inbound_parse_spam_check_disabled": (HIGH, "Only fires when inbound_parse_enabled=true AND inbound_parse_spam_check_enabled=false; both conditions must be explicitly present."),
+    "sendgrid_event_webhook_not_signed": (HIGH, "Only fires when event_webhook_enabled=true AND event_webhook_has_url=true AND event_webhook_signed=false on a sendgrid_webhook_settings record; webhook URL, OAuth secrets, and event payloads NEVER stored."),
     # Auth0 — M81B
     "auth0_tenant_session_lifetime_extended": (HIGH, "Only fires when session_lifetime_category=='extended' on an auth0_tenant_settings record; no token or session content is stored."),
     "auth0_tenant_idle_session_lifetime_extended": (HIGH, "Only fires when idle_session_lifetime_category=='extended' on an auth0_tenant_settings record."),

@@ -230,6 +230,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "sendgrid_inbound_parse_enabled": ("sendgrid", "medium", "Webhook configuration"),
     "sendgrid_inbound_parse_raw_email_enabled": ("sendgrid", "medium", "Webhook configuration"),
     "sendgrid_inbound_parse_spam_check_disabled": ("sendgrid", "medium", "Webhook configuration"),
+    "sendgrid_event_webhook_not_signed": ("sendgrid", "medium", "Webhook configuration"),
     # Auth0 — M81B
     "auth0_tenant_session_lifetime_extended": ("auth0", "medium", "Tenant session"),
     "auth0_tenant_idle_session_lifetime_extended": ("auth0", "low", "Tenant session"),

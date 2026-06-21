@@ -667,10 +667,10 @@ class TestExpansionFramework:
         return svc.get_framework()
 
     def test_g1_planned_next_stage_contains_m80f(self):
-        # After M81E completes, pointer advances past M81A — any M81x is fine
+        """All SendGrid milestones complete — planned_next_stage points to M89A Kubernetes."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert any(f"M81{x}" in stage for x in "ABCDEFGHI"), (
-            f"expected M81x stage, got {stage!r}"
+        assert "M89A" in stage or "Kubernetes" in stage, (
+            f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
         )
 
     def test_g2_planned_next_stage_not_m80e(self):

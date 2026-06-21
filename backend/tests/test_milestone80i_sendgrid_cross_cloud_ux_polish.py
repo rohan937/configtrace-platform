@@ -83,6 +83,8 @@ EXPECTED_SENDGRID_RULE_KEYS = frozenset({
     "sendgrid_inbound_parse_enabled",
     "sendgrid_inbound_parse_raw_email_enabled",
     "sendgrid_inbound_parse_spam_check_disabled",
+    # M80C QA: webhook signing posture (1)
+    "sendgrid_event_webhook_not_signed",
 })
 
 # Expected 10 SendGrid signal types (M80E).
@@ -193,7 +195,7 @@ def test_capability_matrix_sendgrid_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_m81a():
-    """After M80I and M81A, planned_next_stage points to M81B Auth0 Core Security."""
+    """All SendGrid + subsequent arcs complete — planned_next_stage points to M89A Kubernetes."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M80I" not in stage, (
@@ -202,24 +204,19 @@ def test_expansion_framework_planned_next_stage_is_m81a():
     assert "M81A" not in stage, (
         f"planned_next_stage still points to M81A after it launched: {stage!r}"
     )
-    assert ("M81B" in stage or "Auth0" in stage or "M82" in stage or "Datadog" in stage
-            or "M83" in stage or "Clerk" in stage or "M84" in stage or "PagerDuty" in stage
-            or "M85A" in stage or "Linear" in stage
-            or "M86A" in stage or "M86B" in stage or "Jira" in stage
-            or "M87A" in stage or "GitLab" in stage), (
-        f"planned_next_stage should point to M81B/Auth0/M82/M83/Clerk or later; got: {stage!r}"
+    assert "M89A" in stage or "Kubernetes" in stage, (
+        f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
     )
 
 
 def test_expansion_framework_top_recommendation_is_auth0():
-    """Datadog is the head of the recommended queue (Auth0 launched in M81A)."""
+    """All prior arcs complete — Kubernetes is the head of the recommended queue."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    # After M84A, PagerDuty launched; Linear is now at head.
-    assert top["provider"] in ("pagerduty", "linear", "jira", "gitlab")
-    assert top["label"] in ("PagerDuty", "Linear", "Jira", "GitLab")
+    assert top["provider"] == "kubernetes"
+    assert top["label"] == "Kubernetes"
 
 
 def test_expansion_framework_sendgrid_not_in_recommended_queue():
@@ -239,12 +236,11 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_auth0():
-    """Framework summary next_provider = Clerk (Datadog launched in M82A)."""
+    """Framework summary next_provider = Kubernetes (all prior arcs complete)."""
     fw = exp_svc.get_framework()
-    # After M84A, PagerDuty launched; Linear is now head.
-    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab")
+    assert fw["summary"]["next_provider"] == "Kubernetes"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms or "M86B" in next_ms or "M87A" in next_ms or "GitLab" in next_ms
+    assert "Kubernetes" in next_ms or "M89A" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -676,12 +672,12 @@ def test_fe_demo_script_no_forbidden_wording():
 
 
 def test_fe_rule_catalog_sendgrid_rule_count():
-    """securityRuleCatalog.ts contains all 26 SendGrid rules."""
+    """securityRuleCatalog.ts contains all 27 SendGrid rules (27 = 15+11+1)."""
     text = _read_fe("lib/securityRuleCatalog.ts")
     entries = re.findall(r'key:\s*"(sendgrid_[a-z0-9_]+)"', text)
     keys = frozenset(entries)
-    assert len(keys) == 26, (
-        f"Expected 26 SendGrid rules in catalog, found {len(keys)}: {sorted(keys)}"
+    assert len(keys) == 27, (
+        f"Expected 27 SendGrid rules in catalog, found {len(keys)}: {sorted(keys)}"
     )
 
 
@@ -842,9 +838,9 @@ def test_fe_types_sendgrid_correlation_generate_response():
 
 
 def test_backend_sendgrid_rule_keys_count():
-    """Backend SENDGRID_RULE_KEYS has all 26 expected rules."""
-    assert len(SENDGRID_RULE_KEYS) == 26, (
-        f"Expected 26 SendGrid rule keys, found {len(SENDGRID_RULE_KEYS)}"
+    """Backend SENDGRID_RULE_KEYS has all 27 expected rules (15+11+1)."""
+    assert len(SENDGRID_RULE_KEYS) == 27, (
+        f"Expected 27 SendGrid rule keys, found {len(SENDGRID_RULE_KEYS)}"
     )
 
 

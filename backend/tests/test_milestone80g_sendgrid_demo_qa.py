@@ -717,8 +717,8 @@ def test_i5_expansion_framework_points_to_m80h():
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage, (
-        f"expected planned_next_stage past M81A; got {stage!r}"
+    assert "M89A" in stage or "Kubernetes" in stage, (
+        f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
     )
 
 

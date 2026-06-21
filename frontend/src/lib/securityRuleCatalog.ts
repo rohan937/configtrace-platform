@@ -2932,6 +2932,27 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when inbound_parse_enabled=true AND inbound_parse_spam_check_enabled=false are both explicitly present. Some senders intentionally handle spam filtering at the application level.",
   },
+  {
+    key: "sendgrid_event_webhook_not_signed",
+    provider: "sendgrid",
+    severity: "medium",
+    title: "SendGrid event webhook is active but webhook signing is not enabled",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "The SendGrid event webhook is enabled and a URL is configured, but webhook signing (OAuth-based event verification) is not active. Without signing, the receiving endpoint cannot verify that delivery events originate from SendGrid.",
+    whatItChecks:
+      "event_webhook_enabled=true AND event_webhook_has_url=true AND event_webhook_signed=false on a sendgrid_webhook_settings record.",
+    whyItMatters:
+      "Webhook signing lets the receiving endpoint verify event authenticity. Without it, the endpoint cannot distinguish legitimate SendGrid events from spoofed payloads, which may require review.",
+    evidence:
+      "event_webhook_enabled, event_webhook_has_url, and event_webhook_signed booleans. No webhook URL, OAuth secrets, or event payloads are stored.",
+    remediation:
+      "In SendGrid Console, navigate to Settings > Mail Settings > Event Webhook and enable webhook signing (OAuth). Update the receiving endpoint to validate the signed event signature.",
+    falsePositiveGuard:
+      "Only fires when event_webhook_enabled=true AND event_webhook_has_url=true AND event_webhook_signed=false are all explicitly present. Requires a fully-configured active webhook with signing disabled.",
+  },
   // ── Auth0 — M81B ──────────────────────────────────────────────────────────
   {
     key: "auth0_tenant_session_lifetime_extended",

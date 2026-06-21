@@ -56,6 +56,7 @@ from app.services.security_rules import jira as jira_rules
 from app.services.security_rules import gitlab as gitlab_rules
 from app.services.security_rules import terraform_cloud as terraform_cloud_rules
 from app.services.security_rules import twilio as twilio_rules
+from app.services.security_rules import sendgrid as sendgrid_rules
 from app.services.security_rules.base import FindingCandidate
 
 logger = logging.getLogger(__name__)
@@ -88,6 +89,8 @@ _PROVIDER_RULES = {
     "terraform_cloud": [terraform_cloud_rules.evaluate],
     # M79B/M79C: Twilio core security rules
     "twilio": [twilio_rules.evaluate],
+    # M80B/M80C: SendGrid core security rules
+    "sendgrid": [sendgrid_rules.evaluate],
 }
 
 

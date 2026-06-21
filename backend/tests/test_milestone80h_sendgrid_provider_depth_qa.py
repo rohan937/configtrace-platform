@@ -143,6 +143,8 @@ EXPECTED_RULE_KEYS = {
     "sendgrid_inbound_parse_enabled",
     "sendgrid_inbound_parse_raw_email_enabled",
     "sendgrid_inbound_parse_spam_check_disabled",
+    # M80C QA: webhook signing posture (1)
+    "sendgrid_event_webhook_not_signed",
 }
 
 # Canonical activity event types produced by the ingestion pipeline (17 total,
@@ -372,10 +374,8 @@ def test_expansion_framework_points_to_m80i():
         f"M80H is done; pointer must advance past it (got: {planned!r})"
     )
     # After M80I/M81x completes, the pointer advances further — any M80I/M81x is acceptable.
-    assert any(tag in planned for tag in (
-        "M80I", "M81A", "M81B", "M81C", "M81D", "M81E", "M81F", "M81G", "M81H", "M81I",
-    )), (
-        f"planned_next_stage must point past M80H; got: {planned!r}"
+    assert "M89A" in planned or "Kubernetes" in planned, (
+        f"planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
     )
 
 
@@ -1603,10 +1603,6 @@ def test_expansion_framework_sendgrid_arc_not_abandoned():
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
     # M80I or M81A (Auth0) are both acceptable — SendGrid arc should not be skipped.
-    assert (
-        "M80I" in planned
-        or "M81A" in planned
-        or "Auth0" in planned
-    ), (
-        f"After M80H, planned_next_stage should be M80I or M81A/Auth0; got: {planned!r}"
+    assert "M89A" in planned or "Kubernetes" in planned, (
+        f"After M80H, planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
     )

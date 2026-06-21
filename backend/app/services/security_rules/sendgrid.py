@@ -137,6 +137,11 @@ _RULE_INBOUND_PARSE_ENABLED = "sendgrid_inbound_parse_enabled"
 _RULE_INBOUND_PARSE_RAW_EMAIL = "sendgrid_inbound_parse_raw_email_enabled"
 _RULE_INBOUND_PARSE_SPAM_CHECK = "sendgrid_inbound_parse_spam_check_disabled"
 
+# ── Rule keys — M80C QA (webhook signing posture) ─────────────────────────────
+
+# Webhook settings
+_RULE_EVENT_WEBHOOK_NOT_SIGNED = "sendgrid_event_webhook_not_signed"
+
 # Threshold for broad event stream rule.
 _BROAD_EVENT_STREAM_THRESHOLD = 8
 
@@ -169,6 +174,8 @@ SENDGRID_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_INBOUND_PARSE_ENABLED,
     _RULE_INBOUND_PARSE_RAW_EMAIL,
     _RULE_INBOUND_PARSE_SPAM_CHECK,
+    # M80C QA: webhook signing posture
+    _RULE_EVENT_WEBHOOK_NOT_SIGNED,
 })
 
 
@@ -783,6 +790,7 @@ def _eval_webhook_settings(record: dict[str, Any]) -> list[FindingCandidate]:
     for check_fn in (
         _check_event_webhook_disabled,
         _check_event_webhook_url_missing,
+        _check_event_webhook_not_signed,           # M80C QA
         _check_event_webhook_broad_event_stream,   # M80C
         _check_inbound_parse_enabled,              # M80C
         _check_inbound_parse_raw_email_enabled,    # M80C
@@ -874,6 +882,60 @@ def _check_event_webhook_url_missing(
                 "Set a valid HTTPS URL that can receive POST events from SendGrid.",
                 "Verify the endpoint is reachable and correctly processes event payloads.",
                 "Consider enabling webhook signing to verify event authenticity.",
+            ],
+        },
+        record_id=record_id,
+    )
+
+
+def _check_event_webhook_not_signed(
+    record: dict[str, Any],
+) -> FindingCandidate | None:
+    """Fire when the event webhook is active but webhook signing is not enabled.
+
+    Webhook signing (via OAuth client credentials) lets the receiving endpoint
+    verify that events originate from SendGrid. Without signing, the endpoint
+    cannot authenticate the event source, which is a meaningful posture gap.
+
+    SECURITY: webhook URL, OAuth client secret, and event payloads are NEVER
+    stored — only the enabled and signed booleans are used.
+    """
+    if record.get("record_type") != SENDGRID_WEBHOOK_SETTINGS:
+        return None
+    if record.get("event_webhook_enabled") is not True:
+        return None
+    if record.get("event_webhook_has_url") is not True:
+        return None
+    if record.get("event_webhook_signed") is not False:
+        return None
+    record_id = get_str(record, "record_id") or None
+    return FindingCandidate(
+        provider="sendgrid",
+        rule_key=_RULE_EVENT_WEBHOOK_NOT_SIGNED,
+        finding_key=make_finding_key(_RULE_EVENT_WEBHOOK_NOT_SIGNED, record_id),
+        severity="medium",
+        title="SendGrid event webhook is active but webhook signing is not enabled",
+        description=(
+            "The SendGrid event webhook is enabled and a URL is configured, but "
+            "webhook signing (OAuth-based event verification) is not active. Without "
+            "signing, the receiving endpoint cannot verify that delivery events "
+            "originate from SendGrid. This is configuration evidence for review and "
+            "does not confirm unauthorized access or data exposure."
+        ),
+        evidence={
+            "rule": _RULE_EVENT_WEBHOOK_NOT_SIGNED,
+            "event_webhook_enabled": True,
+            "event_webhook_has_url": True,
+            "event_webhook_signed": False,
+            # SECURITY: webhook URL, OAuth secrets, and event payloads NEVER stored.
+        },
+        remediation={
+            "summary": "Enable webhook signing to verify SendGrid event authenticity.",
+            "steps": [
+                "In SendGrid Console, navigate to Settings > Mail Settings > Event Webhook.",
+                "Enable webhook signing (OAuth) and configure the client credentials.",
+                "Update the receiving endpoint to validate the signed event signature.",
+                "Verify signed events are being received and validated correctly.",
             ],
         },
         record_id=record_id,

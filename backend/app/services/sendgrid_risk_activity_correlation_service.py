@@ -155,6 +155,7 @@ SENDGRID_CORRELATION_RULES: dict[str, dict[str, Any]] = {
         "rule_keys": {
             "sendgrid_event_webhook_disabled",
             "sendgrid_event_webhook_url_missing",
+            "sendgrid_event_webhook_not_signed",
             "sendgrid_event_webhook_broad_event_stream",
             "sendgrid_inbound_parse_enabled",
             "sendgrid_inbound_parse_raw_email_enabled",

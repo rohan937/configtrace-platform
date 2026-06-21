@@ -248,6 +248,7 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "sendgrid_inbound_parse_enabled": ("sendgrid_webhook_settings",),
     "sendgrid_inbound_parse_raw_email_enabled": ("sendgrid_webhook_settings",),
     "sendgrid_inbound_parse_spam_check_disabled": ("sendgrid_webhook_settings",),
+    "sendgrid_event_webhook_not_signed": ("sendgrid_webhook_settings",),
     # Auth0 — M81B
     "auth0_tenant_session_lifetime_extended": ("auth0_tenant_settings",),
     "auth0_tenant_idle_session_lifetime_extended": ("auth0_tenant_settings",),

@@ -215,10 +215,10 @@ class TestRuleKeyExistence:
         )
 
     def test_sendgrid_rule_keys_count_is_15(self):
-        """M80C added 11 rules — total is now 26 (15 M80B + 11 M80C)."""
+        """M80C added 11 rules, M80C QA added 1 more — total is now 27."""
         from app.services.security_rules.sendgrid import SENDGRID_RULE_KEYS
-        assert len(SENDGRID_RULE_KEYS) == 26, (
-            f"Expected 26 rule keys (15 M80B + 11 M80C), got {len(SENDGRID_RULE_KEYS)}: {sorted(SENDGRID_RULE_KEYS)}"
+        assert len(SENDGRID_RULE_KEYS) == 27, (
+            f"Expected 27 rule keys (15 M80B + 11 M80C + 1 M80C QA), got {len(SENDGRID_RULE_KEYS)}: {sorted(SENDGRID_RULE_KEYS)}"
         )
 
     def test_all_rule_keys_have_sendgrid_prefix(self):
@@ -653,14 +653,13 @@ class TestCapabilityMatrix:
 
 class TestExpansionFramework:
     def test_planned_next_stage_is_m80c(self):
-        """M80C complete — planned_next_stage rolls to M80D."""
+        """All SendGrid milestones complete — planned_next_stage points to M89A Kubernetes."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         stage = fw["summary"]["planned_next_stage"]
-        assert "M81C" in stage or "Auth0" in stage, (
-            f"planned_next_stage should point past M80I/M81A/M81B; got: {stage!r}"
+        assert "M89A" in stage or "Kubernetes" in stage, (
+            f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
         )
-        assert "Auth0" in stage
 
     def test_m80b_not_in_planned_next_stage(self):
         from app.services.provider_expansion_framework import get_framework

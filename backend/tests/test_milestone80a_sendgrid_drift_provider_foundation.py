@@ -1186,10 +1186,10 @@ class TestExpansionFramework:
         return get_framework()
 
     def test_planned_next_stage_is_m80b(self):
-        """M80C complete — planned_next_stage rolls to M80D."""
+        """All SendGrid milestones complete — planned_next_stage points to M89A Kubernetes."""
         stage = self._fw()["summary"]["planned_next_stage"]
-        assert "M81B" in stage or "Auth0" in stage or "Datadog" in stage, (
-            f"planned_next_stage should be past M81A after M81A launched; got: {stage!r}"
+        assert "M89A" in stage or "Kubernetes" in stage, (
+            f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
         )
 
     def test_m80a_not_in_planned_next_stage(self):
