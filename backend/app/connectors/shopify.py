@@ -898,6 +898,12 @@ class ShopifyConnector(BaseConnector):
         domain = normalize_shop_domain(credentials.get("shop_domain", ""))
         validate_shop_domain(domain)
 
+        # Fast-fail on a missing/blank access token before any network call.
+        # SECURITY: the token value is NEVER included in this error.
+        token = credentials.get("shopify_access_token")
+        if not token or not str(token).strip():
+            raise AuthenticationError("Shopify access token is required")
+
         logger.info(
             "ShopifyConnector.validate_credentials: probing shop=%s",
             domain,

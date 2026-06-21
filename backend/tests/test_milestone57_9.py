@@ -129,7 +129,8 @@ class TestShopifySchemaM579:
 
     def test_frozenset_has_four_types(self):
         from app.connectors.shopify_schema import SHOPIFY_RECORD_TYPES
-        assert len(SHOPIFY_RECORD_TYPES) == 4
+        # shopify_domain added in M74A
+        assert len(SHOPIFY_RECORD_TYPES) == 5
 
 
 # ─────────────────────────────────────────────────────────────────────────────

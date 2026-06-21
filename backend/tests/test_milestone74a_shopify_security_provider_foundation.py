@@ -273,10 +273,27 @@ def test_webhook_high_risk_topic_orders(test_user, db_session):
     try:
         _evaluate(db_session, ws, integ, res, test_user,
                   [_webhook("we_orders", topic="orders/create")])
-        keys = {f.finding_key.split(":", 1)[0] for f in _active(db_session, ws.id, res.id)}
-        assert "shopify_webhook_high_risk_topic" in keys
+        findings = _active(db_session, ws.id, res.id)
+        by_rule = {f.finding_key.split(":", 1)[0]: f for f in findings}
+        assert "shopify_webhook_high_risk_topic" in by_rule
         # HTTPS endpoint → no http rule.
-        assert "shopify_webhook_http" not in keys
+        assert "shopify_webhook_http" not in by_rule
+        finding = by_rule["shopify_webhook_high_risk_topic"]
+        # Severity is a fixed medium for this rule.
+        assert finding.severity == "medium"
+        # Evidence is metadata-only: no token, customer email, order data, or PII.
+        ev_blob = json.dumps(finding.evidence, default=str).lower()
+        for bad in ("shpat_", "x-shopify-access-token", "bearer ",
+                    RAW_TOKEN.lower(), RAW_CUSTOMER_EMAIL.lower(),
+                    RAW_ORDER_NOTE.lower(), "email", "secret-path"):
+            assert bad not in ev_blob
+        # Title/description make no breach/compromise/exposure *assertions*.
+        # (The standard claim-discipline disclaimer legitimately negates these
+        # words, e.g. "does not confirm fraud, compromise, ... or data
+        # exposure", so we assert on the forbidden incident-claim phrases.)
+        copy_blob = (str(finding.title) + " " + str(finding.description)).lower()
+        for phrase in _FORBIDDEN:
+            assert phrase not in copy_blob
     finally:
         _cleanup(db_session, ws.id)
 

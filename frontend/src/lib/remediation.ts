@@ -5493,7 +5493,7 @@ function _shopifyAppScopePlaybooks(
     title: "Review and revoke unexpected Shopify app permission scopes",
     summary: "Investigate which installed app gained new sensitive or write-access scopes (customer, order, payment data) and revoke permissions for any app that should not have them.",
     why_this_helps:
-      "Shopify app permission scopes define what store data each installed app can read and write. An increase in write scopes or the appearance of customer, order, or payment data scopes means an app has gained elevated access to sensitive store and customer information. If this was not intentional — caused by an app update, a new app installation, or a compromised OAuth flow — it represents a direct data exposure risk for your customers.",
+      "Shopify app permission scopes define what store data each installed app can read and write. An increase in write scopes or the appearance of customer, order, or payment data scopes means an app has broader access than before to store and customer configuration. If this was not intentional — caused by an app update, a new app installation, or an unexpected OAuth grant — it may indicate broader access than intended; review whether this app should retain these permissions.",
     verify_first: [
       "Identify which app's scope changed by checking Shopify Admin → Apps → [app name] → Permissions.",
       "Confirm whether the scope change corresponds to a known app update or a new app installation.",

@@ -463,7 +463,12 @@ class TestFetchStorePolicies:
         creds = {"shop_domain": "mystore.myshopify.com", "shopify_access_token": "shpat_test"}
         with patch.object(c, "_get", return_value=self._make_policy_response()):
             records = c._fetch_store_policies(creds)
-        for rec in records:
+        # M74A: _fetch_store_policies also emits ``present=False`` baseline
+        # records for canonical policy types the API did not return; those
+        # carry body_hash=None. Assert on the populated (present) policies.
+        populated = [r for r in records if r.get("present") is True]
+        assert populated
+        for rec in populated:
             assert "body_hash" in rec, "body_hash must be present for change detection"
             assert isinstance(rec["body_hash"], str)
 
@@ -473,7 +478,11 @@ class TestFetchStorePolicies:
         creds = {"shop_domain": "mystore.myshopify.com", "shopify_access_token": "shpat_test"}
         with patch.object(c, "_get", return_value=self._make_policy_response()):
             records = c._fetch_store_policies(creds)
-        for rec in records:
+        # M74A baseline (present=False) records have body_length=0; assert on
+        # the populated policies returned by the API.
+        populated = [r for r in records if r.get("present") is True]
+        assert populated
+        for rec in populated:
             assert "body_length" in rec
             assert isinstance(rec["body_length"], int)
             assert rec["body_length"] > 0
@@ -484,8 +493,12 @@ class TestFetchStorePolicies:
         creds = {"shop_domain": "mystore.myshopify.com", "shopify_access_token": "shpat_test"}
         with patch.object(c, "_get", return_value=self._make_policy_response()):
             records = c._fetch_store_policies(creds)
-        for rec in records:
-            assert rec.get("present") is True
+        # M74A also emits ``present=False`` baseline records for canonical
+        # policy types the API omitted. The two policies returned by the API
+        # (refund + privacy) must be marked present=True.
+        present_types = {r["policy_type"] for r in records if r.get("present") is True}
+        assert "refund_policy" in present_types
+        assert "privacy_policy" in present_types
 
     def test_returns_empty_on_403(self):
         from app.connectors.shopify import ShopifyConnector
@@ -510,18 +523,28 @@ class TestShopifyConnectorFetch:
         shop_rec = {"record_type": "shopify_shop_metadata", "record_id": "mystore.myshopify.com"}
         webhook_rec = {"record_type": "shopify_webhook_subscription", "record_id": "wh_abc"}
         policy_rec = {"record_type": "shopify_store_policy", "record_id": "mystore.myshopify.com:refund_policy"}
+        scope_rec = {"record_type": "shopify_app_scope_summary", "record_id": "mystore.myshopify.com:app_scopes"}
+        domain_rec = {"record_type": "shopify_domain", "record_id": "mystore.myshopify.com:host"}
         with (
             patch.object(c, "_fetch_shop_metadata", return_value=shop_rec),
             patch.object(c, "_fetch_webhook_subscriptions", return_value=[webhook_rec]),
             patch.object(c, "_fetch_store_policies", return_value=[policy_rec]),
+            # _fetch_access_scopes (M57.9) and _fetch_domains (M74A) were added
+            # after M57.5 — patch them so fetch() makes no real network calls.
+            patch.object(c, "_fetch_access_scopes", return_value=scope_rec),
+            patch.object(c, "_fetch_domains", return_value=[domain_rec]),
         ):
             records = c.fetch(creds)
         assert isinstance(records, list)
-        assert len(records) == 3
+        # 5 record types now: shop_metadata, webhook_subscription, store_policy,
+        # app_scope_summary (M57.9), domain (M74A).
+        assert len(records) == 5
         types = {r["record_type"] for r in records}
         assert "shopify_shop_metadata" in types
         assert "shopify_webhook_subscription" in types
         assert "shopify_store_policy" in types
+        assert "shopify_app_scope_summary" in types
+        assert "shopify_domain" in types
 
     def test_fetch_skips_none_shop_metadata(self):
         from app.connectors.shopify import ShopifyConnector
@@ -531,6 +554,9 @@ class TestShopifyConnectorFetch:
             patch.object(c, "_fetch_shop_metadata", return_value=None),
             patch.object(c, "_fetch_webhook_subscriptions", return_value=[]),
             patch.object(c, "_fetch_store_policies", return_value=[]),
+            # _fetch_access_scopes (M57.9) and _fetch_domains (M74A) added later.
+            patch.object(c, "_fetch_access_scopes", return_value=None),
+            patch.object(c, "_fetch_domains", return_value=[]),
         ):
             records = c.fetch(creds)
         assert records == []
@@ -1206,6 +1232,9 @@ class TestSecurityInvariants:
             patch.object(c, "_fetch_shop_metadata", return_value=shop_rec),
             patch.object(c, "_fetch_webhook_subscriptions", return_value=[]),
             patch.object(c, "_fetch_store_policies", return_value=[]),
+            # M57.9 / M74A helpers — patch so fetch() makes no real network call.
+            patch.object(c, "_fetch_access_scopes", return_value=None),
+            patch.object(c, "_fetch_domains", return_value=[]),
         ):
             records = c.fetch(creds)
         for rec in records:
