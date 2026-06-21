@@ -352,7 +352,7 @@ def _eval_workspace(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_WORKSPACE_NO_WEBHOOKS,
             finding_key=make_finding_key(_RULE_WORKSPACE_NO_WEBHOOKS, record_id),
-            severity="medium",
+            severity="low",
             title="Linear workspace has no webhook subscriptions configured",
             description=(
                 "A Linear workspace has no webhook subscriptions configured. "
@@ -437,12 +437,12 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             rule_key=_RULE_TEAM_PRIVATE,
             finding_key=make_finding_key(_RULE_TEAM_PRIVATE, record_id),
             severity="low",
-            title="Linear team has private visibility",
+            title="Team configured with private visibility (posture review)",
             description=(
-                "A Linear team is configured with private visibility. Private teams "
-                "restrict access to team members only, which may limit cross-team "
-                "collaboration and visibility into project status. This team "
-                "configuration evidence may require review."
+                "This team is configured with private visibility. Private team "
+                "visibility is a common and often intentional configuration. "
+                "Review whether this aligns with workspace collaboration "
+                "expectations."
             ),
             evidence={
                 "rule": _RULE_TEAM_PRIVATE,
@@ -526,7 +526,7 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_TEAM_AUTO_ARCHIVE_DISABLED,
             finding_key=make_finding_key(_RULE_TEAM_AUTO_ARCHIVE_DISABLED, record_id),
-            severity="medium",
+            severity="low",
             title="Linear team has auto-archive disabled",
             description=(
                 "A Linear team does not have an auto-archive period configured. "
@@ -557,7 +557,7 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_TEAM_CYCLES_DISABLED,
             finding_key=make_finding_key(_RULE_TEAM_CYCLES_DISABLED, record_id),
-            severity="medium",
+            severity="low",
             title="Linear team has cycles (sprints) disabled",
             description=(
                 "A Linear team has cycles (sprint planning) disabled. Without "
@@ -629,7 +629,7 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_TEAM_NO_BACKLOG_STATE,
             finding_key=make_finding_key(_RULE_TEAM_NO_BACKLOG_STATE, record_id),
-            severity="medium",
+            severity="low",
             title="Linear team workflow has no backlog state",
             description=(
                 "A Linear team's workflow does not include a state of type 'backlog'. "
@@ -659,7 +659,7 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_TEAM_NO_STARTED_STATE,
             finding_key=make_finding_key(_RULE_TEAM_NO_STARTED_STATE, record_id),
-            severity="medium",
+            severity="low",
             title="Linear team workflow has no started/in-progress state",
             description=(
                 "A Linear team's workflow does not include a state of type 'started'. "
@@ -689,14 +689,14 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_TEAM_NO_COMPLETED_STATE,
             finding_key=make_finding_key(_RULE_TEAM_NO_COMPLETED_STATE, record_id),
-            severity="high",
+            severity="medium",
             title="Linear team workflow has no completed state",
             description=(
                 "A Linear team's workflow does not include a state of type 'completed'. "
                 "Without a completed state, issues can never be marked as done, which "
                 "means all work remains perpetually open. This may prevent accurate "
-                "reporting of delivered work and is a high-priority workflow configuration "
-                "finding that may require review."
+                "reporting of delivered work. This workflow configuration evidence "
+                "may require review."
             ),
             evidence={
                 "rule": _RULE_TEAM_NO_COMPLETED_STATE,
@@ -750,7 +750,7 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_TEAM_LOW_WORKFLOW_STATE_COUNT,
             finding_key=make_finding_key(_RULE_TEAM_LOW_WORKFLOW_STATE_COUNT, record_id),
-            severity="medium",
+            severity="low",
             title="Linear team has very few workflow states",
             description=(
                 "A Linear team has two or fewer workflow states configured. A minimal "
@@ -810,7 +810,7 @@ def _eval_team(record: dict[str, Any]) -> list[FindingCandidate]:
             provider="linear",
             rule_key=_RULE_TEAM_NO_WEBHOOKS,
             finding_key=make_finding_key(_RULE_TEAM_NO_WEBHOOKS, record_id),
-            severity="medium",
+            severity="low",
             title="Linear team has no webhook subscriptions",
             description=(
                 "A Linear team has no webhook subscriptions configured. Without "
