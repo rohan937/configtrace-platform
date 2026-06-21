@@ -236,10 +236,9 @@ def test_demo_lifecycle_round_trip(
     ws = _ws(test_user, db_session)
 
     # A real (non-demo) finding for this provider that must survive clear.
-    real_provider = "github" if provider == "github" else provider
-    ct, iv = encrypt_credentials({"demo_smoke": True, "provider": real_provider})
+    ct, iv = encrypt_credentials({"demo_smoke": True, "provider": provider})
     real_integ = Integration(
-        user_id=test_user.id, workspace_id=ws.id, provider=real_provider,
+        user_id=test_user.id, workspace_id=ws.id, provider=provider,
         display_name=f"real-{provider}", encrypted_credentials=ct,
         credential_iv=iv, status="active",
     )
@@ -253,7 +252,7 @@ def test_demo_lifecycle_round_trip(
     db_session.add(real_res); db_session.commit(); db_session.refresh(real_res)
     real = finding_svc.upsert_active_finding(
         db=db_session, workspace_id=ws.id, integration_id=real_integ.id,
-        provider=real_provider,
+        provider=provider,
         finding_key=f"real_{provider}_finding:{real_res.provider_resource_id}",
         severity="medium", title=f"Real {label} finding (keep)",
         resource_id=real_res.id,

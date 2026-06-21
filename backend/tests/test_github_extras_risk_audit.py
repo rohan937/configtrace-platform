@@ -849,6 +849,9 @@ class TestSecretSafety:
         bad_phrases = (
             "compromised", "hacked", "definitely down", "guaranteed outage",
             "site is down", "auto-fix", "auto fix",
+            "breach", "attacker", "attack detected",
+            "unauthorized access confirmed", "compromise confirmed",
+            "data leaked", "secret leaked",
         )
         scenarios = [
             _ch(record_type="github_ruleset", change_type="removed",

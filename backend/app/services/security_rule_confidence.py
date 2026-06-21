@@ -59,6 +59,9 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "github_automation_write_permission": (HIGH, "Reads the authenticated credential's repository permission object directly."),
     "github_token_broad_scopes": (MEDIUM, "Classic-PAT scopes only (from X-OAuth-Scopes); fine-grained tokens/Apps expose no scopes, so it may under-report."),
     "github_webhook_secret_missing": (HIGH, "GitHub reliably masks a configured secret and omits the field when none is set."),
+    # GitHub new QA rules
+    "github_actions_broad_permissions": (HIGH, "Only fires when allowed_actions is exactly 'all' on a github_actions_permissions record."),
+    "github_branch_admin_bypass_allowed": (HIGH, "Only fires when protection_enabled=True and enforce_admins is explicitly False on a github_branch_protection record."),
     # AWS
     "aws_public_admin_port": (HIGH, "Only 0.0.0.0/0 or ::/0 count as public; reachability is not claimed."),
     "aws_public_database_port": (HIGH, "Only canonical 'any' CIDRs count as public."),

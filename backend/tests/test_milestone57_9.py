@@ -76,8 +76,9 @@ class TestGitHubSchemaM579:
         # extras surfaces (ruleset, codeowners, workflow_file, oidc_trust,
         # collaborator, app_installation, security_features).  The original
         # eight must still be present; the new seven are additive.
+        # Count updated to 16: includes github_automation_permissions added in M69.5B
         from app.connectors.github_schema import GITHUB_RECORD_TYPES
-        assert len(GITHUB_RECORD_TYPES) == 15
+        assert len(GITHUB_RECORD_TYPES) == 16
         for legacy in (
             "github_repo_settings",
             "github_branch_protection",

@@ -78,6 +78,9 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "github_automation_write_permission": ("github_automation_permissions",),
     "github_token_broad_scopes": ("github_automation_permissions",),
     "github_webhook_secret_missing": ("github_webhook",),
+    # GitHub new QA rules
+    "github_actions_broad_permissions": ("github_actions_permissions",),
+    "github_branch_admin_bypass_allowed": ("github_branch_protection",),
     # AWS
     "aws_public_admin_port": ("aws_security_group_rule",),
     "aws_public_database_port": ("aws_security_group_rule",),
@@ -587,7 +590,7 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
 
 # Friendly, human surfaces per provider for display (no internal jargon).
 PROVIDER_SURFACES: dict[str, list[str]] = {
-    "github": ["Webhooks", "Branch protection", "Deploy keys", "Environment protection"],
+    "github": ["Webhooks", "Branch protection", "Deploy keys", "Environment protection", "Rulesets", "Automation permissions"],
     "aws": ["Security group rules", "S3 buckets", "IAM policy attachments", "IAM access keys"],
     "cloudflare": ["Zone settings", "WAF rules", "DNS records"],
     "supabase": ["Row-level security", "Public table policies", "Auth configuration", "Edge Functions"],
@@ -748,6 +751,18 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "github_environment_protection": {
         "message": "Environment protection metadata may require repository-level access.",
         "hints": [],
+    },
+    "github_actions_permissions": {
+        "message": "Missing GitHub Actions permission records may indicate insufficient scope to read repository Actions settings.",
+        "hints": ["Ensure the token or app has 'actions' read scope on the repository."],
+    },
+    "github_ruleset": {
+        "message": "Missing GitHub ruleset records may indicate insufficient repository ruleset permissions.",
+        "hints": ["Ensure the token or app has 'administration' scope to read rulesets."],
+    },
+    "github_automation_permissions": {
+        "message": "Missing GitHub automation permission records may indicate the credential cannot read repository permission posture.",
+        "hints": ["Review token scopes or GitHub App installation permissions."],
     },
     # AWS
     "aws_security_group_rule": {

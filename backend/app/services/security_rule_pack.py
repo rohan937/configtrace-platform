@@ -39,7 +39,7 @@ DEFAULT_INTRODUCED_IN = SECURITY_RULE_PACK_VERSION
 # headline (worst-case) severity.
 _RULE_META: dict[str, tuple[str, str, str]] = {
     # GitHub
-    "github_webhook_http": ("github", "critical", "Webhooks"),
+    "github_webhook_http": ("github", "high", "Webhooks"),
     "github_branch_protection_missing": ("github", "high", "Branch protection"),
     "github_force_pushes_allowed": ("github", "high", "Branch protection"),
     "github_branch_deletion_allowed": ("github", "high", "Branch protection"),
@@ -58,7 +58,10 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "github_automation_admin_permission": ("github", "high", "Automation permissions"),
     "github_automation_write_permission": ("github", "medium", "Automation permissions"),
     "github_token_broad_scopes": ("github", "high", "Automation permissions"),
-    "github_webhook_secret_missing": ("github", "medium", "Webhooks"),
+    "github_webhook_secret_missing": ("github", "high", "Webhooks"),
+    # GitHub new QA rules
+    "github_actions_broad_permissions": ("github", "high", "Automation permissions"),
+    "github_branch_admin_bypass_allowed": ("github", "high", "Branch protection"),
     # AWS
     "aws_public_admin_port": ("aws", "high", "Security groups"),
     "aws_public_database_port": ("aws", "critical", "Security groups"),

@@ -197,6 +197,84 @@ def test_env_malformed_ignored():
     ) == []
 
 
+# ── Webhook HTTP evidence safety ─────────────────────────────────────────────
+
+
+def test_webhook_http_evidence_does_not_store_raw_url():
+    """Verify P0 fix: webhook URL with embedded credentials is not stored in evidence."""
+    record = {
+        "record_id": "acme/widgets#webhook#99",
+        "record_type": GITHUB_WEBHOOK,
+        "webhook_secret_configured": False,
+        "active": True,
+        "url": "http://hooks.example.com/endpoint?token=secret_abc123&api_key=xyz",
+        "content_type": "json",
+    }
+    findings = gh.evaluate(record)
+    webhook_http = next((f for f in findings if f.rule_key == "github_webhook_http"), None)
+    assert webhook_http is not None, "github_webhook_http should fire for http URL"
+    ev = webhook_http.evidence
+    assert "url" not in ev, "Raw URL must not be stored in evidence"
+    assert "secret_abc123" not in str(ev), "Embedded token must not appear in evidence"
+    assert "api_key" not in str(ev), "Query params must not appear in evidence"
+    assert "xyz" not in str(ev), "Query param values must not appear in evidence"
+    assert ev.get("url_scheme") == "http"
+    assert ev.get("url_host") == "hooks.example.com"
+    assert ev.get("uses_http") is True
+
+
+def test_webhook_http_evidence_url_host_has_no_path_or_query():
+    """Evidence url_host must be just the hostname — no path, no query string."""
+    record = {
+        "record_id": "acme/widgets#webhook#100",
+        "record_type": GITHUB_WEBHOOK,
+        "active": True,
+        "url": "http://hooks.example.com/path/to/endpoint?foo=bar",
+    }
+    findings = gh.evaluate(record)
+    http_finding = next((f for f in findings if f.rule_key == "github_webhook_http"), None)
+    assert http_finding is not None
+    url_host = http_finding.evidence.get("url_host", "")
+    assert "?" not in url_host, f"url_host must not contain query string: {url_host!r}"
+    assert "/" not in url_host, f"url_host must not contain path: {url_host!r}"
+
+
+# ── Severity calibration ─────────────────────────────────────────────────────
+
+
+def test_webhook_http_severity_is_high():
+    """github_webhook_http severity was calibrated from critical → high (M69.5B QA)."""
+    record = {
+        "record_id": "acme/widgets#webhook#1",
+        "record_type": GITHUB_WEBHOOK,
+        "active": True,
+        "url": "http://hooks.example.com/hook",
+    }
+    findings = gh.evaluate(record)
+    http_f = next((f for f in findings if f.rule_key == "github_webhook_http"), None)
+    assert http_f is not None
+    assert http_f.severity == "high", (
+        f"github_webhook_http severity must be 'high' (was 'critical' before calibration); got {http_f.severity!r}"
+    )
+
+
+def test_webhook_secret_missing_severity_is_high():
+    """github_webhook_secret_missing severity was calibrated from medium → high (M69.5B QA)."""
+    record = {
+        "record_id": "acme/widgets#webhook#2",
+        "record_type": GITHUB_WEBHOOK,
+        "active": True,
+        "url": "https://hooks.example.com/hook",
+        "webhook_secret_configured": False,
+    }
+    findings = gh.evaluate(record)
+    secret_f = next((f for f in findings if f.rule_key == "github_webhook_secret_missing"), None)
+    assert secret_f is not None
+    assert secret_f.severity == "high", (
+        f"github_webhook_secret_missing severity must be 'high' (was 'medium' before calibration); got {secret_f.severity!r}"
+    )
+
+
 # ── Unknown record ───────────────────────────────────────────────────────────
 
 

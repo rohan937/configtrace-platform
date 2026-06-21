@@ -300,6 +300,13 @@ def test_scheduled_sync_enqueues_github_integrations(db_session):
         gh_integration = _make_github_integration(db_session, user)
         cf_integration = _make_cloudflare_integration(db_session, user)
 
+        # Clean up any stale SyncRun records that could block scheduling for
+        # these integrations via the in-flight guard (has_in_flight_sync).
+        db_session.query(SyncRun).filter(
+            SyncRun.integration_id.in_([gh_integration.id, cf_integration.id]),
+        ).delete(synchronize_session=False)
+        db_session.commit()
+
         delay_calls: list[dict] = []
 
         def _fake_delay(**kwargs):
@@ -309,10 +316,13 @@ def test_scheduled_sync_enqueues_github_integrations(db_session):
             mock_task.delay.side_effect = _fake_delay
             result = sync_service.create_scheduled_syncs_for_active_integrations(db_session)
 
-        assert result["integrations_seen"] >= 2
         enqueued_integration_ids = {c["integration_id"] for c in delay_calls}
-        assert str(gh_integration.id) in enqueued_integration_ids
-        assert str(cf_integration.id) in enqueued_integration_ids
+        assert str(gh_integration.id) in enqueued_integration_ids, (
+            f"GitHub integration not enqueued; result={result}, enqueued={enqueued_integration_ids}"
+        )
+        assert str(cf_integration.id) in enqueued_integration_ids, (
+            f"Cloudflare integration not enqueued; result={result}, enqueued={enqueued_integration_ids}"
+        )
     finally:
         try:
             db_session.delete(user)

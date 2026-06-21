@@ -40,8 +40,10 @@ Deferred GitHub rules (intentionally NOT implemented — see report)
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from app.connectors.github_schema import (
+    GITHUB_ACTIONS_PERMISSIONS,
     GITHUB_AUTOMATION_PERMISSIONS,
     GITHUB_BRANCH_PROTECTION,
     GITHUB_DEPLOY_KEY,
@@ -77,6 +79,10 @@ _RULE_AUTOMATION_ADMIN = "github_automation_admin_permission"
 _RULE_AUTOMATION_WRITE = "github_automation_write_permission"
 _RULE_TOKEN_BROAD_SCOPES = "github_token_broad_scopes"
 _RULE_WEBHOOK_SECRET_MISSING = "github_webhook_secret_missing"
+# GitHub Actions broad permissions (new QA rule)
+_RULE_ACTIONS_BROAD_PERMISSIONS = "github_actions_broad_permissions"
+# GitHub branch admin bypass allowed (new QA rule)
+_RULE_BRANCH_ADMIN_BYPASS = "github_branch_admin_bypass_allowed"
 
 # Calibrated note for automation-permission findings (keeps claims safe).
 _AUTOMATION_REVIEW_NOTE = (
@@ -110,6 +116,8 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
         return _eval_ruleset(record)
     if rtype == GITHUB_AUTOMATION_PERMISSIONS:
         return _eval_automation_permissions(record)
+    if rtype == GITHUB_ACTIONS_PERMISSIONS:
+        return _eval_actions_permissions(record)
     return []
 
 
@@ -124,19 +132,25 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
     out: list[FindingCandidate] = []
 
     if url.lower().startswith("http://"):
+        parsed_url = urlparse(url)
         out.append(
             FindingCandidate(
                 provider="github",
                 rule_key=_RULE_WEBHOOK_HTTP,
                 finding_key=make_finding_key(_RULE_WEBHOOK_HTTP, record_id),
-                severity="critical",
+                severity="high",
                 title="GitHub webhook uses plain HTTP",
                 description=(
                     "A GitHub webhook delivers events over plain HTTP. Event "
                     "payloads and signature headers may be transmitted in cleartext, "
                     "allowing interception or tampering."
                 ),
-                evidence={"rule": _RULE_WEBHOOK_HTTP, "url": url},
+                evidence={
+                    "rule": _RULE_WEBHOOK_HTTP,
+                    "url_scheme": parsed_url.scheme,
+                    "url_host": parsed_url.hostname or "",
+                    "uses_http": True,
+                },
                 remediation={
                     "summary": "Restore HTTPS on the webhook endpoint and verify ownership.",
                     "steps": [
@@ -158,7 +172,7 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
                 provider="github",
                 rule_key=_RULE_WEBHOOK_SECRET_MISSING,
                 finding_key=make_finding_key(_RULE_WEBHOOK_SECRET_MISSING, record_id),
-                severity="medium",
+                severity="high",
                 title="GitHub webhook has no secret configured",
                 description=(
                     "A GitHub webhook has no signing secret configured. Without a "
@@ -306,6 +320,30 @@ def _eval_branch_protection(record: dict[str, Any]) -> list[FindingCandidate]:
             )
         )
 
+    # Admin bypass: branch protection exists but enforce_admins is explicitly False.
+    if "enforce_admins" in record and record.get("enforce_admins") is not True:
+        out.append(
+            _bp_sub(
+                record_id,
+                branch,
+                rule=_RULE_BRANCH_ADMIN_BYPASS,
+                severity="high",
+                title="Branch protection admin enforcement disabled",
+                description=(
+                    "Repository administrators can bypass branch protection rules. "
+                    "This may require review."
+                ),
+                steps=[
+                    "Enable 'Include administrators' in branch protection settings.",
+                    "Ensure all committers are subject to the same protection rules.",
+                ],
+                extra={
+                    "enforce_admins": False,
+                    "protection_enabled": True,
+                },
+            )
+        )
+
     return out
 
 
@@ -366,8 +404,8 @@ def _eval_deploy_key(record: dict[str, Any]) -> list[FindingCandidate]:
             title="GitHub deploy key has write access",
             description=(
                 f"The deploy key '{title}' has read-write access to the "
-                f"repository. A leaked write-capable deploy key allows pushing "
-                f"malicious code."
+                f"repository. A write-capable deploy key, if exposed, would allow "
+                f"unauthorized pushes to the repository."
             ),
             evidence=evidence,
             remediation={
@@ -727,3 +765,40 @@ def _eval_automation_permissions(record: dict[str, Any]) -> list[FindingCandidat
         )
 
     return out
+
+
+# ── GitHub Actions broad permissions (new QA rule) ───────────────────────────
+
+
+def _eval_actions_permissions(record: dict[str, Any]) -> list[FindingCandidate]:
+    """Fire github_actions_broad_permissions when allowed_actions == 'all'."""
+    if record.get("allowed_actions") != "all":
+        return []
+
+    record_id = get_str(record, "record_id") or None
+    return [
+        FindingCandidate(
+            provider="github",
+            rule_key=_RULE_ACTIONS_BROAD_PERMISSIONS,
+            finding_key=make_finding_key(_RULE_ACTIONS_BROAD_PERMISSIONS, record_id),
+            severity="high",
+            title="GitHub Actions broad permissions: all Actions workflows allowed",
+            description=(
+                "Repository Actions permissions allow all workflows including from "
+                "external sources. This may require review."
+            ),
+            evidence={
+                "rule": _RULE_ACTIONS_BROAD_PERMISSIONS,
+                "allowed_actions": record.get("allowed_actions"),
+                "enabled": record.get("enabled", True),
+            },
+            remediation={
+                "summary": "Restrict allowed Actions to selected or local only.",
+                "steps": [
+                    "Set allowed_actions to 'selected' and enumerate trusted actions.",
+                    "Avoid 'all' in repositories with access to sensitive secrets.",
+                ],
+            },
+            record_id=record_id,
+        )
+    ]

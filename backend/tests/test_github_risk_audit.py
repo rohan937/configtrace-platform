@@ -265,7 +265,9 @@ class TestActionsSecrets:
     @pytest.mark.parametrize("name", [
         "STRIPE_SECRET_KEY", "DATABASE_URL", "JWT_SECRET",
     ])
-    def test_C2_sensitive_secret_rotated_is_at_least_high(self, name):
+    def test_C2_sensitive_secret_rotated_is_high(self, name):
+        # Sensitive secret rotation is classified as "high" (credential changed,
+        # warrants immediate review, but rotation itself is expected security hygiene).
         c = _change(
             record_type="github_actions_secret",
             field_path="last_updated_at",
@@ -274,7 +276,7 @@ class TestActionsSecrets:
             record_name=name,
         )
         level, _ = _classify(c)
-        assert level in ("high", "critical")
+        assert level == "high"
 
     def test_C3_non_sensitive_secret_removed_is_medium(self):
         c = _change(
@@ -714,11 +716,38 @@ class TestSecretAndKeySafety:
             "auto-fix", "automatically fix", "guaranteed", "auto fix",
             "guaranteed outage", "is compromised",
             "definitely compromised", "definitely down",
+            "breach", "attacker", "attack detected",
+            "unauthorized access confirmed", "compromise confirmed",
+            "data leaked", "secret leaked",
         )
         for args in cases:
             _, reason = _classify(_change(**args))
             lower = reason.lower()
             for phrase in bad:
+                assert phrase not in lower, (
+                    f"reason contains {phrase!r}: {reason!r}"
+                )
+
+    def test_J6_no_forbidden_phrases_in_webhook_reasons(self):
+        """Webhook reasons must not contain forbidden claim wording."""
+        cases = [
+            dict(record_type="github_webhook", change_type="removed"),
+            dict(record_type="github_webhook", field_path="url",
+                 new_value="http://hooks.example.com/hook",
+                 prev_value="https://hooks.example.com/hook"),
+            dict(record_type="github_webhook", change_type="added"),
+        ]
+        # Note: "leaked" is checked in finding copy only — not in raw source field
+        # names like "publicly_leaked" which may appear as GitHub API field relays.
+        bad_in_copy = (
+            "breach confirmed", "compromise confirmed", "attacker found",
+            "unauthorized access confirmed", "attack detected",
+            "data leaked", "secret leaked",
+        )
+        for args in cases:
+            _, reason = _classify(_change(**args))
+            lower = reason.lower()
+            for phrase in bad_in_copy:
                 assert phrase not in lower, (
                     f"reason contains {phrase!r}: {reason!r}"
                 )
