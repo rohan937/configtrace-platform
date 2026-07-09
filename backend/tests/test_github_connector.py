@@ -317,6 +317,91 @@ def test_fetch_webhooks(connector: GitHubConnector) -> None:
     assert hook["events"] == ["pull_request", "push"]  # sorted
     assert hook["content_type"] == "json"
     assert hook["hook_id"] == 1001
+    # No insecure_ssl in the raw config → unknown, not defaulted to "verified".
+    assert hook["insecure_ssl_enabled"] is None
+    assert hook["ssl_verification_enabled"] is None
+
+
+@respx.mock
+def test_fetch_webhooks_insecure_ssl_string_one_means_disabled(connector: GitHubConnector) -> None:
+    """config.insecure_ssl == "1" => insecure_ssl_enabled=True, ssl_verification_enabled=False."""
+    hooks = [
+        {
+            "id": 2001,
+            "active": True,
+            "events": ["push"],
+            "config": {
+                "url": "https://ci.example.com/hook",
+                "content_type": "json",
+                "insecure_ssl": "1",
+            },
+        }
+    ]
+    _full_mock(hooks=hooks)
+    records = connector.fetch(VALID_CREDS)
+    hook = next(r for r in records if r["record_type"] == GITHUB_WEBHOOK)
+
+    assert hook["insecure_ssl_enabled"] is True
+    assert hook["ssl_verification_enabled"] is False
+
+
+@respx.mock
+def test_fetch_webhooks_insecure_ssl_string_zero_means_enabled(connector: GitHubConnector) -> None:
+    """config.insecure_ssl == "0" => insecure_ssl_enabled=False, ssl_verification_enabled=True."""
+    hooks = [
+        {
+            "id": 2002,
+            "active": True,
+            "events": ["push"],
+            "config": {
+                "url": "https://ci.example.com/hook",
+                "content_type": "json",
+                "insecure_ssl": "0",
+            },
+        }
+    ]
+    _full_mock(hooks=hooks)
+    records = connector.fetch(VALID_CREDS)
+    hook = next(r for r in records if r["record_type"] == GITHUB_WEBHOOK)
+
+    assert hook["insecure_ssl_enabled"] is False
+    assert hook["ssl_verification_enabled"] is True
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "raw_value,expected_insecure",
+    [
+        ("1", True),
+        ("0", False),
+        (1, True),
+        (0, False),
+        (True, True),
+        (False, False),
+    ],
+)
+def test_fetch_webhooks_insecure_ssl_handles_string_and_int_and_bool(
+    connector: GitHubConnector, raw_value, expected_insecure
+) -> None:
+    """insecure_ssl normalization is robust across string/int/bool shapes GitHub may return."""
+    hooks = [
+        {
+            "id": 2003,
+            "active": True,
+            "events": ["push"],
+            "config": {
+                "url": "https://ci.example.com/hook",
+                "content_type": "json",
+                "insecure_ssl": raw_value,
+            },
+        }
+    ]
+    _full_mock(hooks=hooks)
+    records = connector.fetch(VALID_CREDS)
+    hook = next(r for r in records if r["record_type"] == GITHUB_WEBHOOK)
+
+    assert hook["insecure_ssl_enabled"] is expected_insecure
+    assert hook["ssl_verification_enabled"] is (not expected_insecure)
 
 
 # ── fetch(): actions permissions ──────────────────────────────────────────────

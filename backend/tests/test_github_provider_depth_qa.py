@@ -38,6 +38,7 @@ EXPECTED_GITHUB_RULE_KEYS: frozenset[str] = frozenset({
     # Webhook rules
     "github_webhook_http",
     "github_webhook_secret_missing",
+    "github_webhook_ssl_verification_disabled",
     # Branch protection rules
     "github_branch_protection_missing",
     "github_force_pushes_allowed",
@@ -273,6 +274,14 @@ def test_J_github_rule_copy_no_forbidden_words():
             "url": "https://hooks.example.com/hook",
             "webhook_secret_configured": False,
         },
+        # Webhook with SSL verification disabled
+        {
+            "record_id": "acme/qa-repo#webhook#3",
+            "record_type": "github_webhook",
+            "active": True,
+            "url": "https://hooks.example.com/hook",
+            "insecure_ssl_enabled": True,
+        },
         # Branch protection missing
         {
             "record_id": "acme/qa-repo#branch_protection#main",
@@ -475,4 +484,67 @@ def test_M_rule_pack_severity_github_webhook_secret_missing_is_high():
     provider, severity, category = _RULE_META["github_webhook_secret_missing"]
     assert severity == "high", (
         f"_RULE_META['github_webhook_secret_missing'] severity must be 'high'; got {severity!r}"
+    )
+
+
+def test_M_severity_github_webhook_ssl_verification_disabled_is_high():
+    """github_webhook_ssl_verification_disabled fires 'high' when insecure_ssl_enabled is True."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#webhook#ssl",
+        "record_type": "github_webhook",
+        "active": True,
+        "url": "https://hooks.example.com/hook",
+        "insecure_ssl_enabled": True,
+    }
+    findings = gh.evaluate(record)
+    ssl_f = next(
+        (f for f in findings if f.rule_key == "github_webhook_ssl_verification_disabled"),
+        None,
+    )
+    assert ssl_f is not None
+    assert ssl_f.severity == "high", (
+        f"github_webhook_ssl_verification_disabled must be 'high'; got {ssl_f.severity!r}"
+    )
+
+
+def test_M_no_finding_when_ssl_verification_enabled():
+    """No finding fires when insecure_ssl_enabled is explicitly False."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#webhook#ssl-ok",
+        "record_type": "github_webhook",
+        "active": True,
+        "url": "https://hooks.example.com/hook",
+        "insecure_ssl_enabled": False,
+    }
+    findings = gh.evaluate(record)
+    ssl_findings = [f for f in findings if f.rule_key == "github_webhook_ssl_verification_disabled"]
+    assert not ssl_findings, "No finding should fire when insecure_ssl_enabled is False"
+
+
+def test_M_no_finding_when_ssl_verification_unknown():
+    """No finding fires when insecure_ssl_enabled is unknown (None / absent)."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#webhook#ssl-unknown",
+        "record_type": "github_webhook",
+        "active": True,
+        "url": "https://hooks.example.com/hook",
+    }
+    findings = gh.evaluate(record)
+    ssl_findings = [f for f in findings if f.rule_key == "github_webhook_ssl_verification_disabled"]
+    assert not ssl_findings, "No finding should fire when insecure_ssl_enabled is unknown/absent"
+
+
+def test_M_rule_pack_severity_github_webhook_ssl_verification_disabled_is_high():
+    """_RULE_META confirms github_webhook_ssl_verification_disabled severity as 'high'."""
+    from app.services.security_rule_pack import _RULE_META
+
+    provider, severity, category = _RULE_META["github_webhook_ssl_verification_disabled"]
+    assert severity == "high", (
+        f"_RULE_META['github_webhook_ssl_verification_disabled'] severity must be 'high'; got {severity!r}"
     )

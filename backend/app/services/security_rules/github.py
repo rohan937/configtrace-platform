@@ -7,7 +7,7 @@ No secrets, tokens, key material, webhook secrets, or payloads are ever read.
 
 Record types consumed
 ---------------------
-- ``github_webhook``                → webhook delivered over plain HTTP
+- ``github_webhook``                → webhook delivered over plain HTTP, or with SSL verification disabled
 - ``github_branch_protection``      → default-branch protection posture
 - ``github_deploy_key``             → write-capable deploy keys
 - ``github_environment_protection`` → unguarded production environments
@@ -79,6 +79,7 @@ _RULE_AUTOMATION_ADMIN = "github_automation_admin_permission"
 _RULE_AUTOMATION_WRITE = "github_automation_write_permission"
 _RULE_TOKEN_BROAD_SCOPES = "github_token_broad_scopes"
 _RULE_WEBHOOK_SECRET_MISSING = "github_webhook_secret_missing"
+_RULE_WEBHOOK_SSL_VERIFICATION_DISABLED = "github_webhook_ssl_verification_disabled"
 # GitHub Actions broad permissions (new QA rule)
 _RULE_ACTIONS_BROAD_PERMISSIONS = "github_actions_broad_permissions"
 # GitHub branch admin bypass allowed (new QA rule)
@@ -157,6 +158,40 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
                         "Change the webhook delivery URL back to https://.",
                         "Verify the endpoint is owned by your team.",
                         "Rotate the webhook secret if exposure is suspected.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # Webhook SSL verification disabled — GitHub's config.insecure_ssl == "1".
+    # Only fires when the connector explicitly resolved the field to True;
+    # None (absent/unrecognised) is treated as unknown, not a finding.
+    if record.get("insecure_ssl_enabled") is True:
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_WEBHOOK_SSL_VERIFICATION_DISABLED,
+                finding_key=make_finding_key(_RULE_WEBHOOK_SSL_VERIFICATION_DISABLED, record_id),
+                severity="high",
+                title="GitHub webhook SSL verification disabled",
+                description=(
+                    "A GitHub repository webhook is configured without SSL "
+                    "verification for deliveries. This weakens transport "
+                    "verification and may require review. Configuration "
+                    "evidence does not confirm compromise, unauthorized "
+                    "access, or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_WEBHOOK_SSL_VERIFICATION_DISABLED,
+                    "insecure_ssl_enabled": True,
+                },
+                remediation={
+                    "summary": "Enable SSL verification on the webhook and confirm the endpoint uses a valid HTTPS certificate.",
+                    "steps": [
+                        "Edit the webhook in repository settings.",
+                        "Turn on 'Enable SSL verification'.",
+                        "Confirm the endpoint presents a valid, non-expired HTTPS certificate.",
                     ],
                 },
                 record_id=record_id,

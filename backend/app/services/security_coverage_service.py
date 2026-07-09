@@ -78,6 +78,7 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "github_automation_write_permission": ("github_automation_permissions",),
     "github_token_broad_scopes": ("github_automation_permissions",),
     "github_webhook_secret_missing": ("github_webhook",),
+    "github_webhook_ssl_verification_disabled": ("github_webhook",),
     # GitHub new QA rules
     "github_actions_broad_permissions": ("github_actions_permissions",),
     "github_branch_admin_bypass_allowed": ("github_branch_protection",),

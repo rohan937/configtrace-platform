@@ -589,6 +589,37 @@ def test_webhook_content_type_changed_is_low():
     assert level == "low"
 
 
+def test_webhook_ssl_verification_disabled_is_high():
+    """SSL verification turned off (insecure_ssl_enabled False → True) — High."""
+    change = _change(
+        record_type="github_webhook",
+        field_path="insecure_ssl_enabled",
+        prev_value=False,
+        new_value=True,
+    )
+    level, reason = classify_github_change(change)
+    assert level == "high"
+    assert "ssl verification is disabled" in reason.lower()
+    # Safety wording: no breach/compromise/leak/exploit/attacker claims. The
+    # rule's own disclaimer legitimately says "does not confirm ... data
+    # exposure", so "exposure" itself is not forbidden here.
+    for forbidden in ("breach", "compromise", "leak", "exploit", "attacker"):
+        assert forbidden not in reason.lower()
+
+
+def test_webhook_ssl_verification_restored_is_medium():
+    """SSL verification turned back on (insecure_ssl_enabled True → False) — Medium."""
+    change = _change(
+        record_type="github_webhook",
+        field_path="insecure_ssl_enabled",
+        prev_value=True,
+        new_value=False,
+    )
+    level, reason = classify_github_change(change)
+    assert level == "medium"
+    assert "re-enabled" in reason.lower() or "restored" in reason.lower()
+
+
 # ── Actions permissions ───────────────────────────────────────────────────────
 
 def test_actions_disabled_is_high():

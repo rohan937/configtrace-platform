@@ -177,6 +177,7 @@ _GITHUB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "active",
         "events",
         "content_type",
+        "insecure_ssl_enabled",
     ),
     "github_actions_permissions": (
         "enabled",

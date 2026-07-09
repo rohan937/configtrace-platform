@@ -39,7 +39,7 @@ from app.models.sync_run import SyncRun
 from app.models.user import User
 from app.schemas.integration import IntegrationCreateRequest
 from app.services import sync_service
-from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS, compute_diff
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -407,6 +407,51 @@ def test_tracked_fields_github_webhook():
     assert "url" in fields
     assert "active" in fields
     assert "events" in fields
+    assert "insecure_ssl_enabled" in fields
+
+
+def test_webhook_ssl_verification_disabled_produces_drift_change():
+    """Disabling SSL verification on a webhook must surface as a modified-field Change.
+
+    Regression test for the underlying bug: the connector can normalize
+    insecure_ssl_enabled correctly, but if the field isn't in the tracked-fields
+    tuple for github_webhook, compute_diff will never notice it changed.
+    """
+    from app.models.snapshot import Snapshot
+
+    def _mock_snapshot(state: list[dict]) -> MagicMock:
+        snap = MagicMock(spec=Snapshot)
+        snap.state = state
+        snap.id = uuid.uuid4()
+        return snap
+
+    def _webhook_record(insecure_ssl_enabled) -> dict:
+        return {
+            "record_id": "acme/myapp#webhook#1",
+            "record_type": "github_webhook",
+            "name": "hook #1",
+            "hook_id": 1,
+            "url": "https://ci.example.com/hook",
+            "active": True,
+            "events": ["push"],
+            "content_type": "json",
+            "webhook_secret_configured": True,
+            "insecure_ssl_enabled": insecure_ssl_enabled,
+            "ssl_verification_enabled": (
+                None if insecure_ssl_enabled is None else not insecure_ssl_enabled
+            ),
+        }
+
+    prev = _mock_snapshot([_webhook_record(False)])
+    new = _mock_snapshot([_webhook_record(True)])
+
+    changes = compute_diff(prev, new)
+    ssl_changes = [c for c in changes if c["field_path"] == "insecure_ssl_enabled"]
+
+    assert len(ssl_changes) == 1
+    assert ssl_changes[0]["change_type"] == "modified"
+    assert ssl_changes[0]["prev_value"] is False
+    assert ssl_changes[0]["new_value"] is True
 
 
 def test_tracked_fields_github_deploy_key():

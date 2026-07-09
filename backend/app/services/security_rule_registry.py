@@ -35,6 +35,7 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "github_automation_write_permission",
         "github_token_broad_scopes",
         "github_webhook_secret_missing",
+        "github_webhook_ssl_verification_disabled",
         # GitHub new QA rules
         "github_actions_broad_permissions",
         "github_branch_admin_bypass_allowed",

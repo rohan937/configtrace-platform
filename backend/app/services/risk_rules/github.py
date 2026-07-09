@@ -697,6 +697,17 @@ def _classify_webhook(
             "delivered to the configured URL until the webhook is re-enabled.",
         )
 
+    # SSL verification disabled for webhook deliveries — this weakens
+    # transport verification for events sent to the endpoint.
+    if change_type == "modified" and field_path == "insecure_ssl_enabled" and new_value is True:
+        return (
+            "high",
+            "Webhook SSL verification is disabled. This weakens delivery "
+            "transport verification and may require review. Configuration "
+            "evidence does not confirm compromise, unauthorized access, or "
+            "data exposure.",
+        )
+
     # ── MEDIUM ────────────────────────────────────────────────────────────────
 
     # Webhook added — a new delivery endpoint has been connected.
@@ -713,6 +724,14 @@ def _classify_webhook(
             "medium",
             "A repository webhook was re-enabled. Event delivery to the "
             "configured URL will resume.",
+        )
+
+    # SSL verification restored (insecure_ssl_enabled True → False).
+    if change_type == "modified" and field_path == "insecure_ssl_enabled" and new_value is False:
+        return (
+            "medium",
+            "Webhook SSL verification was re-enabled. Delivery transport "
+            "verification is restored for this webhook.",
         )
 
     # Subscribed events changed — webhook now receives a different event set.

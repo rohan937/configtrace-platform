@@ -354,6 +354,23 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     remediation: "Configure a webhook secret and verify signatures on delivery.",
     falsePositiveGuard: "GitHub reliably masks a configured secret and omits the field when none is set.",
   },
+  {
+    key: "github_webhook_ssl_verification_disabled",
+    provider: "github",
+    severity: "high",
+    title: "GitHub webhook SSL verification disabled",
+    category: "Webhooks",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A GitHub repository webhook is configured without SSL verification for deliveries. This weakens transport verification and may require review.",
+    whatItChecks: "The webhook config's insecure_ssl field.",
+    whyItMatters:
+      "Without SSL verification, the delivery endpoint's certificate is not validated, which weakens transport verification for event deliveries. This is configuration evidence only — it does not confirm compromise, unauthorized access, or data exposure.",
+    evidence: "Webhook insecure_ssl_enabled boolean.",
+    remediation: "Enable SSL verification on the webhook and confirm the endpoint uses a valid HTTPS certificate.",
+    falsePositiveGuard: "Only fires when the connector explicitly resolved config.insecure_ssl to True; absent/unrecognised values are treated as unknown, not a finding.",
+  },
 
   // ── AWS ───────────────────────────────────────────────────────────────────
   {

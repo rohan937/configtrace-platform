@@ -273,6 +273,15 @@ class GitHubWebhook(TypedDict):
         Sorted list of subscribed event strings (e.g. ``["push", "pull_request"]``).
     content_type
         Delivery content-type: ``"json"`` or ``"form"``.
+    webhook_secret_configured
+        Whether a signing secret is configured (boolean presence only — the
+        secret value itself is never stored).
+    insecure_ssl_enabled
+        Normalized from ``config.insecure_ssl``. ``True`` means SSL
+        verification is disabled for deliveries; ``False`` means it's
+        enabled; ``None`` means the field was absent or unrecognised.
+    ssl_verification_enabled
+        Inverse of ``insecure_ssl_enabled`` (``None`` stays ``None``).
     """
     record_id: str
     record_type: str
@@ -282,6 +291,9 @@ class GitHubWebhook(TypedDict):
     active: bool
     events: List[str]
     content_type: str
+    webhook_secret_configured: bool
+    insecure_ssl_enabled: Optional[bool]
+    ssl_verification_enabled: Optional[bool]
 
 
 class GitHubActionsPermissions(TypedDict):

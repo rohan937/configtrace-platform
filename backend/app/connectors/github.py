@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -102,6 +102,36 @@ def _auth_headers(token: str) -> dict[str, str]:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+
+
+# ── Webhook config normalization ─────────────────────────────────────────────
+
+def _normalize_insecure_ssl(raw: Any) -> Optional[bool]:
+    """Normalize GitHub's ``config.insecure_ssl`` field to a bool.
+
+    GitHub's webhook config API is inconsistent about the shape of this field
+    across API versions/clients: it may be the string ``"1"``/``"0"``, the
+    int ``1``/``0``, or an actual bool. ``"1"``/``1``/``True`` mean insecure
+    SSL is enabled (verification disabled); ``"0"``/``0``/``False`` mean
+    verification is enabled. When the field is absent or an unrecognised
+    shape, return ``None`` (unknown) rather than defaulting to False — we
+    must not silently claim SSL verification is enabled when we don't know.
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        if raw == "1":
+            return True
+        if raw == "0":
+            return False
+        return None
+    if isinstance(raw, int):
+        if raw == 1:
+            return True
+        if raw == 0:
+            return False
+        return None
+    return None
 
 
 # ── Connector class ──────────────────────────────────────────────────────────
@@ -911,6 +941,7 @@ class GitHubConnector(BaseConnector):
         for item in items:
             hook_id = item["id"]
             config: dict = item.get("config") or {}
+            insecure_ssl_enabled = _normalize_insecure_ssl(config.get("insecure_ssl"))
             records.append({
                 "record_id":    f"{slug}#webhook#{hook_id}",
                 "record_type":  GITHUB_WEBHOOK,
@@ -924,6 +955,14 @@ class GitHubConnector(BaseConnector):
                 # field entirely when none is set). We store ONLY the boolean
                 # presence — never the masked or real secret value (M69.5B).
                 "webhook_secret_configured": bool(config.get("secret")),
+                # GitHub's ``config.insecure_ssl`` — "1"/1/True means SSL
+                # verification is DISABLED for deliveries; "0"/0/False means
+                # it's enabled. None means the field was absent/unrecognised
+                # (unknown posture — never defaulted to a verified state).
+                "insecure_ssl_enabled": insecure_ssl_enabled,
+                "ssl_verification_enabled": (
+                    None if insecure_ssl_enabled is None else not insecure_ssl_enabled
+                ),
             })
         return records
 

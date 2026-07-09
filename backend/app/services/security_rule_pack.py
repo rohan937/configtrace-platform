@@ -59,6 +59,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "github_automation_write_permission": ("github", "medium", "Automation permissions"),
     "github_token_broad_scopes": ("github", "high", "Automation permissions"),
     "github_webhook_secret_missing": ("github", "high", "Webhooks"),
+    "github_webhook_ssl_verification_disabled": ("github", "high", "Webhooks"),
     # GitHub new QA rules
     "github_actions_broad_permissions": ("github", "high", "Automation permissions"),
     "github_branch_admin_bypass_allowed": ("github", "high", "Branch protection"),
