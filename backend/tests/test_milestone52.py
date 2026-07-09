@@ -118,9 +118,14 @@ class TestWorkspaceBillingModel:
             db_session.commit()
         db_session.rollback()
 
-        # Cleanup
-        db_session.delete(member)
-        db_session.delete(ws)
+        # Cleanup — the rollback above reverts the flushed `ws`/`member` rows
+        # too, so they may no longer be persistent; only delete what's still
+        # attached to the session to avoid InvalidRequestError.
+        from sqlalchemy import inspect as sa_inspect
+
+        for obj in (member, ws):
+            if sa_inspect(obj).persistent:
+                db_session.delete(obj)
         db_session.commit()
 
 

@@ -1084,6 +1084,10 @@ export interface WorkspaceBilling {
   trial_end: string | null;
   limits: PlanLimits;
   usage: BillingUsage;
+  // Safe Stripe config status from backend — never contains keys or secrets.
+  stripe_configured: boolean;
+  stripe_mode: "test" | "live" | "not_configured";
+  stripe_events_configured: boolean;
 }
 
 // ── M58.8: Change Notes ───────────────────────────────────────────────────────

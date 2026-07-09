@@ -108,18 +108,20 @@ _STRIPE_API = "https://api.stripe.com/v1"
 # Price IDs are NEVER hardcoded in this file or anywhere else in the repo.
 def _allowed_price_ids() -> set[str]:
     ids = set()
-    if settings.STRIPE_PRICE_PRO_MONTHLY:
-        ids.add(settings.STRIPE_PRICE_PRO_MONTHLY)
-    if settings.STRIPE_PRICE_TEAM_MONTHLY:
-        ids.add(settings.STRIPE_PRICE_TEAM_MONTHLY)
+    pro_id = settings.effective_stripe_pro_price_id
+    team_id = settings.effective_stripe_team_price_id
+    if pro_id:
+        ids.add(pro_id)
+    if team_id:
+        ids.add(team_id)
     return ids
 
 
 def _plan_for_price(price_id: str) -> str:
     """Map a Stripe price ID to our internal plan name."""
-    if price_id == settings.STRIPE_PRICE_PRO_MONTHLY:
+    if price_id and price_id == settings.effective_stripe_pro_price_id:
         return "pro"
-    if price_id == settings.STRIPE_PRICE_TEAM_MONTHLY:
+    if price_id and price_id == settings.effective_stripe_team_price_id:
         return "team"
     return "free"
 

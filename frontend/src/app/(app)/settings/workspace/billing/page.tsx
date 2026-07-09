@@ -12,22 +12,23 @@ import {
 import type { WorkspaceBilling, BillingPlan } from "@/types";
 import PageHeader from "@/components/common/PageHeader";
 
-// ── Beta gate ─────────────────────────────────────────────────────────────────
+// ── Billing availability ──────────────────────────────────────────────────────
 //
-// During the beta/demo period, Stripe checkout is paused. The full Stripe
-// integration (backend routes, env vars, plan IDs, webhooks, portal flow) is
-// intact — we only hide the upgrade CTAs and surface explanatory copy.
+// Stripe billing is active by default when the backend reports stripe_configured=true.
 //
-// To re-enable real billing later, EITHER flip ``BETA_BILLING_DISABLED`` to
-// ``false`` below, OR set the env var ``NEXT_PUBLIC_BILLING_CHECKOUT_DISABLED=false``
-// at build time (no code change needed).
-const BETA_BILLING_DISABLED =
-  (process.env.NEXT_PUBLIC_BILLING_CHECKOUT_DISABLED ?? "true").toLowerCase() !==
-  "false";
+// Emergency override: set NEXT_PUBLIC_BILLING_CHECKOUT_DISABLED=true at build
+// time (Vercel env var) to disable checkout site-wide without a code change.
+// This is an escape hatch only — do not set it in normal deployments.
+//
+// Switching between test and live Stripe modes requires no code change:
+// replace env vars in Render (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, price
+// IDs) and in Vercel (NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) then redeploy.
+const CHECKOUT_FORCE_DISABLED =
+  (process.env.NEXT_PUBLIC_BILLING_CHECKOUT_DISABLED ?? "false").toLowerCase() === "true";
 
-const BETA_DISABLED_CTA_LABEL = "Unavailable during beta";
-const BETA_DISABLED_HELPER_TEXT =
-  "Checkout is disabled during the beta period. Early users currently receive temporary Team access.";
+const STRIPE_UNAVAILABLE_CTA_LABEL = "Billing is temporarily unavailable";
+const STRIPE_UNAVAILABLE_HELPER_TEXT =
+  "Billing setup is in progress. Checkout will be available shortly.";
 
 // ── Plan metadata ─────────────────────────────────────────────────────────────
 //
@@ -344,12 +345,14 @@ function PlanCard({
   actionBusy,
   onUpgrade,
   onManage,
+  checkoutAvailable,
 }: {
   planKey: BillingPlan;
   billing: WorkspaceBilling;
   actionBusy: boolean;
   onUpgrade: (plan: BillingPlan) => void;
   onManage: () => void;
+  checkoutAvailable: boolean;
 }) {
   const plan      = PLAN_META[planKey];
   const isCurrent = billing.plan === planKey;
@@ -474,14 +477,14 @@ function PlanCard({
         </button>
       )}
 
-      {action === "upgrade" && BETA_BILLING_DISABLED && (
+      {action === "upgrade" && !checkoutAvailable && (
         <>
           <button
             type="button"
             disabled
             aria-disabled="true"
-            aria-label={`Checkout for ${plan.name} is disabled during the beta period`}
-            title={BETA_DISABLED_HELPER_TEXT}
+            aria-label={`Checkout for ${plan.name} is temporarily unavailable`}
+            title={STRIPE_UNAVAILABLE_HELPER_TEXT}
             style={{
               width: "100%",
               background: "#1e2030",
@@ -495,7 +498,7 @@ function PlanCard({
               fontFamily: "inherit",
             }}
           >
-            {BETA_DISABLED_CTA_LABEL}
+            {STRIPE_UNAVAILABLE_CTA_LABEL}
           </button>
           <div
             style={{
@@ -506,12 +509,12 @@ function PlanCard({
               lineHeight: 1.4,
             }}
           >
-            {BETA_DISABLED_HELPER_TEXT}
+            {STRIPE_UNAVAILABLE_HELPER_TEXT}
           </div>
         </>
       )}
 
-      {action === "upgrade" && !BETA_BILLING_DISABLED && (
+      {action === "upgrade" && checkoutAvailable && (
         <>
           <button
             onClick={() => onUpgrade(planKey)}
@@ -608,11 +611,10 @@ export default function BillingPage() {
 
   async function handleUpgrade(plan: BillingPlan) {
     if (!selectedWorkspace) return;
-    // Defense-in-depth: even if the disabled button is somehow triggered
-    // (keyboard, tests, devtools), do not call the Stripe checkout endpoint
-    // while the beta gate is on.
-    if (BETA_BILLING_DISABLED) {
-      setActionError(BETA_DISABLED_HELPER_TEXT);
+    // Defense-in-depth: guard against the disabled button being triggered via
+    // devtools or keyboard when Stripe is not configured or force-disabled.
+    if (CHECKOUT_FORCE_DISABLED || !billing?.stripe_configured) {
+      setActionError(STRIPE_UNAVAILABLE_HELPER_TEXT);
       return;
     }
     const meta = PLAN_META[plan];
@@ -790,75 +792,6 @@ export default function BillingPage() {
 
         {!loading && !error && billing && (
           <>
-            {/* ── Beta access banner ─────────────────────────────────── */}
-            {BETA_BILLING_DISABLED && (
-              <section
-                role="status"
-                aria-label="Temporary Team access during beta"
-                style={{
-                  background: "rgba(96,165,250,0.06)",
-                  border: "1px solid rgba(96,165,250,0.30)",
-                  borderRadius: "8px",
-                  padding: "16px 18px",
-                  marginBottom: "20px",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "10px",
-                    marginBottom: "8px",
-                  }}
-                >
-                  <h2
-                    style={{
-                      margin: 0,
-                      fontSize: "14px",
-                      fontWeight: 600,
-                      color: "#e8eaf0",
-                    }}
-                  >
-                    Temporary Team access
-                  </h2>
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      fontWeight: 600,
-                      color: "#60a5fa",
-                      background: "rgba(96,165,250,0.12)",
-                      border: "1px solid rgba(96,165,250,0.30)",
-                      borderRadius: "3px",
-                      padding: "1px 6px",
-                      letterSpacing: "0.04em",
-                    }}
-                  >
-                    BETA
-                  </span>
-                </div>
-                <ul
-                  style={{
-                    margin: 0,
-                    padding: 0,
-                    listStyle: "none",
-                    fontSize: "12px",
-                    color: "#c4c8d4",
-                    lineHeight: 1.7,
-                  }}
-                >
-                  <li>
-                    During beta, your workspace has full Team access for 14 days
-                    while we collect feedback.
-                  </li>
-                  <li>Billing is not applicable during this demo/beta period.</li>
-                  <li>
-                    After the beta period, you can continue on Free or upgrade to
-                    Pro or Team.
-                  </li>
-                </ul>
-              </section>
-            )}
-
             {/* ── Over-limit banner ──────────────────────────────────── */}
             <OverLimitBanner
               billing={billing}
@@ -1069,6 +1002,7 @@ export default function BillingPage() {
                     actionBusy={actionBusy}
                     onUpgrade={handleUpgrade}
                     onManage={handleManage}
+                    checkoutAvailable={!CHECKOUT_FORCE_DISABLED && billing.stripe_configured}
                   />
                 ))}
               </div>
@@ -1077,7 +1011,7 @@ export default function BillingPage() {
                   Shown to free-plan workspaces with at least one trial-bearing
                   plan configured. The Stripe Customer Portal (reached via
                   "Manage billing") is the only cancellation path. */}
-              {!BETA_BILLING_DISABLED &&
+              {!CHECKOUT_FORCE_DISABLED &&
                 billing.plan === "free" &&
                 (PLAN_META.pro.trialDays > 0 || PLAN_META.team.trialDays > 0) &&
                 (PLAN_META.pro.priceId || PLAN_META.team.priceId) && (

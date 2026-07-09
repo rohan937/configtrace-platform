@@ -71,19 +71,33 @@ class Settings(BaseSettings):
     # ── Required for Milestone 52 (Billing + Usage Limits) ─────────────────
     # Stripe secret key — used to create Checkout/Portal sessions via the API.
     # Find it in the Stripe dashboard → Developers → API keys → Secret key.
+    # sk_test_* for test mode, sk_live_* for live mode.
     # NEVER expose this to the frontend.  NEVER log it.
     STRIPE_SECRET_KEY: Optional[str] = None
 
     # Stripe webhook signing secret — used to verify webhook payloads.
     # Find it in the Stripe dashboard → Developers → Webhooks → Signing secret.
     # NEVER expose this to the frontend.
+    # Missing webhook secret disables webhook verification but does NOT block
+    # checkout session creation.
     STRIPE_WEBHOOK_SECRET: Optional[str] = None
 
     # Stripe Price IDs for each paid plan (monthly billing).
     # Create products + prices in the Stripe dashboard, then paste the IDs here.
     # Example: price_1ABC...
-    STRIPE_PRICE_PRO_MONTHLY: Optional[str] = None
-    STRIPE_PRICE_TEAM_MONTHLY: Optional[str] = None
+    #
+    # Three equivalent env var names are supported for each plan so that
+    # Render service definitions with different historical naming conventions
+    # all resolve correctly.  The first non-empty value wins.
+    #
+    # Pro plan price ID aliases (use any one):
+    STRIPE_PRICE_PRO_MONTHLY: Optional[str] = None       # primary
+    STRIPE_PRO_PRICE_ID: Optional[str] = None            # alias
+    STRIPE_PRICE_ID_PRO_MONTHLY: Optional[str] = None    # alias
+    # Team plan price ID aliases (use any one):
+    STRIPE_PRICE_TEAM_MONTHLY: Optional[str] = None      # primary
+    STRIPE_TEAM_PRICE_ID: Optional[str] = None           # alias
+    STRIPE_PRICE_ID_TEAM_MONTHLY: Optional[str] = None   # alias
 
     # Public-facing frontend URL — used to build success/cancel URLs for Stripe
     # Checkout.  Defaults to APP_BASE_URL when not set separately.
@@ -175,15 +189,71 @@ class Settings(BaseSettings):
         return not any(p in url for p in placeholders)
 
     @property
+    def effective_stripe_pro_price_id(self) -> Optional[str]:
+        """Resolve Pro plan price ID from any supported env var alias.
+
+        Priority: STRIPE_PRICE_PRO_MONTHLY → STRIPE_PRO_PRICE_ID → STRIPE_PRICE_ID_PRO_MONTHLY.
+        Returns the first non-empty value, or None if none are set.
+        """
+        return (
+            self.STRIPE_PRICE_PRO_MONTHLY
+            or self.STRIPE_PRO_PRICE_ID
+            or self.STRIPE_PRICE_ID_PRO_MONTHLY
+            or None
+        )
+
+    @property
+    def effective_stripe_team_price_id(self) -> Optional[str]:
+        """Resolve Team plan price ID from any supported env var alias.
+
+        Priority: STRIPE_PRICE_TEAM_MONTHLY → STRIPE_TEAM_PRICE_ID → STRIPE_PRICE_ID_TEAM_MONTHLY.
+        Returns the first non-empty value, or None if none are set.
+        """
+        return (
+            self.STRIPE_PRICE_TEAM_MONTHLY
+            or self.STRIPE_TEAM_PRICE_ID
+            or self.STRIPE_PRICE_ID_TEAM_MONTHLY
+            or None
+        )
+
+    @property
+    def stripe_mode(self) -> str:
+        """Detect Stripe key mode from the secret key prefix.
+
+        Returns:
+          "test"          — STRIPE_SECRET_KEY starts with sk_test_
+          "live"          — STRIPE_SECRET_KEY starts with sk_live_
+          "not_configured" — key absent or unrecognised prefix
+        """
+        key = self.STRIPE_SECRET_KEY or ""
+        if key.startswith("sk_test_"):
+            return "test"
+        if key.startswith("sk_live_"):
+            return "live"
+        return "not_configured"
+
+    @property
     def is_stripe_configured(self) -> bool:
-        """Return True when Stripe secret key and webhook secret are both set."""
-        if not self.STRIPE_SECRET_KEY or not self.STRIPE_WEBHOOK_SECRET:
+        """Return True when STRIPE_SECRET_KEY is set and not a placeholder.
+
+        Webhook secret is checked separately via is_webhook_configured.
+        A missing webhook secret disables webhook event verification but does
+        NOT block checkout session creation — checkout only needs the secret key.
+        """
+        key = self.STRIPE_SECRET_KEY
+        if not key:
             return False
         placeholders = ("replace-with", "CHANGE_ME", "sk_test_placeholder")
-        return not any(
-            p in (self.STRIPE_SECRET_KEY or "")
-            for p in placeholders
-        )
+        return not any(p in key for p in placeholders)
+
+    @property
+    def is_webhook_configured(self) -> bool:
+        """Return True when STRIPE_WEBHOOK_SECRET is set and not a placeholder."""
+        secret = self.STRIPE_WEBHOOK_SECRET
+        if not secret:
+            return False
+        placeholders = ("replace-with", "CHANGE_ME", "whsec_replace_me")
+        return not any(p in secret for p in placeholders)
 
     @property
     def effective_frontend_url(self) -> str:

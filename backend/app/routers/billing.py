@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import UUID4, BaseModel
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.core.auth import get_current_user
 from app.database import get_db
 from app.models.user import User
@@ -43,6 +44,11 @@ class BillingResponse(BaseModel):
     # Computed fields
     limits: dict
     usage: dict
+    # Safe Stripe config status — never exposes keys, secrets, or price IDs.
+    # "test" | "live" | "not_configured"
+    stripe_configured: bool = False
+    stripe_mode: str = "not_configured"
+    stripe_events_configured: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -117,6 +123,9 @@ def get_billing(
         ),
         limits=limits,
         usage=usage,
+        stripe_configured=settings.is_stripe_configured,
+        stripe_mode=settings.stripe_mode,
+        stripe_events_configured=settings.is_webhook_configured,
     )
 
 
