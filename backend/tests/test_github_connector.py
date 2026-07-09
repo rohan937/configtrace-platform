@@ -27,6 +27,7 @@ from app.connectors.github_schema import (
     GITHUB_ACTIONS_VARIABLE,
     GITHUB_BRANCH_PROTECTION,
     GITHUB_DEPLOY_KEY,
+    GITHUB_PAGES,
     GITHUB_REPO_SETTINGS,
     GITHUB_WEBHOOK,
 )
@@ -48,6 +49,7 @@ HOOKS_URL = f"{REPO_URL}/hooks"
 PERMISSIONS_URL = f"{REPO_URL}/actions/permissions"
 WORKFLOW_PERMISSIONS_URL = f"{REPO_URL}/actions/permissions/workflow"
 KEYS_URL = f"{REPO_URL}/keys"
+PAGES_URL = f"{REPO_URL}/pages"
 
 
 # ── Fixture ───────────────────────────────────────────────────────────────────
@@ -63,13 +65,14 @@ def _repo_raw(
     visibility: str = "private",
     default_branch: str = "main",
     archived: bool = False,
+    has_wiki: bool = False,
 ) -> dict:
     return {
         "visibility": visibility,
         "default_branch": default_branch,
         "has_issues": True,
         "has_projects": True,
-        "has_wiki": False,
+        "has_wiki": has_wiki,
         "allow_merge_commit": True,
         "allow_squash_merge": True,
         "allow_rebase_merge": False,
@@ -115,6 +118,8 @@ def _full_mock(
     workflow_permissions=None,
     workflow_permissions_status: int = 200,
     deploy_keys=None,
+    pages=None,
+    pages_status: int = 404,
 ):
     """Set up respx routes for all seven GitHub API endpoints."""
     if repo_raw is None:
@@ -171,6 +176,21 @@ def _full_mock(
 
     # Deploy keys
     respx.get(KEYS_URL).mock(return_value=httpx.Response(200, json=deploy_keys))
+
+    # Pages
+    if pages_status == 200:
+        if pages is None:
+            pages = {
+                "build_type": "legacy",
+                "source": {"branch": "gh-pages", "path": "/"},
+                "public": True,
+                "https_enforced": True,
+            }
+        respx.get(PAGES_URL).mock(return_value=httpx.Response(200, json=pages))
+    else:
+        respx.get(PAGES_URL).mock(
+            return_value=httpx.Response(pages_status, json={"message": "Not Found"})
+        )
 
 
 # ── validate_credentials ──────────────────────────────────────────────────────
@@ -229,6 +249,18 @@ def test_fetch_repo_settings_fields(connector: GitHubConnector) -> None:
     assert settings["has_wiki"] is False
     assert settings["archived"] is False
     assert settings["delete_branch_on_merge"] is True
+
+
+@respx.mock
+def test_fetch_repo_settings_has_wiki_true(connector: GitHubConnector) -> None:
+    """has_wiki: true from the GitHub API normalizes to has_wiki=True."""
+    raw = _repo_raw(has_wiki=True)
+    _full_mock(repo_raw=raw)
+
+    records = connector.fetch(VALID_CREDS)
+    settings = next(r for r in records if r["record_type"] == GITHUB_REPO_SETTINGS)
+
+    assert settings["has_wiki"] is True
 
 
 # ── fetch(): branch protection ────────────────────────────────────────────────
@@ -567,6 +599,81 @@ def test_fetch_deploy_keys(connector: GitHubConnector) -> None:
     assert staging_key["verified"] is False
 
 
+# ── fetch(): pages ─────────────────────────────────────────────────────────────
+
+@respx.mock
+def test_fetch_pages_enabled(connector: GitHubConnector) -> None:
+    """200 on /pages normalizes pages_enabled=True and the safe source/build fields."""
+    pages = {
+        "build_type": "workflow",
+        "source": {"branch": "gh-pages", "path": "/docs"},
+        "cname": "www.example.com",
+        "public": True,
+        "https_enforced": True,
+    }
+    _full_mock(pages=pages, pages_status=200)
+    records = connector.fetch(VALID_CREDS)
+    page = next(r for r in records if r["record_type"] == GITHUB_PAGES)
+
+    assert page["record_id"] == f"{SLUG}#pages"
+    assert page["pages_enabled"] is True
+    assert page["pages_source_branch"] == "gh-pages"
+    assert page["pages_source_path"] == "/docs"
+    assert page["pages_build_type"] == "workflow"
+    assert page["pages_cname_configured"] is True
+    assert page["pages_https_enforced"] is True
+    assert page["pages_visibility"] == "public"
+    # Raw CNAME domain must never appear anywhere in the normalized record.
+    assert "www.example.com" not in str(page.values())
+
+
+@respx.mock
+def test_fetch_pages_enabled_no_cname(connector: GitHubConnector) -> None:
+    """When no CNAME is set, pages_cname_configured is False."""
+    pages = {
+        "build_type": "legacy",
+        "source": {"branch": "main", "path": "/"},
+        "public": False,
+        "https_enforced": False,
+    }
+    _full_mock(pages=pages, pages_status=200)
+    records = connector.fetch(VALID_CREDS)
+    page = next(r for r in records if r["record_type"] == GITHUB_PAGES)
+
+    assert page["pages_cname_configured"] is False
+    assert page["pages_https_enforced"] is False
+    assert page["pages_visibility"] == "private"
+
+
+@respx.mock
+def test_fetch_pages_404_normalized_disabled(connector: GitHubConnector) -> None:
+    """404 on /pages means Pages is not enabled — normalized, not an error."""
+    _full_mock(pages_status=404)
+    records = connector.fetch(VALID_CREDS)  # must not raise
+    page = next(r for r in records if r["record_type"] == GITHUB_PAGES)
+
+    assert page["pages_enabled"] is False
+    assert page["pages_source_branch"] is None
+    assert page["pages_source_path"] is None
+    assert page["pages_cname_configured"] is None
+    assert page["pages_https_enforced"] is None
+    assert page["pages_visibility"] is None
+
+
+@respx.mock
+def test_fetch_pages_403_is_soft_fail_disabled_unknown(connector: GitHubConnector) -> None:
+    """A 403 on /pages must NOT fail the whole sync — same fail-soft contract as
+    other sub-endpoints that require broader permissions than the base token scope."""
+    _full_mock(pages_status=403)
+    records = connector.fetch(VALID_CREDS)  # must not raise
+
+    page = next(r for r in records if r["record_type"] == GITHUB_PAGES)
+    assert page["pages_enabled"] is False
+    assert page["pages_source_branch"] is None
+    # Other record types still synced normally.
+    assert any(r["record_type"] == GITHUB_REPO_SETTINGS for r in records)
+
+
 # ── fetch(): all categories present ───────────────────────────────────────────
 
 @respx.mock
@@ -588,6 +695,7 @@ def test_fetch_returns_all_seven_categories(connector: GitHubConnector) -> None:
     assert GITHUB_WEBHOOK in record_types
     assert GITHUB_ACTIONS_PERMISSIONS in record_types
     assert GITHUB_DEPLOY_KEY in record_types
+    assert GITHUB_PAGES in record_types
 
 
 # ── fetch(): empty collections ────────────────────────────────────────────────

@@ -83,6 +83,8 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "github_actions_broad_permissions": ("github_actions_permissions",),
     "github_actions_workflow_token_write_permission": ("github_actions_permissions",),
     "github_actions_can_approve_pull_requests": ("github_actions_permissions",),
+    "github_wiki_enabled": ("github_repo_settings",),
+    "github_pages_enabled": ("github_pages",),
     "github_branch_admin_bypass_allowed": ("github_branch_protection",),
     # AWS
     "aws_public_admin_port": ("aws_security_group_rule",),
@@ -596,7 +598,7 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
 
 # Friendly, human surfaces per provider for display (no internal jargon).
 PROVIDER_SURFACES: dict[str, list[str]] = {
-    "github": ["Webhooks", "Branch protection", "Deploy keys", "Environment protection", "Rulesets", "Automation permissions"],
+    "github": ["Webhooks", "Branch protection", "Deploy keys", "Environment protection", "Rulesets", "Automation permissions", "Repository settings", "Pages"],
     "aws": ["Security group rules", "S3 buckets", "IAM policy attachments", "IAM access keys"],
     "cloudflare": ["Zone settings", "WAF rules", "DNS records"],
     "supabase": ["Row-level security", "Public table policies", "Auth configuration", "Edge Functions"],
@@ -769,6 +771,10 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "github_automation_permissions": {
         "message": "Missing GitHub automation permission records may indicate the credential cannot read repository permission posture.",
         "hints": ["Review token scopes or GitHub App installation permissions."],
+    },
+    "github_pages": {
+        "message": "GitHub Pages metadata was not observed for this repository/resource.",
+        "hints": ["Ensure the token or app has 'pages' read scope on the repository."],
     },
     # AWS
     "aws_security_group_rule": {

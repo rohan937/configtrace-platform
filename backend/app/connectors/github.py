@@ -78,6 +78,7 @@ from app.connectors.github_schema import (
     GITHUB_BRANCH_PROTECTION,
     GITHUB_DEPLOY_KEY,
     GITHUB_ENVIRONMENT_PROTECTION,
+    GITHUB_PAGES,
     GITHUB_REPO_SETTINGS,
     GITHUB_RULESET,
     GITHUB_WEBHOOK,
@@ -257,6 +258,14 @@ class GitHubConnector(BaseConnector):
                     client, headers, owner, repo, slug,
                     credential_type=credentials.get("credential_type") or "github_token",
                 )
+            )
+
+            # 11. GitHub Pages configuration. Fully fail-soft: some tokens lack
+            # the Pages-specific permission even when other endpoints succeed,
+            # and a 404 simply means Pages isn't enabled. Both cases produce a
+            # safe "disabled/unknown" record rather than aborting the sync.
+            records.append(
+                self._fetch_pages(client, headers, owner, repo, slug)
             )
 
         logger.info(
@@ -882,6 +891,77 @@ class GitHubConnector(BaseConnector):
             "broad_scope_names":         broad_scope_names,
         }]
 
+    def _fetch_pages(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> dict[str, Any]:
+        """Fetch GitHub Pages configuration for the repository.
+
+        Returns a 'disabled/unknown' record on 404 (Pages not enabled for
+        this repository) and fail-soft on any other error — some fine-grained
+        PATs lack the Pages-specific permission even when Administration:Read
+        is granted, so a 403 here must not abort the rest of the sync.
+
+        Only presence/posture booleans and safe enum strings are stored —
+        never the CNAME domain string, certificate material, or credentials.
+        """
+        url = f"{_BASE_URL}/repos/{owner}/{repo}/pages"
+        disabled_record: dict[str, Any] = {
+            "record_id":              f"{slug}#pages",
+            "record_type":            GITHUB_PAGES,
+            "name":                   slug,
+            "pages_enabled":          False,
+            "pages_source_branch":    None,
+            "pages_source_path":      None,
+            "pages_build_type":       None,
+            "pages_cname_configured": None,
+            "pages_https_enforced":   None,
+            "pages_visibility":       None,
+        }
+        try:
+            resp = self._get(client, url, headers, allow_404=True)
+            if resp.status_code == 404:
+                return disabled_record
+            raw = resp.json()
+            if not isinstance(raw, dict):
+                return disabled_record
+        except (AuthenticationError, ConnectorError, RateLimitError, NetworkError):
+            logger.info(
+                "github_connector: pages configuration unavailable for %s "
+                "(non-fatal)", slug
+            )
+            return disabled_record
+        except Exception:  # noqa: BLE001 — never break sync
+            logger.warning(
+                "github_connector: unexpected error reading pages configuration "
+                "for %s (non-fatal)", slug
+            )
+            return disabled_record
+
+        source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+        cname = raw.get("cname")
+        public = raw.get("public")
+        https_enforced = raw.get("https_enforced")
+
+        return {
+            "record_id":              f"{slug}#pages",
+            "record_type":            GITHUB_PAGES,
+            "name":                   slug,
+            "pages_enabled":          True,
+            "pages_source_branch":    source.get("branch"),
+            "pages_source_path":      source.get("path"),
+            "pages_build_type":       raw.get("build_type"),
+            "pages_cname_configured": bool(cname),
+            "pages_https_enforced":   https_enforced if isinstance(https_enforced, bool) else None,
+            "pages_visibility": (
+                "public" if public is True else "private" if public is False else None
+            ),
+        }
+
     def _fetch_actions_secrets(
         self,
         client: httpx.Client,
@@ -1334,6 +1414,19 @@ class GitHubConnector(BaseConnector):
                 continue
 
             if resp.status_code in (401, 403):
+                if resp.status_code == 403:
+                    # 403 usually means the credential is fine but no longer has
+                    # access to THIS repository (e.g. it was made private and the
+                    # fine-grained PAT's repository access wasn't updated) —
+                    # distinct from a genuinely invalid/expired token (401).
+                    raise AuthenticationError(
+                        "GitHub authentication failed or the token no longer has "
+                        "access to this repository (HTTP 403). Reconnect with a "
+                        "fine-grained PAT that includes this repository and the "
+                        "required permissions: Metadata:Read, Administration:Read, "
+                        "Secrets:Read, Variables:Read.",
+                        status_code=resp.status_code,
+                    )
                 raise AuthenticationError(
                     f"GitHub authentication failed (HTTP {resp.status_code}). "
                     "Verify the fine-grained PAT has the required repository "

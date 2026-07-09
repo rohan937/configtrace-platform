@@ -381,6 +381,132 @@ def test_tracked_fields_github_repo_settings():
     assert "visibility" in fields
     assert "default_branch" in fields
     assert "archived" in fields
+    assert "has_wiki" in fields
+
+
+def test_tracked_fields_github_pages():
+    record = {"record_type": "github_pages"}
+    fields = _tracked_fields_for(record)
+    assert "pages_enabled" in fields
+    assert "pages_source_branch" in fields
+    assert "pages_source_path" in fields
+    assert "pages_https_enforced" in fields
+    assert "pages_cname_configured" in fields
+
+
+def test_has_wiki_false_to_true_produces_drift_change():
+    """Enabling the Wiki (has_wiki False → True) must surface as a Change."""
+    from app.models.snapshot import Snapshot
+
+    def _mock_snapshot(state: list[dict]) -> MagicMock:
+        snap = MagicMock(spec=Snapshot)
+        snap.state = state
+        snap.id = uuid.uuid4()
+        return snap
+
+    def _settings_record(has_wiki: bool) -> dict:
+        return {
+            "record_id": "acme/myapp#settings",
+            "record_type": "github_repo_settings",
+            "name": "acme/myapp",
+            "visibility": "private",
+            "default_branch": "main",
+            "has_issues": True,
+            "has_projects": True,
+            "has_wiki": has_wiki,
+            "allow_merge_commit": True,
+            "allow_squash_merge": True,
+            "allow_rebase_merge": False,
+            "delete_branch_on_merge": True,
+            "archived": False,
+        }
+
+    prev = _mock_snapshot([_settings_record(False)])
+    new = _mock_snapshot([_settings_record(True)])
+
+    changes = compute_diff(prev, new)
+    wiki_changes = [c for c in changes if c["field_path"] == "has_wiki"]
+
+    assert len(wiki_changes) == 1
+    assert wiki_changes[0]["change_type"] == "modified"
+    assert wiki_changes[0]["prev_value"] is False
+    assert wiki_changes[0]["new_value"] is True
+
+
+def test_pages_enabled_false_to_true_produces_drift_change():
+    """Enabling GitHub Pages (pages_enabled False → True) must surface as a Change.
+
+    Regression test for the same failure mode as the webhook SSL and Actions
+    workflow-token bugs: without a dedicated github_pages tracked-fields entry,
+    compute_diff would never notice Pages being enabled.
+    """
+    from app.models.snapshot import Snapshot
+
+    def _mock_snapshot(state: list[dict]) -> MagicMock:
+        snap = MagicMock(spec=Snapshot)
+        snap.state = state
+        snap.id = uuid.uuid4()
+        return snap
+
+    def _pages_record(enabled: bool, branch=None, path=None) -> dict:
+        return {
+            "record_id": "acme/myapp#pages",
+            "record_type": "github_pages",
+            "name": "acme/myapp",
+            "pages_enabled": enabled,
+            "pages_source_branch": branch,
+            "pages_source_path": path,
+            "pages_build_type": "legacy" if enabled else None,
+            "pages_cname_configured": False if enabled else None,
+            "pages_https_enforced": True if enabled else None,
+            "pages_visibility": "public" if enabled else None,
+        }
+
+    prev = _mock_snapshot([_pages_record(False)])
+    new = _mock_snapshot([_pages_record(True, branch="gh-pages", path="/")])
+
+    changes = compute_diff(prev, new)
+    pages_changes = [c for c in changes if c["field_path"] == "pages_enabled"]
+
+    assert len(pages_changes) == 1
+    assert pages_changes[0]["change_type"] == "modified"
+    assert pages_changes[0]["prev_value"] is False
+    assert pages_changes[0]["new_value"] is True
+
+
+def test_pages_source_branch_change_produces_drift_change():
+    """Changing the Pages source branch/path must also surface as a Change."""
+    from app.models.snapshot import Snapshot
+
+    def _mock_snapshot(state: list[dict]) -> MagicMock:
+        snap = MagicMock(spec=Snapshot)
+        snap.state = state
+        snap.id = uuid.uuid4()
+        return snap
+
+    def _pages_record(branch: str, path: str) -> dict:
+        return {
+            "record_id": "acme/myapp#pages",
+            "record_type": "github_pages",
+            "name": "acme/myapp",
+            "pages_enabled": True,
+            "pages_source_branch": branch,
+            "pages_source_path": path,
+            "pages_build_type": "legacy",
+            "pages_cname_configured": False,
+            "pages_https_enforced": True,
+            "pages_visibility": "public",
+        }
+
+    prev = _mock_snapshot([_pages_record("main", "/")])
+    new = _mock_snapshot([_pages_record("gh-pages", "/")])
+
+    changes = compute_diff(prev, new)
+    branch_changes = [c for c in changes if c["field_path"] == "pages_source_branch"]
+
+    assert len(branch_changes) == 1
+    assert branch_changes[0]["prev_value"] == "main"
+    assert branch_changes[0]["new_value"] == "gh-pages"
 
 
 def test_tracked_fields_github_branch_protection():

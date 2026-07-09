@@ -85,6 +85,11 @@ GITHUB_SECURITY_FEATURES = "github_security_features"
 # secrets. Used to surface broad automation blast radius.
 GITHUB_AUTOMATION_PERMISSIONS = "github_automation_permissions"
 
+# GitHub Pages configuration for the repository (one record when Pages is
+# enabled; a disabled/unknown record otherwise). Never stores the CNAME
+# domain itself or any certificate material — presence/posture booleans only.
+GITHUB_PAGES = "github_pages"
+
 #: Set of all GitHub record type strings — used for fast membership checks.
 GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
     GITHUB_REPO_SETTINGS,
@@ -103,6 +108,7 @@ GITHUB_RECORD_TYPES: frozenset[str] = frozenset({
     GITHUB_APP_INSTALLATION,
     GITHUB_SECURITY_FEATURES,
     GITHUB_AUTOMATION_PERMISSIONS,
+    GITHUB_PAGES,
 })
 
 
@@ -575,3 +581,51 @@ class GitHubSecurityFeatures(TypedDict, total=False):
     dependabot_alerts_enabled: Optional[bool]
     dependabot_security_updates_enabled: Optional[bool]
     vulnerability_alerts_enabled: Optional[bool]
+
+
+class GitHubPages(TypedDict, total=False):
+    """GitHub Pages configuration for the repository.
+
+    Fields
+    ------
+    record_id
+        ``"{owner}/{repo}#pages"``
+    record_type
+        ``GITHUB_PAGES``
+    name
+        ``"{owner}/{repo}"`` — display label.
+    pages_enabled
+        Whether GitHub Pages is enabled (the ``/pages`` endpoint returned 200).
+    pages_source_branch
+        Source branch for the Pages build, or ``None`` when unknown/disabled.
+    pages_source_path
+        Source path within the branch (e.g. ``"/"`` or ``"/docs"``), or
+        ``None`` when unknown/disabled.
+    pages_build_type
+        ``"legacy"`` or ``"workflow"`` (GitHub Actions-based build), or
+        ``None`` when unknown/disabled.
+    pages_cname_configured
+        Whether a custom domain (CNAME) is configured. The domain string
+        itself is never stored — presence boolean only.
+    pages_https_enforced
+        Whether HTTPS is enforced for the Pages site. ``None`` when unknown.
+    pages_visibility
+        ``"public"`` or ``"private"`` (private Pages sites are a GitHub
+        Enterprise feature), or ``None`` when unknown/disabled.
+
+    Security
+    --------
+    No certificate material, raw CNAME domain, or credentials are ever
+    stored — only presence/posture booleans and safe enum strings.
+    """
+
+    record_id: str
+    record_type: str
+    name: str
+    pages_enabled: bool
+    pages_source_branch: Optional[str]
+    pages_source_path: Optional[str]
+    pages_build_type: Optional[str]
+    pages_cname_configured: Optional[bool]
+    pages_https_enforced: Optional[bool]
+    pages_visibility: Optional[str]

@@ -171,6 +171,8 @@ def classify_github_change(change: Any) -> tuple[str, str]:
         return _classify_app_installation(pm, change_type, field_path, prev_value, new_value)
     if record_type == "github_security_features":
         return _classify_security_features(pm, change_type, field_path, prev_value, new_value)
+    if record_type == "github_pages":
+        return _classify_pages(change_type, field_path, prev_value, new_value)
 
     # Unknown GitHub record type — safe low-severity fallback.
     return (
@@ -261,6 +263,22 @@ def _classify_repo_settings(
             "medium",
             f"Repository merge setting '{field_path}' changed to '{new_value}'. "
             "Pull request merge behaviour is affected for all contributors.",
+        )
+
+    # Wiki toggled — an additional collaboration surface, generally low risk
+    # (explicitly Low, overriding the generic "other settings" Medium fallback).
+    if change_type == "modified" and field_path == "has_wiki" and new_value is True:
+        return (
+            "low",
+            "GitHub Wiki is enabled. This adds an additional collaboration "
+            "surface that may require review. Configuration evidence does "
+            "not confirm compromise, unauthorized access, or data exposure.",
+        )
+
+    if change_type == "modified" and field_path == "has_wiki" and new_value is False:
+        return (
+            "low",
+            "GitHub Wiki was disabled for this repository.",
         )
 
     # Other repository settings changes.
@@ -1816,5 +1834,62 @@ def _classify_security_features(
     return (
         "low",
         f"Security feature '{field_path}' changed; no specific risk pattern "
+        "matched.",
+    )
+
+
+def _classify_pages(
+    change_type: str,
+    field_path: str,
+    prev_value: Any,
+    new_value: Any,
+) -> tuple[str, str]:
+    """Rules for ``github_pages`` records — an additional publishing surface.
+
+    GitHub Pages enablement is Low severity: it's a deliberate, visible
+    configuration choice, not a security weakening on its own.
+    """
+
+    if change_type == "modified" and field_path == "pages_enabled" and new_value is True:
+        return (
+            "low",
+            "GitHub Pages is enabled. This adds an additional publishing "
+            "surface that may require review. Configuration evidence does "
+            "not confirm compromise, unauthorized access, or data exposure.",
+        )
+
+    if change_type == "modified" and field_path == "pages_enabled" and new_value is False:
+        return (
+            "low",
+            "GitHub Pages was disabled for this repository.",
+        )
+
+    if change_type == "added":
+        return (
+            "low",
+            "GitHub Pages configuration was added for this repository.",
+        )
+
+    if change_type == "modified" and field_path in (
+        "pages_source_branch",
+        "pages_source_path",
+    ):
+        return (
+            "low",
+            f"GitHub Pages source '{field_path}' changed from "
+            f"'{prev_value}' to '{new_value}'. Verify the new source is "
+            "intentional.",
+        )
+
+    if change_type == "modified" and field_path == "pages_https_enforced" and new_value is False:
+        return (
+            "medium",
+            "GitHub Pages HTTPS enforcement was disabled. Visitors may be "
+            "able to reach the Pages site over plain HTTP.",
+        )
+
+    return (
+        "low",
+        "GitHub Pages configuration changed; no specific risk pattern "
         "matched.",
     )

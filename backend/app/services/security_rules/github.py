@@ -48,6 +48,8 @@ from app.connectors.github_schema import (
     GITHUB_BRANCH_PROTECTION,
     GITHUB_DEPLOY_KEY,
     GITHUB_ENVIRONMENT_PROTECTION,
+    GITHUB_PAGES,
+    GITHUB_REPO_SETTINGS,
     GITHUB_RULESET,
     GITHUB_WEBHOOK,
 )
@@ -85,6 +87,9 @@ _RULE_ACTIONS_BROAD_PERMISSIONS = "github_actions_broad_permissions"
 # GitHub Actions workflow token / PR-approval posture
 _RULE_ACTIONS_WORKFLOW_TOKEN_WRITE = "github_actions_workflow_token_write_permission"
 _RULE_ACTIONS_CAN_APPROVE_PRS = "github_actions_can_approve_pull_requests"
+# Additional publishing/collaboration surfaces
+_RULE_WIKI_ENABLED = "github_wiki_enabled"
+_RULE_PAGES_ENABLED = "github_pages_enabled"
 # GitHub branch admin bypass allowed (new QA rule)
 _RULE_BRANCH_ADMIN_BYPASS = "github_branch_admin_bypass_allowed"
 
@@ -122,6 +127,10 @@ def evaluate(record: dict[str, Any]) -> list[FindingCandidate]:
         return _eval_automation_permissions(record)
     if rtype == GITHUB_ACTIONS_PERMISSIONS:
         return _eval_actions_permissions(record)
+    if rtype == GITHUB_REPO_SETTINGS:
+        return _eval_repo_settings(record)
+    if rtype == GITHUB_PAGES:
+        return _eval_pages(record)
     return []
 
 
@@ -907,3 +916,86 @@ def _eval_actions_permissions(record: dict[str, Any]) -> list[FindingCandidate]:
         )
 
     return out
+
+
+# ── Wiki enabled (additional collaboration surface) ──────────────────────────
+
+
+def _eval_repo_settings(record: dict[str, Any]) -> list[FindingCandidate]:
+    """Fire github_wiki_enabled when has_wiki is explicitly True."""
+    if record.get("has_wiki") is not True:
+        return []
+
+    record_id = get_str(record, "record_id") or None
+    return [
+        FindingCandidate(
+            provider="github",
+            rule_key=_RULE_WIKI_ENABLED,
+            finding_key=make_finding_key(_RULE_WIKI_ENABLED, record_id),
+            severity="low",
+            title="GitHub Wiki is enabled",
+            description=(
+                "A repository has Wikis enabled, creating an additional "
+                "collaboration surface that may require review. "
+                "Configuration evidence does not confirm compromise, "
+                "unauthorized access, or data exposure."
+            ),
+            evidence={
+                "rule": _RULE_WIKI_ENABLED,
+                "has_wiki": True,
+            },
+            remediation={
+                "summary": "Confirm Wikis are intentional for this repository, or disable Wikis if not needed.",
+                "steps": [
+                    "Go to Settings → General → Features.",
+                    "Uncheck 'Wikis' if the wiki isn't intentionally used.",
+                ],
+            },
+            record_id=record_id,
+        )
+    ]
+
+
+# ── GitHub Pages enabled (additional publishing surface) ─────────────────────
+
+
+def _eval_pages(record: dict[str, Any]) -> list[FindingCandidate]:
+    """Fire github_pages_enabled when pages_enabled is explicitly True."""
+    if record.get("pages_enabled") is not True:
+        return []
+
+    record_id = get_str(record, "record_id") or None
+    return [
+        FindingCandidate(
+            provider="github",
+            rule_key=_RULE_PAGES_ENABLED,
+            finding_key=make_finding_key(_RULE_PAGES_ENABLED, record_id),
+            severity="low",
+            title="GitHub Pages is enabled",
+            description=(
+                "A repository has GitHub Pages enabled, creating an "
+                "additional publishing surface that may require review. "
+                "Configuration evidence does not confirm compromise, "
+                "unauthorized access, or data exposure."
+            ),
+            evidence={
+                "rule": _RULE_PAGES_ENABLED,
+                "pages_enabled": True,
+                "pages_source_branch": record.get("pages_source_branch"),
+                "pages_source_path": record.get("pages_source_path"),
+                "pages_build_type": record.get("pages_build_type"),
+                "pages_cname_configured": record.get("pages_cname_configured"),
+                "pages_https_enforced": record.get("pages_https_enforced"),
+                "pages_visibility": record.get("pages_visibility"),
+            },
+            remediation={
+                "summary": "Confirm GitHub Pages is intentional, uses the expected source branch/path, and has appropriate repository governance.",
+                "steps": [
+                    "Go to Settings → Pages.",
+                    "Verify the source branch/path is expected.",
+                    "Disable Pages if it isn't intentionally published.",
+                ],
+            },
+            record_id=record_id,
+        )
+    ]

@@ -65,6 +65,9 @@ EXPECTED_GITHUB_RULE_KEYS: frozenset[str] = frozenset({
     "github_actions_broad_permissions",
     "github_actions_workflow_token_write_permission",
     "github_actions_can_approve_pull_requests",
+    # Additional publishing/collaboration surfaces
+    "github_wiki_enabled",
+    "github_pages_enabled",
 })
 
 FORBIDDEN_PHRASES = [
@@ -171,7 +174,7 @@ def test_F_github_provider_surfaces_complete():
 
     surfaces = PROVIDER_SURFACES.get("github", [])
     assert surfaces, "PROVIDER_SURFACES must have a 'github' entry"
-    for expected in ("Webhooks", "Branch protection", "Rulesets", "Automation permissions"):
+    for expected in ("Webhooks", "Branch protection", "Rulesets", "Automation permissions", "Pages"):
         assert expected in surfaces, (
             f"Expected surface {expected!r} missing from GitHub surfaces: {surfaces}"
         )
@@ -185,7 +188,7 @@ def test_G_record_type_diagnostics_complete():
     from app.services.security_coverage_service import RECORD_TYPE_DIAGNOSTICS
 
     for rt in ("github_ruleset", "github_automation_permissions", "github_webhook",
-               "github_branch_protection"):
+               "github_branch_protection", "github_pages"):
         assert rt in RECORD_TYPE_DIAGNOSTICS, (
             f"Record type {rt!r} missing from RECORD_TYPE_DIAGNOSTICS"
         )
@@ -325,6 +328,20 @@ def test_J_github_rule_copy_no_forbidden_words():
             "allowed_actions": "selected",
             "default_workflow_permissions": "write",
             "can_approve_pull_request_reviews": True,
+        },
+        # Wiki enabled
+        {
+            "record_id": "acme/qa-repo#settings",
+            "record_type": "github_repo_settings",
+            "has_wiki": True,
+        },
+        # Pages enabled
+        {
+            "record_id": "acme/qa-repo#pages",
+            "record_type": "github_pages",
+            "pages_enabled": True,
+            "pages_source_branch": "gh-pages",
+            "pages_source_path": "/",
         },
     ]
 
@@ -652,4 +669,102 @@ def test_M_rule_pack_severity_github_actions_can_approve_pull_requests_is_high()
     provider, severity, category = _RULE_META["github_actions_can_approve_pull_requests"]
     assert severity == "high", (
         f"_RULE_META['github_actions_can_approve_pull_requests'] severity must be 'high'; got {severity!r}"
+    )
+
+
+# ── Section N: Wiki + Pages enabled evaluators ────────────────────────────────
+
+
+def test_N_wiki_enabled_fires_on_true():
+    """github_wiki_enabled fires when has_wiki is explicitly True."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#settings",
+        "record_type": "github_repo_settings",
+        "has_wiki": True,
+    }
+    findings = gh.evaluate(record)
+    assert any(f.rule_key == "github_wiki_enabled" for f in findings)
+
+
+def test_N_wiki_enabled_does_not_fire_on_false_or_unknown():
+    """github_wiki_enabled must not fire for False or unknown (missing)."""
+    from app.services.security_rules import github as gh
+
+    for record in (
+        {"record_id": "acme/qa-repo#settings", "record_type": "github_repo_settings", "has_wiki": False},
+        {"record_id": "acme/qa-repo#settings", "record_type": "github_repo_settings"},
+    ):
+        findings = gh.evaluate(record)
+        wiki_findings = [f for f in findings if f.rule_key == "github_wiki_enabled"]
+        assert not wiki_findings, f"github_wiki_enabled must not fire for {record!r}"
+
+
+def test_N_pages_enabled_fires_on_true():
+    """github_pages_enabled fires when pages_enabled is explicitly True."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#pages",
+        "record_type": "github_pages",
+        "pages_enabled": True,
+        "pages_source_branch": "gh-pages",
+        "pages_source_path": "/",
+    }
+    findings = gh.evaluate(record)
+    assert any(f.rule_key == "github_pages_enabled" for f in findings)
+
+
+def test_N_pages_enabled_does_not_fire_on_false_or_unknown():
+    """github_pages_enabled must not fire for False or unknown (missing)."""
+    from app.services.security_rules import github as gh
+
+    for record in (
+        {"record_id": "acme/qa-repo#pages", "record_type": "github_pages", "pages_enabled": False},
+        {"record_id": "acme/qa-repo#pages", "record_type": "github_pages"},
+    ):
+        findings = gh.evaluate(record)
+        pages_findings = [f for f in findings if f.rule_key == "github_pages_enabled"]
+        assert not pages_findings, f"github_pages_enabled must not fire for {record!r}"
+
+
+def test_N_pages_evidence_does_not_store_raw_cname():
+    """Evidence for github_pages_enabled must never contain the raw CNAME domain."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#pages",
+        "record_type": "github_pages",
+        "pages_enabled": True,
+        "pages_source_branch": "gh-pages",
+        "pages_source_path": "/",
+        "pages_cname_configured": True,
+        # A raw cname value must never be read by the evaluator even if present
+        # on the record (the connector doesn't store it, but this guards the
+        # rule itself from ever being changed to read it).
+        "cname": "www.example.com",
+    }
+    findings = gh.evaluate(record)
+    pages_f = next(f for f in findings if f.rule_key == "github_pages_enabled")
+    assert "www.example.com" not in str(pages_f.evidence)
+
+
+def test_M_rule_pack_severity_github_wiki_enabled_is_low():
+    """_RULE_META confirms github_wiki_enabled severity as 'low'."""
+    from app.services.security_rule_pack import _RULE_META
+
+    provider, severity, category = _RULE_META["github_wiki_enabled"]
+    assert severity == "low", (
+        f"_RULE_META['github_wiki_enabled'] severity must be 'low'; got {severity!r}"
+    )
+
+
+def test_M_rule_pack_severity_github_pages_enabled_is_low():
+    """_RULE_META confirms github_pages_enabled severity as 'low'."""
+    from app.services.security_rule_pack import _RULE_META
+
+    provider, severity, category = _RULE_META["github_pages_enabled"]
+    assert severity == "low", (
+        f"_RULE_META['github_pages_enabled'] severity must be 'low'; got {severity!r}"
     )

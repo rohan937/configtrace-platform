@@ -64,6 +64,8 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "github_actions_broad_permissions": (HIGH, "Only fires when allowed_actions is exactly 'all' on a github_actions_permissions record."),
     "github_actions_workflow_token_write_permission": (HIGH, "Only fires when the connector explicitly resolved default_workflow_permissions to 'write'; unreadable/unknown values never fire."),
     "github_actions_can_approve_pull_requests": (HIGH, "Only fires when the connector explicitly resolved can_approve_pull_request_reviews to True; unreadable/unknown values never fire."),
+    "github_wiki_enabled": (HIGH, "Reads the has_wiki field directly from the repository settings response."),
+    "github_pages_enabled": (HIGH, "Only fires when the Pages endpoint returns 200; 403/404 (unavailable/disabled) never fire."),
     "github_branch_admin_bypass_allowed": (HIGH, "Only fires when protection_enabled=True and enforce_admins is explicitly False on a github_branch_protection record."),
     # AWS
     "aws_public_admin_port": (HIGH, "Only 0.0.0.0/0 or ::/0 count as public; reachability is not claimed."),

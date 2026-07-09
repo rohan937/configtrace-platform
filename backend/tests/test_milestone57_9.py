@@ -77,8 +77,9 @@ class TestGitHubSchemaM579:
         # collaborator, app_installation, security_features).  The original
         # eight must still be present; the new seven are additive.
         # Count updated to 16: includes github_automation_permissions added in M69.5B
+        # Count updated to 17: includes github_pages (GitHub Pages configuration)
         from app.connectors.github_schema import GITHUB_RECORD_TYPES
-        assert len(GITHUB_RECORD_TYPES) == 16
+        assert len(GITHUB_RECORD_TYPES) == 17
         for legacy in (
             "github_repo_settings",
             "github_branch_protection",

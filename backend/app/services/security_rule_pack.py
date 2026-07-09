@@ -64,6 +64,8 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "github_actions_broad_permissions": ("github", "high", "Automation permissions"),
     "github_actions_workflow_token_write_permission": ("github", "high", "Automation permissions"),
     "github_actions_can_approve_pull_requests": ("github", "high", "Automation permissions"),
+    "github_wiki_enabled": ("github", "low", "Repository settings"),
+    "github_pages_enabled": ("github", "low", "Pages"),
     "github_branch_admin_bypass_allowed": ("github", "high", "Branch protection"),
     # AWS
     "aws_public_admin_port": ("aws", "high", "Security groups"),

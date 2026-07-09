@@ -249,14 +249,13 @@ export function getFriendlyErrorCopy(
   if (!lastSyncError) return null;
   const msg = lastSyncError.toLowerCase();
 
-  if (
-    msg.includes("authentication") ||
-    msg.includes("invalid") ||
-    msg.includes("revoked") ||
-    msg.includes("401")
-  ) {
-    return "Credentials invalid or expired — reconnect this integration.";
-  }
+  // Check 403/permission-denied signals BEFORE the generic "authentication"
+  // match below: connector error text for both 401 and 403 often contains the
+  // word "authentication" (e.g. "GitHub authentication failed (HTTP 403)"),
+  // which would otherwise always classify a 403 as "invalid or expired"
+  // credentials even when the token is fine but simply lacks access to this
+  // specific resource (e.g. a repo that just went private). 403 is a more
+  // specific signal than the generic word "authentication", so it must win.
   if (
     msg.includes("permission") ||
     msg.includes("403") ||
@@ -264,6 +263,14 @@ export function getFriendlyErrorCopy(
     msg.includes("insufficient scopes")
   ) {
     return "Permission denied — review provider permissions or reconnect this integration.";
+  }
+  if (
+    msg.includes("authentication") ||
+    msg.includes("invalid") ||
+    msg.includes("revoked") ||
+    msg.includes("401")
+  ) {
+    return "Credentials invalid or expired — reconnect this integration.";
   }
   if (msg.includes("not found") || msg.includes("404")) {
     return "Resource not found — the provider resource may have been deleted or renamed.";

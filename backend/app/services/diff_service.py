@@ -199,6 +199,15 @@ _GITHUB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "protected_branches",
         "custom_branch_policies",
     ),
+    "github_pages": (
+        "pages_enabled",
+        "pages_source_branch",
+        "pages_source_path",
+        "pages_build_type",
+        "pages_cname_configured",
+        "pages_https_enforced",
+        "pages_visibility",
+    ),
 }
 
 

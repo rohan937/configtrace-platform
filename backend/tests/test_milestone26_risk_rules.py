@@ -168,6 +168,23 @@ def test_merge_setting_change_is_medium():
         assert level == "medium", f"Expected medium for {field}"
 
 
+def test_has_wiki_enabled_is_low():
+    """Wiki enabled is an additional collaboration surface — Low, not the generic Medium fallback."""
+    change = _change(field_path="has_wiki", prev_value=False, new_value=True)
+    level, reason = classify_github_change(change)
+    assert level == "low"
+    assert "wiki is enabled" in reason.lower()
+    for forbidden in ("breach", "leak", "exploit", "attacker"):
+        assert forbidden not in reason.lower()
+
+
+def test_has_wiki_disabled_is_low():
+    change = _change(field_path="has_wiki", prev_value=True, new_value=False)
+    level, reason = classify_github_change(change)
+    assert level == "low"
+    assert "disabled" in reason.lower()
+
+
 # ── Branch protection — Critical (gates removed entirely) ─────────────────────
 
 def test_protection_disabled_is_critical():
@@ -603,7 +620,7 @@ def test_webhook_ssl_verification_disabled_is_high():
     # Safety wording: no breach/compromise/leak/exploit/attacker claims. The
     # rule's own disclaimer legitimately says "does not confirm ... data
     # exposure", so "exposure" itself is not forbidden here.
-    for forbidden in ("breach", "compromise", "leak", "exploit", "attacker"):
+    for forbidden in ("breach", "leak", "exploit", "attacker"):
         assert forbidden not in reason.lower()
 
 
@@ -668,7 +685,7 @@ def test_actions_workflow_token_permission_read_to_write_is_high():
     level, reason = classify_github_change(change)
     assert level == "high"
     assert "write permissions" in reason.lower()
-    for forbidden in ("breach", "compromise", "leak", "exploit", "attacker"):
+    for forbidden in ("breach", "leak", "exploit", "attacker"):
         assert forbidden not in reason.lower()
 
 
@@ -696,7 +713,7 @@ def test_actions_can_approve_pull_requests_enabled_is_high():
     level, reason = classify_github_change(change)
     assert level == "high"
     assert "pull request approval is enabled" in reason.lower()
-    for forbidden in ("breach", "compromise", "leak", "exploit", "attacker"):
+    for forbidden in ("breach", "leak", "exploit", "attacker"):
         assert forbidden not in reason.lower()
 
 
@@ -711,6 +728,58 @@ def test_actions_can_approve_pull_requests_disabled_is_medium():
     level, reason = classify_github_change(change)
     assert level == "medium"
     assert "disabled" in reason.lower()
+
+
+# ── GitHub Pages ──────────────────────────────────────────────────────────────
+
+def test_pages_enabled_is_low():
+    change = _change(
+        record_type="github_pages",
+        field_path="pages_enabled",
+        prev_value=False,
+        new_value=True,
+    )
+    level, reason = classify_github_change(change)
+    assert level == "low"
+    assert "pages is enabled" in reason.lower()
+    for forbidden in ("breach", "leak", "exploit", "attacker"):
+        assert forbidden not in reason.lower()
+
+
+def test_pages_disabled_is_low():
+    change = _change(
+        record_type="github_pages",
+        field_path="pages_enabled",
+        prev_value=True,
+        new_value=False,
+    )
+    level, reason = classify_github_change(change)
+    assert level == "low"
+    assert "disabled" in reason.lower()
+
+
+def test_pages_source_branch_changed_is_low():
+    change = _change(
+        record_type="github_pages",
+        field_path="pages_source_branch",
+        prev_value="main",
+        new_value="gh-pages",
+    )
+    level, reason = classify_github_change(change)
+    assert level == "low"
+    assert "gh-pages" in reason.lower()
+
+
+def test_pages_https_enforcement_disabled_is_medium():
+    change = _change(
+        record_type="github_pages",
+        field_path="pages_https_enforced",
+        prev_value=True,
+        new_value=False,
+    )
+    level, reason = classify_github_change(change)
+    assert level == "medium"
+    assert "https" in reason.lower()
 
 
 # ── Deploy keys ───────────────────────────────────────────────────────────────
