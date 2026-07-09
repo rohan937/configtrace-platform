@@ -63,6 +63,8 @@ EXPECTED_GITHUB_RULE_KEYS: frozenset[str] = frozenset({
     "github_token_broad_scopes",
     # Actions permissions rule (new QA rule)
     "github_actions_broad_permissions",
+    "github_actions_workflow_token_write_permission",
+    "github_actions_can_approve_pull_requests",
 })
 
 FORBIDDEN_PHRASES = [
@@ -315,6 +317,15 @@ def test_J_github_rule_copy_no_forbidden_words():
             "enabled": True,
             "allowed_actions": "all",
         },
+        # Actions workflow token write + PR approval
+        {
+            "record_id": "acme/qa-repo#actions_permissions",
+            "record_type": "github_actions_permissions",
+            "enabled": True,
+            "allowed_actions": "selected",
+            "default_workflow_permissions": "write",
+            "can_approve_pull_request_reviews": True,
+        },
     ]
 
     all_findings = []
@@ -368,6 +379,80 @@ def test_K_actions_broad_permissions_does_not_fire_for_local_only():
         broad = [f for f in findings if f.rule_key == "github_actions_broad_permissions"]
         assert not broad, (
             f"github_actions_broad_permissions must not fire for allowed_actions={safe_value!r}"
+        )
+
+
+def test_K_workflow_token_write_fires_on_write():
+    """github_actions_workflow_token_write_permission fires when the token permission is 'write'."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#actions_permissions",
+        "record_type": "github_actions_permissions",
+        "enabled": True,
+        "allowed_actions": "selected",
+        "default_workflow_permissions": "write",
+    }
+    findings = gh.evaluate(record)
+    assert any(f.rule_key == "github_actions_workflow_token_write_permission" for f in findings)
+
+
+def test_K_workflow_token_write_does_not_fire_on_read_or_unknown():
+    """github_actions_workflow_token_write_permission must not fire for 'read' or unknown (None)."""
+    from app.services.security_rules import github as gh
+
+    for safe_value in ("read", None):
+        record: dict[str, Any] = {
+            "record_id": "acme/qa-repo#actions_permissions",
+            "record_type": "github_actions_permissions",
+            "enabled": True,
+            "allowed_actions": "selected",
+            "default_workflow_permissions": safe_value,
+        }
+        findings = gh.evaluate(record)
+        write_findings = [
+            f for f in findings if f.rule_key == "github_actions_workflow_token_write_permission"
+        ]
+        assert not write_findings, (
+            f"github_actions_workflow_token_write_permission must not fire for "
+            f"default_workflow_permissions={safe_value!r}"
+        )
+
+
+def test_K_actions_can_approve_prs_fires_on_true():
+    """github_actions_can_approve_pull_requests fires when the flag is explicitly True."""
+    from app.services.security_rules import github as gh
+
+    record = {
+        "record_id": "acme/qa-repo#actions_permissions",
+        "record_type": "github_actions_permissions",
+        "enabled": True,
+        "allowed_actions": "selected",
+        "can_approve_pull_request_reviews": True,
+    }
+    findings = gh.evaluate(record)
+    assert any(f.rule_key == "github_actions_can_approve_pull_requests" for f in findings)
+
+
+def test_K_actions_can_approve_prs_does_not_fire_on_false_or_unknown():
+    """github_actions_can_approve_pull_requests must not fire for False or unknown (None)."""
+    from app.services.security_rules import github as gh
+
+    for safe_value in (False, None):
+        record: dict[str, Any] = {
+            "record_id": "acme/qa-repo#actions_permissions",
+            "record_type": "github_actions_permissions",
+            "enabled": True,
+            "allowed_actions": "selected",
+            "can_approve_pull_request_reviews": safe_value,
+        }
+        findings = gh.evaluate(record)
+        approve_findings = [
+            f for f in findings if f.rule_key == "github_actions_can_approve_pull_requests"
+        ]
+        assert not approve_findings, (
+            f"github_actions_can_approve_pull_requests must not fire for "
+            f"can_approve_pull_request_reviews={safe_value!r}"
         )
 
 
@@ -547,4 +632,24 @@ def test_M_rule_pack_severity_github_webhook_ssl_verification_disabled_is_high()
     provider, severity, category = _RULE_META["github_webhook_ssl_verification_disabled"]
     assert severity == "high", (
         f"_RULE_META['github_webhook_ssl_verification_disabled'] severity must be 'high'; got {severity!r}"
+    )
+
+
+def test_M_rule_pack_severity_github_actions_workflow_token_write_permission_is_high():
+    """_RULE_META confirms github_actions_workflow_token_write_permission severity as 'high'."""
+    from app.services.security_rule_pack import _RULE_META
+
+    provider, severity, category = _RULE_META["github_actions_workflow_token_write_permission"]
+    assert severity == "high", (
+        f"_RULE_META['github_actions_workflow_token_write_permission'] severity must be 'high'; got {severity!r}"
+    )
+
+
+def test_M_rule_pack_severity_github_actions_can_approve_pull_requests_is_high():
+    """_RULE_META confirms github_actions_can_approve_pull_requests severity as 'high'."""
+    from app.services.security_rule_pack import _RULE_META
+
+    provider, severity, category = _RULE_META["github_actions_can_approve_pull_requests"]
+    assert severity == "high", (
+        f"_RULE_META['github_actions_can_approve_pull_requests'] severity must be 'high'; got {severity!r}"
     )

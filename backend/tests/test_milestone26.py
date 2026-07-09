@@ -454,6 +454,87 @@ def test_webhook_ssl_verification_disabled_produces_drift_change():
     assert ssl_changes[0]["new_value"] is True
 
 
+def test_tracked_fields_github_actions_permissions_includes_workflow_posture():
+    record = {"record_type": "github_actions_permissions"}
+    fields = _tracked_fields_for(record)
+    assert "default_workflow_permissions" in fields
+    assert "can_approve_pull_request_reviews" in fields
+
+
+def test_actions_workflow_token_read_to_write_produces_drift_change():
+    """Widening the workflow token permission from read to write must surface as a Change.
+
+    Regression test for the same failure mode as the webhook SSL bug: the
+    connector can normalize default_workflow_permissions correctly, but if
+    it isn't in the tracked-fields tuple for github_actions_permissions,
+    compute_diff will never notice it changed.
+    """
+    from app.models.snapshot import Snapshot
+
+    def _mock_snapshot(state: list[dict]) -> MagicMock:
+        snap = MagicMock(spec=Snapshot)
+        snap.state = state
+        snap.id = uuid.uuid4()
+        return snap
+
+    def _actions_permissions_record(permission, can_approve) -> dict:
+        return {
+            "record_id": "acme/myapp#actions_permissions",
+            "record_type": "github_actions_permissions",
+            "name": "acme/myapp",
+            "enabled": True,
+            "allowed_actions": "selected",
+            "default_workflow_permissions": permission,
+            "can_approve_pull_request_reviews": can_approve,
+        }
+
+    prev = _mock_snapshot([_actions_permissions_record("read", False)])
+    new = _mock_snapshot([_actions_permissions_record("write", False)])
+
+    changes = compute_diff(prev, new)
+    perm_changes = [c for c in changes if c["field_path"] == "default_workflow_permissions"]
+
+    assert len(perm_changes) == 1
+    assert perm_changes[0]["change_type"] == "modified"
+    assert perm_changes[0]["prev_value"] == "read"
+    assert perm_changes[0]["new_value"] == "write"
+
+
+def test_actions_pr_approval_false_to_true_produces_drift_change():
+    """Enabling Actions PR approval (False → True) must surface as a Change."""
+    from app.models.snapshot import Snapshot
+
+    def _mock_snapshot(state: list[dict]) -> MagicMock:
+        snap = MagicMock(spec=Snapshot)
+        snap.state = state
+        snap.id = uuid.uuid4()
+        return snap
+
+    def _actions_permissions_record(permission, can_approve) -> dict:
+        return {
+            "record_id": "acme/myapp#actions_permissions",
+            "record_type": "github_actions_permissions",
+            "name": "acme/myapp",
+            "enabled": True,
+            "allowed_actions": "selected",
+            "default_workflow_permissions": permission,
+            "can_approve_pull_request_reviews": can_approve,
+        }
+
+    prev = _mock_snapshot([_actions_permissions_record("read", False)])
+    new = _mock_snapshot([_actions_permissions_record("read", True)])
+
+    changes = compute_diff(prev, new)
+    approve_changes = [
+        c for c in changes if c["field_path"] == "can_approve_pull_request_reviews"
+    ]
+
+    assert len(approve_changes) == 1
+    assert approve_changes[0]["change_type"] == "modified"
+    assert approve_changes[0]["prev_value"] is False
+    assert approve_changes[0]["new_value"] is True
+
+
 def test_tracked_fields_github_deploy_key():
     record = {"record_type": "github_deploy_key"}
     fields = _tracked_fields_for(record)

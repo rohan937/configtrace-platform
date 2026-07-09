@@ -134,6 +134,26 @@ def _normalize_insecure_ssl(raw: Any) -> Optional[bool]:
     return None
 
 
+def _normalize_workflow_permission(raw: Any) -> Optional[str]:
+    """Normalize GitHub's ``default_workflow_permissions`` to ``"read"``/``"write"``.
+
+    GitHub's documented values are ``"read"`` and ``"write"``, but some API
+    surfaces/orgs have historically used ``"read-all"``/``"write-all"`` or
+    ``"read_repository"``/``"write_repository"`` naming for the equivalent
+    org-level setting. Normalize any of these to the canonical two values;
+    return ``None`` (unknown) for anything unrecognised rather than
+    defaulting to the safe "read" value.
+    """
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip().lower()
+    if value in ("read", "read-all", "read_repository"):
+        return "read"
+    if value in ("write", "write-all", "write_repository"):
+        return "write"
+    return None
+
+
 # ── Connector class ──────────────────────────────────────────────────────────
 
 class GitHubConnector(BaseConnector):
@@ -974,14 +994,25 @@ class GitHubConnector(BaseConnector):
         repo: str,
         slug: str,
     ) -> dict[str, Any]:
-        """Fetch Actions permissions (enabled, allowed_actions).
+        """Fetch Actions permissions (enabled, allowed_actions, workflow token posture).
 
         Returns a 'disabled / unknown' record on HTTP 404 — this can happen
         when Actions is not available for a repository (e.g. Actions is
         disabled at the organisation level).
+
+        Workflow token permissions (default_workflow_permissions,
+        can_approve_pull_request_reviews) come from a separate endpoint
+        (``.../actions/permissions/workflow``) that some fine-grained PATs
+        are not scoped for. That sub-fetch is fail-soft: a 403/404/error
+        leaves those two fields ``None`` (unknown) without aborting the rest
+        of the sync, matching the pattern used by ``_fetch_environments``.
         """
         url = f"{_BASE_URL}/repos/{owner}/{repo}/actions/permissions"
         resp = self._get(client, url, headers, allow_404=True)
+
+        workflow_permission, can_approve_pr = self._fetch_workflow_permissions(
+            client, headers, owner, repo, slug
+        )
 
         if resp.status_code == 404:
             return {
@@ -990,6 +1021,8 @@ class GitHubConnector(BaseConnector):
                 "name":            slug,
                 "enabled":         False,
                 "allowed_actions": "",
+                "default_workflow_permissions": workflow_permission,
+                "can_approve_pull_request_reviews": can_approve_pr,
             }
 
         raw = resp.json()
@@ -999,7 +1032,44 @@ class GitHubConnector(BaseConnector):
             "name":            slug,
             "enabled":         bool(raw.get("enabled", True)),
             "allowed_actions": raw.get("allowed_actions", "all"),
+            "default_workflow_permissions": workflow_permission,
+            "can_approve_pull_request_reviews": can_approve_pr,
         }
+
+    def _fetch_workflow_permissions(
+        self,
+        client: httpx.Client,
+        headers: dict[str, str],
+        owner: str,
+        repo: str,
+        slug: str,
+    ) -> tuple[Optional[str], Optional[bool]]:
+        """Fetch the default workflow token permission + PR-approval posture.
+
+        Soft-fails to ``(None, None)`` (unknown) on 403/404/network error —
+        this sub-endpoint requires broader Administration access than the
+        base Actions-permissions endpoint, so some tokens can read one but
+        not the other. We never default an unreadable posture to "safe".
+        """
+        url = f"{_BASE_URL}/repos/{owner}/{repo}/actions/permissions/workflow"
+        try:
+            resp = self._get(client, url, headers)
+        except Exception as exc:
+            logger.info(
+                "github: workflow permissions not accessible repo=%s (%s) — unknown",
+                slug,
+                type(exc).__name__,
+            )
+            return None, None
+
+        raw = resp.json()
+        if not isinstance(raw, dict):
+            return None, None
+
+        permission = _normalize_workflow_permission(raw.get("default_workflow_permissions"))
+        can_approve = raw.get("can_approve_pull_request_reviews")
+        can_approve = can_approve if isinstance(can_approve, bool) else None
+        return permission, can_approve
 
     def _fetch_deploy_keys(
         self,

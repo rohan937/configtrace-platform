@@ -312,12 +312,21 @@ class GitHubActionsPermissions(TypedDict):
     allowed_actions
         Which actions can run: ``"all"``, ``"local_only"``, or ``"selected"``.
         Empty string when Actions is disabled.
+    default_workflow_permissions
+        Normalized default GITHUB_TOKEN permission scope: ``"read"`` or
+        ``"write"``. ``None`` when the workflow-permissions sub-endpoint
+        wasn't accessible (insufficient token scope) — never defaulted.
+    can_approve_pull_request_reviews
+        Whether GitHub Actions workflows may approve pull request reviews.
+        ``None`` when unknown (same soft-fail as above).
     """
     record_id: str
     record_type: str
     name: str
     enabled: bool
     allowed_actions: str
+    default_workflow_permissions: Optional[str]
+    can_approve_pull_request_reviews: Optional[bool]
 
 
 class GitHubDeployKey(TypedDict):

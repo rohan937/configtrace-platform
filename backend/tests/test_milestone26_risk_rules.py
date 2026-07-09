@@ -657,6 +657,62 @@ def test_actions_allowed_changed_to_all_is_medium():
     assert "all" in reason.lower()
 
 
+def test_actions_workflow_token_permission_read_to_write_is_high():
+    """Workflow token permission widened to write — High."""
+    change = _change(
+        record_type="github_actions_permissions",
+        field_path="default_workflow_permissions",
+        prev_value="read",
+        new_value="write",
+    )
+    level, reason = classify_github_change(change)
+    assert level == "high"
+    assert "write permissions" in reason.lower()
+    for forbidden in ("breach", "compromise", "leak", "exploit", "attacker"):
+        assert forbidden not in reason.lower()
+
+
+def test_actions_workflow_token_permission_write_to_read_is_medium():
+    """Workflow token permission restored to read-only — Medium."""
+    change = _change(
+        record_type="github_actions_permissions",
+        field_path="default_workflow_permissions",
+        prev_value="write",
+        new_value="read",
+    )
+    level, reason = classify_github_change(change)
+    assert level == "medium"
+    assert "read-only" in reason.lower()
+
+
+def test_actions_can_approve_pull_requests_enabled_is_high():
+    """Actions PR approval enabled — High."""
+    change = _change(
+        record_type="github_actions_permissions",
+        field_path="can_approve_pull_request_reviews",
+        prev_value=False,
+        new_value=True,
+    )
+    level, reason = classify_github_change(change)
+    assert level == "high"
+    assert "pull request approval is enabled" in reason.lower()
+    for forbidden in ("breach", "compromise", "leak", "exploit", "attacker"):
+        assert forbidden not in reason.lower()
+
+
+def test_actions_can_approve_pull_requests_disabled_is_medium():
+    """Actions PR approval disabled again — Medium."""
+    change = _change(
+        record_type="github_actions_permissions",
+        field_path="can_approve_pull_request_reviews",
+        prev_value=True,
+        new_value=False,
+    )
+    level, reason = classify_github_change(change)
+    assert level == "medium"
+    assert "disabled" in reason.lower()
+
+
 # ── Deploy keys ───────────────────────────────────────────────────────────────
 
 def test_write_enabled_deploy_key_added_is_critical():

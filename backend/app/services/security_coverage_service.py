@@ -81,6 +81,8 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "github_webhook_ssl_verification_disabled": ("github_webhook",),
     # GitHub new QA rules
     "github_actions_broad_permissions": ("github_actions_permissions",),
+    "github_actions_workflow_token_write_permission": ("github_actions_permissions",),
+    "github_actions_can_approve_pull_requests": ("github_actions_permissions",),
     "github_branch_admin_bypass_allowed": ("github_branch_protection",),
     # AWS
     "aws_public_admin_port": ("aws_security_group_rule",),

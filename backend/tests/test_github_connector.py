@@ -46,6 +46,7 @@ SECRETS_URL = f"{REPO_URL}/actions/secrets"
 VARIABLES_URL = f"{REPO_URL}/actions/variables"
 HOOKS_URL = f"{REPO_URL}/hooks"
 PERMISSIONS_URL = f"{REPO_URL}/actions/permissions"
+WORKFLOW_PERMISSIONS_URL = f"{REPO_URL}/actions/permissions/workflow"
 KEYS_URL = f"{REPO_URL}/keys"
 
 
@@ -111,6 +112,8 @@ def _full_mock(
     variables=None,
     hooks=None,
     permissions=None,
+    workflow_permissions=None,
+    workflow_permissions_status: int = 200,
     deploy_keys=None,
 ):
     """Set up respx routes for all seven GitHub API endpoints."""
@@ -124,6 +127,11 @@ def _full_mock(
         hooks = []
     if permissions is None:
         permissions = {"enabled": True, "allowed_actions": "all"}
+    if workflow_permissions is None:
+        workflow_permissions = {
+            "default_workflow_permissions": "read",
+            "can_approve_pull_request_reviews": False,
+        }
     if deploy_keys is None:
         deploy_keys = []
 
@@ -150,6 +158,16 @@ def _full_mock(
 
     # Permissions
     respx.get(PERMISSIONS_URL).mock(return_value=httpx.Response(200, json=permissions))
+
+    # Workflow permissions (default token permission + PR-approval posture)
+    if workflow_permissions_status == 200:
+        respx.get(WORKFLOW_PERMISSIONS_URL).mock(
+            return_value=httpx.Response(200, json=workflow_permissions)
+        )
+    else:
+        respx.get(WORKFLOW_PERMISSIONS_URL).mock(
+            return_value=httpx.Response(workflow_permissions_status, json={"message": "Forbidden"})
+        )
 
     # Deploy keys
     respx.get(KEYS_URL).mock(return_value=httpx.Response(200, json=deploy_keys))
@@ -417,6 +435,9 @@ def test_fetch_actions_permissions(connector: GitHubConnector) -> None:
     assert perm_records[0]["record_id"] == f"{SLUG}#actions_permissions"
     assert perm_records[0]["enabled"] is True
     assert perm_records[0]["allowed_actions"] == "selected"
+    # Default _full_mock workflow-permissions fixture: read / no PR approval.
+    assert perm_records[0]["default_workflow_permissions"] == "read"
+    assert perm_records[0]["can_approve_pull_request_reviews"] is False
 
 
 @respx.mock
@@ -430,6 +451,96 @@ def test_fetch_actions_permissions_404_normalised(connector: GitHubConnector) ->
 
     assert len(perm_records) == 1
     assert perm_records[0]["enabled"] is False
+
+
+@respx.mock
+def test_fetch_workflow_permissions_write_and_pr_approval_true(connector: GitHubConnector) -> None:
+    """default_workflow_permissions='write' and can_approve_pull_request_reviews=True normalize as-is."""
+    _full_mock(
+        workflow_permissions={
+            "default_workflow_permissions": "write",
+            "can_approve_pull_request_reviews": True,
+        }
+    )
+    records = connector.fetch(VALID_CREDS)
+    perm = next(r for r in records if r["record_type"] == GITHUB_ACTIONS_PERMISSIONS)
+
+    assert perm["default_workflow_permissions"] == "write"
+    assert perm["can_approve_pull_request_reviews"] is True
+
+
+@respx.mock
+def test_fetch_workflow_permissions_read_and_pr_approval_false(connector: GitHubConnector) -> None:
+    """default_workflow_permissions='read' and can_approve_pull_request_reviews=False normalize as-is."""
+    _full_mock(
+        workflow_permissions={
+            "default_workflow_permissions": "read",
+            "can_approve_pull_request_reviews": False,
+        }
+    )
+    records = connector.fetch(VALID_CREDS)
+    perm = next(r for r in records if r["record_type"] == GITHUB_ACTIONS_PERMISSIONS)
+
+    assert perm["default_workflow_permissions"] == "read"
+    assert perm["can_approve_pull_request_reviews"] is False
+
+
+@respx.mock
+def test_fetch_workflow_permissions_403_is_soft_fail_unknown(connector: GitHubConnector) -> None:
+    """A 403 on the workflow-permissions sub-endpoint must NOT fail the whole sync.
+
+    The fields become unknown (None), and every other record type still comes
+    back normally — this is the same fail-soft contract as _fetch_environments.
+    """
+    _full_mock(workflow_permissions_status=403)
+    records = connector.fetch(VALID_CREDS)  # must not raise
+
+    perm = next(r for r in records if r["record_type"] == GITHUB_ACTIONS_PERMISSIONS)
+    assert perm["default_workflow_permissions"] is None
+    assert perm["can_approve_pull_request_reviews"] is None
+    # Other record types still synced normally.
+    assert any(r["record_type"] == GITHUB_REPO_SETTINGS for r in records)
+
+
+@respx.mock
+def test_fetch_workflow_permissions_404_is_soft_fail_unknown(connector: GitHubConnector) -> None:
+    """A 404 on the workflow-permissions sub-endpoint is also a soft, unknown-posture fail."""
+    _full_mock(workflow_permissions_status=404)
+    records = connector.fetch(VALID_CREDS)  # must not raise
+
+    perm = next(r for r in records if r["record_type"] == GITHUB_ACTIONS_PERMISSIONS)
+    assert perm["default_workflow_permissions"] is None
+    assert perm["can_approve_pull_request_reviews"] is None
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "raw_value,expected",
+    [
+        ("read", "read"),
+        ("write", "write"),
+        ("read-all", "read"),
+        ("write-all", "write"),
+        ("read_repository", "read"),
+        ("write_repository", "write"),
+        ("something_unrecognised", None),
+        (None, None),
+    ],
+)
+def test_fetch_workflow_permissions_normalization_variants(
+    connector: GitHubConnector, raw_value, expected
+) -> None:
+    """default_workflow_permissions normalization is robust across GitHub's naming variants."""
+    _full_mock(
+        workflow_permissions={
+            "default_workflow_permissions": raw_value,
+            "can_approve_pull_request_reviews": False,
+        }
+    )
+    records = connector.fetch(VALID_CREDS)
+    perm = next(r for r in records if r["record_type"] == GITHUB_ACTIONS_PERMISSIONS)
+
+    assert perm["default_workflow_permissions"] == expected
 
 
 # ── fetch(): deploy keys ──────────────────────────────────────────────────────

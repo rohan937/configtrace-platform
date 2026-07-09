@@ -182,6 +182,8 @@ _GITHUB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "github_actions_permissions": (
         "enabled",
         "allowed_actions",
+        "default_workflow_permissions",
+        "can_approve_pull_request_reviews",
     ),
     "github_deploy_key": (
         "title",

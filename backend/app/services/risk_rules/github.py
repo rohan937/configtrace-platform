@@ -772,6 +772,32 @@ def _classify_actions_permissions(
             "runs will stop immediately until Actions is re-enabled.",
         )
 
+    # Workflow token permission widened to write — the default GITHUB_TOKEN
+    # can now write to the repository from any workflow run.
+    if change_type == "modified" and field_path == "default_workflow_permissions" and new_value == "write":
+        return (
+            "high",
+            "GitHub Actions workflow token has write permissions. This "
+            "increases the impact of workflow misconfiguration and may "
+            "require review. Configuration evidence does not confirm "
+            "compromise, unauthorized access, or data exposure.",
+        )
+
+    # Actions can now create/approve pull requests — weakens PR review
+    # governance since a workflow can approve its own changes.
+    if (
+        change_type == "modified"
+        and field_path == "can_approve_pull_request_reviews"
+        and new_value is True
+    ):
+        return (
+            "high",
+            "GitHub Actions pull request approval is enabled. This weakens "
+            "repository governance and may require review. Configuration "
+            "evidence does not confirm compromise, unauthorized access, or "
+            "data exposure.",
+        )
+
     # ── MEDIUM ────────────────────────────────────────────────────────────────
 
     # Actions re-enabled.
@@ -779,6 +805,25 @@ def _classify_actions_permissions(
         return (
             "medium",
             "GitHub Actions has been re-enabled for this repository.",
+        )
+
+    # Workflow token permission narrowed back to read.
+    if change_type == "modified" and field_path == "default_workflow_permissions" and new_value == "read":
+        return (
+            "medium",
+            "GitHub Actions workflow token permission was restored to "
+            "read-only.",
+        )
+
+    # Actions PR approval disabled again.
+    if (
+        change_type == "modified"
+        and field_path == "can_approve_pull_request_reviews"
+        and new_value is False
+    ):
+        return (
+            "medium",
+            "GitHub Actions pull request approval was disabled.",
         )
 
     # Allowed actions broadened to allow any action from any repository.

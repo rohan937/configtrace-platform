@@ -82,6 +82,9 @@ _RULE_WEBHOOK_SECRET_MISSING = "github_webhook_secret_missing"
 _RULE_WEBHOOK_SSL_VERIFICATION_DISABLED = "github_webhook_ssl_verification_disabled"
 # GitHub Actions broad permissions (new QA rule)
 _RULE_ACTIONS_BROAD_PERMISSIONS = "github_actions_broad_permissions"
+# GitHub Actions workflow token / PR-approval posture
+_RULE_ACTIONS_WORKFLOW_TOKEN_WRITE = "github_actions_workflow_token_write_permission"
+_RULE_ACTIONS_CAN_APPROVE_PRS = "github_actions_can_approve_pull_requests"
 # GitHub branch admin bypass allowed (new QA rule)
 _RULE_BRANCH_ADMIN_BYPASS = "github_branch_admin_bypass_allowed"
 
@@ -806,34 +809,101 @@ def _eval_automation_permissions(record: dict[str, Any]) -> list[FindingCandidat
 
 
 def _eval_actions_permissions(record: dict[str, Any]) -> list[FindingCandidate]:
-    """Fire github_actions_broad_permissions when allowed_actions == 'all'."""
-    if record.get("allowed_actions") != "all":
-        return []
-
+    """Fire Actions-permissions findings: broad allowed_actions, write-capable
+    workflow token, and Actions-can-approve-PRs posture."""
     record_id = get_str(record, "record_id") or None
-    return [
-        FindingCandidate(
-            provider="github",
-            rule_key=_RULE_ACTIONS_BROAD_PERMISSIONS,
-            finding_key=make_finding_key(_RULE_ACTIONS_BROAD_PERMISSIONS, record_id),
-            severity="high",
-            title="GitHub Actions broad permissions: all Actions workflows allowed",
-            description=(
-                "Repository Actions permissions allow all workflows including from "
-                "external sources. This may require review."
-            ),
-            evidence={
-                "rule": _RULE_ACTIONS_BROAD_PERMISSIONS,
-                "allowed_actions": record.get("allowed_actions"),
-                "enabled": record.get("enabled", True),
-            },
-            remediation={
-                "summary": "Restrict allowed Actions to selected or local only.",
-                "steps": [
-                    "Set allowed_actions to 'selected' and enumerate trusted actions.",
-                    "Avoid 'all' in repositories with access to sensitive secrets.",
-                ],
-            },
-            record_id=record_id,
+    out: list[FindingCandidate] = []
+
+    if record.get("allowed_actions") == "all":
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_ACTIONS_BROAD_PERMISSIONS,
+                finding_key=make_finding_key(_RULE_ACTIONS_BROAD_PERMISSIONS, record_id),
+                severity="high",
+                title="GitHub Actions broad permissions: all Actions workflows allowed",
+                description=(
+                    "Repository Actions permissions allow all workflows including from "
+                    "external sources. This may require review."
+                ),
+                evidence={
+                    "rule": _RULE_ACTIONS_BROAD_PERMISSIONS,
+                    "allowed_actions": record.get("allowed_actions"),
+                    "enabled": record.get("enabled", True),
+                },
+                remediation={
+                    "summary": "Restrict allowed Actions to selected or local only.",
+                    "steps": [
+                        "Set allowed_actions to 'selected' and enumerate trusted actions.",
+                        "Avoid 'all' in repositories with access to sensitive secrets.",
+                    ],
+                },
+                record_id=record_id,
+            )
         )
-    ]
+
+    # Workflow token has write access — only fires when the connector could
+    # resolve the field (None = unknown, not a finding).
+    if record.get("default_workflow_permissions") == "write":
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_ACTIONS_WORKFLOW_TOKEN_WRITE,
+                finding_key=make_finding_key(_RULE_ACTIONS_WORKFLOW_TOKEN_WRITE, record_id),
+                severity="high",
+                title="GitHub Actions workflow token has write permissions",
+                description=(
+                    "A repository allows GitHub Actions workflows to use a "
+                    "write-capable token. This can increase the impact of "
+                    "workflow misconfiguration and may require review. "
+                    "Configuration evidence does not confirm compromise, "
+                    "unauthorized access, or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_ACTIONS_WORKFLOW_TOKEN_WRITE,
+                    "default_workflow_permissions": "write",
+                },
+                remediation={
+                    "summary": "Set the default workflow token permission to read-only.",
+                    "steps": [
+                        "Go to Settings → Actions → General → Workflow permissions.",
+                        "Select 'Read repository contents permission'.",
+                        "Grant write access explicitly per-workflow via 'permissions:' only where needed.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # Actions can create/approve pull request reviews — only fires when the
+    # connector could resolve the field (None = unknown, not a finding).
+    if record.get("can_approve_pull_request_reviews") is True:
+        out.append(
+            FindingCandidate(
+                provider="github",
+                rule_key=_RULE_ACTIONS_CAN_APPROVE_PRS,
+                finding_key=make_finding_key(_RULE_ACTIONS_CAN_APPROVE_PRS, record_id),
+                severity="high",
+                title="GitHub Actions pull request approval is enabled",
+                description=(
+                    "GitHub Actions is allowed to create or approve pull request "
+                    "reviews. This weakens repository governance and may "
+                    "require review. Configuration evidence does not confirm "
+                    "compromise, unauthorized access, or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_ACTIONS_CAN_APPROVE_PRS,
+                    "can_approve_pull_request_reviews": True,
+                },
+                remediation={
+                    "summary": "Disable Actions PR creation/approval unless explicitly required.",
+                    "steps": [
+                        "Go to Settings → Actions → General → Workflow permissions.",
+                        "Uncheck 'Allow GitHub Actions to create and approve pull requests'.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    return out

@@ -38,6 +38,8 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "github_webhook_ssl_verification_disabled",
         # GitHub new QA rules
         "github_actions_broad_permissions",
+        "github_actions_workflow_token_write_permission",
+        "github_actions_can_approve_pull_requests",
         "github_branch_admin_bypass_allowed",
         # AWS
         "aws_public_admin_port",

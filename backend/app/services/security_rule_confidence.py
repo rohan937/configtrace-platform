@@ -62,6 +62,8 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "github_webhook_ssl_verification_disabled": (HIGH, "Only fires when the connector explicitly resolved config.insecure_ssl to True; absent/unrecognised values are treated as unknown, not a finding."),
     # GitHub new QA rules
     "github_actions_broad_permissions": (HIGH, "Only fires when allowed_actions is exactly 'all' on a github_actions_permissions record."),
+    "github_actions_workflow_token_write_permission": (HIGH, "Only fires when the connector explicitly resolved default_workflow_permissions to 'write'; unreadable/unknown values never fire."),
+    "github_actions_can_approve_pull_requests": (HIGH, "Only fires when the connector explicitly resolved can_approve_pull_request_reviews to True; unreadable/unknown values never fire."),
     "github_branch_admin_bypass_allowed": (HIGH, "Only fires when protection_enabled=True and enforce_admins is explicitly False on a github_branch_protection record."),
     # AWS
     "aws_public_admin_port": (HIGH, "Only 0.0.0.0/0 or ::/0 count as public; reachability is not claimed."),
