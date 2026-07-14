@@ -3,14 +3,19 @@
 Fetches repository-level configuration (not code) from the GitHub REST API
 using a fine-grained Personal Access Token (PAT).
 
-Seven categories are monitored per repository:
-    1. Repository settings     (visibility, default branch, merge policies, …)
+Categories monitored per repository (expanded across several milestones):
+    1. Repository settings     (visibility, default branch, merge policies,
+                                 has_wiki, …)
     2. Default-branch protection rules
     3. Actions secrets metadata  (names + ``last_updated_at`` — **never** values)
     4. Actions variables         (name + value)
-    5. Repository webhooks       (URL, events, active, content_type)
-    6. Actions permissions       (enabled, allowed_actions)
+    5. Repository webhooks       (URL, events, active, content_type,
+                                   insecure_ssl / SSL verification posture)
+    6. Actions permissions       (enabled, allowed_actions, default workflow
+                                   token permission, PR-approval posture)
     7. Deploy keys               (title, read_only, verified)
+    8. GitHub Pages configuration (enabled, source branch/path, build type,
+                                    CNAME/HTTPS/visibility posture booleans)
 
 Usage
 -----
@@ -29,9 +34,15 @@ Credentials dict
         Fine-grained PAT with the following **repository** permissions:
             - Metadata: Read  (always required for fine-grained PATs)
             - Administration: Read  (branch protection, webhooks, deploy keys,
-                                     Actions permissions)
+                                     Actions permissions, workflow token
+                                     permission posture)
             - Secrets: Read         (Actions secrets metadata — names + timestamps)
             - Variables: Read       (Actions variables)
+            - Pages: Read           (GitHub Pages configuration — optional; if
+                                     absent, Pages fetch fails soft and the
+                                     sync still succeeds with pages_enabled
+                                     reported as unknown/false rather than
+                                     aborting)
     repo_owner : str
         The GitHub username or organisation that owns the repository.
     repo_name : str
