@@ -1040,6 +1040,164 @@ class TestJiraRiskClassifier:
         level, reason = classify_jira_change(real_shaped_change)
         assert level == "high", f"Expected high, got {level!r}: {reason}"
 
+    # ── Change-classification QA pass regression tests ───────────────────────
+
+    def test_project_archived_true_reads_new_value(self):
+        """Regression: project_archived previously returned the same
+        direction-blind message regardless of new_value — it never read
+        new_value at all."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(JIRA_PROJECT, "project_archived", prev_value=False, new_value=True)
+        level, reason = classify_jira_change(change)
+        assert level == "low"
+        assert "archived" in reason.lower()
+        assert "unarchived" not in reason.lower()
+
+    def test_project_unarchived_reads_new_value(self):
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(JIRA_PROJECT, "project_archived", prev_value=True, new_value=False)
+        level, reason = classify_jira_change(change)
+        assert level == "low"
+        assert "unarchived" in reason.lower()
+
+    def test_project_deleted_true_to_unknown_is_low_not_cleared_wording(self):
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(JIRA_PROJECT, "project_deleted", prev_value=True, new_value=None)
+        level, reason = classify_jira_change(change)
+        assert level == "low"
+        assert "cleared" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_workflow_draft_true_reads_new_value(self):
+        """Regression: workflow_draft previously returned the same
+        direction-blind message regardless of new_value."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(JIRA_WORKFLOW, "workflow_draft", prev_value=False, new_value=True)
+        level, reason = classify_jira_change(change)
+        assert level == "low", f"Expected low (matches jira_workflow_draft Finding severity), got {level!r}"
+        assert "draft" in reason.lower()
+
+    def test_workflow_draft_false_is_published_restoration(self):
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(JIRA_WORKFLOW, "workflow_draft", prev_value=True, new_value=False)
+        level, reason = classify_jira_change(change)
+        assert level == "low"
+        assert "published" in reason.lower()
+
+    def test_public_administer_projects_true_to_unknown_is_low_not_removed_wording(self):
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_PERMISSION_SCHEME, "permission_public_administer_projects",
+            prev_value=True, new_value=None,
+        )
+        level, reason = classify_jira_change(change)
+        assert level == "low"
+        assert "was removed" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_public_browse_projects_true_to_unknown_is_low_not_removed_wording(self):
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_PERMISSION_SCHEME, "permission_public_browse_projects",
+            prev_value=True, new_value=None,
+        )
+        level, reason = classify_jira_change(change)
+        assert level == "low"
+        assert "was removed" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_public_administer_projects_explicit_false_is_removed_wording(self):
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_PERMISSION_SCHEME, "permission_public_administer_projects",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_jira_change(change)
+        assert level == "low"
+        assert "was removed" in reason.lower()
+
+    def test_automation_condition_count_increase_is_medium(self):
+        """Regression: automation_condition_count is tracked in
+        diff_service.py but was accidentally excluded from the
+        action_count/branch_count grouped branch, silently falling to the
+        generic low fallback instead of matching its sibling fields."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_AUTOMATION_RULE, "automation_condition_count", prev_value=1, new_value=5,
+        )
+        level, reason = classify_jira_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_automation_condition_count_decrease_is_low(self):
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_AUTOMATION_RULE, "automation_condition_count", prev_value=5, new_value=1,
+        )
+        level, _ = classify_jira_change(change)
+        assert level == "low"
+
+    def test_unknown_transitions_never_produce_high(self):
+        unknown_cases = [
+            (JIRA_PROJECT, "project_archived", True, None),
+            (JIRA_PROJECT, "project_deleted", True, None),
+            (JIRA_WORKFLOW, "workflow_draft", False, None),
+            (JIRA_PERMISSION_SCHEME, "permission_public_administer_projects", True, None),
+            (JIRA_PERMISSION_SCHEME, "permission_public_browse_projects", True, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            from app.services.risk_rules.jira import classify_jira_change
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_jira_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
+    # ── Parity checks for the 5 newly-added security rules ───────────────────
+
+    def test_workflow_draft_change_matches_finding_severity_low(self):
+        """jira_workflow_draft Finding severity is low; the Change classifier
+        must agree for the same True (entered draft) transition."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(JIRA_WORKFLOW, "workflow_draft", prev_value=False, new_value=True)
+        level, _ = classify_jira_change(change)
+        assert level == "low"
+
+    def test_workflow_scheme_low_project_count_change_matches_finding_severity_low(self):
+        """jira_workflow_scheme_low_project_count Finding severity is low."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_WORKFLOW_SCHEME, "workflow_scheme_project_count", prev_value=5, new_value=1,
+        )
+        level, _ = classify_jira_change(change)
+        assert level == "low"
+
+    def test_permission_scheme_high_grant_count_change_matches_finding_severity_medium(self):
+        """jira_permission_scheme_high_grant_count Finding severity is medium."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_PERMISSION_SCHEME, "permission_grant_count", prev_value=10, new_value=25,
+        )
+        level, reason = classify_jira_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_webhook_broad_event_scope_change_matches_finding_severity_medium(self):
+        """jira_webhook_broad_event_scope Finding severity is medium."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_WEBHOOK, "webhook_event_count", prev_value=2, new_value=15,
+        )
+        level, reason = classify_jira_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_automation_high_component_count_change_matches_finding_severity_low(self):
+        """jira_automation_rule_high_component_count Finding severity is low."""
+        from app.services.risk_rules.jira import classify_jira_change
+        change = self._make_change(
+            JIRA_AUTOMATION_RULE, "automation_component_count", prev_value=5, new_value=20,
+        )
+        level, _ = classify_jira_change(change)
+        assert level == "low"
+
     def test_no_forbidden_wording_in_reasons(self):
         from app.services.risk_rules.jira import classify_jira_change
 

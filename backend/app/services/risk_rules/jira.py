@@ -112,10 +112,16 @@ def _classify_project_change(change: Change) -> tuple[str, str]:
                 "Jira project was marked deleted. "
                 "Jira configuration evidence may require review.",
             )
-        return ("low", "Jira project deleted flag changed.")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Jira project deleted flag was cleared.")
+        return ("low", "Jira project deleted flag is now unknown or missing.")
 
     if fp == "project_archived":
-        return ("low", "Jira project archived flag changed.")
+        if _is_truthy(new_v):
+            return ("low", "Jira project was archived.")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Jira project was unarchived — it is now active again.")
+        return ("low", "Jira project archived flag is now unknown or missing.")
 
     return ("low", f"Jira project configuration field '{fp}' changed.")
 
@@ -228,7 +234,11 @@ def _classify_workflow_change(change: Change) -> tuple[str, str]:
         return ("low", f"Jira workflow {fp} changed from {n_old} to {n_new}.")
 
     if fp == "workflow_draft":
-        return ("low", "Jira workflow draft state changed.")
+        if _is_truthy(new_v):
+            return ("low", "Jira workflow entered a draft (unpublished) state.")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Jira workflow was published (no longer draft).")
+        return ("low", "Jira workflow draft state is now unknown or missing.")
 
     return ("low", f"Jira workflow configuration field '{fp}' changed.")
 
@@ -332,7 +342,9 @@ def _classify_permission_scheme_change(change: Change) -> tuple[str, str]:
                 f"Jira permission scheme grants public {label} access. "
                 "Jira project access was broadened — Jira configuration evidence may require review.",
             )
-        return ("low", f"Jira permission scheme public {label} access was removed.")
+        if _is_falsy_explicit(new_v):
+            return ("low", f"Jira permission scheme public {label} access was removed.")
+        return ("low", f"Jira permission scheme public {label} access is now unknown or missing.")
 
     if fp == "permission_public_browse_projects":
         if _is_truthy(new_v):
@@ -341,7 +353,9 @@ def _classify_permission_scheme_change(change: Change) -> tuple[str, str]:
                 "Jira permission scheme grants public browse-projects access. "
                 "Jira project access was broadened — Jira configuration evidence may require review.",
             )
-        return ("low", "Jira permission scheme public browse-projects access was removed.")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Jira permission scheme public browse-projects access was removed.")
+        return ("low", "Jira permission scheme public browse-projects access is now unknown or missing.")
 
     if fp in ("permission_unknown_holder_count", "permission_public_grant_count"):
         n_old, n_new = _int_pair(prev_v, new_v)
@@ -592,7 +606,7 @@ def _classify_automation_rule_change(change: Change) -> tuple[str, str]:
             )
         return ("low", "Jira automation rule email action changed.")
 
-    if fp in ("automation_action_count", "automation_branch_count"):
+    if fp in ("automation_action_count", "automation_branch_count", "automation_condition_count"):
         n_old, n_new = _int_pair(prev_v, new_v)
         if n_new > n_old:
             return (
