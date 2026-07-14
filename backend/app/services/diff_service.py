@@ -1937,6 +1937,70 @@ _SHOPIFY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# ── SendGrid-specific tracked fields ──────────────────────────────────────────
+
+#: Per-record-type tracked field tuples for SendGrid records (M80A+).
+#: Only the fields listed here are compared field-by-field in compute_diff.
+#: Identity fields (record_id, record_type, provider_resource_id, and each
+#: record's own opaque id field) are intentionally excluded — they never
+#: change without the record itself being replaced (added/removed).
+_SENDGRID_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "sendgrid_account": (
+        "account_type",
+        "reputation",
+    ),
+    "sendgrid_api_key": (
+        "name",
+        "scopes_count",
+        "has_mail_send",
+        "has_full_access",
+    ),
+    "sendgrid_sender_identity": (
+        "nickname",
+        "from_email_domain",
+        "reply_to_domain",
+        "verified",
+        "locked",
+    ),
+    "sendgrid_domain_authentication": (
+        "domain",
+        "valid",
+        "automatic_security",
+        "default",
+        "legacy",
+        "dns_record_count",
+    ),
+    "sendgrid_mail_settings": (
+        "bcc_enabled",
+        "bounce_purge_enabled",
+        "footer_enabled",
+        "forward_bounce_enabled",
+        "forward_spam_enabled",
+        "sandbox_mode_enabled",
+        "spam_check_enabled",
+        "template_enabled",
+    ),
+    "sendgrid_tracking_settings": (
+        "click_tracking_enabled",
+        "open_tracking_enabled",
+        "subscription_tracking_enabled",
+        "ganalytics_enabled",
+    ),
+    "sendgrid_webhook_settings": (
+        "event_webhook_enabled",
+        "event_webhook_has_url",
+        "event_webhook_signed",
+        "event_count",
+        "inbound_parse_enabled",
+        "inbound_parse_spam_check_enabled",
+        "inbound_parse_send_raw_enabled",
+    ),
+    "sendgrid_suppression_settings": (
+        "suppression_group_count",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -1954,6 +2018,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_SUPABASE_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"shopify_"`` look up in
       ``_SHOPIFY_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"sendgrid_"`` look up in
+      ``_SENDGRID_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -1977,6 +2043,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _SUPABASE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("shopify_"):
         return _SHOPIFY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("sendgrid_"):
+        return _SENDGRID_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table

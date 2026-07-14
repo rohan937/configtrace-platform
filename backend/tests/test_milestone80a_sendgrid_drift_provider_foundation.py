@@ -1387,3 +1387,183 @@ class TestUtilityHelpers:
 
     def test_email_domain_uses_last_at_sign(self):
         assert _email_domain("weird@@example.com") == "example.com"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# U. Diff tracked fields (drift detection) — QA regression
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Regression coverage for a gap where SendGrid record types had no entry in
+# diff_service's per-provider tracked-fields dispatch. Without an entry,
+# `_tracked_fields_for` fell through every known provider prefix to the
+# Cloudflare-DNS default tuple ("record_type", "name", "content", "ttl",
+# "proxied", "priority", "comment") — none of which exist on any SendGrid
+# record. compute_diff would therefore NEVER detect a modified field on an
+# existing SendGrid record (API key scope changes, webhook signing toggled,
+# tracking settings changed, etc.) even though the connector normalizes and
+# the security-rules evaluator can already classify the field correctly.
+# Only added/removed records would ever surface, since those don't depend on
+# tracked fields at all.
+
+
+class TestSendGridDiffTrackedFields:
+    def test_all_eight_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _SENDGRID_TRACKED_FIELDS_BY_TYPE
+        from app.connectors.sendgrid_schema import SENDGRID_RECORD_TYPES
+
+        for record_type in SENDGRID_RECORD_TYPES:
+            assert record_type in _SENDGRID_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_sendgrid_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in (
+            "sendgrid_account",
+            "sendgrid_api_key",
+            "sendgrid_sender_identity",
+            "sendgrid_domain_authentication",
+            "sendgrid_mail_settings",
+            "sendgrid_tracking_settings",
+            "sendgrid_webhook_settings",
+            "sendgrid_suppression_settings",
+        ):
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own SendGrid fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_api_key_broad_scope_change_produces_drift_change(self):
+        """has_full_access False → True must surface as a Change.
+
+        This is the exact scenario item A (API key scope broadening) depends
+        on: if this field isn't tracked, the security finding would still
+        fire on next evaluation, but the Changes timeline would never show
+        the drift event at all.
+        """
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _api_key_record(has_full_access: bool) -> dict:
+            return {
+                "record_id": "SG.abc123",
+                "record_type": "sendgrid_api_key",
+                "provider_resource_id": "api_keys/SG.abc123",
+                "api_key_id": "SG.abc123",
+                "name": "prod-key",
+                "scopes_count": 5,
+                "has_mail_send": True,
+                "has_full_access": has_full_access,
+            }
+
+        prev = _mock_snapshot([_api_key_record(False)])
+        new = _mock_snapshot([_api_key_record(True)])
+
+        changes = compute_diff(prev, new)
+        scope_changes = [c for c in changes if c["field_path"] == "has_full_access"]
+
+        assert len(scope_changes) == 1
+        assert scope_changes[0]["change_type"] == "modified"
+        assert scope_changes[0]["prev_value"] is False
+        assert scope_changes[0]["new_value"] is True
+
+    def test_webhook_signing_disabled_change_produces_drift_change(self):
+        """event_webhook_signed True → False must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _webhook_record(signed: bool) -> dict:
+            return {
+                "record_id": "sendgrid_webhook_settings_main",
+                "record_type": "sendgrid_webhook_settings",
+                "provider_resource_id": "webhooks/event/settings/main",
+                "event_webhook_enabled": True,
+                "event_webhook_has_url": True,
+                "event_webhook_signed": signed,
+                "event_count": 3,
+                "inbound_parse_enabled": False,
+                "inbound_parse_spam_check_enabled": True,
+                "inbound_parse_send_raw_enabled": False,
+            }
+
+        prev = _mock_snapshot([_webhook_record(True)])
+        new = _mock_snapshot([_webhook_record(False)])
+
+        changes = compute_diff(prev, new)
+        signed_changes = [c for c in changes if c["field_path"] == "event_webhook_signed"]
+
+        assert len(signed_changes) == 1
+        assert signed_changes[0]["prev_value"] is True
+        assert signed_changes[0]["new_value"] is False
+
+    def test_click_tracking_enabled_change_produces_drift_change(self):
+        """click_tracking_enabled False → True must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _tracking_record(click_enabled: bool) -> dict:
+            return {
+                "record_id": "sendgrid_tracking_settings_main",
+                "record_type": "sendgrid_tracking_settings",
+                "provider_resource_id": "tracking_settings/main",
+                "click_tracking_enabled": click_enabled,
+                "open_tracking_enabled": False,
+                "subscription_tracking_enabled": True,
+                "ganalytics_enabled": False,
+            }
+
+        prev = _mock_snapshot([_tracking_record(False)])
+        new = _mock_snapshot([_tracking_record(True)])
+
+        changes = compute_diff(prev, new)
+        click_changes = [c for c in changes if c["field_path"] == "click_tracking_enabled"]
+
+        assert len(click_changes) == 1
+        assert click_changes[0]["prev_value"] is False
+        assert click_changes[0]["new_value"] is True
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_id": "sendgrid_mail_settings_main",
+            "record_type": "sendgrid_mail_settings",
+            "provider_resource_id": "mail_settings/main",
+            "bcc_enabled": False,
+            "bounce_purge_enabled": True,
+            "footer_enabled": False,
+            "forward_bounce_enabled": False,
+            "forward_spam_enabled": False,
+            "sandbox_mode_enabled": False,
+            "spam_check_enabled": True,
+            "template_enabled": False,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
