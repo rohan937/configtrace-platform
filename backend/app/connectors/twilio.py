@@ -10,7 +10,9 @@ PRIVACY / SECURITY — what is NEVER stored or logged
 ----------------------------------------------------
 - auth_token, API key secrets, private key material, OAuth tokens.
 - Full phone number strings — only the last 4 digits are stored.
-- Webhook / callback URL strings — stored as boolean presence flags only.
+- Webhook / callback URL strings — stored as a boolean presence flag plus
+  the URL *scheme* only ("http"/"https"/``None``). Host, path, query
+  string, and the full URL are NEVER stored, logged, or returned.
 - Message bodies, call logs, recording data, SMS/MMS content.
 - Customer PII (caller name, caller ID, verification payloads).
 - Sub-account auth tokens or credentials of any kind.
@@ -30,12 +32,16 @@ TWILIO_INCOMING_PHONE_NUMBER
     Safe fields: phone_number_sid, friendly_name, phone_number_last4 (last 4
     digits only), iso_country, capability_voice/sms/mms/fax (booleans),
     sms_url_configured, voice_url_configured, status_callback_configured
-    (all URL fields as booleans), address_requirements, emergency_status.
+    (boolean presence), sms_url_scheme, voice_url_scheme,
+    status_callback_scheme (scheme only — "http"/"https"/``None``),
+    address_requirements, emergency_status.
 
 TWILIO_MESSAGING_SERVICE
     Safe fields: messaging_service_sid, friendly_name,
     inbound_request_url_configured, fallback_url_configured,
-    status_callback_url_configured (all URL fields as booleans),
+    status_callback_url_configured (boolean presence),
+    inbound_request_url_scheme, fallback_url_scheme,
+    status_callback_url_scheme (scheme only — "http"/"https"/``None``),
     smart_encoding, validity_period, area_code_geomatch, sticky_sender,
     mms_converter, use_inbound_webhook_on_number, number_count.
 
@@ -61,7 +67,8 @@ statements, and never stored on the connector instance.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 
@@ -108,6 +115,35 @@ def _trunc(value: Any, length: int = _MAX_STR_LEN) -> str:
     if isinstance(value, str):
         return value[:length]
     return ""
+
+
+def _url_scheme(value: Any) -> Optional[str]:
+    """Return ONLY the scheme ("http" or "https") of a URL — never the host,
+    path, query string, or full URL.
+
+    SECURITY: this function's return value is the sole piece of information
+    ever retained from a webhook/callback URL. The full string passed in is
+    never stored, logged, or returned in any other form. Any scheme other
+    than http/https, or a missing/empty/unparseable value, returns ``None``
+    (unknown) — never defaulted to a "safe" scheme.
+
+    Examples:
+        "https://example.com/path?token=x" -> "https"
+        "http://example.com/path"           -> "http"
+        ""                                  -> None
+        None                                -> None
+        "not a url"                         -> None
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+    scheme = parsed.scheme.lower()
+    if scheme in ("http", "https"):
+        return scheme
+    return None
 
 
 # ── Connector ──────────────────────────────────────────────────────────────────
@@ -380,8 +416,9 @@ class TwilioConnector(BaseConnector):
               "address_requirements": "none", "emergency_status": "Active" }
 
         SECURITY: phone_number string is NEVER stored — only the last 4 chars.
-        sms_url, voice_url, status_callback strings are NEVER stored — only
-        boolean presence flags.
+        sms_url, voice_url, status_callback strings are NEVER stored — only a
+        boolean presence flag plus the URL scheme ("http"/"https"/``None``).
+        Host, path, query string, and the full URL are NEVER stored.
         """
         sid = _trunc(raw.get("sid") or "", length=200)
         phone_number_raw = raw.get("phone_number") or ""
@@ -406,10 +443,14 @@ class TwilioConnector(BaseConnector):
             "capability_sms": bool(capabilities.get("sms")),
             "capability_mms": bool(capabilities.get("mms")),
             "capability_fax": bool(capabilities.get("fax")),
-            # SECURITY: webhook URL strings are NEVER stored — boolean only.
+            # SECURITY: webhook URL strings are NEVER stored — boolean
+            # presence plus scheme only. Host, path, and query are discarded.
             "sms_url_configured": bool(raw.get("sms_url")),
             "voice_url_configured": bool(raw.get("voice_url")),
             "status_callback_configured": bool(raw.get("status_callback")),
+            "sms_url_scheme": _url_scheme(raw.get("sms_url")),
+            "voice_url_scheme": _url_scheme(raw.get("voice_url")),
+            "status_callback_scheme": _url_scheme(raw.get("status_callback")),
             "address_requirements": _trunc(raw.get("address_requirements") or "none"),
             "emergency_status": _trunc(raw.get("emergency_status") or ""),
         }
@@ -428,7 +469,9 @@ class TwilioConnector(BaseConnector):
               "mms_converter": true, "use_inbound_webhook_on_number": false }
 
         SECURITY: inbound_request_url, fallback_url, and status_callback_url
-        strings are NEVER stored — only boolean presence flags.
+        strings are NEVER stored — only a boolean presence flag plus the URL
+        scheme ("http"/"https"/``None``) for each. Host, path, query string,
+        and the full URL are NEVER stored.
         """
         sid = _trunc(raw.get("sid") or "", length=200)
 
@@ -438,10 +481,14 @@ class TwilioConnector(BaseConnector):
             "provider_resource_id": f"messaging_services/{sid}",
             "messaging_service_sid": sid,
             "friendly_name": _trunc(raw.get("friendly_name") or ""),
-            # SECURITY: URL strings are NEVER stored — booleans only.
+            # SECURITY: URL strings are NEVER stored — boolean presence plus
+            # scheme only. Host, path, and query are discarded.
             "inbound_request_url_configured": bool(raw.get("inbound_request_url")),
             "fallback_url_configured": bool(raw.get("fallback_url")),
             "status_callback_url_configured": bool(raw.get("status_callback_url")),
+            "inbound_request_url_scheme": _url_scheme(raw.get("inbound_request_url")),
+            "fallback_url_scheme": _url_scheme(raw.get("fallback_url")),
+            "status_callback_url_scheme": _url_scheme(raw.get("status_callback_url")),
             "smart_encoding": bool(raw.get("smart_encoding")),
             "validity_period": int(raw.get("validity_period") or 0),
             "area_code_geomatch": bool(raw.get("area_code_geomatch")),

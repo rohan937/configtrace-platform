@@ -207,6 +207,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "twilio_phone_number_voice_observability_gap": ("twilio", "medium", "Webhook configuration"),
     "twilio_verify_psd2_disabled": ("twilio", "low", "Verify services"),
     "twilio_verify_sms_to_landlines_allowed": ("twilio", "low", "Verify services"),
+    "twilio_webhook_uses_http": ("twilio", "high", "Webhook configuration"),
     # SendGrid — M80B
     "sendgrid_api_key_broad_scopes": ("sendgrid", "high", "API key scopes"),
     "sendgrid_sender_identity_unverified": ("sendgrid", "medium", "Sender identities"),

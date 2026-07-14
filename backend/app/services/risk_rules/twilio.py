@@ -17,15 +17,24 @@ these fields correctly.
 
 Severity ceiling
 -----------------
-Twilio has no ``"high"`` or ``"critical"`` classification in this module,
-matching every existing Twilio Security Finding (all 17 cap at ``medium``).
-The connector's normalized fields never expose a scope/permission-broadening
-signal (Twilio's API Key summary resource has no status/scope field at
-all — only SID, friendly name, and timestamps) or a webhook URL scheme
-(the connector deliberately stores webhook URLs as boolean presence flags
-only, never the URL string or its scheme — see
-``app/connectors/twilio_schema.py``). Without either signal, there is no
-Twilio field whose weakening genuinely rises above ``medium``.
+Every non-webhook-scheme classification in this module caps at ``medium``,
+matching every existing Twilio Security Finding for those fields (Twilio's
+API Key summary resource has no status/scope field at all — only SID,
+friendly name, and timestamps — so no field ever carries a scope-
+broadening signal analogous to other providers).
+
+The one exception is an explicit webhook URL scheme regressing from
+``"https"`` to ``"http"`` (``sms_url_scheme``, ``voice_url_scheme``,
+``status_callback_scheme``, ``inbound_request_url_scheme``,
+``fallback_url_scheme``, ``status_callback_url_scheme``), which is
+classified ``"high"`` — matching the equivalent GitHub webhook-HTTP
+convention (a plaintext delivery channel is a materially different risk
+category than a missing/weak configuration flag). Discovering an
+already-``"http"`` scheme with no prior known value is ``"medium"`` (a
+confirmed *regression* from https is worse than a first observation of an
+unknown-history http endpoint). Only the *scheme* is ever known or
+compared — the connector never stores the full URL, host, path, or query
+string (see ``app/connectors/twilio_schema.py``).
 
 Directionality
 ---------------
@@ -59,6 +68,52 @@ def _get(obj: Any, key: str) -> Any:
     if isinstance(obj, dict):
         return obj.get(key)
     return getattr(obj, key, None)
+
+
+# ── Shared webhook-scheme classifier ──────────────────────────────────────────
+
+
+def _classify_scheme_change(kind: str, prev_value: Any, new_value: Any) -> tuple[str, str]:
+    """Classify a webhook URL scheme transition. Only ever sees "http",
+    "https", or None (unknown/removed/unparseable) — never a full URL.
+
+    Directionality:
+      * https → http (confirmed regression)         : high
+      * unknown/missing → http (first observation)   : medium
+      * http → https (restoration)                   : medium
+      * anything → https with no prior http known    : low
+      * → None (unknown)                              : low, never escalated
+    """
+    if new_value == "http":
+        if prev_value == "https":
+            return (
+                "high",
+                f"A Twilio {kind} webhook changed from HTTPS to HTTP. Webhook "
+                "transport security is weakened. This may require review. "
+                "Configuration evidence does not confirm compromise, "
+                "unauthorized access, message exposure, or data exposure.",
+            )
+        return (
+            "medium",
+            f"A Twilio {kind} webhook uses HTTP. This may require review. "
+            "Configuration evidence does not confirm compromise, "
+            "unauthorized access, message exposure, or data exposure.",
+        )
+    if new_value == "https":
+        if prev_value == "http":
+            return (
+                "medium",
+                f"A Twilio {kind} webhook was restored to HTTPS. Webhook "
+                "transport security is improved.",
+            )
+        return (
+            "low",
+            f"A Twilio {kind} webhook uses HTTPS.",
+        )
+    return (
+        "low",
+        f"A Twilio {kind} webhook's transport scheme is now unknown.",
+    )
 
 
 # ── twilio_account ─────────────────────────────────────────────────────────────
@@ -97,7 +152,7 @@ def _classify_account_change(
 
 
 def _classify_phone_number_change(
-    change_type: str, field_path: str, new_value: Any
+    change_type: str, field_path: str, prev_value: Any, new_value: Any
 ) -> tuple[str, str]:
     if change_type in ("added", "removed"):
         return (
@@ -121,6 +176,18 @@ def _classify_phone_number_change(
             "low",
             f"A Twilio phone number's {kind} webhook was configured.",
         )
+
+    if change_type == "modified" and field_path in (
+        "sms_url_scheme",
+        "voice_url_scheme",
+        "status_callback_scheme",
+    ):
+        kind = {
+            "sms_url_scheme": "SMS",
+            "voice_url_scheme": "voice",
+            "status_callback_scheme": "status callback",
+        }[field_path]
+        return _classify_scheme_change(kind, prev_value, new_value)
 
     if change_type == "modified" and field_path == "status_callback_configured":
         if new_value is False:
@@ -169,7 +236,7 @@ def _classify_phone_number_change(
 
 
 def _classify_messaging_service_change(
-    change_type: str, field_path: str, new_value: Any
+    change_type: str, field_path: str, prev_value: Any, new_value: Any
 ) -> tuple[str, str]:
     if change_type in ("added", "removed"):
         return (
@@ -203,6 +270,18 @@ def _classify_messaging_service_change(
             "low",
             f"A Twilio Messaging Service's '{field_path}' was configured.",
         )
+
+    if change_type == "modified" and field_path in (
+        "inbound_request_url_scheme",
+        "fallback_url_scheme",
+        "status_callback_url_scheme",
+    ):
+        kind = {
+            "inbound_request_url_scheme": "inbound",
+            "fallback_url_scheme": "fallback",
+            "status_callback_url_scheme": "status callback",
+        }[field_path]
+        return _classify_scheme_change(kind, prev_value, new_value)
 
     if change_type == "modified" and field_path == "validity_period":
         try:
@@ -340,23 +419,25 @@ def classify_twilio_change(change: Change) -> tuple[str, str]:
         change: A ``Change`` ORM instance (or a plain dict, for testing).
 
     Returns:
-        ``(risk_level, risk_reason)`` where risk_level is one of ``"medium"``
-        or ``"low"``. Twilio has no ``"critical"`` or ``"high"``
-        classification — see the module docstring for why.
+        ``(risk_level, risk_reason)`` where risk_level is one of ``"high"``,
+        ``"medium"``, or ``"low"``. ``"high"`` only occurs for a webhook
+        scheme confirmed to regress from https to http; Twilio has no
+        ``"critical"`` classification — see the module docstring for why.
     """
     pm = _get(change, "provider_metadata") or {}
     record_type = (pm.get("record_type") or "").lower() if isinstance(pm, dict) else ""
 
     change_type = (_get(change, "change_type") or "").lower()
     field_path = _get(change, "field_path") or ""
+    prev_value = _get(change, "prev_value")
     new_value = _get(change, "new_value")
 
     if record_type == "twilio_account":
         return _classify_account_change(change_type, field_path, new_value)
     if record_type == "twilio_incoming_phone_number":
-        return _classify_phone_number_change(change_type, field_path, new_value)
+        return _classify_phone_number_change(change_type, field_path, prev_value, new_value)
     if record_type == "twilio_messaging_service":
-        return _classify_messaging_service_change(change_type, field_path, new_value)
+        return _classify_messaging_service_change(change_type, field_path, prev_value, new_value)
     if record_type == "twilio_verify_service":
         return _classify_verify_service_change(change_type, field_path, new_value)
     if record_type == "twilio_api_key_summary":

@@ -73,6 +73,8 @@ EXPECTED_TWILIO_RULE_KEYS = frozenset({
     "twilio_phone_number_voice_observability_gap",
     "twilio_verify_psd2_disabled",
     "twilio_verify_sms_to_landlines_allowed",
+    # Webhook scheme (transport posture)
+    "twilio_webhook_uses_http",
 })
 
 # Expected 7 Twilio signal types (M79E).
@@ -599,12 +601,12 @@ def test_fe_demo_script_no_forbidden_wording():
 
 
 def test_fe_rule_catalog_twilio_rule_count():
-    """securityRuleCatalog.ts contains all 17 Twilio rules."""
+    """securityRuleCatalog.ts contains all 18 Twilio rules."""
     text = _read_fe("lib/securityRuleCatalog.ts")
     entries = re.findall(r'key:\s*"(twilio_[a-z0-9_]+)"', text)
     keys = frozenset(entries)
-    assert len(keys) == 17, (
-        f"Expected 17 Twilio rules in catalog, found {len(keys)}: {sorted(keys)}"
+    assert len(keys) == 18, (
+        f"Expected 18 Twilio rules in catalog, found {len(keys)}: {sorted(keys)}"
     )
 
 
@@ -723,9 +725,9 @@ def test_fe_api_ts_demo_provider_union_includes_twilio():
 
 
 def test_backend_twilio_rule_keys_count():
-    """Backend TWILIO_RULE_KEYS has all 17 expected rules."""
-    assert len(TWILIO_RULE_KEYS) == 17, (
-        f"Expected 17 Twilio rule keys, found {len(TWILIO_RULE_KEYS)}"
+    """Backend TWILIO_RULE_KEYS has all 18 expected rules."""
+    assert len(TWILIO_RULE_KEYS) == 18, (
+        f"Expected 18 Twilio rule keys, found {len(TWILIO_RULE_KEYS)}"
     )
 
 

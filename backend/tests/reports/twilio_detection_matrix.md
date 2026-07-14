@@ -14,14 +14,16 @@ and `sendgrid_change_classification_matrix.md`.
   `TestErrorHandling`, including a dedicated `test_messaging_service_404_
   does_not_crash_fetch`). No auth tokens, full phone numbers, webhook URL
   strings, message content, or call/verification data are ever stored.
-- **Security findings** (current-state, "Configuration Risk"): 17 rules,
-  100% registered across `security_rule_registry.py`,
+- **Security findings** (current-state, "Configuration Risk"): 18 rules
+  (17 original + `twilio_webhook_uses_http` added in the follow-up scheme-
+  detection pass below), 100% registered across `security_rule_registry.py`,
   `security_rule_pack.py`, `security_rule_confidence.py`,
   `security_coverage_service.py`, and
   `frontend/src/lib/securityRuleCatalog.ts` — verified byte-for-byte parity
   (zero diff) between the rule keys defined in `security_rules/twilio.py`
-  and all four backend registries plus the frontend catalog. This was
-  already true before this QA pass; no fix needed.
+  and all four backend registries plus the frontend catalog. The original
+  17 were already in full parity before this QA pass; the 18th was added
+  and registered in the same pass that implemented scheme detection.
 - **Diff/drift tracking**: **one real gap found and fixed** — identical in
   shape to the SendGrid gap fixed in commit `4bd31f4`. Twilio had no entry
   in `diff_service.py`'s per-provider tracked-fields dispatch, so every
@@ -40,30 +42,47 @@ and `sendgrid_change_classification_matrix.md`.
   `medium` — Twilio's connector has no field that carries a `high`-grade
   signal; see "Not modeled" below for why).
 
-## Not modeled (reviewed, not fixed — explicit design constraint)
+## UPDATE — Webhook URL scheme detection implemented (items D, E, F, H)
 
-**Webhook URL scheme (HTTP vs. HTTPS) — items D, E, F, H.** The connector's
-privacy contract is explicit and repeated in three places (module
-docstring, connector class docstring, and `twilio_schema.py`'s module
-docstring): *"Webhook / callback URL strings — stored as boolean presence
-flags only"* — Twilio is deliberately **more conservative** than GitHub's
-webhook connector (which stores the full URL specifically to support
-scheme/host evidence in its SSL-verification and HTTP-webhook rules).
-Because the raw URL string is discarded to a boolean before it ever reaches
-a normalized record, **there is no scheme information available anywhere in
-the pipeline** to classify "HTTP vs. HTTPS."
+**Resolved.** The product decision flagged below as needing an explicit
+call was made: it is acceptable to store *only* the URL scheme
+(`"http"`/`"https"`/`None`) — never the full URL, host, path, query string,
+or embedded tokens. Implemented across the full pipeline:
 
-This was a deliberate call in this pass, not an oversight: extracting even
-just the URL *scheme* (e.g., a bare `"https"`/`"http"` enum, never host,
-path, or query string) would be a low-risk, zero-new-endpoint addition that
-directly enables items D/E/F/H — but it would mean silently reinterpreting
-an explicit, multiple-times-repeated security/privacy design statement made
-elsewhere in the codebase. That is a product decision, not a QA-pass fix.
-**Recommendation:** if HTTP-webhook detection for Twilio is wanted, make
-that decision explicitly (e.g., add `sms_url_scheme` / `voice_url_scheme` /
-`inbound_request_url_scheme` fields storing only the scheme, matching the
-GitHub webhook precedent) — do not have a future QA pass reinterpret this
-unilaterally either.
+- **Connector** (`twilio.py`): new `_url_scheme()` helper (`urlparse`-based,
+  returns `None` for anything that isn't exactly `http`/`https`). Applied to
+  `sms_url`, `voice_url`, `status_callback` (phone numbers) and
+  `inbound_request_url`, `fallback_url`, `status_callback_url` (Messaging
+  Services), producing `sms_url_scheme`, `voice_url_scheme`,
+  `status_callback_scheme`, `inbound_request_url_scheme`,
+  `fallback_url_scheme`, `status_callback_url_scheme`. No new API calls —
+  purely additional extraction from data already fetched. All three
+  privacy-contract docstrings (module, connector class, schema module) were
+  updated to describe the new "scheme only" contract precisely.
+- **Schema** (`twilio_schema.py`): both affected TypedDicts updated with the
+  six new `Optional[str]` fields and matching docstring language.
+- **Diff tracking**: all six new fields added to
+  `_TWILIO_TRACKED_FIELDS_BY_TYPE`.
+- **Change classification** (`risk_rules/twilio.py`): new shared
+  `_classify_scheme_change()` helper — `https → http` (confirmed
+  regression) is `high` (the one exception to this module's otherwise-
+  `medium` ceiling, matching the GitHub webhook-HTTP precedent);
+  unknown/missing `→ http` (first observation) is `medium`; `http → https`
+  (restoration) is `medium`; anything `→ None` (unknown) is `low`, never
+  escalated.
+- **Security finding**: new rule `twilio_webhook_uses_http` (`high`),
+  firing once per HTTP-scheme webhook field on a phone number or Messaging
+  Service record, registered across all four backend registries and the
+  frontend catalog (rule count 17 → 18 everywhere, verified).
+- **Tests**: new `backend/tests/test_twilio_webhook_scheme.py` (38 tests)
+  covering the extractor itself, connector normalization (https/http/
+  missing/invalid), diff detection in both directions, a same-scheme-
+  different-host no-op proof, Change classification for every transition,
+  and Security Finding positive/negative/unknown cases plus evidence/copy
+  safety. Plus updates to 5 existing test files whose hardcoded rule-count
+  assertions (17) needed bumping to 18.
+
+Items D, E, F, H are now **FIXED** — see the updated test matrix rows below.
 
 **Event Streams / Sinks — items I, J.** Not fetched by the connector at
 all; no endpoint call exists for `https://events.twilio.com` Sinks/
@@ -90,11 +109,11 @@ fetched. Correctly absent.
 | A. API key active/enabled posture | `twilio_api_key_summary` | — | n/a | n/a | not modeled | n/a | n/a | n/a | n/a | **N/A** | Twilio's API Keys API has no status/enabled field at all |
 | B. API key disabled/restricted posture | `twilio_api_key_summary` | — | n/a | n/a | not modeled | n/a | n/a | n/a | n/a | **N/A** | Same — API keys are binary exist/deleted, correctly modeled as add/remove |
 | C. API key scope/permission broadening | `twilio_api_key_summary` | — | n/a | n/a | not modeled | n/a | n/a | n/a | n/a | **N/A** | Twilio API keys carry no scope/permission model in the API itself |
-| D. Phone number webhook URL HTTP vs HTTPS | `twilio_incoming_phone_number` | `sms_url_configured`/`voice_url_configured` | n/a | n/a | not modeled (scheme not stored) | high (per task) | n/a | n/a | n/a | **GAP (documented, not fixed)** | See "Not modeled" above — deliberate privacy contract, needs an explicit product decision to extend |
+| D. Phone number webhook URL HTTP vs HTTPS | `twilio_incoming_phone_number` | `sms_url_scheme`, `voice_url_scheme`, `status_callback_scheme` | `"https" → "http"` | Change (high) + Security Finding (high) | Both fire | high | high | `twilio_webhook_uses_http` | `test_https_to_http_is_high`, `test_fires_on_explicit_http_phone_number` (in `test_twilio_webhook_scheme.py`) | **FIXED** | Implemented via scheme-only extraction — see update above |
 | E. Phone number webhook URL changed | `twilio_incoming_phone_number` | `sms_url_configured`, `voice_url_configured` | `True → False` (removed) | Change + medium finding | **Change now detected** (fixed); finding already fired | medium | medium | `twilio_phone_number_sms_webhook_missing` / `..._voice_webhook_missing` (medium) | `test_phone_number_sms_webhook_removed_is_medium`, `test_phone_number_voice_webhook_removed_is_medium`, `test_phone_number_sms_webhook_removed_produces_drift_change` | **FIXED** | Diff-tracking + classification both fixed in this pass |
-| F. Messaging service webhook URL HTTP vs HTTPS | `twilio_messaging_service` | `inbound_request_url_configured` | n/a | n/a | not modeled (scheme not stored) | high (per task) | n/a | n/a | n/a | **GAP (documented, not fixed)** | Same as D |
+| F. Messaging service webhook URL HTTP vs HTTPS | `twilio_messaging_service` | `inbound_request_url_scheme`, `fallback_url_scheme`, `status_callback_url_scheme` | `"https" → "http"` | Change (high) + Security Finding (high) | Both fire | high | high | `twilio_webhook_uses_http` | `test_messaging_service_inbound_https_to_http_is_high`, `test_fires_on_explicit_http_messaging_service` | **FIXED** | Same rule key as D — one shared rule fires on either record type |
 | G. Messaging service webhook disabled/enabled | `twilio_messaging_service` | `inbound_request_url_configured` | `True → False` | Change + medium finding | Change now detected; finding already fired | medium | medium | `twilio_messaging_service_inbound_webhook_missing` (medium) | `test_messaging_service_inbound_webhook_removed_is_medium` | **FIXED** | — |
-| H. Voice/application webhook HTTP vs HTTPS | `twilio_incoming_phone_number` | `voice_url_configured` | n/a | n/a | not modeled (scheme not stored) | high (per task) | n/a | n/a | n/a | **GAP (documented, not fixed)** | Same as D — "voice/application webhook" in this connector is the phone number's `voice_url`, same field as D |
+| H. Voice/application webhook HTTP vs HTTPS | `twilio_incoming_phone_number` | `voice_url_scheme` | `"https" → "http"` | Change (high) + Security Finding (high) | Both fire | high | high | `twilio_webhook_uses_http` | `test_voice_webhook_configured_is_low_improvement` (restoration direction), `test_https_to_http_is_high` (regression direction, same field family) | **FIXED** | "Voice/application webhook" in this connector is the phone number's `voice_url` field, same field as D |
 | I. Event sink enabled/disabled | n/a | n/a | n/a | n/a | not modeled | n/a | n/a | n/a | n/a | **N/A** | No Event Streams/Sinks endpoint fetched |
 | J. Event sink destination changed | n/a | n/a | n/a | n/a | not modeled | n/a | n/a | n/a | n/a | **N/A** | Same as I |
 | K. Account/subaccount setting weakened | `twilio_account` | `status` | `"active" → "suspended"` | Change + finding | Change now detected; finding already fired | medium | medium | `twilio_account_suspended` (low, reviewed — see note) | `test_account_status_non_active_is_medium`, `test_account_status_change_produces_drift_change` | **FIXED** | Change classifier uses `medium` (a real status change is more actionable than the finding's conservative `low`, which also covers ambiguous "unknown" status — see note below) |
@@ -104,7 +123,7 @@ fetched. Correctly absent.
 | N. 403/404 fail-soft on optional endpoints | phone numbers, messaging services, verify services, API keys | n/a | endpoint returns error | sync continues, other surfaces unaffected | Confirmed via `TestErrorHandling.test_messaging_service_404_does_not_crash_fetch` and the parametrized 403/404/422/500/502 → `ConnectorError` test | n/a | n/a | n/a | `test_messaging_service_404_does_not_crash_fetch`, `test_raise_for_status_4xx_5xx_raises_connector_error` | PASS | Only account fetch is required (credential-validation anchor); all others fail soft |
 | O. Records with normalized fields but no security rule | `twilio_account` (`account_type`, `friendly_name`, `subaccount_count`), `twilio_incoming_phone_number` (`friendly_name`, `iso_country`, `address_requirements`, individual `capability_*` booleans), `twilio_messaging_service` (`friendly_name`, `smart_encoding`, `area_code_geomatch`, `sticky_sender`, `mms_converter`), `twilio_verify_service` (`friendly_name`, `default_template_sid_present`) | n/a | n/a | n/a | correctly no finding (cosmetic/low-signal fields) | n/a | n/a | n/a | n/a | PASS | These are display/identity/low-signal fields, not security-relevant on their own — correctly have no dedicated rule. All still diff-tracked and Change-classified at `low` |
 | P. Security rules with no reachable normalized record | — | — | — | — | none found — all 17 rules dispatch from `evaluate()` against one of the 5 real record types, verified via `TestSendGridEvaluatorDispatch`-equivalent coverage in `test_twilio_provider_depth_qa.py` | n/a | n/a | n/a | existing M79B/M79C/QA test suites | PASS | Zero dead/unreachable rules |
-| Registry/pack/confidence/coverage/frontend parity | n/a | n/a | n/a | all 17 rule keys present everywhere with matching severities | Verified via exact set diff: `security_rules/twilio.py` (17) vs. `security_rule_registry.py` (17), `security_rule_pack.py` (17), `security_rule_confidence.py` (17), `security_coverage_service.py` `RULE_RECORD_TYPES` (17), `securityRuleCatalog.ts` (17) | n/a | n/a | all | `test_twilio_provider_depth_qa.py` (`len(ALL_TWILIO_RULE_KEYS) == 17`) | PASS | Zero mismatches found |
+| Registry/pack/confidence/coverage/frontend parity | n/a | n/a | n/a | all 18 rule keys present everywhere with matching severities | Verified via exact set diff: `security_rules/twilio.py` (18) vs. `security_rule_registry.py` (18), `security_rule_pack.py` (18), `security_rule_confidence.py` (18), `security_coverage_service.py` `RULE_RECORD_TYPES` (18), `securityRuleCatalog.ts` (18) | n/a | n/a | all | `test_twilio_provider_depth_qa.py` (`len(ALL_TWILIO_RULE_KEYS) == 18`) | PASS | Zero mismatches found (was 17 before the scheme-detection pass added `twilio_webhook_uses_http`) |
 | Diff-tracked fields present for all 5 record types | all | all normalized fields | n/a | every normalized field that isn't a pure identity field is diff-tracked | **0 of 5 record types tracked (before fix)** → **5 of 5 tracked (after fix)** | n/a | n/a | n/a | new `TestTwilioDiffTrackedFields` (6 tests) | **FIXED** | The core fix of this QA pass |
 
 ## Note on `twilio_account_suspended` severity (reviewed, not changed)
@@ -124,12 +143,12 @@ this is not a parity bug and was **not changed** in this pass.
 
 | Metric | Count |
 |---|---|
-| Total Twilio test cases reviewed | 22 (rows in the table above, D/H collapsed as the same underlying field) |
+| Total Twilio test cases reviewed | 22 (rows in the table above) |
 | PASS | 8 |
 | FAIL | 0 |
-| FIXED (previously misclassified/undetected, now correct) | 8 |
+| FIXED (previously misclassified/undetected/gap, now correct) | 11 (8 from the original pass + D, F, H from the scheme-detection follow-up) |
 | N/A (not modeled, correctly absent per API/connector reality) | 5 |
-| GAP (documented, deliberately not fixed — needs a product decision) | 3 (D, F, H — all the same underlying scheme-detection gap) |
+| GAP (remaining, not fixed) | 0 |
 
 ## Fixes made
 
@@ -152,6 +171,40 @@ this is not a parity bug and was **not changed** in this pass.
    every category A–M from the task plus the dispatch-regression test.
 6. **`backend/tests/reports/twilio_detection_matrix.md`** — this report.
 
+### Follow-up pass — webhook URL scheme detection
+
+7. **`backend/app/connectors/twilio.py`** — new `_url_scheme()` helper;
+   applied to both phone-number and Messaging Service normalizers; privacy
+   contract docstrings updated (module + class level).
+8. **`backend/app/connectors/twilio_schema.py`** — 6 new `Optional[str]`
+   scheme fields added to the two affected TypedDicts; docstrings updated.
+9. **`backend/app/services/diff_service.py`** — 6 new scheme fields added
+   to `_TWILIO_TRACKED_FIELDS_BY_TYPE`.
+10. **`backend/app/services/risk_rules/twilio.py`** — new
+    `_classify_scheme_change()` shared helper; wired into both phone-number
+    and messaging-service classifiers; module docstring updated to document
+    the one `high`-severity exception.
+11. **`backend/app/services/security_rules/twilio.py`** — new rule
+    `twilio_webhook_uses_http` (high), two new check functions (phone
+    number, messaging service), wired into both `_eval_*` dispatchers.
+12. **`backend/app/services/security_rule_registry.py`**,
+    **`security_rule_pack.py`**, **`security_rule_confidence.py`**,
+    **`security_coverage_service.py`**, **`frontend/src/lib/
+    securityRuleCatalog.ts`** — new rule registered in all five places.
+13. **`backend/app/services/twilio_risk_activity_correlation_service.py`**
+    — new rule key added to both the phone-number and messaging-service
+    correlation buckets (it fires on both record types).
+14. **`backend/tests/test_twilio_webhook_scheme.py`** (new, 38 tests) —
+    end-to-end coverage of the extractor, connector normalization, diff
+    detection, Change classification, and Security Finding behavior.
+15. **`backend/tests/test_milestone79b_twilio_core_security_foundation.py`**,
+    **`test_milestone79c_twilio_messaging_webhook_risk_expansion.py`**,
+    **`test_milestone79h_twilio_provider_depth_qa.py`**,
+    **`test_milestone79i_twilio_cross_cloud_ux_polish.py`**,
+    **`test_twilio_provider_depth_qa.py`** — hardcoded rule-count
+    assertions (17) and expected-key sets updated to include
+    `twilio_webhook_uses_http` (18 total).
+
 ## Validation run (narrow, foreground only)
 
 ```
@@ -160,20 +213,25 @@ DATABASE_URL="postgresql://configtrace:configtrace@localhost:5432/configtrace" \
 # 147 passed
 
 DATABASE_URL="postgresql://configtrace:configtrace@localhost:5432/configtrace" \
-  .venv/bin/pytest tests -q -k "twilio and risk"
-# 110 passed, 16791 deselected
+  .venv/bin/pytest tests/test_twilio_risk_rules.py -q
+# 26 passed
+
+DATABASE_URL="postgresql://configtrace:configtrace@localhost:5432/configtrace" \
+  .venv/bin/pytest tests -q -k "twilio and webhook"
+# 137 passed, 16802 deselected
 
 DATABASE_URL="postgresql://configtrace:configtrace@localhost:5432/configtrace" \
   .venv/bin/pytest tests -q -k "twilio and diff"
-# 15 passed, 16886 deselected
+# 19 passed, 16920 deselected
 
 DATABASE_URL="postgresql://configtrace:configtrace@localhost:5432/configtrace" \
   .venv/bin/pytest tests -q -k "twilio"
-# 675 passed, 1 skipped, 16225 deselected (was 643 passed, 1 skipped before this pass)
+# 713 passed, 1 skipped, 16225 deselected (was 675 passed, 1 skipped before this follow-up pass)
 
 DATABASE_URL="postgresql://configtrace:configtrace@localhost:5432/configtrace" \
-  .venv/bin/pytest tests/test_twilio_risk_rules.py -q
-# 26 passed
+  .venv/bin/pytest tests/test_twilio_webhook_scheme.py -q
+# 38 passed
 ```
 
-No frontend files were touched, so `npx tsc --noEmit` was not run.
+Frontend catalog changed (`securityRuleCatalog.ts`), so `npx tsc --noEmit`
+was run: clean, no errors.

@@ -167,9 +167,9 @@ class TestRuleKeyExistence:
         from app.services.security_rules.twilio import TWILIO_RULE_KEYS
         self.keys = TWILIO_RULE_KEYS
 
-    def test_total_rule_keys_is_17(self):
-        assert len(self.keys) == 17, (
-            f"expected 17 total rule keys, got {len(self.keys)}: {sorted(self.keys)}"
+    def test_total_rule_keys_is_18(self):
+        assert len(self.keys) == 18, (
+            f"expected 18 total rule keys, got {len(self.keys)}: {sorted(self.keys)}"
         )
 
     def test_api_key_stale_in_keys(self):

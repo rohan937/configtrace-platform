@@ -128,6 +128,8 @@ EXPECTED_RULE_KEYS = {
     "twilio_phone_number_voice_observability_gap",
     "twilio_verify_psd2_disabled",
     "twilio_verify_sms_to_landlines_allowed",
+    # Webhook scheme (transport posture)
+    "twilio_webhook_uses_http",
 }
 
 # Canonical activity event types produced by the ingestion pipeline (15 total,

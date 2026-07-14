@@ -225,6 +225,7 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "twilio_phone_number_voice_observability_gap": ("twilio_incoming_phone_number",),
     "twilio_verify_psd2_disabled": ("twilio_verify_service",),
     "twilio_verify_sms_to_landlines_allowed": ("twilio_verify_service",),
+    "twilio_webhook_uses_http": ("twilio_incoming_phone_number", "twilio_messaging_service"),
     # SendGrid — M80B
     "sendgrid_api_key_broad_scopes": ("sendgrid_api_key",),
     "sendgrid_sender_identity_unverified": ("sendgrid_sender_identity",),

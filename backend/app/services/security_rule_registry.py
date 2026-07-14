@@ -179,6 +179,7 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "twilio_phone_number_voice_observability_gap",
         "twilio_verify_psd2_disabled",
         "twilio_verify_sms_to_landlines_allowed",
+        "twilio_webhook_uses_http",
         # SendGrid — M80B
         "sendgrid_api_key_broad_scopes",
         "sendgrid_sender_identity_unverified",

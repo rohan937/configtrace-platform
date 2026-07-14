@@ -3,10 +3,11 @@
 Every rule fires only on explicit, reliable normalized fields produced by the
 Twilio connector (app/connectors/twilio.py + twilio_schema.py). Evidence is
 metadata-only: SIDs, friendly names, phone_number_last4, capability booleans,
-webhook presence booleans, code length, and account status strings. No
-auth_token, API key secret, full phone number strings, webhook URL strings,
-message bodies, call logs, recording data, customer PII, or raw API responses
-are ever read, stored, or surfaced.
+webhook presence booleans, webhook URL *scheme* only ("http"/"https" — never
+the host, path, query string, or full URL), code length, and account status
+strings. No auth_token, API key secret, full phone number strings, webhook
+URL/host/path/query strings, message bodies, call logs, recording data,
+customer PII, or raw API responses are ever read, stored, or surfaced.
 
 CLAIM DISCIPLINE
 ----------------
@@ -19,12 +20,22 @@ that a breach occurred, or that any attacker is present.
 Record types consumed (M79A)
 ----------------------------
 - ``twilio_incoming_phone_number`` → SMS/voice webhook missing, status
-                                       callback missing
+                                       callback missing, webhook uses HTTP
 - ``twilio_messaging_service``    → inbound webhook missing, fallback URL
-                                       missing, status callback URL missing
+                                       missing, status callback URL missing,
+                                       webhook uses HTTP
 - ``twilio_verify_service``       → short code length, lookup disabled
 - ``twilio_account``              → non-active account status
 - ``twilio_api_key_summary``      → stale API key (M79C)
+
+Webhook scheme (transport posture) rule
+----------------------------------------
+  twilio_webhook_uses_http — fires once per webhook field (SMS/voice/status
+    callback on a phone number; inbound/fallback/status callback on a
+    Messaging Service) whose scheme is explicitly resolved to "http".
+    Severity "high" — the one exception to this module's otherwise-medium
+    ceiling, matching the equivalent GitHub webhook-HTTP convention. Never
+    fires on an unknown/unparseable/missing scheme.
 
 M79C expansion rules
 --------------------
@@ -84,6 +95,10 @@ _RULE_PHONE_VOICE_OBS_GAP = "twilio_phone_number_voice_observability_gap"
 _RULE_VERIFY_PSD2_DISABLED = "twilio_verify_psd2_disabled"
 _RULE_VERIFY_SMS_TO_LANDLINES = "twilio_verify_sms_to_landlines_allowed"
 
+# ── Rule keys — webhook scheme (transport posture) ────────────────────────────
+
+_RULE_WEBHOOK_USES_HTTP = "twilio_webhook_uses_http"
+
 _STALE_THRESHOLD_DAYS = 180
 
 TWILIO_RULE_KEYS: frozenset[str] = frozenset({
@@ -106,6 +121,8 @@ TWILIO_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_PHONE_VOICE_OBS_GAP,
     _RULE_VERIFY_PSD2_DISABLED,
     _RULE_VERIFY_SMS_TO_LANDLINES,
+    # Webhook scheme
+    _RULE_WEBHOOK_USES_HTTP,
 })
 
 
@@ -273,6 +290,66 @@ def _eval_phone_number(record: dict[str, Any]) -> list[FindingCandidate]:
         result = check_fn(record)
         if result is not None:
             out.append(result)
+    out.extend(_check_phone_number_webhook_uses_http(record))
+    return out
+
+
+def _check_phone_number_webhook_uses_http(
+    record: dict[str, Any],
+) -> list[FindingCandidate]:
+    """Fire once per webhook field on this phone number whose scheme is
+    explicitly ``"http"``. Unknown/missing scheme (``None``, e.g. no webhook
+    configured, or a scheme the connector couldn't parse) never fires — only
+    an explicitly-resolved ``"http"`` does.
+
+    SECURITY: only the scheme string ("http") is ever read or surfaced in
+    evidence — never the host, path, query string, or full URL, which the
+    connector never stores in the first place.
+    """
+    if record.get("record_type") != TWILIO_INCOMING_PHONE_NUMBER:
+        return []
+    record_id = get_str(record, "record_id") or None
+    out: list[FindingCandidate] = []
+    for field, kind in (
+        ("sms_url_scheme", "SMS"),
+        ("voice_url_scheme", "voice"),
+        ("status_callback_scheme", "status callback"),
+    ):
+        if record.get(field) != "http":
+            continue
+        finding_key_discriminator = f"{record_id}:{field}" if record_id else field
+        out.append(
+            FindingCandidate(
+                provider="twilio",
+                rule_key=_RULE_WEBHOOK_USES_HTTP,
+                finding_key=make_finding_key(_RULE_WEBHOOK_USES_HTTP, finding_key_discriminator),
+                severity="high",
+                title="Twilio webhook uses HTTP",
+                description=(
+                    f"This Twilio phone number's {kind} webhook uses plain HTTP "
+                    "instead of HTTPS. Webhook transport verification is "
+                    "weakened. This may require review. Configuration evidence "
+                    "does not confirm compromise, unauthorized access, message "
+                    "exposure, or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_WEBHOOK_USES_HTTP,
+                    "phone_number_sid": get_str(record, "phone_number_sid"),
+                    "friendly_name": get_str(record, "friendly_name"),
+                    "webhook_field": field,
+                    "scheme": "http",
+                },
+                remediation={
+                    "summary": "Switch this webhook to an HTTPS endpoint.",
+                    "steps": [
+                        "In the Twilio Console, navigate to Phone Numbers > Manage > Active numbers.",
+                        "Update the webhook URL to use https:// instead of http://.",
+                        "Verify the HTTPS endpoint is reachable and presents a valid certificate.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
     return out
 
 
@@ -413,6 +490,63 @@ def _eval_messaging_service(record: dict[str, Any]) -> list[FindingCandidate]:
         result = check_fn(record)
         if result is not None:
             out.append(result)
+    out.extend(_check_messaging_service_webhook_uses_http(record))
+    return out
+
+
+def _check_messaging_service_webhook_uses_http(
+    record: dict[str, Any],
+) -> list[FindingCandidate]:
+    """Fire once per webhook field on this Messaging Service whose scheme is
+    explicitly ``"http"``. Unknown/missing scheme never fires.
+
+    SECURITY: only the scheme string ("http") is ever read or surfaced in
+    evidence — never the host, path, query string, or full URL.
+    """
+    if record.get("record_type") != TWILIO_MESSAGING_SERVICE:
+        return []
+    record_id = get_str(record, "record_id") or None
+    out: list[FindingCandidate] = []
+    for field, kind in (
+        ("inbound_request_url_scheme", "inbound"),
+        ("fallback_url_scheme", "fallback"),
+        ("status_callback_url_scheme", "status callback"),
+    ):
+        if record.get(field) != "http":
+            continue
+        finding_key_discriminator = f"{record_id}:{field}" if record_id else field
+        out.append(
+            FindingCandidate(
+                provider="twilio",
+                rule_key=_RULE_WEBHOOK_USES_HTTP,
+                finding_key=make_finding_key(_RULE_WEBHOOK_USES_HTTP, finding_key_discriminator),
+                severity="high",
+                title="Twilio webhook uses HTTP",
+                description=(
+                    f"This Twilio Messaging Service's {kind} webhook uses plain "
+                    "HTTP instead of HTTPS. Webhook transport verification is "
+                    "weakened. This may require review. Configuration evidence "
+                    "does not confirm compromise, unauthorized access, message "
+                    "exposure, or data exposure."
+                ),
+                evidence={
+                    "rule": _RULE_WEBHOOK_USES_HTTP,
+                    "messaging_service_sid": get_str(record, "messaging_service_sid"),
+                    "friendly_name": get_str(record, "friendly_name"),
+                    "webhook_field": field,
+                    "scheme": "http",
+                },
+                remediation={
+                    "summary": "Switch this webhook to an HTTPS endpoint.",
+                    "steps": [
+                        "In the Twilio Console, navigate to Messaging > Services.",
+                        "Update the webhook URL to use https:// instead of http://.",
+                        "Verify the HTTPS endpoint is reachable and presents a valid certificate.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
     return out
 
 

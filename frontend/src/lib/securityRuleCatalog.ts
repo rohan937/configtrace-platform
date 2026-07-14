@@ -2461,6 +2461,27 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only an explicit skip_sms_to_landlines=false fires; missing or unknown values are skipped. Some deployments may intentionally allow all number types.",
   },
+  {
+    key: "twilio_webhook_uses_http",
+    provider: "twilio",
+    severity: "high",
+    title: "Twilio webhook uses HTTP",
+    category: "Webhook configuration",
+    confidence: "high",
+    metadataOnly: true,
+    description:
+      "A Twilio phone number or Messaging Service webhook uses plain HTTP instead of HTTPS. Webhook transport verification is weakened.",
+    whatItChecks:
+      "The scheme ('http'/'https') of each configured webhook field (SMS, voice, status callback on a phone number; inbound, fallback, status callback on a Messaging Service).",
+    whyItMatters:
+      "A plain-HTTP webhook weakens transport verification for delivery events. This is configuration evidence for review — it does not confirm compromise, unauthorized access, message exposure, or data exposure.",
+    evidence:
+      "Phone number SID or Messaging Service SID, friendly_name, the affected webhook field name, and the scheme ('http'). The host, path, query string, and full URL are never stored or surfaced.",
+    remediation:
+      "Update the webhook URL to use https:// and verify the endpoint presents a valid certificate.",
+    falsePositiveGuard:
+      "Only fires when the connector explicitly resolved a webhook URL scheme to 'http'; unknown, unparseable, or missing schemes never fire.",
+  },
   // ── SendGrid — M80B ──────────────────────────────────────────────────────────
   {
     key: "sendgrid_api_key_broad_scopes",

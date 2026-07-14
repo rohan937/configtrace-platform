@@ -78,6 +78,7 @@ TWILIO_CORRELATION_RULES: dict[str, dict[str, Any]] = {
             "twilio_phone_number_status_callback_missing",
             "twilio_phone_number_messaging_observability_gap",
             "twilio_phone_number_voice_observability_gap",
+            "twilio_webhook_uses_http",
         },
         "signal_types": {
             "twilio_phone_number_config_changed",
@@ -96,6 +97,7 @@ TWILIO_CORRELATION_RULES: dict[str, dict[str, Any]] = {
             "twilio_messaging_service_observability_gap",
             "twilio_messaging_service_number_level_inbound_webhook",
             "twilio_messaging_service_long_validity_period",
+            "twilio_webhook_uses_http",
         },
         "signal_types": {
             "twilio_messaging_service_config_changed",

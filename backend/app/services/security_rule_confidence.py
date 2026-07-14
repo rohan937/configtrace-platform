@@ -207,6 +207,7 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "twilio_phone_number_voice_observability_gap": (HIGH, "Only fires when capability_voice=true AND both voice_url_configured=false AND status_callback_configured=false on a twilio_incoming_phone_number record."),
     "twilio_verify_psd2_disabled": (MEDIUM, "Only an explicit psd2_enabled=false fires; missing/unknown is skipped. PSD2 is only relevant for financial transaction verification in regulated markets."),
     "twilio_verify_sms_to_landlines_allowed": (MEDIUM, "Only an explicit skip_sms_to_landlines=false fires; missing/unknown is skipped."),
+    "twilio_webhook_uses_http": (HIGH, "Only fires when the connector explicitly resolved a webhook URL scheme to 'http'; unknown/unparseable/missing schemes never fire."),
     # SendGrid — M80B
     "sendgrid_api_key_broad_scopes": (HIGH, "Only fires when has_full_access=true on a sendgrid_api_key record; missing/false is never flagged."),
     "sendgrid_sender_identity_unverified": (HIGH, "Only fires when verified=false on a sendgrid_sender_identity record; missing/unknown is skipped."),

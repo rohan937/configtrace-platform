@@ -7,13 +7,15 @@ Five safe drift surfaces ingested in the initial Twilio connector milestone:
     twilio_account                  — account metadata (status, type, friendly
                                       name truncated; SID stored as prefix only)
     twilio_incoming_phone_number    — phone number configuration posture (last-4
-                                      digits only; webhook URLs as booleans;
+                                      digits only; webhook URLs as boolean
+                                      presence + scheme only, never the URL;
                                       capabilities, address requirements,
                                       emergency status)
     twilio_messaging_service        — Messaging Service configuration posture
-                                      (URL presence as booleans; smart encoding,
-                                      validity period, geomatch, sticky sender,
-                                      MMS converter, number count)
+                                      (URL presence + scheme only, never the
+                                      URL; smart encoding, validity period,
+                                      geomatch, sticky sender, MMS converter,
+                                      number count)
     twilio_verify_service           — Verify Service configuration posture (code
                                       length, lookup/PSD2/landline-skip flags,
                                       default template presence)
@@ -29,7 +31,9 @@ re-identifying field is ever stored on a normalised record.
 Never stored:
   - auth_token or any API secret / private key material
   - full phone numbers (only the last 4 digits are kept)
-  - webhook / callback URL strings (stored as bool: configured or not)
+  - webhook / callback URL strings — only a boolean presence flag plus the
+    URL *scheme* ("http"/"https"/``None``) is stored for each. Host, path,
+    query string, and the full URL are NEVER persisted or logged.
   - message bodies, call SIDs, call legs, recording data
   - customer PII (caller name, call metadata, SMS content)
   - raw Twilio API response dicts
@@ -37,7 +41,7 @@ Never stored:
 """
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 # ── M79A record type string constants ─────────────────────────────────────────
 
@@ -105,7 +109,8 @@ class TwilioIncomingPhoneNumberRecord(TypedDict):
 
     SECURITY: the full phone number string is NEVER stored — only the last 4
     digits (phone_number_last4). Webhook URL strings are NEVER stored — only
-    boolean flags indicating whether they are configured.
+    a boolean presence flag plus the URL scheme ("http"/"https"/``None``).
+    Host, path, query string, and the full URL are NEVER persisted.
     """
 
     record_type: str            # always "twilio_incoming_phone_number"
@@ -122,6 +127,9 @@ class TwilioIncomingPhoneNumberRecord(TypedDict):
     sms_url_configured: bool    # bool(sms_url) — URL string is NEVER stored
     voice_url_configured: bool  # bool(voice_url) — URL string is NEVER stored
     status_callback_configured: bool  # bool(status_callback)
+    sms_url_scheme: Optional[str]          # "http" | "https" | None — scheme only
+    voice_url_scheme: Optional[str]        # "http" | "https" | None — scheme only
+    status_callback_scheme: Optional[str]  # "http" | "https" | None — scheme only
     address_requirements: str   # "none" | "local" | "foreign" | "any"
     emergency_status: str       # "Active" | "Inactive" | ""
 
@@ -130,8 +138,10 @@ class TwilioMessagingServiceRecord(TypedDict):
     """Safe normalised record for a Twilio Messaging Service (M79A).
 
     SECURITY: webhook URL strings (inbound_request_url, fallback_url,
-    status_callback_url) are NEVER stored — only boolean presence flags.
-    Message content and sender identities are never accessed.
+    status_callback_url) are NEVER stored — only a boolean presence flag
+    plus the URL scheme ("http"/"https"/``None``) for each. Host, path,
+    query string, and the full URL are NEVER persisted. Message content and
+    sender identities are never accessed.
     """
 
     record_type: str                        # always "twilio_messaging_service"
@@ -142,6 +152,9 @@ class TwilioMessagingServiceRecord(TypedDict):
     inbound_request_url_configured: bool   # bool(inbound_request_url)
     fallback_url_configured: bool          # bool(fallback_url)
     status_callback_url_configured: bool   # bool(status_callback_url)
+    inbound_request_url_scheme: Optional[str]   # "http" | "https" | None
+    fallback_url_scheme: Optional[str]          # "http" | "https" | None
+    status_callback_url_scheme: Optional[str]   # "http" | "https" | None
     smart_encoding: bool                   # smart encoding enabled
     validity_period: int                   # message validity period in seconds
     area_code_geomatch: bool               # area code geomatch enabled

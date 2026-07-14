@@ -66,6 +66,7 @@ TWILIO_RULE_KEYS = [
     "twilio_phone_number_voice_observability_gap",
     "twilio_verify_psd2_disabled",
     "twilio_verify_sms_to_landlines_allowed",
+    "twilio_webhook_uses_http",
 ]
 
 ALL_TWILIO_RULE_KEYS: frozenset[str] = frozenset(TWILIO_RULE_KEYS)
@@ -237,6 +238,21 @@ def _all_twilio_findings() -> list[Any]:
             "date_created": old,
             "date_updated": old,
         },
+        # Phone number: SMS webhook uses plain HTTP → webhook uses HTTP (1 rule).
+        # Separate record so it doesn't collide with the webhook-missing rules
+        # above (which require sms_url_configured=False).
+        {
+            "record_type": TWILIO_INCOMING_PHONE_NUMBER,
+            "record_id": "PNdepth02",
+            "phone_number_sid": "PNdepth02",
+            "friendly_name": "Depth Phone HTTP",
+            "phone_number_last4": "8765",
+            "iso_country": "US",
+            "capability_sms": True,
+            "capability_voice": False,
+            "sms_url_configured": True,
+            "sms_url_scheme": "http",
+        },
     ]
     out: list[Any] = []
     for r in records:
@@ -247,8 +263,8 @@ def _all_twilio_findings() -> list[Any]:
 # ── TestTwilioRuleRegistration ────────────────────────────────────────────────
 
 class TestTwilioRuleRegistration:
-    def test_rule_key_count_is_seventeen(self) -> None:
-        assert len(ALL_TWILIO_RULE_KEYS) == 17
+    def test_rule_key_count_is_eighteen(self) -> None:
+        assert len(ALL_TWILIO_RULE_KEYS) == 18
 
     def test_module_export_matches_canonical_set(self) -> None:
         from app.services.security_rules.twilio import TWILIO_RULE_KEYS as MOD_KEYS
