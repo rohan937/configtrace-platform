@@ -11,24 +11,28 @@ provider capability matrix already (incorrectly) advertising
 
 Risk levels
 -----------
-high   — password/implicit OAuth grants enabled; a public/client-side app
-         gains the client_credentials grant; a wildcard callback or
+high   — password/implicit OAuth grants enabled; a wildcard callback or
          allowed-origin is present; a weak (symmetric) JWT signing
-         algorithm is configured; dynamic client registration is enabled
-         tenant-wide; a database connection's password policy is weak or
-         unconfigured.
+         algorithm is configured (application or API); dynamic client
+         registration is enabled tenant-wide; a database connection's
+         password policy is weak or unconfigured; a database connection's
+         MFA capability is disabled.
 
 medium — OIDC conformance disabled; callback/origin counts cross the
          "many" review threshold; a broad grant-type surface; a wildcard
          logout URL; callbacks/origins missing HTTPS; refresh token
          rotation disabled; refresh token or access token lifetime
-         extended; token endpoint auth method is "none"; a public client
-         gains the refresh_token grant; API offline access enabled; API
-         RBAC disabled; tenant session lifetime extended; custom domain
-         not in a ready state.
+         extended; token endpoint auth method is "none"; API offline
+         access enabled; API RBAC disabled; tenant session lifetime
+         extended; custom domain not in a ready state; a strong MFA
+         factor is disabled.
 
-low    — device code grant; localhost callback/origin; idle session
-         lifetime extended; connection with no enabled clients; rule
+low    — client_credentials grant enabled (Change-only signal: the
+         combined "public client + client_credentials" Security Finding
+         requires app_type, which a single-field Change cannot see, so
+         this is deliberately NOT elevated by default); device code
+         grant; localhost callback/origin; idle session lifetime
+         extended; connection with no enabled clients; rule
          disabled/large script; action not deployed / has secrets; custom
          domain weak TLS policy; count-only changes with unclear impact;
          metadata-only drift; unknown/missing category fields; safe
@@ -298,12 +302,18 @@ def _classify_application_change(change: Change) -> tuple[str, str]:
         return ("low", "Auth0 application implicit grant state is now unknown or missing.")
 
     if fp == "grant_client_credentials_enabled":
+        # Change-only signal, deliberately kept low rather than mirroring
+        # auth0_application_public_client_credentials_enabled (high): that
+        # Finding requires the COMBINATION of this grant with a public/
+        # client-side app_type or token_endpoint_auth_method="none". Client
+        # credentials is Auth0's standard, expected grant for confidential
+        # machine-to-machine applications — defaulting to an elevated
+        # severity on every enablement would over-alert on the common,
+        # expected case. The Finding layer (which can see app_type) already
+        # covers the genuinely risky combination; see design notes in
+        # auth0_change_classification_matrix.md.
         if _is_truthy(new_v):
-            return (
-                "medium",
-                "Auth0 application OAuth posture changed — the client "
-                "credentials grant was enabled. This may require review.",
-            )
+            return ("low", "Auth0 application client credentials grant was enabled. This may require review.")
         if _is_falsy_explicit(new_v):
             return ("low", "Auth0 application client credentials grant was disabled.")
         return ("low", "Auth0 application client credentials grant state is now unknown or missing.")
@@ -387,7 +397,7 @@ def _classify_application_change(change: Change) -> tuple[str, str]:
     if fp in (
         "name", "app_type", "is_first_party", "grant_types_summary",
         "grant_authorization_code_enabled", "grant_refresh_token_enabled",
-        "grant_mfa_enabled",
+        "grant_mfa_enabled", "allowed_logout_urls_count",
     ):
         return ("low", f"Auth0 application {fp.replace('_', ' ')} changed.")
 
@@ -433,9 +443,9 @@ def _classify_connection_change(change: Change) -> tuple[str, str]:
         return ("low", "Auth0 connection password policy was strengthened.")
 
     if fp == "mfa_enabled":
-        # Change-only signal: no dedicated Security Finding exists yet for
-        # connection-level mfa_enabled (see auth0_detection_matrix.md,
-        # category S) — classified per this task's MFA severity convention.
+        # Matches auth0_connection_mfa_disabled (high), added during the
+        # change-classification QA pass to close the Finding-layer gap
+        # documented in auth0_detection_matrix.md, category S.
         if _is_falsy_explicit(new_v):
             return (
                 "high",
@@ -498,9 +508,9 @@ def _classify_resource_server_change(change: Change) -> tuple[str, str]:
         return ("low", "Auth0 API RBAC enforcement state is now unknown or missing.")
 
     if fp == "signing_alg":
-        # Change-only signal: security_rules/auth0.py only evaluates
-        # jwt_alg weakness at the auth0_application record type, not on
-        # auth0_resource_server — see auth0_detection_matrix.md, category S.
+        # Matches auth0_resource_server_weak_signing_algorithm (high), added
+        # during the change-classification QA pass to close the Finding-layer
+        # gap documented in auth0_detection_matrix.md, category S.
         if new_v in _WEAK_JWT_ALGS:
             return (
                 "high",

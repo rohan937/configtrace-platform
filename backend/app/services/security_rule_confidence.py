@@ -276,6 +276,8 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "auth0_application_origin_missing_https": (HIGH, "Only fires when allowed_origins_missing_https=true (a boolean derived from allowed_origins during normalization, excluding localhost); raw origin URLs are NEVER stored."),
     "auth0_public_client_refresh_tokens_enabled": (MEDIUM, "Only fires when grant_refresh_token_enabled=true AND app_type is spa/native; no token values are stored."),
     "auth0_application_token_endpoint_auth_none": (HIGH, "Only fires when token_endpoint_auth_method=='none' on an auth0_application record."),
+    "auth0_connection_mfa_disabled": (HIGH, "Only fires for strategy=='auth0' database connections when mfa_enabled is explicitly false; social/enterprise connections (mfa_enabled=None) are skipped. No enrollment data ever stored."),
+    "auth0_resource_server_weak_signing_algorithm": (HIGH, "Only fires when signing_alg is HS256/HS384/HS512/none on an auth0_resource_server record; signing keys NEVER stored."),
     # Datadog — M82B core security rules
     "datadog_monitor_disabled": (HIGH, "Only fires when enabled is explicitly false on a datadog_monitor record; raw query and message NEVER stored."),
     "datadog_monitor_unrestricted_roles": (MEDIUM, "Fires when restricted_roles_count==0; many monitors are intentionally open, so medium confidence applies."),

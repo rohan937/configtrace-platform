@@ -107,6 +107,9 @@ EXPECTED_AUTH0_RULE_KEYS = frozenset({
     # ── M81C: Public client / token endpoint (2) ───────────────────────────
     "auth0_public_client_refresh_tokens_enabled",
     "auth0_application_token_endpoint_auth_none",
+    # ── Classification-QA pass: Change-only coverage gaps closed (2) ────────
+    "auth0_connection_mfa_disabled",
+    "auth0_resource_server_weak_signing_algorithm",
 })
 
 # Expected 9 Auth0 signal types (M81E).
@@ -695,17 +698,17 @@ def test_fe_demo_script_no_forbidden_wording():
 
 
 def test_fe_rule_catalog_auth0_rule_count():
-    """securityRuleCatalog.ts contains all 37 Auth0 rules."""
+    """securityRuleCatalog.ts contains all 39 Auth0 rules."""
     text = _read_fe("lib/securityRuleCatalog.ts")
     entries = re.findall(r'key:\s*"(auth0_[a-z0-9_]+)"', text)
     keys = frozenset(entries)
-    assert len(keys) == 37, (
-        f"Expected 37 Auth0 rules in catalog, found {len(keys)}: {sorted(keys)}"
+    assert len(keys) == 39, (
+        f"Expected 39 Auth0 rules in catalog, found {len(keys)}: {sorted(keys)}"
     )
 
 
 def test_fe_rule_catalog_auth0_all_keys_present():
-    """All 37 expected Auth0 rule keys appear in the catalog."""
+    """All 39 expected Auth0 rule keys appear in the catalog."""
     text = _read_fe("lib/securityRuleCatalog.ts")
     entries = frozenset(re.findall(r'key:\s*"(auth0_[a-z0-9_]+)"', text))
     missing = EXPECTED_AUTH0_RULE_KEYS - entries
@@ -854,9 +857,9 @@ def test_fe_types_auth0_correlation_generate_response():
 
 
 def test_backend_auth0_rule_keys_count():
-    """Backend AUTH0_RULE_KEYS has all 37 expected rules."""
-    assert len(AUTH0_RULE_KEYS) == 37, (
-        f"Expected 37 Auth0 rule keys, found {len(AUTH0_RULE_KEYS)}"
+    """Backend AUTH0_RULE_KEYS has all 39 expected rules."""
+    assert len(AUTH0_RULE_KEYS) == 39, (
+        f"Expected 39 Auth0 rule keys, found {len(AUTH0_RULE_KEYS)}"
     )
 
 

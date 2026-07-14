@@ -276,6 +276,9 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "auth0_application_origin_missing_https": ("auth0", "medium", "Application origin posture"),
     "auth0_public_client_refresh_tokens_enabled": ("auth0", "medium", "Refresh token posture"),
     "auth0_application_token_endpoint_auth_none": ("auth0", "medium", "Token endpoint posture"),
+    # Auth0 — classification-QA pass (Change-only coverage gaps closed)
+    "auth0_connection_mfa_disabled": ("auth0", "high", "Connection MFA posture"),
+    "auth0_resource_server_weak_signing_algorithm": ("auth0", "high", "Resource server token signing"),
     # Datadog — M82B core security rules
     "datadog_monitor_disabled": ("datadog", "medium", "Monitor posture"),
     "datadog_monitor_unrestricted_roles": ("datadog", "low", "Monitor posture"),

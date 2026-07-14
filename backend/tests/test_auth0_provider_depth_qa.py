@@ -49,7 +49,7 @@ FE_RULE_CATALOG = FRONTEND / "lib" / "securityRuleCatalog.ts"
 
 CANONICAL_PROVIDER = "auth0"
 
-# ── Canonical Auth0 rule set (the 37 shipped rules) ───────────────────────────
+# ── Canonical Auth0 rule set (the 39 shipped rules) ───────────────────────────
 
 AUTH0_RULE_KEYS = [
     # Tenant settings (M81B)
@@ -102,6 +102,9 @@ AUTH0_RULE_KEYS = [
     # Application — public client / token endpoint posture (M81C)
     "auth0_public_client_refresh_tokens_enabled",
     "auth0_application_token_endpoint_auth_none",
+    # Classification-QA pass: Change-only coverage gaps closed
+    "auth0_connection_mfa_disabled",
+    "auth0_resource_server_weak_signing_algorithm",
 ]
 
 ALL_AUTH0_RULE_KEYS: frozenset[str] = frozenset(AUTH0_RULE_KEYS)
@@ -304,8 +307,8 @@ def _all_auth0_findings() -> list[Any]:
 # ── TestAuth0RuleRegistration ─────────────────────────────────────────────────
 
 class TestAuth0RuleRegistration:
-    def test_rule_key_count_is_thirty_seven(self) -> None:
-        assert len(ALL_AUTH0_RULE_KEYS) == 37
+    def test_rule_key_count_is_thirty_nine(self) -> None:
+        assert len(ALL_AUTH0_RULE_KEYS) == 39
 
     def test_module_export_matches_canonical_set(self) -> None:
         from app.services.security_rules.auth0 import AUTH0_RULE_KEYS as MOD_KEYS

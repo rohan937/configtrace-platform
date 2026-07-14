@@ -294,6 +294,8 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "auth0_application_origin_missing_https": ("auth0_application",),
     "auth0_public_client_refresh_tokens_enabled": ("auth0_application",),
     "auth0_application_token_endpoint_auth_none": ("auth0_application",),
+    "auth0_connection_mfa_disabled": ("auth0_connection",),
+    "auth0_resource_server_weak_signing_algorithm": ("auth0_resource_server",),
     # Datadog — M82B
     "datadog_monitor_disabled": ("datadog_monitor",),
     "datadog_monitor_unrestricted_roles": ("datadog_monitor",),

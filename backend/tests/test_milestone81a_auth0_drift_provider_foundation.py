@@ -1912,3 +1912,339 @@ class TestAuth0RiskClassifier:
                 assert phrase not in reason_lower, (
                     f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
                 )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Section — Change-classification QA pass (dedicated follow-up)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Two bugs found and fixed in this pass:
+#
+# 1. auth0_application.allowed_logout_urls_count was tracked in
+#    _AUTH0_TRACKED_FIELDS_BY_TYPE but had no branch in risk_rules/auth0.py
+#    at all — it silently fell through to the bare "configuration field
+#    '...' changed." fallback instead of being grouped with its sibling
+#    count fields. Severity was unaffected (still "low" either way), but
+#    the field is now named explicitly.
+#
+# 2. grant_client_credentials_enabled: True -> False previously returned
+#    "medium" unconditionally. The backing Finding
+#    (auth0_application_public_client_credentials_enabled, high) only
+#    fires when this grant is COMBINED with a public/client-side app_type
+#    or token_endpoint_auth_method="none" — client_credentials is Auth0's
+#    standard, expected grant for confidential machine-to-machine
+#    applications, which is the common case. Defaulting to "medium" on
+#    every enablement would over-alert on normal M2M configuration.
+#    Downgraded to "low" (a Change-only, generic signal), consistent with
+#    how grant_refresh_token_enabled and grant_authorization_code_enabled
+#    are already treated — the Finding layer (which can see app_type)
+#    remains the source of truth for the genuinely risky combination.
+
+
+class TestAuth0ChangeClassificationQA:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+        record_id: str = "",
+    ) -> dict:
+        pm = {"record_type": record_type}
+        if record_id:
+            pm["record_id"] = record_id
+        return {
+            "provider_metadata": pm,
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_allowed_logout_urls_count_is_explicitly_named_not_bare_fallback(self):
+        """Regression test for the allowed_logout_urls_count fall-through
+        bug fixed in this classification-QA pass."""
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "allowed_logout_urls_count", prev_value=1, new_value=2,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "low"
+        assert "allowed logout urls count" in reason.lower()
+        assert "configuration field 'allowed_logout_urls_count'" not in reason.lower()
+
+    def test_client_credentials_grant_enabled_is_low_not_medium(self):
+        """Regression test for the grant_client_credentials_enabled
+        over-alerting bug fixed in this classification-QA pass: enabling
+        this grant is normal/expected for confidential M2M applications,
+        so it must not default to medium without app_type evidence."""
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "grant_client_credentials_enabled", prev_value=False, new_value=True,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+
+    def test_client_credentials_grant_disabled_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "grant_client_credentials_enabled", prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    # ── Tenant settings (category A) ─────────────────────────────────────────
+
+    def test_tenant_dynamic_client_registration_disabled_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_tenant_settings", "flag_enable_dynamic_client_registration",
+            prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_tenant_session_lifetime_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_tenant_settings", "session_lifetime_category",
+            prev_value="extended", new_value="standard",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_tenant_idle_session_lifetime_extended_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_tenant_settings", "idle_session_lifetime_category",
+            prev_value="standard", new_value="extended",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+
+    # ── Applications / clients (category B) ──────────────────────────────────
+
+    def test_oidc_conformant_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "oidc_conformant", prev_value=False, new_value=True,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_token_endpoint_auth_none_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "token_endpoint_auth_method",
+            prev_value="none", new_value="client_secret_basic",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_wildcard_allowed_origin_removed_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "wildcard_allowed_origin_present", prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_wildcard_logout_url_present_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "wildcard_logout_url_present", prev_value=False, new_value=True,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_callbacks_missing_https_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "callbacks_missing_https", prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_web_origins_count_increase_while_already_broad_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "web_origins_count", prev_value=15, new_value=20,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_grant_types_count_decrease_while_still_broad_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "grant_types_count", prev_value=8, new_value=6,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    # ── Connections (category C) ─────────────────────────────────────────────
+
+    def test_connection_mfa_enabled_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_connection", "mfa_enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_connection_enabled_clients_count_zero_is_low_not_error(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_connection", "enabled_clients_count", prev_value=3, new_value=0,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+
+    # ── Resource servers / APIs (category D) ─────────────────────────────────
+
+    def test_resource_server_rbac_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_resource_server", "rbac_enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_resource_server_offline_access_disabled_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_resource_server", "allow_offline_access", prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_resource_server_signing_alg_strengthened_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_resource_server", "signing_alg", prev_value="HS256", new_value="RS256",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_resource_server_token_lifetime_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_resource_server", "token_lifetime_category", prev_value="extended", new_value="short",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    # ── Custom domains (category E) ──────────────────────────────────────────
+
+    def test_custom_domain_provisioning_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_custom_domain", "status", prev_value="ready", new_value="provisioning",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_custom_domain_tls_policy_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_custom_domain", "tls_policy_category", prev_value="compatible", new_value="recommended",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    # ── Rules / actions (category F) ─────────────────────────────────────────
+
+    def test_rule_enabled_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_rule", "enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_action_secrets_count_real_zero_is_low_not_error(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_action", "secrets_count", prev_value=2, new_value=0,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+
+    def test_action_deployed_version_restored_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_action", "deployed_version_present", prev_value=False, new_value=True,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    # ── Broader unknown-transition sweep across every high/medium field ─────
+
+    def test_broader_unknown_transition_sweep_never_produces_high_or_overstated_medium(self):
+        """Extends the existing unknown-transition sweep to every field this
+        pass identified as carrying a high or medium severity, proving
+        _is_falsy_explicit()/_is_truthy() correctly distinguish None from an
+        explicit False across the whole module, not just the fields already
+        covered by the original detection-QA pass."""
+        from app.services.risk_rules.auth0 import classify_auth0_change
+
+        cases = [
+            ("auth0_tenant_settings", "session_lifetime_category", "standard", None),
+            ("auth0_tenant_settings", "flag_enable_dynamic_client_registration", False, None),
+            ("auth0_application", "oidc_conformant", True, None),
+            ("auth0_application", "jwt_alg", "RS256", None),
+            ("auth0_application", "refresh_token_rotation_enabled", True, None),
+            ("auth0_application", "wildcard_callback_present", False, None),
+            ("auth0_application", "wildcard_allowed_origin_present", False, None),
+            ("auth0_application", "token_endpoint_auth_method", "client_secret_basic", None),
+            # NOTE: auth0_connection.password_policy_category is deliberately
+            # excluded here — None is an intentional exception (see
+            # test_connection_password_policy_unset_is_high) that mirrors
+            # the Security Finding's own explicit "unset is itself weak"
+            # design, not an unknown-overstatement bug.
+            ("auth0_connection", "mfa_enabled", True, None),
+            ("auth0_resource_server", "rbac_enabled", True, None),
+            ("auth0_resource_server", "signing_alg", "RS256", None),
+            ("auth0_resource_server", "allow_offline_access", False, None),
+            ("auth0_custom_domain", "status", "ready", None),
+            ("auth0_mfa_factor", "enabled", True, None),
+        ]
+        for record_type, field, prev, new in cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_auth0_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+            reason_lower = reason.lower()
+            assert "disabled" not in reason_lower or "unknown" in reason_lower or "missing" in reason_lower, (
+                f"{record_type}.{field} unknown transition may overstate certainty: {reason!r}"
+            )
+
+    def test_generic_fallback_never_used_for_security_sensitive_fields(self):
+        """Every field this pass classified as high/medium-capable (MFA,
+        weak JWT/signing algorithm, wildcard callback/origin, password
+        policy, dynamic client registration, RBAC, custom domain status)
+        must resolve through a field-specific branch, not the bare
+        '<record type> configuration field '...' changed.' fallback used
+        for purely cosmetic/metadata fields."""
+        from app.services.risk_rules.auth0 import classify_auth0_change
+
+        security_sensitive = [
+            ("auth0_tenant_settings", "flag_enable_dynamic_client_registration", False, True),
+            ("auth0_application", "grant_password_enabled", False, True),
+            ("auth0_application", "wildcard_callback_present", False, True),
+            ("auth0_application", "jwt_alg", "RS256", "HS256"),
+            ("auth0_connection", "password_policy_category", "good", "fair"),
+            ("auth0_connection", "mfa_enabled", True, False),
+            ("auth0_resource_server", "rbac_enabled", True, False),
+            ("auth0_resource_server", "signing_alg", "RS256", "HS256"),
+            ("auth0_custom_domain", "status", "ready", "pending_verification"),
+            ("auth0_mfa_factor", "enabled", True, False),
+        ]
+        for record_type, field, prev, new in security_sensitive:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            _, reason = classify_auth0_change(change)
+            assert "configuration field" not in reason.lower(), (
+                f"{record_type}.{field} used the generic bare fallback instead of "
+                f"a field-specific branch: {reason!r}"
+            )

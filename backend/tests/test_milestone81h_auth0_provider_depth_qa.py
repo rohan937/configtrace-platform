@@ -168,6 +168,9 @@ EXPECTED_RULE_KEYS = {
     # ── M81C: Public client / token endpoint (2) ─────────────────────────
     "auth0_public_client_refresh_tokens_enabled",
     "auth0_application_token_endpoint_auth_none",
+    # ── Classification-QA pass: Change-only coverage gaps closed (2) ───────
+    "auth0_connection_mfa_disabled",
+    "auth0_resource_server_weak_signing_algorithm",
 }
 
 # Canonical activity event types produced by the ingestion pipeline (23 total,

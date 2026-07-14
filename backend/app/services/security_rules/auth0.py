@@ -22,8 +22,10 @@ Record types consumed (M81A)
                                    token_endpoint_auth_method, OIDC conformance,
                                    refresh token configuration, grant type booleans
                                    (M81C), URL posture booleans (M81C)
-- ``auth0_connection``          → strategy, enabled clients count, password policy
+- ``auth0_connection``          → strategy, enabled clients count, password policy,
+                                   MFA enabled (classification-QA pass)
 - ``auth0_resource_server``     → signing alg, token lifetime, offline access, RBAC
+                                   (weak signing algorithm added in classification-QA pass)
 - ``auth0_rule``                → enabled status, script presence/length
 - ``auth0_action``              → deployed status, secrets count
 - ``auth0_mfa_factor``          → factor name, enabled status
@@ -127,6 +129,20 @@ _RULE_APP_ORIGIN_MISSING_HTTPS = "auth0_application_origin_missing_https"
 _RULE_PUBLIC_CLIENT_REFRESH_TOKENS = "auth0_public_client_refresh_tokens_enabled"
 _RULE_APP_TOKEN_ENDPOINT_AUTH_NONE = "auth0_application_token_endpoint_auth_none"
 
+# ── Rule keys — classification-QA pass (Change-only coverage gaps closed) ─────
+#
+# Both fields below were already fetched, normalized, and diff-tracked, but
+# had no dedicated Finding before this pass. Each is a direct single-field
+# analog of an existing rule pattern on a different record type (not a
+# multi-field combined condition), so adding a Finding here is low-risk and
+# closes a genuine detection gap rather than inventing new connector scope.
+
+# Connection — MFA posture
+_RULE_CONNECTION_MFA_DISABLED = "auth0_connection_mfa_disabled"
+
+# Resource server — signing algorithm posture
+_RULE_RS_WEAK_SIGNING_ALGORITHM = "auth0_resource_server_weak_signing_algorithm"
+
 AUTH0_RULE_KEYS: frozenset[str] = frozenset({
     # Tenant settings (M81B)
     _RULE_TENANT_SESSION_LIFETIME_EXTENDED,
@@ -163,10 +179,14 @@ AUTH0_RULE_KEYS: frozenset[str] = frozenset({
     # Connection (M81B)
     _RULE_CONNECTION_NO_ENABLED_CLIENTS,
     _RULE_CONNECTION_WEAK_PASSWORD_POLICY,
+    # Connection — classification-QA pass
+    _RULE_CONNECTION_MFA_DISABLED,
     # Resource server (M81B)
     _RULE_RS_OFFLINE_ACCESS_ENABLED,
     _RULE_RS_TOKEN_LIFETIME_EXTENDED,
     _RULE_RS_RBAC_DISABLED,
+    # Resource server — classification-QA pass
+    _RULE_RS_WEAK_SIGNING_ALGORITHM,
     # Rule (M81B)
     _RULE_RULE_DISABLED,
     _RULE_RULE_LARGE_SCRIPT,
@@ -1223,6 +1243,44 @@ def _eval_connection(record: dict[str, Any]) -> list[FindingCandidate]:
                 record_id=record_id,
             ))
 
+    # ── auth0_connection_mfa_disabled ─────────────────────────────────────────
+    # Only applies to Auth0 database connections (strategy == "auth0"); the
+    # connector only populates mfa_enabled for this strategy — social and
+    # enterprise connections carry mfa_enabled=None and are skipped.
+    if strategy == "auth0" and record.get("mfa_enabled") is False:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_CONNECTION_MFA_DISABLED,
+            finding_key=make_finding_key(_RULE_CONNECTION_MFA_DISABLED, record_id),
+            severity="high",
+            title="Auth0 database connection has MFA disabled",
+            description=(
+                f"The Auth0 database connection '{conn_name}' does not have "
+                "multi-factor authentication (MFA) enabled. Without MFA, users "
+                "authenticating through this connection use a single factor, "
+                "which may increase exposure to credential-based account access. "
+                "This configuration posture may require review. "
+                "This is configuration evidence — it does not confirm unauthorized access."
+            ),
+            evidence={
+                "rule": _RULE_CONNECTION_MFA_DISABLED,
+                "connection_id": record_id,
+                "name": conn_name,
+                "strategy": strategy,
+                "mfa_enabled": False,
+            },
+            remediation={
+                "summary": "Enable MFA for this database connection in the Auth0 Dashboard.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Authentication > Database and select the connection.",
+                    "Under Settings, enable Multi-factor Authentication.",
+                    "Review your MFA policy to confirm it applies to users of this connection.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
     return findings
 
 
@@ -1331,6 +1389,44 @@ def _eval_resource_server(record: dict[str, Any]) -> list[FindingCandidate]:
                     "Under Settings > RBAC Settings, enable 'Enable RBAC' and "
                     "'Add Permissions in the Access Token'.",
                     "Define permissions for the API and assign them to roles as appropriate.",
+                ],
+            },
+            record_id=record_id,
+        ))
+
+    # ── auth0_resource_server_weak_signing_algorithm ──────────────────────────
+    signing_alg = get_str(record, "signing_alg")
+    if signing_alg and signing_alg in _WEAK_JWT_ALGS:
+        findings.append(FindingCandidate(
+            provider="auth0",
+            rule_key=_RULE_RS_WEAK_SIGNING_ALGORITHM,
+            finding_key=make_finding_key(_RULE_RS_WEAK_SIGNING_ALGORITHM, record_id),
+            severity="high",
+            title="Auth0 API uses a symmetric token signing algorithm",
+            description=(
+                f"The Auth0 resource server '{rs_name}' is configured to use "
+                f"{signing_alg} for access token signing. Symmetric HMAC algorithms "
+                "require the signing secret to be shared with every consumer that "
+                "verifies tokens, broadening the secret surface compared to "
+                "asymmetric algorithms (RS256, PS256). Consider migrating to RS256 "
+                "or PS256 to reduce signing-secret exposure. "
+                "No signing keys are ever stored by ConfigTrace."
+            ),
+            evidence={
+                "rule": _RULE_RS_WEAK_SIGNING_ALGORITHM,
+                "resource_server_id": record_id,
+                "name": rs_name,
+                "signing_alg": signing_alg,
+            },
+            remediation={
+                "summary": "Switch this API's token signing algorithm to RS256 or PS256.",
+                "steps": [
+                    "Sign in to the Auth0 Dashboard.",
+                    "Navigate to Applications > APIs and select the resource server.",
+                    "Under Settings, change the Signing Algorithm to RS256.",
+                    "Update token verification for all consumers of this API to use "
+                    "Auth0's public key (available from .well-known/jwks.json) instead "
+                    "of a shared signing secret.",
                 ],
             },
             record_id=record_id,

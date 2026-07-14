@@ -248,6 +248,9 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "auth0_application_origin_missing_https",
         "auth0_public_client_refresh_tokens_enabled",
         "auth0_application_token_endpoint_auth_none",
+        # Auth0 — classification-QA pass (Change-only coverage gaps closed)
+        "auth0_connection_mfa_disabled",
+        "auth0_resource_server_weak_signing_algorithm",
         # Datadog — M82B core security rules
         "datadog_monitor_disabled",
         "datadog_monitor_unrestricted_roles",

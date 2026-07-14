@@ -463,6 +463,36 @@ def test_connection_social_strategy_skipped_for_password_policy():
     assert "auth0_connection_weak_password_policy" not in keys
 
 
+# ── auth0_connection_mfa_disabled (classification-QA pass) ───────────────────
+
+
+def test_connection_mfa_disabled_fires():
+    keys = {f.rule_key for f in evaluate(_connection_record(mfa_enabled=False))}
+    assert "auth0_connection_mfa_disabled" in keys
+
+
+def test_connection_mfa_enabled_does_not_fire():
+    keys = {f.rule_key for f in evaluate(_connection_record(mfa_enabled=True))}
+    assert "auth0_connection_mfa_disabled" not in keys
+
+
+def test_connection_mfa_unknown_does_not_fire():
+    """mfa_enabled=None (unknown/not-applicable) must never fire — only an
+    explicit False is a finding-worthy signal."""
+    keys = {f.rule_key for f in evaluate(_connection_record(mfa_enabled=None))}
+    assert "auth0_connection_mfa_disabled" not in keys
+
+
+def test_connection_mfa_social_strategy_skipped():
+    """Social/enterprise connections carry mfa_enabled=None from the connector
+    and must never fire this database-connection-only rule."""
+    keys = {f.rule_key for f in evaluate(_connection_record(
+        strategy="google-oauth2",
+        mfa_enabled=None,
+    ))}
+    assert "auth0_connection_mfa_disabled" not in keys
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # Section E — Resource server rule evaluators
 # ════════════════════════════════════════════════════════════════════════════
@@ -520,6 +550,31 @@ def test_resource_server_rbac_disabled_fires():
 def test_resource_server_rbac_enabled_does_not_fire():
     keys = {f.rule_key for f in evaluate(_rs_record(rbac_enabled=True))}
     assert "auth0_resource_server_rbac_disabled" not in keys
+
+
+# ── auth0_resource_server_weak_signing_algorithm (classification-QA pass) ────
+
+
+def test_resource_server_weak_signing_algorithm_fires_hs256():
+    keys = {f.rule_key for f in evaluate(_rs_record(signing_alg="HS256"))}
+    assert "auth0_resource_server_weak_signing_algorithm" in keys
+
+
+def test_resource_server_weak_signing_algorithm_fires_none():
+    keys = {f.rule_key for f in evaluate(_rs_record(signing_alg="none"))}
+    assert "auth0_resource_server_weak_signing_algorithm" in keys
+
+
+def test_resource_server_rs256_does_not_fire_weak_signing():
+    keys = {f.rule_key for f in evaluate(_rs_record(signing_alg="RS256"))}
+    assert "auth0_resource_server_weak_signing_algorithm" not in keys
+
+
+def test_resource_server_signing_alg_missing_does_not_fire():
+    """An empty/missing signing_alg must never fire — only an explicit weak
+    algorithm value is a finding-worthy signal."""
+    keys = {f.rule_key for f in evaluate(_rs_record(signing_alg=""))}
+    assert "auth0_resource_server_weak_signing_algorithm" not in keys
 
 
 # ════════════════════════════════════════════════════════════════════════════

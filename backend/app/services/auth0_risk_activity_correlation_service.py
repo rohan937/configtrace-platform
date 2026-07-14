@@ -138,6 +138,7 @@ AUTH0_CORRELATION_RULES: dict[str, dict[str, Any]] = {
         "rule_keys": {
             "auth0_connection_no_enabled_clients",
             "auth0_connection_weak_password_policy",
+            "auth0_connection_mfa_disabled",
         },
         "signal_types": {
             "auth0_connection_config_changed",
@@ -153,6 +154,7 @@ AUTH0_CORRELATION_RULES: dict[str, dict[str, Any]] = {
             "auth0_resource_server_offline_access_enabled",
             "auth0_resource_server_token_lifetime_extended",
             "auth0_resource_server_rbac_disabled",
+            "auth0_resource_server_weak_signing_algorithm",
         },
         "signal_types": {
             "auth0_resource_server_config_changed",

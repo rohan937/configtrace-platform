@@ -3830,6 +3830,48 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
     falsePositiveGuard:
       "Only fires when token_endpoint_auth_method=='none'. SPAs and native apps using authorization_code + PKCE legitimately use this setting.",
   },
+  {
+    key: "auth0_connection_mfa_disabled",
+    provider: "auth0",
+    severity: "high",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Connection MFA posture",
+    title: "Auth0 database connection has MFA disabled",
+    description:
+      "The Auth0 database connection does not have multi-factor authentication (MFA) enabled. Without MFA, users authenticating through this connection use a single factor.",
+    whatItChecks:
+      "strategy=='auth0' AND mfa_enabled==false on an auth0_connection record.",
+    whyItMatters:
+      "Single-factor authentication may increase exposure to credential-based account access. This is configuration evidence — it does not confirm unauthorized access.",
+    evidence:
+      "connection_id, name, strategy, mfa_enabled. Connection credentials are NEVER stored.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Authentication > Database, select the connection, and enable Multi-factor Authentication under Settings.",
+    falsePositiveGuard:
+      "Only fires for strategy=='auth0' database connections when mfa_enabled is explicitly false. Social/enterprise connections (mfa_enabled=None) are skipped.",
+  },
+  {
+    key: "auth0_resource_server_weak_signing_algorithm",
+    provider: "auth0",
+    severity: "high",
+    confidence: "high",
+    metadataOnly: true,
+    category: "Resource server token signing",
+    title: "Auth0 API uses a symmetric token signing algorithm",
+    description:
+      "The Auth0 resource server (API) is configured to use a symmetric (HMAC) algorithm for access token signing. Symmetric algorithms require the signing secret to be shared with every consumer that verifies tokens.",
+    whatItChecks:
+      "signing_alg is HS256/HS384/HS512/none on an auth0_resource_server record.",
+    whyItMatters:
+      "Sharing a signing secret across consumers broadens the secret surface compared to asymmetric algorithms (RS256, PS256). No signing keys are ever stored by ConfigTrace.",
+    evidence:
+      "resource_server_id, name, signing_alg.",
+    remediation:
+      "In the Auth0 Dashboard navigate to Applications > APIs, select the resource server, and change the Signing Algorithm to RS256.",
+    falsePositiveGuard:
+      "Only fires when signing_alg is HS256/HS384/HS512/none. RS256/PS256 (the Auth0 default) never fires this rule.",
+  },
 
   // ── Datadog (M82B) ────────────────────────────────────────────────────────
   {
