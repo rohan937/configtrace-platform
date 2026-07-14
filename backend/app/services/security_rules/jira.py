@@ -177,6 +177,16 @@ _RULE_BOARD_NO_COLUMNS = "jira_board_no_columns"
 # Screen scheme (1)
 _RULE_SCREEN_SCHEME_UNMAPPED_SCREENS = "jira_screen_scheme_unmapped_screens"
 
+# ── QA-pass rule keys (previously specified in the frontend catalog but not
+# implemented in this module — added because the connector already fetches
+# and normalizes the underlying evidence field) ────────────────────────────
+
+_RULE_WORKFLOW_DRAFT = "jira_workflow_draft"
+_RULE_WORKFLOW_SCHEME_LOW_PROJECT_COUNT = "jira_workflow_scheme_low_project_count"
+_RULE_PERMISSION_SCHEME_HIGH_GRANT_COUNT = "jira_permission_scheme_high_grant_count"
+_RULE_WEBHOOK_BROAD_EVENT_SCOPE = "jira_webhook_broad_event_scope"
+_RULE_AUTOMATION_RULE_HIGH_COMPONENT_COUNT = "jira_automation_rule_high_component_count"
+
 
 # ── All Jira rule keys implemented in this module ─────────────────────────────
 
@@ -258,6 +268,12 @@ JIRA_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_BOARD_UNKNOWN_SWIMLANE_STRATEGY,
     _RULE_BOARD_NO_COLUMNS,
     _RULE_SCREEN_SCHEME_UNMAPPED_SCREENS,
+    # QA-pass additions
+    _RULE_WORKFLOW_DRAFT,
+    _RULE_WORKFLOW_SCHEME_LOW_PROJECT_COUNT,
+    _RULE_PERMISSION_SCHEME_HIGH_GRANT_COUNT,
+    _RULE_WEBHOOK_BROAD_EVENT_SCOPE,
+    _RULE_AUTOMATION_RULE_HIGH_COMPONENT_COUNT,
 })
 
 
@@ -277,6 +293,12 @@ _HIGH_NOTIFICATION_EVENT_THRESHOLD = 20
 _HIGH_AUTOMATION_ACTION_THRESHOLD = 10
 _HIGH_AUTOMATION_BRANCH_THRESHOLD = 5
 _HIGH_QUICK_FILTER_THRESHOLD = 10
+
+# QA-pass thresholds
+_LOW_WORKFLOW_SCHEME_PROJECT_COUNT_FLOOR = 2
+_HIGH_PERMISSION_GRANT_THRESHOLD = 20
+_HIGH_WEBHOOK_EVENT_COUNT_THRESHOLD = 10
+_HIGH_AUTOMATION_COMPONENT_THRESHOLD = 15
 
 
 # ── Safe field readers ─────────────────────────────────────────────────────────
@@ -531,7 +553,7 @@ def _eval_board(record: dict[str, Any]) -> list[FindingCandidate]:
     if board_location_type_category and board_location_type_category.lower() == "unknown":
         findings.append(_fc(
             rule_key=_RULE_BOARD_UNKNOWN_LOCATION_TYPE, record_id=record_id, record_type=JIRA_BOARD,
-            severity="low",
+            severity="medium",
             title="Jira board location type is unknown",
             description=(
                 f"The connector could not classify the Jira board location type. This board configuration may require review. {_DOES_NOT_CONFIRM}"
@@ -635,7 +657,7 @@ def _eval_workflow(record: dict[str, Any]) -> list[FindingCandidate]:
     if status_count is not None and status_count == 0:
         findings.append(_fc(
             rule_key=_RULE_WORKFLOW_NO_STATUSES, record_id=record_id, record_type=JIRA_WORKFLOW,
-            severity="low",
+            severity="medium",
             title="Jira workflow has no statuses",
             description=(
                 f"This Jira workflow reports zero statuses. This workflow configuration may require review. {_DOES_NOT_CONFIRM}"
@@ -663,7 +685,7 @@ def _eval_workflow(record: dict[str, Any]) -> list[FindingCandidate]:
     ):
         findings.append(_fc(
             rule_key=_RULE_WORKFLOW_EXCESSIVE_GLOBAL_TRANSITIONS, record_id=record_id, record_type=JIRA_WORKFLOW,
-            severity="medium",
+            severity="low",
             title="Jira workflow has an excessive number of global transitions",
             description=(
                 "This Jira workflow has many global transitions, which bypass "
@@ -676,7 +698,7 @@ def _eval_workflow(record: dict[str, Any]) -> list[FindingCandidate]:
     if active is False:
         findings.append(_fc(
             rule_key=_RULE_WORKFLOW_INACTIVE, record_id=record_id, record_type=JIRA_WORKFLOW,
-            severity="low",
+            severity="medium",
             title="Jira workflow is inactive",
             description=(
                 f"This Jira workflow is reported inactive. This workflow lifecycle posture may require review. {_DOES_NOT_CONFIRM}"
@@ -780,6 +802,20 @@ def _eval_workflow(record: dict[str, Any]) -> list[FindingCandidate]:
             remediation_summary="Connect orphaned statuses with transitions or remove them.",
         ))
 
+    workflow_draft = _bool(record, "workflow_draft")
+    if workflow_draft is True:
+        findings.append(_fc(
+            rule_key=_RULE_WORKFLOW_DRAFT, record_id=record_id, record_type=JIRA_WORKFLOW,
+            severity="low",
+            title="Jira workflow is in draft state",
+            description=(
+                "This Jira workflow is in a draft (unpublished) state. This workflow "
+                f"configuration may require review. {_DOES_NOT_CONFIRM}"
+            ),
+            extra_evidence={"workflow_draft": True},
+            remediation_summary="Publish or discard the draft workflow as appropriate.",
+        ))
+
     return findings
 
 
@@ -804,7 +840,7 @@ def _eval_workflow_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
     if default_present is False:
         findings.append(_fc(
             rule_key=_RULE_WORKFLOW_SCHEME_NO_DEFAULT, record_id=record_id, record_type=JIRA_WORKFLOW_SCHEME,
-            severity="low",
+            severity="medium",
             title="Jira workflow scheme has no default workflow indicator",
             description=(
                 f"This Jira workflow scheme has no default workflow indicator. This workflow scheme configuration may require review. {_DOES_NOT_CONFIRM}"
@@ -853,6 +889,22 @@ def _eval_workflow_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
             ),
             extra_evidence={"workflow_scheme_issue_type_mapping_count": mapping_count},
             remediation_summary="Review the mappings and consolidate where workflows are shared.",
+        ))
+
+    if (
+        project_count is not None
+        and 0 < project_count < _LOW_WORKFLOW_SCHEME_PROJECT_COUNT_FLOOR
+    ):
+        findings.append(_fc(
+            rule_key=_RULE_WORKFLOW_SCHEME_LOW_PROJECT_COUNT, record_id=record_id, record_type=JIRA_WORKFLOW_SCHEME,
+            severity="low",
+            title="Jira workflow scheme has a low project count",
+            description=(
+                "This Jira workflow scheme is associated with very few projects. This "
+                f"workflow scheme configuration may require review. {_DOES_NOT_CONFIRM}"
+            ),
+            extra_evidence={"workflow_scheme_project_count": project_count},
+            remediation_summary="Consolidate workflow schemes where appropriate.",
         ))
 
     return findings
@@ -1016,6 +1068,20 @@ def _eval_permission_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
             remediation_summary="Review public grants and restrict them to specific groups or project roles.",
         ))
 
+    total_grant_count = _int_opt(record, "permission_grant_count")
+    if total_grant_count is not None and total_grant_count > _HIGH_PERMISSION_GRANT_THRESHOLD:
+        findings.append(_fc(
+            rule_key=_RULE_PERMISSION_SCHEME_HIGH_GRANT_COUNT, record_id=record_id, record_type=JIRA_PERMISSION_SCHEME,
+            severity="medium",
+            title="Jira permission scheme has a high grant count",
+            description=(
+                "This Jira permission scheme has more grants than the configured ceiling. "
+                f"This permission scheme configuration may require review. {_DOES_NOT_CONFIRM}"
+            ),
+            extra_evidence={"permission_grant_count": total_grant_count},
+            remediation_summary="Audit the permission scheme and consolidate or remove unnecessary grants.",
+        ))
+
     return findings
 
 
@@ -1030,7 +1096,7 @@ def _eval_notification_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
     if notif_count is not None and notif_count == 0:
         findings.append(_fc(
             rule_key=_RULE_NOTIFICATION_SCHEME_NO_NOTIFICATIONS, record_id=record_id, record_type=JIRA_NOTIFICATION_SCHEME,
-            severity="low",
+            severity="medium",
             title="Jira notification scheme has no notifications configured",
             description=(
                 f"This Jira notification scheme reports zero notifications. This notification scheme configuration may require review. {_DOES_NOT_CONFIRM}"
@@ -1042,7 +1108,7 @@ def _eval_notification_scheme(record: dict[str, Any]) -> list[FindingCandidate]:
     if email_count is not None and email_count > 0:
         findings.append(_fc(
             rule_key=_RULE_NOTIFICATION_SCHEME_EMAIL_RECIPIENTS, record_id=record_id, record_type=JIRA_NOTIFICATION_SCHEME,
-            severity="low",
+            severity="medium",
             title="Jira notification scheme uses single-email recipients",
             description=(
                 "This Jira notification scheme uses individual email recipients. "
@@ -1180,7 +1246,7 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
     if enabled is False:
         findings.append(_fc(
             rule_key=_RULE_WEBHOOK_DISABLED, record_id=record_id, record_type=JIRA_WEBHOOK,
-            severity="low",
+            severity="medium",
             title="Jira webhook subscription is disabled",
             description=(
                 f"This Jira webhook subscription is disabled. This webhook configuration may require review. {_DOES_NOT_CONFIRM}"
@@ -1222,7 +1288,7 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
     if event_count is not None and event_count == 0:
         findings.append(_fc(
             rule_key=_RULE_WEBHOOK_NO_EVENTS, record_id=record_id, record_type=JIRA_WEBHOOK,
-            severity="low",
+            severity="medium",
             title="Jira webhook subscribes to no events",
             description=(
                 f"This Jira webhook reports zero subscribed events. This webhook configuration may require review. {_DOES_NOT_CONFIRM}"
@@ -1234,7 +1300,7 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
     if jql_present is False:
         findings.append(_fc(
             rule_key=_RULE_WEBHOOK_NO_JQL_FILTER, record_id=record_id, record_type=JIRA_WEBHOOK,
-            severity="medium",
+            severity="low",
             title="Jira webhook has no JQL scope filter indicator",
             description=(
                 "This Jira webhook has no JQL scope filter indicator, meaning subscribed "
@@ -1315,6 +1381,19 @@ def _eval_webhook(record: dict[str, Any]) -> list[FindingCandidate]:
             ),
             extra_evidence={"webhook_all_issue_events": True},
             remediation_summary="Subscribe only to the specific issue events required by the integration.",
+        ))
+
+    if event_count is not None and event_count > _HIGH_WEBHOOK_EVENT_COUNT_THRESHOLD:
+        findings.append(_fc(
+            rule_key=_RULE_WEBHOOK_BROAD_EVENT_SCOPE, record_id=record_id, record_type=JIRA_WEBHOOK,
+            severity="medium",
+            title="Jira webhook has a broad event scope",
+            description=(
+                "This Jira webhook subscribes to more event types than the configured "
+                f"ceiling. This webhook configuration may require review. {_DOES_NOT_CONFIRM}"
+            ),
+            extra_evidence={"webhook_event_count": event_count},
+            remediation_summary="Reduce the webhook's event subscription to only the required event types.",
         ))
 
     return findings
@@ -1474,6 +1553,20 @@ def _eval_automation_rule(record: dict[str, Any]) -> list[FindingCandidate]:
             ),
             extra_evidence={"automation_scope_category": scope_category},
             remediation_summary="Review the automation rule scope to confirm it is correctly configured.",
+        ))
+
+    component_count = _int_opt(record, "automation_component_count")
+    if component_count is not None and component_count > _HIGH_AUTOMATION_COMPONENT_THRESHOLD:
+        findings.append(_fc(
+            rule_key=_RULE_AUTOMATION_RULE_HIGH_COMPONENT_COUNT, record_id=record_id, record_type=JIRA_AUTOMATION_RULE,
+            severity="low",
+            title="Jira automation rule has a high component count",
+            description=(
+                "This Jira automation rule has more components than the configured "
+                f"ceiling. This automation rule configuration may require review. {_DOES_NOT_CONFIRM}"
+            ),
+            extra_evidence={"automation_component_count": component_count},
+            remediation_summary="Audit the automation rule and split or simplify it where possible.",
         ))
 
     return findings

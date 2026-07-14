@@ -530,6 +530,11 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "jira_board_unknown_swimlane_strategy": ("jira_board",),
     "jira_board_no_columns": ("jira_board",),
     "jira_screen_scheme_unmapped_screens": ("jira_screen_scheme",),
+    "jira_workflow_draft": ("jira_workflow",),
+    "jira_workflow_scheme_low_project_count": ("jira_workflow_scheme",),
+    "jira_permission_scheme_high_grant_count": ("jira_permission_scheme",),
+    "jira_webhook_broad_event_scope": ("jira_webhook",),
+    "jira_automation_rule_high_component_count": ("jira_automation_rule",),
     # GitLab — M87B core security rules
     "gitlab_project_public_visibility": ("gitlab_project",),
     "gitlab_project_shared_runners_enabled": ("gitlab_project",),

@@ -484,6 +484,12 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "jira_board_unknown_swimlane_strategy",
         "jira_board_no_columns",
         "jira_screen_scheme_unmapped_screens",
+        # Jira — QA-pass additions (evidence already fetched by the connector)
+        "jira_workflow_draft",
+        "jira_workflow_scheme_low_project_count",
+        "jira_permission_scheme_high_grant_count",
+        "jira_webhook_broad_event_scope",
+        "jira_automation_rule_high_component_count",
         # GitLab — M87B core security rules
         "gitlab_project_public_visibility",
         "gitlab_project_shared_runners_enabled",

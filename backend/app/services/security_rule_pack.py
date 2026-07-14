@@ -512,6 +512,11 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "jira_board_unknown_swimlane_strategy": ("jira", "low", "Board scope posture"),
     "jira_board_no_columns": ("jira", "low", "Board scope posture"),
     "jira_screen_scheme_unmapped_screens": ("jira", "low", "Screen scheme posture"),
+    "jira_workflow_draft": ("jira", "low", "Workflow lifecycle posture"),
+    "jira_workflow_scheme_low_project_count": ("jira", "low", "Workflow scheme posture"),
+    "jira_permission_scheme_high_grant_count": ("jira", "medium", "Permission scheme posture"),
+    "jira_webhook_broad_event_scope": ("jira", "medium", "Webhook subscription posture"),
+    "jira_automation_rule_high_component_count": ("jira", "low", "Automation rule posture"),
     # GitLab — M87B core security rules
     "gitlab_project_public_visibility": ("gitlab", "high", "Project visibility posture"),
     "gitlab_project_shared_runners_enabled": ("gitlab", "medium", "Project runner posture"),

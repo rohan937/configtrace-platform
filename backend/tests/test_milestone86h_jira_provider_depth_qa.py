@@ -242,13 +242,13 @@ def test_jira_rule_count_matches_registry() -> None:
     registry_keys = {
         m for m in re.findall(r'"(jira_[a-z0-9_]+)"', _RULE_REGISTRY_PY.read_text())
     }
-    assert len(JIRA_RULE_KEYS) == 76, (
-        f"Expected 76 Jira rule keys, got {len(JIRA_RULE_KEYS)}"
+    assert len(JIRA_RULE_KEYS) == 81, (
+        f"Expected 81 Jira rule keys, got {len(JIRA_RULE_KEYS)}"
     )
     assert JIRA_RULE_KEYS <= registry_keys, (
         f"Rule keys missing from registry: {JIRA_RULE_KEYS - registry_keys}"
     )
-    assert len(JIRA_RULE_KEYS) == len(JIRA_RULE_KEYS & registry_keys) == 76
+    assert len(JIRA_RULE_KEYS) == len(JIRA_RULE_KEYS & registry_keys) == 81
 
 
 def test_all_jira_rules_have_registry_entry() -> None:
@@ -563,7 +563,7 @@ def test_frontend_catalog_jira_rule_count_matches_backend() -> None:
     assert present == JIRA_RULE_KEYS, (
         f"Frontend catalog missing Jira rule keys: {JIRA_RULE_KEYS - present}"
     )
-    assert len(present) == 76
+    assert len(present) == 81
 
 
 def test_frontend_activity_page_has_jira() -> None:

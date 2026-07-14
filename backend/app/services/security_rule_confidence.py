@@ -512,6 +512,11 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "jira_board_unknown_swimlane_strategy": (MEDIUM, "Fires when board_swimlane_strategy_category is empty or 'unknown'; reflects a strategy the connector could not classify rather than a confirmed misconfiguration."),
     "jira_board_no_columns": (HIGH, "Only fires when board_column_count < 1 on a jira_board record — a direct count."),
     "jira_screen_scheme_unmapped_screens": (HIGH, "Only fires when screen_unmapped_screen_count > 0 on a jira_screen_scheme record — a direct count of operation slots without a mapped screen."),
+    "jira_workflow_draft": (MEDIUM, "Fires when workflow_draft is explicitly true; some drafts may be intentional work-in-progress."),
+    "jira_workflow_scheme_low_project_count": (HIGH, "Only fires when workflow_scheme_project_count is an explicit integer below the configured floor on a jira_workflow_scheme record."),
+    "jira_permission_scheme_high_grant_count": (MEDIUM, "Fires when permission_grant_count exceeds the configured ceiling; some complex schemes may legitimately need many grants."),
+    "jira_webhook_broad_event_scope": (MEDIUM, "Fires when webhook_event_count exceeds the configured ceiling; some integrations may legitimately need broad event coverage."),
+    "jira_automation_rule_high_component_count": (HIGH, "Only fires when automation_component_count exceeds the configured ceiling on a jira_automation_rule record — a direct count."),
     # GitLab — M87B core security rules
     "gitlab_project_public_visibility": (HIGH, "Only fires when visibility_category is explicitly 'public' on a gitlab_project record — a direct category from the GitLab API."),
     "gitlab_project_shared_runners_enabled": (MEDIUM, "Fires when shared_runners_enabled=True on a non-public gitlab_project record; shared runners may be intentional for some projects."),

@@ -2212,6 +2212,84 @@ _GITLAB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_JIRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "jira_site": (
+        "site_url_present", "project_count", "webhook_count",
+        "automation_rule_count",
+    ),
+    "jira_project": (
+        "project_key_present", "project_type_category", "project_private",
+        "project_archived", "project_deleted", "project_simplified",
+        "project_style_category", "board_count", "issue_type_count",
+        "lead_present",
+    ),
+    "jira_board": (
+        "board_type_category", "board_location_type_category", "project_id",
+        "board_filter_present", "board_jql_filter_broad", "board_column_count",
+        "board_quick_filter_count", "board_swimlane_strategy_category",
+    ),
+    "jira_workflow": (
+        "workflow_status_count", "workflow_transition_count",
+        "workflow_global_transition_count", "workflow_active", "workflow_draft",
+        "workflow_has_done_status", "workflow_has_in_progress_status",
+        "workflow_transition_rule_count", "workflow_validator_count",
+        "workflow_condition_count", "workflow_post_function_count",
+        "workflow_orphan_status_count", "workflow_status_category_count",
+    ),
+    "jira_workflow_scheme": (
+        "workflow_scheme_project_count", "workflow_scheme_default_present",
+        "workflow_scheme_workflow_count",
+        "workflow_scheme_issue_type_mapping_count",
+        "workflow_scheme_unmapped_issue_type_count",
+    ),
+    "jira_permission_scheme": (
+        "permission_grant_count", "permission_anonymous_grant_count",
+        "permission_anyone_grant_count", "permission_logged_in_grant_count",
+        "permission_project_role_grant_count",
+        "permission_public_browse_projects",
+        "permission_public_administer_projects",
+        "permission_public_manage_sprints", "permission_public_create_issues",
+        "permission_public_transition_issues", "permission_unknown_holder_count",
+        "permission_high_privilege_grant_count", "permission_public_grant_count",
+    ),
+    "jira_notification_scheme": (
+        "notification_count", "notification_email_recipient_count",
+        "notification_group_recipient_count",
+        "notification_project_role_recipient_count",
+        "notification_all_watchers_recipient_count",
+        "notification_unknown_recipient_count", "notification_event_count",
+    ),
+    "jira_issue_type_scheme": (
+        "issue_type_count", "default_issue_type_present",
+    ),
+    "jira_field_configuration_scheme": (
+        "field_configuration_count", "required_field_count",
+        "hidden_field_count",
+    ),
+    "jira_screen_scheme": (
+        "screen_count", "tab_count", "field_count", "screen_tab_count",
+        "screen_unmapped_screen_count",
+    ),
+    "jira_webhook": (
+        "webhook_enabled", "webhook_event_count", "webhook_url_present",
+        "webhook_url_scheme_category", "webhook_jql_filter_present",
+        "webhook_secret_present", "webhook_has_issue_events",
+        "webhook_has_comment_events", "webhook_has_attachment_events",
+        "webhook_has_project_events", "webhook_has_sprint_events",
+        "webhook_has_worklog_events", "webhook_all_issue_events",
+        "webhook_jql_empty_or_broad", "webhook_event_scope_category",
+    ),
+    "jira_automation_rule": (
+        "automation_enabled", "automation_trigger_type_category",
+        "automation_component_count", "automation_scope_category",
+        "automation_action_count", "automation_condition_count",
+        "automation_branch_count", "automation_has_web_request_action",
+        "automation_has_email_action", "automation_has_external_action",
+        "automation_has_comment_action",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2237,6 +2315,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"gitlab_"`` look up in
       ``_GITLAB_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"jira_"`` look up in
+      ``_JIRA_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2268,6 +2348,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("gitlab_"):
         return _GITLAB_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("jira_"):
+        return _JIRA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table

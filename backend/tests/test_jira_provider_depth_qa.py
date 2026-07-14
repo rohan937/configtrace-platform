@@ -34,6 +34,7 @@ from app.connectors.jira_schema import (
     JIRA_AUTOMATION_RULE,
     JIRA_PERMISSION_SCHEME,
     JIRA_WEBHOOK,
+    JIRA_WORKFLOW_SCHEME,
 )
 from app.services.provider_capability_matrix_service import get_provider_capability
 from app.services.provider_expansion_framework import get_framework
@@ -49,7 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FE_RULE_CATALOG = REPO_ROOT / "frontend" / "src" / "lib" / "securityRuleCatalog.ts"
 JIRA_RULES_PY = REPO_ROOT / "backend" / "app" / "services" / "security_rules" / "jira.py"
 
-LIVE_JIRA_RULE_COUNT = 76
+LIVE_JIRA_RULE_COUNT = 81
 
 # The 6 rules removed during the M86H dead-rule cleanup.
 DEAD_JIRA_RULE_KEYS = [
@@ -389,6 +390,20 @@ def _all_jira_findings() -> list[FindingCandidate]:
                 "record_type": JIRA_AUTOMATION_RULE,
                 "record_id": "auto-multi",
                 "automation_scope_category": "multi-project",
+            },
+            "jira",
+        )
+    )
+    # jira_workflow_scheme_low_project_count only fires in the narrow window
+    # 0 < workflow_scheme_project_count < floor — the generic 0/999 extreme
+    # sweep can never land inside that window, so it needs an explicit record
+    # just like the category-keyed rules above.
+    findings.extend(
+        evaluate_record(
+            {
+                "record_type": JIRA_WORKFLOW_SCHEME,
+                "record_id": "wfs-low-project-count",
+                "workflow_scheme_project_count": 1,
             },
             "jira",
         )
