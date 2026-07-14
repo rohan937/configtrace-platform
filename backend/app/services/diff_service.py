@@ -2370,6 +2370,65 @@ _PAGERDUTY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_DATADOG_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "datadog_monitor": (
+        "resource_name", "monitor_type", "enabled", "status",
+        "priority_category", "query_present", "query_complexity_category",
+        "query_uses_wildcard_scope", "query_group_by_count", "message_present",
+        "message_length_category", "notification_routing_present",
+        "notification_count", "message_template_present", "tag_count",
+        "threshold_count", "threshold_critical_present",
+        "threshold_warning_present", "threshold_recovery_present",
+        "renotify_enabled", "renotify_interval_category",
+        "restricted_roles_count", "notify_no_data", "include_tags",
+        "notify_audit", "require_full_window", "evaluation_delay_category",
+        "silenced_scope_count", "no_data_timeframe_category",
+    ),
+    "datadog_slo": (
+        "resource_name", "slo_type", "target_category",
+        "warning_target_category", "timeframe_count", "monitor_count",
+        "group_count", "tag_count", "description_present",
+        "description_length_category",
+    ),
+    "datadog_dashboard": (
+        "resource_name", "layout_type", "widget_count",
+        "template_variable_count", "restricted_roles_count",
+        "public_url_present", "description_present",
+        "description_length_category",
+    ),
+    "datadog_webhook_integration": (
+        "resource_name", "url_present", "url_scheme_category",
+        "custom_headers_present", "custom_header_count",
+        "auth_material_present", "payload_template_present",
+        "payload_template_length_category", "secret_headers_present",
+        "secret_headers_count", "encode_as_category",
+    ),
+    "datadog_notification_integration": (
+        "resource_name", "integration_type", "enabled", "handle_count",
+        "channel_count", "restricted_roles_count",
+    ),
+    "datadog_api_key_metadata": (
+        "resource_name", "created_present", "modified_present",
+        "last4_present", "created_by_present", "disabled",
+    ),
+    "datadog_application_key_metadata": (
+        "resource_name", "created_present", "modified_present",
+        "scopes_count", "owned_by_present",
+    ),
+    "datadog_role": (
+        "resource_name", "permission_count", "user_count", "team_count",
+    ),
+    "datadog_team": (
+        "resource_name", "member_count", "handle_present", "link_count",
+    ),
+    "datadog_cloud_integration": (
+        "resource_name", "cloud_provider", "account_id_present",
+        "resource_collection_enabled", "metric_collection_enabled",
+        "log_collection_enabled", "account_tags_count", "namespace_count",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2401,6 +2460,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_LINEAR_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"pagerduty_"`` look up in
       ``_PAGERDUTY_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"datadog_"`` look up in
+      ``_DATADOG_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2438,6 +2499,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _LINEAR_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("pagerduty_"):
         return _PAGERDUTY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("datadog_"):
+        return _DATADOG_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table
