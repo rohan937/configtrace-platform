@@ -1367,6 +1367,106 @@ class TestLinearRiskClassifier:
         level, reason = classify_linear_change(real_shaped_change)
         assert level == "high", f"Expected high, got {level!r}: {reason}"
 
+    # ── Change-classification QA pass regression tests ───────────────────────
+
+    def test_webhook_attachment_type_gained_reads_new_value(self):
+        """Regression: webhook_has_attachment_type previously returned the
+        same direction-blind message regardless of new_value — it never
+        read new_value at all."""
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_WEBHOOK, "webhook_has_attachment_type", prev_value=False, new_value=True,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "low"
+        assert "gained" in reason.lower()
+
+    def test_webhook_attachment_type_removed_reads_new_value(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_WEBHOOK, "webhook_has_attachment_type", prev_value=True, new_value=False,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "low"
+        assert "removed" in reason.lower()
+
+    def test_view_shared_true_to_unknown_is_low_not_disabled_wording(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_VIEW, "view_shared", prev_value=True, new_value=None,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "low"
+        assert "disabled" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_view_shared_explicit_false_is_disabled_wording(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_VIEW, "view_shared", prev_value=True, new_value=False,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "low"
+        assert "disabled" in reason.lower()
+
+    def test_workspace_team_count_dropped_to_zero_is_low_not_generic_fallback(self):
+        """Regression: workspace.team_count is tracked in diff_service.py
+        and has a matching linear_workspace_low_team_count Finding, but the
+        Change classifier had no dedicated branch and silently fell to the
+        generic fallback."""
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            "linear_workspace", "team_count", prev_value=3, new_value=0,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "field 'team_count' changed" not in reason.lower()
+        assert "team count" in reason.lower()
+
+    def test_unknown_transitions_never_produce_high_qa_pass(self):
+        from app.services.risk_rules.linear import classify_linear_change
+
+        unknown_cases = [
+            (LINEAR_WEBHOOK, "webhook_has_attachment_type", True, None),
+            (LINEAR_VIEW, "view_shared", True, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_linear_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
+    def test_classifier_copy_never_leaks_raw_resource_name_value(self):
+        """The connector stores raw resource_name values (a deliberate,
+        documented design difference from GitLab/Jira/Terraform Cloud — see
+        linear_detection_matrix.md). This test confirms the Change
+        classifier never echoes an actual name value into its reason
+        string — a resource_name change must fall to the generic
+        field-path-only fallback, never quoting old_value/new_value.
+        """
+        from app.services.risk_rules.linear import classify_linear_change
+
+        change = self._make_change(
+            LINEAR_WORKSPACE, "resource_name",
+            prev_value="Acme Corp Old Name", new_value="Acme Corp New Name",
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "low"
+        assert "Acme Corp Old Name" not in reason
+        assert "Acme Corp New Name" not in reason
+
+        for record_type, field in [
+            (LINEAR_TEAM, "resource_name"),
+            (LINEAR_PROJECT, "resource_name"),
+        ]:
+            change = self._make_change(
+                record_type, field, prev_value="Old Team Name", new_value="New Team Name",
+            )
+            _, reason = classify_linear_change(change)
+            assert "Old Team Name" not in reason
+            assert "New Team Name" not in reason
+
     def test_no_forbidden_wording_in_reasons(self):
         from app.services.risk_rules.linear import classify_linear_change
 

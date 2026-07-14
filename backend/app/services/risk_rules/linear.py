@@ -77,6 +77,12 @@ def _classify_workspace_change(change: Change) -> tuple[str, str]:
     if ct in ("added", "removed"):
         return ("low", "Linear workspace configuration record was added or removed during sync.")
 
+    if fp == "team_count":
+        n_old, n_new = _int_pair(prev_v, new_v)
+        if n_new == 0 and n_old > 0:
+            return ("low", "Linear workspace team count dropped to zero.")
+        return ("low", f"Linear workspace team count changed from {n_old} to {n_new}.")
+
     if fp == "webhook_count":
         n_old, n_new = _int_pair(prev_v, new_v)
         if n_new == 0 and n_old > 0:
@@ -282,7 +288,11 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
         return ("low", "Linear webhook comment-type event scope changed.")
 
     if fp == "webhook_has_attachment_type":
-        return ("low", "Linear webhook attachment-type event scope changed.")
+        if _is_truthy(new_v):
+            return ("low", "Linear webhook gained attachment-type event scope.")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Linear webhook attachment-type event scope was removed.")
+        return ("low", "Linear webhook attachment-type event scope is now unknown or missing.")
 
     return ("low", f"Linear webhook field '{fp}' changed.")
 
@@ -304,7 +314,9 @@ def _classify_view_change(change: Change) -> tuple[str, str]:
                 "low",
                 "Linear view was shared. Linear configuration evidence may require review.",
             )
-        return ("low", "Linear view sharing was disabled (restricted).")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Linear view sharing was disabled (restricted).")
+        return ("low", "Linear view sharing state is now unknown or missing.")
 
     return ("low", f"Linear view configuration field '{fp}' changed.")
 
