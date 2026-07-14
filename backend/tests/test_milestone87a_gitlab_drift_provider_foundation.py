@@ -932,6 +932,216 @@ class TestDriftRiskClassifier:
             )
 
 
+# ── G2. Diff tracked fields (QA pass) ─────────────────────────────────────────
+
+
+class TestGitLabDiffTrackedFields:
+    """GitLab had zero entries in diff_service.py's tracked-fields dispatch,
+    so every gitlab_ record type fell through to the Cloudflare DNS default
+    tuple and compute_diff could never detect a modified field on an
+    existing record. This mirrors the exact bug found and fixed for
+    SendGrid, Twilio, and Terraform Cloud in prior QA passes.
+    """
+
+    def test_all_nine_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _GITLAB_TRACKED_FIELDS_BY_TYPE
+
+        for record_type in GITLAB_RECORD_TYPES:
+            assert record_type in _GITLAB_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_gitlab_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in GITLAB_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own GitLab fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_project_visibility_change_produces_drift_change(self):
+        """visibility_category private -> public must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _project_record(visibility: str) -> dict:
+            return {
+                "record_type": "gitlab_project",
+                "provider": "gitlab",
+                "record_id": "gitlab_project:abc123",
+                "resource_id": "abc123",
+                "visibility_category": visibility,
+                "archived": False,
+                "default_branch_present": True,
+                "merge_requests_enabled": True,
+                "issues_enabled": True,
+                "wiki_enabled": True,
+                "snippets_enabled": True,
+                "container_registry_enabled": False,
+                "packages_enabled": False,
+                "shared_runners_enabled": True,
+                "protected_branch_count": 1,
+                "webhook_count": 0,
+                "ci_variable_count": 0,
+                "deploy_key_count": 0,
+                "approval_rule_count": 0,
+            }
+
+        prev = _mock_snapshot([_project_record("private")])
+        new = _mock_snapshot([_project_record("public")])
+
+        changes = compute_diff(prev, new)
+        vis_changes = [c for c in changes if c["field_path"] == "visibility_category"]
+
+        assert len(vis_changes) == 1
+        assert vis_changes[0]["change_type"] == "modified"
+        assert vis_changes[0]["prev_value"] == "private"
+        assert vis_changes[0]["new_value"] == "public"
+
+    def test_allow_force_push_change_produces_drift_change(self):
+        """allow_force_push False -> True must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _branch_record(allow_force_push: bool) -> dict:
+            return {
+                "record_type": "gitlab_branch_protection",
+                "provider": "gitlab",
+                "record_id": "gitlab_branch_protection:bp123",
+                "resource_id": "bp123",
+                "project_resource_id": "abc123",
+                "pattern_category": "default",
+                "allow_force_push": allow_force_push,
+                "code_owner_approval_required": True,
+                "push_access_level_category": "maintainer",
+                "merge_access_level_category": "maintainer",
+                "allowed_to_push_count": 1,
+                "allowed_to_merge_count": 1,
+            }
+
+        prev = _mock_snapshot([_branch_record(False)])
+        new = _mock_snapshot([_branch_record(True)])
+
+        changes = compute_diff(prev, new)
+        fp_changes = [c for c in changes if c["field_path"] == "allow_force_push"]
+
+        assert len(fp_changes) == 1
+        assert fp_changes[0]["prev_value"] is False
+        assert fp_changes[0]["new_value"] is True
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "gitlab_webhook",
+            "provider": "gitlab",
+            "record_id": "gitlab_webhook:wh123",
+            "resource_id": "wh123",
+            "owner_resource_id": "abc123",
+            "owner_type": "project",
+            "enabled": True,
+            "url_scheme": "https",
+            "url_host_category": "external",
+            "ssl_verification_enabled": True,
+            "secret_token_present": True,
+            "event_count": 2,
+            "push_events": True,
+            "merge_requests_events": False,
+            "pipeline_events": False,
+            "job_events": False,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _GITLAB_TRACKED_FIELDS_BY_TYPE must be classifiable:
+        classify_gitlab_change must not raise, and must return one of the
+        three known severities, for a representative modified change on
+        each tracked field of each record type.
+        """
+        from app.services.diff_service import _GITLAB_TRACKED_FIELDS_BY_TYPE
+
+        for record_type, fields in _GITLAB_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_gitlab_change(change)
+                assert level in ("low", "medium", "high"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
+
+
+class TestGitLabConnectorApprovalRuleCountBugfix:
+    """Regression test for a connector normalization bug: the project
+    record's approval_rule_count field was being populated from
+    approvals_required (the number of approvals required to merge) instead
+    of the actual count of approval rules — a different GitLab concept
+    entirely. _normalize_mr_approval_summary already computed the correct
+    value; fetch() just wasn't reusing it for the project record.
+    """
+
+    def test_mr_approval_rule_count_helper_counts_rules_not_required_approvals(self):
+        from app.connectors.gitlab import _mr_approval_rule_count
+
+        approvals = {
+            "approvals_required": 2,
+            "approval_rules_overwritten": [{"id": 1}, {"id": 2}, {"id": 3}],
+        }
+        assert _mr_approval_rule_count(approvals) == 3
+
+    def test_mr_approval_rule_count_helper_handles_none(self):
+        from app.connectors.gitlab import _mr_approval_rule_count
+
+        assert _mr_approval_rule_count(None) is None
+
+    def test_project_record_and_mr_summary_agree_on_approval_rule_count(self):
+        """Both the project record and the MR approval summary record must
+        derive approval_rule_count from the same source data."""
+        connector = GitLabConnector()
+        approvals = {
+            "approvals_required": 2,
+            "approval_rules_overwritten": [{"id": 1}],
+        }
+        mr_summary = connector._normalize_mr_approval_summary(approvals, "proj123")
+        from app.connectors.gitlab import _mr_approval_rule_count
+
+        project_side_value = _mr_approval_rule_count(approvals)
+        assert mr_summary["approval_rule_count"] == project_side_value == 1
+        # Before the fix, the project record would have used
+        # approvals_required (2) here instead of the rule count (1).
+        assert mr_summary["approval_rule_count"] != approvals["approvals_required"]
+
+
 # ── H. Capability matrix ──────────────────────────────────────────────────────
 
 class TestCapabilityMatrix:

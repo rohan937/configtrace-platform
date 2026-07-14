@@ -220,6 +220,16 @@ def _member_count_category(count: Any) -> str:
     return "very_large"
 
 
+def _mr_approval_rule_count(approvals: Optional[dict]) -> Optional[int]:
+    """Return the number of MR approval rules from raw approvals settings."""
+    if approvals is None:
+        return None
+    rules = approvals.get("approval_rules_overwritten") or []
+    if isinstance(rules, list):
+        return _count(rules)
+    return _int(approvals.get("approval_rule_count"))
+
+
 def _shared_runners_setting_category(setting: Any) -> str:
     """Map GitLab group shared_runners_setting to safe category."""
     v = (setting or "").lower()
@@ -685,10 +695,7 @@ class GitLabConnector(BaseConnector):
         are NEVER stored.
         """
         resource_id = _opaque_id(f"mr_approval:{project_resource_id}")
-        rules = approvals.get("approval_rules_overwritten") or []
-        rule_count = _count(rules) if isinstance(rules, list) else _int(
-            approvals.get("approval_rule_count")
-        )
+        rule_count = _mr_approval_rule_count(approvals) or 0
         return {
             "record_type": "gitlab_merge_request_approval_summary",
             "provider": "gitlab",
@@ -903,10 +910,7 @@ class GitLabConnector(BaseConnector):
                 webhook_count=len(hooks),
                 ci_variable_count=len(variables),
                 deploy_key_count=len(deploy_keys),
-                approval_rule_count=(
-                    _int(approvals.get("approvals_required"))
-                    if approvals else None
-                ),
+                approval_rule_count=_mr_approval_rule_count(approvals),
             )
             records.append(project_record)
 

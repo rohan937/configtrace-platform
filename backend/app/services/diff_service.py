@@ -2163,6 +2163,55 @@ _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_GITLAB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "gitlab_instance": (
+        "version_present", "revision_present", "enterprise",
+        "project_count", "group_count", "two_factor_requirement_enabled",
+        "sign_up_enabled", "visibility_restriction_category",
+        "shared_runners_enabled",
+    ),
+    "gitlab_project": (
+        "visibility_category", "archived", "default_branch_present",
+        "merge_requests_enabled", "issues_enabled", "wiki_enabled",
+        "snippets_enabled", "container_registry_enabled", "packages_enabled",
+        "shared_runners_enabled", "protected_branch_count", "webhook_count",
+        "ci_variable_count", "deploy_key_count", "approval_rule_count",
+    ),
+    "gitlab_group": (
+        "visibility_category", "project_count", "subgroup_count",
+        "member_count_category", "two_factor_requirement_enabled",
+        "membership_lock", "shared_runners_setting_category",
+    ),
+    "gitlab_branch_protection": (
+        "pattern_category", "allow_force_push", "code_owner_approval_required",
+        "push_access_level_category", "merge_access_level_category",
+        "allowed_to_push_count", "allowed_to_merge_count",
+    ),
+    "gitlab_webhook": (
+        "enabled", "url_scheme", "url_host_category",
+        "ssl_verification_enabled", "secret_token_present", "event_count",
+        "push_events", "merge_requests_events", "pipeline_events", "job_events",
+    ),
+    "gitlab_ci_variable_summary": (
+        "variable_count", "protected_variable_count", "masked_variable_count",
+        "environment_scoped_count", "unprotected_unmasked_count",
+    ),
+    "gitlab_deploy_key_summary": (
+        "deploy_key_count", "write_enabled_count", "read_only_count",
+        "enabled_count",
+    ),
+    "gitlab_runner_summary": (
+        "runner_count", "shared_runner_enabled", "locked_runner_count",
+        "paused_runner_count", "tagged_runner_count", "untagged_runner_count",
+    ),
+    "gitlab_merge_request_approval_summary": (
+        "approval_rule_count", "approvals_required", "author_approval_allowed",
+        "reset_approvals_on_push",
+        "disable_overriding_approvers_per_merge_request",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2186,6 +2235,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_TWILIO_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"terraform_cloud_"`` look up in
       ``_TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"gitlab_"`` look up in
+      ``_GITLAB_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2215,6 +2266,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _TWILIO_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("terraform_cloud_"):
         return _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("gitlab_"):
+        return _GITLAB_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table
