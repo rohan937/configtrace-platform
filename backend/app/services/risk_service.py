@@ -128,6 +128,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.linear import classify_linear_change
         return classify_linear_change(change)
 
+    if record_type.startswith("pagerduty_"):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        return classify_pagerduty_change(change)
+
     if record_type == "cloudflare_ruleset":
         from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change
         return classify_cloudflare_ruleset_change(change)

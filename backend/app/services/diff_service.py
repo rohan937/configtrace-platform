@@ -2331,6 +2331,45 @@ _LINEAR_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_PAGERDUTY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "pagerduty_service": (
+        "resource_name", "status_category", "escalation_policy_id",
+        "team_count", "integration_count", "alert_creation_category",
+        "incident_urgency_rule_type", "support_hours_enabled",
+        "scheduled_actions_count", "auto_resolve_timeout_category",
+        "acknowledgement_timeout_category",
+    ),
+    "pagerduty_escalation_policy": (
+        "resource_name", "team_count", "escalation_rule_count",
+        "escalation_level_count", "repeat_enabled", "num_loops",
+        "on_call_handoff_notifications", "target_count", "user_target_count",
+        "schedule_target_count", "has_schedule_targets",
+    ),
+    "pagerduty_schedule": (
+        "resource_name", "time_zone_present", "layer_count", "user_count",
+        "team_count", "restriction_count", "has_restrictions",
+    ),
+    "pagerduty_service_integration": (
+        "type_category", "vendor_name", "has_integration_key",
+        "routing_key_present",
+    ),
+    "pagerduty_webhook_subscription": (
+        "active", "event_count", "delivery_url_scheme_category",
+        "filter_type", "has_custom_headers",
+    ),
+    "pagerduty_event_orchestration": (
+        "resource_name", "team_present", "route_count",
+    ),
+    "pagerduty_business_service": (
+        "resource_name", "team_present", "point_of_contact_present",
+    ),
+    "pagerduty_response_play": (
+        "resource_name", "team_present", "responder_count",
+        "subscriber_count", "conference_number_present", "runnability",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2360,6 +2399,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_JIRA_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"linear_"`` look up in
       ``_LINEAR_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"pagerduty_"`` look up in
+      ``_PAGERDUTY_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2395,6 +2436,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _JIRA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("linear_"):
         return _LINEAR_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("pagerduty_"):
+        return _PAGERDUTY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table

@@ -1018,3 +1018,305 @@ def test_p_no_secret_shape_in_module(module_path: Path) -> None:
         assert not re.search(pattern, text), (
             f"{label} found in {module_path.name}"
         )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Section Q — Diff tracked fields and risk classification (QA pass)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# PagerDuty previously had NO entry in diff_service.py's tracked-fields
+# dispatch (every pagerduty_ record type fell through to the Cloudflare DNS
+# default tuple, so compute_diff could never detect a modified field) and NO
+# risk_rules/pagerduty.py module at all (risk_service.py had no pagerduty_
+# dispatch branch, so every PagerDuty change silently fell through to the
+# Cloudflare DNS classifier). Both were built during this QA pass.
+
+
+class TestPagerDutyDiffTrackedFields:
+    def test_all_eight_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _PAGERDUTY_TRACKED_FIELDS_BY_TYPE
+
+        for record_type in PAGERDUTY_RECORD_TYPES:
+            assert record_type in _PAGERDUTY_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_pagerduty_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in PAGERDUTY_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own PagerDuty fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_escalation_policy_id_change_produces_drift_change(self):
+        """escalation_policy_id present -> empty must surface as a Change —
+        this is the field-level signal behind PagerDuty response routing
+        posture."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _service_record(ep_id: str) -> dict:
+            return {
+                "record_type": "pagerduty_service",
+                "provider": "pagerduty",
+                "record_id": "pagerduty_service:s1",
+                "resource_id": "s1",
+                "resource_name": "test-service",
+                "status_category": "active",
+                "escalation_policy_id": ep_id,
+                "team_count": 1,
+                "integration_count": 1,
+                "alert_creation_category": "alerts_and_incidents",
+                "incident_urgency_rule_type": "constant",
+                "support_hours_enabled": False,
+                "scheduled_actions_count": 0,
+                "auto_resolve_timeout_category": "medium",
+                "acknowledgement_timeout_category": "medium",
+            }
+
+        prev = _mock_snapshot([_service_record("ep1")])
+        new = _mock_snapshot([_service_record("")])
+
+        changes = compute_diff(prev, new)
+        ep_changes = [c for c in changes if c["field_path"] == "escalation_policy_id"]
+
+        assert len(ep_changes) == 1
+        assert ep_changes[0]["prev_value"] == "ep1"
+        assert ep_changes[0]["new_value"] == ""
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "pagerduty_webhook_subscription",
+            "provider": "pagerduty",
+            "record_id": "pagerduty_webhook_subscription:wh1",
+            "resource_id": "wh1",
+            "active": True,
+            "event_count": 2,
+            "delivery_url_scheme_category": "https",
+            "filter_type": "service_reference",
+            "has_custom_headers": True,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _PAGERDUTY_TRACKED_FIELDS_BY_TYPE must be
+        classifiable: classify_pagerduty_change must not raise, and must
+        return one of the three known severities, for a representative
+        modified change on each tracked field of each record type.
+        """
+        from app.services.diff_service import _PAGERDUTY_TRACKED_FIELDS_BY_TYPE
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+
+        for record_type, fields in _PAGERDUTY_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_pagerduty_change(change)
+                assert level in ("low", "medium", "high"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
+
+
+class TestPagerDutyRiskClassifier:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_risk_service_dispatches_pagerduty_to_pagerduty_classifier(self):
+        """Regression guard: risk_service.py must route pagerduty_ record
+        types to classify_pagerduty_change, not silently fall through to
+        the Cloudflare DNS classifier (the exact bug this QA pass found and
+        fixed)."""
+        from app.services.risk_service import classify_change
+
+        change = self._make_change(
+            "pagerduty_service", "escalation_policy_id", prev_value="ep1", new_value="",
+        )
+        mock_change = MagicMock()
+        mock_change.provider_metadata = change["provider_metadata"]
+        mock_change.field_path = change["field_path"]
+        mock_change.change_type = change["change_type"]
+        mock_change.prev_value = change["prev_value"]
+        mock_change.new_value = change["new_value"]
+        level, reason = classify_change(mock_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+        assert "pagerduty" in reason.lower()
+
+    def test_service_loses_escalation_policy_is_high(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_SERVICE, "escalation_policy_id", prev_value="ep1", new_value="",
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_service_gains_escalation_policy_is_low(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_SERVICE, "escalation_policy_id", prev_value="", new_value="ep1",
+        )
+        level, _ = classify_pagerduty_change(change)
+        assert level == "low"
+
+    def test_escalation_policy_zero_rules_is_high(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_ESCALATION_POLICY, "escalation_rule_count", prev_value=2, new_value=0,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_escalation_policy_zero_targets_is_high(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_ESCALATION_POLICY, "target_count", prev_value=3, new_value=0,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_schedule_zero_users_is_high(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_SCHEDULE, "user_count", prev_value=2, new_value=0,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_response_play_zero_responders_is_high(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_RESPONSE_PLAY, "responder_count", prev_value=2, new_value=0,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_webhook_http_scheme_is_high(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_WEBHOOK_SUBSCRIPTION, "delivery_url_scheme_category",
+            prev_value="https", new_value="http",
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_webhook_https_restored_is_low(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_WEBHOOK_SUBSCRIPTION, "delivery_url_scheme_category",
+            prev_value="http", new_value="https",
+        )
+        level, _ = classify_pagerduty_change(change)
+        assert level == "low"
+
+    def test_integration_key_removed_is_medium(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_SERVICE_INTEGRATION, "has_integration_key",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_unknown_record_type_is_low(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change("pagerduty_unknown_surface", "some_field", prev_value=1, new_value=2)
+        level, _ = classify_pagerduty_change(change)
+        assert level == "low"
+
+    def test_unknown_transitions_never_produce_high(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+
+        unknown_cases = [
+            (PAGERDUTY_WEBHOOK_SUBSCRIPTION, "active", True, None),
+            (PAGERDUTY_WEBHOOK_SUBSCRIPTION, "delivery_url_scheme_category", "https", None),
+            (PAGERDUTY_SERVICE_INTEGRATION, "has_integration_key", True, None),
+            (PAGERDUTY_ESCALATION_POLICY, "has_schedule_targets", True, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_pagerduty_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
+    def test_classifier_reads_real_compute_diff_dict_shape_not_a_mock(self):
+        """Regression guard against the exact old_value/prev_value bug class
+        found in Terraform Cloud's first QA pass: builds a plain dict shaped
+        EXACTLY like compute_diff's real output (prev_value/new_value/
+        field_path/change_type/provider_metadata), not a MagicMock, to prove
+        the classifier reads the real field name."""
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+
+        real_shaped_change = {
+            "change_type": "modified",
+            "field_path": "escalation_rule_count",
+            "prev_value": 2,
+            "new_value": 0,
+            "provider_metadata": {"record_type": "pagerduty_escalation_policy"},
+        }
+        level, reason = classify_pagerduty_change(real_shaped_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_no_forbidden_wording_in_reasons(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+
+        FORBIDDEN = [
+            "breach", "compromise", "attacker", "leaked", "unauthorized access",
+            "exfiltration", "stolen", "fraud", "attack detected",
+            "incident exposed", "alert exposed", "secret exposed", "data exposed",
+        ]
+        test_changes = [
+            self._make_change(PAGERDUTY_SERVICE, "escalation_policy_id", prev_value="ep1", new_value=""),
+            self._make_change(PAGERDUTY_ESCALATION_POLICY, "target_count", prev_value=3, new_value=0),
+            self._make_change(PAGERDUTY_SCHEDULE, "user_count", prev_value=2, new_value=0),
+            self._make_change(PAGERDUTY_WEBHOOK_SUBSCRIPTION, "delivery_url_scheme_category", prev_value="https", new_value="http"),
+            self._make_change(PAGERDUTY_RESPONSE_PLAY, "responder_count", prev_value=2, new_value=0),
+        ]
+        for change in test_changes:
+            _, reason = classify_pagerduty_change(change)
+            reason_lower = reason.lower()
+            for phrase in FORBIDDEN:
+                assert phrase not in reason_lower, (
+                    f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
+                )
