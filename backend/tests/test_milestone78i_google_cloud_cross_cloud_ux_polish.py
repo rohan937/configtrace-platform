@@ -58,6 +58,7 @@ EXPECTED_GOOGLE_CLOUD_RULE_KEYS = frozenset({
     "google_cloud_gke_legacy_abac_enabled",
     "google_cloud_gke_network_policy_disabled",
     "google_cloud_gke_workload_identity_disabled",
+    "google_cloud_gke_shielded_nodes_disabled",
     "google_cloud_service_account_user_managed_keys",
     "google_cloud_service_account_old_keys",
     "google_cloud_secret_manager_auto_replication_without_cmek",
@@ -532,12 +533,12 @@ def test_fe_demo_script_page_capability_table_description_mentions_google_cloud(
 
 
 def test_fe_rule_catalog_google_cloud_rule_count():
-    """securityRuleCatalog.ts contains all 22 Google Cloud rules."""
+    """securityRuleCatalog.ts contains all 23 Google Cloud rules."""
     text = _read_fe("lib/securityRuleCatalog.ts")
     entries = re.findall(r'key:\s*"(google_cloud_[a-z_]+)"', text)
     keys = frozenset(entries)
-    assert len(keys) == 22, (
-        f"Expected 22 Google Cloud rules in catalog, found {len(keys)}: {sorted(keys)}"
+    assert len(keys) == 23, (
+        f"Expected 23 Google Cloud rules in catalog, found {len(keys)}: {sorted(keys)}"
     )
 
 
@@ -637,9 +638,9 @@ def test_fe_api_ts_google_cloud_provider_referenced():
 
 
 def test_backend_google_cloud_rule_keys_count():
-    """Backend GOOGLE_CLOUD_RULE_KEYS has all 22 expected rules."""
-    assert len(GOOGLE_CLOUD_RULE_KEYS) == 22, (
-        f"Expected 22 Google Cloud rule keys, found {len(GOOGLE_CLOUD_RULE_KEYS)}"
+    """Backend GOOGLE_CLOUD_RULE_KEYS has all 23 expected rules."""
+    assert len(GOOGLE_CLOUD_RULE_KEYS) == 23, (
+        f"Expected 23 Google Cloud rule keys, found {len(GOOGLE_CLOUD_RULE_KEYS)}"
     )
 
 

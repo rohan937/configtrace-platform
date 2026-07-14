@@ -1602,3 +1602,247 @@ class TestGoogleCloudRiskClassifier:
                 assert phrase not in reason_lower, (
                     f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
                 )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 20. Change-classification QA pass (dedicated follow-up)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Bugs found and fixed in this pass:
+#
+# 1. user_managed_key_count / old_user_managed_key_count used
+#    `n_new > (n_old or 0)` to detect an increase — coercing a genuinely
+#    unknown previous count (n_old is None) to 0 for the comparison,
+#    which could falsely report "increased" for a count we have no prior
+#    evidence about. This is the exact PagerDuty-style unknown-treated-
+#    as-zero bug class, applied here proactively (the real connector
+#    always populates this field with an int, so this was not reachable
+#    with live data, but the defensive fix removes the bug class
+#    entirely). Fixed by requiring `n_old is not None` before claiming
+#    an increase.
+#
+# 2. `_crossed_threshold_increase()` was defined but never called anywhere
+#    in the module (dead code) — removed.
+#
+# 3. The firewall/IAM list-diffing logic (`source_ranges_summary`,
+#    `allowed_summary`, `role_names`) treated a missing/unknown previous
+#    list the same as an explicitly empty list, which could cause the
+#    classifier to claim an entry was "added" when the previous state was
+#    actually unknown (not confirmed empty). Fixed by adding
+#    `_as_str_list_or_none()`/`_as_dict_list_or_none()` and branching
+#    explicitly on "previous list is unknown" to evaluate current-state-
+#    only (mirroring the Finding's own current-state check) without
+#    claiming a false transition.
+#
+# 4. `google_cloud_gke_cluster.shielded_nodes_enabled` was fetched,
+#    normalized, and diff-tracked, but had no Security Finding — a direct
+#    single-field analog of the sibling `network_policy_enabled`/
+#    `workload_identity_enabled` rules on the same record type. Added
+#    `google_cloud_gke_shielded_nodes_disabled` (medium) and wired the
+#    Change classifier to match.
+
+
+class TestGoogleCloudChangeClassificationQA:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    # ── Bug #1: unknown-old-count must never be treated as zero ─────────────
+
+    def test_user_managed_key_count_unknown_baseline_is_not_treated_as_increase(self):
+        """Regression test for the (n_old or 0) bug fixed in this pass: a
+        genuinely unknown previous count must never be coerced to 0 for the
+        'did it increase' comparison."""
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_service_account_key_summary", "user_managed_key_count",
+            prev_value=None, new_value=2,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "increased" not in reason.lower()
+
+    def test_user_managed_key_count_unknown_baseline_still_fires_high_over_threshold(self):
+        """The absolute-threshold check (>4 keys) must still fire regardless
+        of whether the previous count is known — it mirrors the Finding's
+        own current-state-only check."""
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_service_account_key_summary", "user_managed_key_count",
+            prev_value=None, new_value=6,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_old_user_managed_key_count_unknown_baseline_is_not_treated_as_increase(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_service_account_key_summary", "old_user_managed_key_count",
+            prev_value=None, new_value=1,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "increased" not in reason.lower()
+
+    # ── Bug #3: list None/unknown must not be conflated with empty ──────────
+
+    def test_role_names_unknown_baseline_does_not_claim_added(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "role_names",
+            prev_value=None, new_value=["roles/owner"],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+        assert "added" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_role_names_unknown_new_value_is_low_unknown(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "role_names",
+            prev_value=["roles/owner"], new_value=None,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_source_ranges_unknown_baseline_does_not_claim_added(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "source_ranges_summary",
+            prev_value=None, new_value=["0.0.0.0/0"],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "added" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_source_ranges_unknown_new_value_is_low_unknown(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "source_ranges_summary",
+            prev_value=["10.0.0.0/8"], new_value=None,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_allowed_summary_unknown_baseline_does_not_claim_added(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "allowed_summary",
+            prev_value=None, new_value=[{"protocol": "tcp", "ports": ["3389"]}],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "critical", f"Expected critical, got {level!r}: {reason}"
+        assert "added" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_allowed_summary_unknown_new_value_is_low_unknown(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "allowed_summary",
+            prev_value=[{"protocol": "tcp", "ports": ["443"]}], new_value=None,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_crossed_threshold_increase_helper_removed_as_dead_code(self):
+        """_crossed_threshold_increase() was defined but never called anywhere
+        in the module — removed during this classification-QA pass."""
+        import app.services.risk_rules.google_cloud as gcp_risk
+        assert not hasattr(gcp_risk, "_crossed_threshold_increase")
+
+    # ── Bug #4: shielded_nodes_enabled Finding-layer gap closed ──────────────
+
+    def test_gke_shielded_nodes_disabled_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_gke_cluster", "shielded_nodes_enabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_gke_shielded_nodes_enabled_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_gke_cluster", "shielded_nodes_enabled",
+            prev_value=False, new_value=True,
+        )
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_gke_shielded_nodes_unknown_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_gke_cluster", "shielded_nodes_enabled",
+            prev_value=True, new_value=None,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_generic_fallback_never_used_for_security_sensitive_fields(self):
+        """Every field this pass classified as high/medium/critical-capable
+        must resolve through a field-specific branch, not the bare
+        '<record type> configuration field '...' changed.' fallback used
+        for purely cosmetic/metadata fields."""
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+
+        security_sensitive = [
+            ("google_cloud_iam_policy_summary", "allusers_binding_present", False, True),
+            ("google_cloud_iam_policy_summary", "role_names", [], ["roles/owner"]),
+            ("google_cloud_firewall_rule", "source_ranges_summary", ["10.0.0.0/8"], ["10.0.0.0/8", "0.0.0.0/0"]),
+            ("google_cloud_firewall_rule", "allowed_summary", [], [{"protocol": "tcp", "ports": ["22"]}]),
+            ("google_cloud_storage_bucket", "uniform_bucket_level_access_enabled", True, False),
+            ("google_cloud_sql_instance", "public_ip_enabled", False, True),
+            ("google_cloud_run_service", "public_invoker_allowed", False, True),
+            ("google_cloud_gke_cluster", "legacy_abac_enabled", False, True),
+            ("google_cloud_gke_cluster", "shielded_nodes_enabled", True, False),
+            ("google_cloud_service_account_key_summary", "user_managed_key_count", 1, 6),
+        ]
+        for record_type, field, prev, new in security_sensitive:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            _, reason = classify_google_cloud_change(change)
+            assert "configuration field" not in reason.lower(), (
+                f"{record_type}.{field} used the generic bare fallback instead of "
+                f"a field-specific branch: {reason!r}"
+            )
+
+    def test_broader_unknown_transition_sweep_never_produces_high_or_critical(self):
+        """Extends the existing unknown-transition sweep, proving
+        _is_falsy_explicit()/_is_truthy()/_int_or_none() correctly
+        distinguish None from an explicit False/0 across every high/
+        critical-capable branch added or touched in this pass."""
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+
+        cases = [
+            ("google_cloud_iam_policy_summary", "allusers_binding_present", False, None),
+            ("google_cloud_storage_bucket", "uniform_bucket_level_access_enabled", True, None),
+            ("google_cloud_sql_instance", "public_ip_enabled", False, None),
+            ("google_cloud_run_service", "public_invoker_allowed", False, None),
+            ("google_cloud_gke_cluster", "legacy_abac_enabled", False, None),
+            ("google_cloud_gke_cluster", "shielded_nodes_enabled", True, None),
+            ("google_cloud_service_account_key_summary", "user_managed_key_count", 3, None),
+        ]
+        for record_type, field, prev, new in cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_google_cloud_change(change)
+            assert level not in ("high", "critical"), (
+                f"{record_type}.{field} unknown transition produced {level!r}: {reason!r}"
+            )

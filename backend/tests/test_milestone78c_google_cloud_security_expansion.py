@@ -697,6 +697,34 @@ class TestGKERules:
             f.rule_key == "google_cloud_gke_workload_identity_disabled" for f in findings
         )
 
+    def test_shielded_nodes_disabled_fires(self):
+        """Added during the change-classification QA pass — a direct
+        single-field analog of the workload_identity/network_policy rules
+        on the same record type."""
+        record = self._gke_record(shielded_nodes_enabled=False)
+        findings = self._evaluate(record)
+        assert any(
+            f.rule_key == "google_cloud_gke_shielded_nodes_disabled" for f in findings
+        )
+        f = next(f for f in findings if f.rule_key == "google_cloud_gke_shielded_nodes_disabled")
+        assert f.severity == "medium"
+
+    def test_shielded_nodes_not_fired_when_enabled(self):
+        record = self._gke_record(shielded_nodes_enabled=True)
+        findings = self._evaluate(record)
+        assert not any(
+            f.rule_key == "google_cloud_gke_shielded_nodes_disabled" for f in findings
+        )
+
+    def test_shielded_nodes_not_fired_when_unknown(self):
+        """Missing/unknown shielded_nodes_enabled must never fire — only an
+        explicit False is a finding-worthy signal."""
+        record = self._gke_record(shielded_nodes_enabled=None)
+        findings = self._evaluate(record)
+        assert not any(
+            f.rule_key == "google_cloud_gke_shielded_nodes_disabled" for f in findings
+        )
+
     def test_safe_record_no_findings(self):
         record = self._gke_record(
             public_endpoint_enabled=False,

@@ -126,32 +126,35 @@ def _int_or_none(val: object) -> Optional[int]:
         return None
 
 
-def _crossed_threshold_increase(
-    prev_v: object, new_v: object, threshold: int
-) -> Optional[bool]:
-    """Return True if *new_v* is over *threshold* and higher than *prev_v*.
-
-    Fires on ANY increase while over the threshold, not just the exact
-    moment of crossing it. Returns None when the new value cannot be
-    parsed as an int.
-    """
-    n_new = _int_or_none(new_v)
-    if n_new is None:
-        return None
-    n_old = _int_or_none(prev_v)
-    return n_new > threshold and n_new > (n_old or 0)
-
-
 def _as_str_list(val: object) -> list[str]:
     if isinstance(val, list):
         return [v for v in val if isinstance(v, str)]
     return []
 
 
+def _as_str_list_or_none(val: object) -> Optional[list[str]]:
+    """Like ``_as_str_list``, but preserves the missing/unknown distinction.
+
+    Returns ``None`` (not ``[]``) when *val* is not actually a list, so a
+    genuinely unknown/missing list is never conflated with an explicitly
+    empty one — the list-valued analog of ``_int_or_none()``.
+    """
+    if isinstance(val, list):
+        return [v for v in val if isinstance(v, str)]
+    return None
+
+
 def _as_dict_list(val: object) -> list[dict]:
     if isinstance(val, list):
         return [v for v in val if isinstance(v, dict)]
     return []
+
+
+def _as_dict_list_or_none(val: object) -> Optional[list[dict]]:
+    """List-of-dict analog of ``_as_str_list_or_none``."""
+    if isinstance(val, list):
+        return [v for v in val if isinstance(v, dict)]
+    return None
 
 
 def _expand_ports(ports_value: object) -> list[int]:
@@ -259,8 +262,33 @@ def _classify_iam_policy_summary_change(change: Change) -> tuple[str, str]:
         return ("low", "Google Cloud IAM public member presence is now unknown or missing.")
 
     if fp == "role_names":
-        prev_roles = set(_as_str_list(prev_v))
-        new_roles = set(_as_str_list(new_v))
+        new_role_list = _as_str_list_or_none(new_v)
+        if new_role_list is None:
+            return ("low", "Google Cloud IAM policy role names are now unknown or missing.")
+        new_roles = set(new_role_list)
+        prev_role_list = _as_str_list_or_none(prev_v)
+        if prev_role_list is None:
+            # Previous role list is genuinely unknown — cannot claim a role
+            # was newly "added". Evaluate the current role set only, mirroring
+            # the Finding's own current-state-only check, without overstating
+            # a transition we have no evidence for.
+            if new_roles & _HIGH_SEVERITY_BROAD_ROLES:
+                return (
+                    "high",
+                    "Google Cloud IAM policy currently includes a broad "
+                    "privileged role, though prior role names are unknown or "
+                    "missing. This may require review.",
+                )
+            if new_roles & _MEDIUM_SEVERITY_BROAD_ROLES:
+                return (
+                    "medium",
+                    "Google Cloud IAM policy currently includes a "
+                    "service-account admin role, though prior role names are "
+                    "unknown or missing. This may require review.",
+                )
+            return ("low", "Google Cloud IAM policy role names changed.")
+
+        prev_roles = set(prev_role_list)
         added_roles = new_roles - prev_roles
         if added_roles & _HIGH_SEVERITY_BROAD_ROLES:
             return (
@@ -335,8 +363,25 @@ def _classify_firewall_rule_change(change: Change) -> tuple[str, str]:
         return ("low", "Firewall rule disabled state is now unknown or missing.")
 
     if fp == "source_ranges_summary":
-        prev_ranges = set(_as_str_list(prev_v))
-        new_ranges = set(_as_str_list(new_v))
+        new_range_list = _as_str_list_or_none(new_v)
+        if new_range_list is None:
+            return ("low", "Firewall rule source ranges are now unknown or missing.")
+        new_ranges = set(new_range_list)
+        prev_range_list = _as_str_list_or_none(prev_v)
+        if prev_range_list is None:
+            # Previous source ranges are genuinely unknown — cannot claim a
+            # public range was newly "added". Evaluate the current source
+            # ranges only, without overstating a transition we have no
+            # evidence for.
+            if new_ranges & _PUBLIC_SOURCE_RANGES:
+                return (
+                    "low",
+                    "Firewall rule currently has a public source range, though "
+                    "prior source ranges are unknown or missing. This may require review.",
+                )
+            return ("low", "Firewall rule source ranges changed.")
+
+        prev_ranges = set(prev_range_list)
         gained_public = bool((new_ranges - prev_ranges) & _PUBLIC_SOURCE_RANGES)
         lost_public = bool((prev_ranges - new_ranges) & _PUBLIC_SOURCE_RANGES)
         if gained_public:
@@ -350,9 +395,37 @@ def _classify_firewall_rule_change(change: Change) -> tuple[str, str]:
         return ("low", "Firewall rule source ranges changed.")
 
     if fp == "allowed_summary":
-        added = _added_entries(prev_v, new_v)
+        new_entry_list = _as_dict_list_or_none(new_v)
+        if new_entry_list is None:
+            return ("low", "Firewall rule allowed entries are now unknown or missing.")
+        prev_entry_list = _as_dict_list_or_none(prev_v)
+        if prev_entry_list is None:
+            # Previous allowed entries are genuinely unknown — cannot claim
+            # an entry was newly "added". Evaluate the current entries only,
+            # mirroring the Finding's own current-state-only check.
+            worst = "low"
+            for entry in new_entry_list:
+                if _is_broad_port_entry(entry):
+                    worst = "critical"
+                    break
+                ports = _expand_ports(entry.get("ports"))
+                if any(p in _ADMIN_PORTS_CRITICAL for p in ports):
+                    worst = "critical"
+                    break
+                if any(p in _ADMIN_PORTS_HIGH for p in ports) and worst != "critical":
+                    worst = "high"
+            if worst in ("critical", "high"):
+                return (
+                    worst,
+                    "Firewall rule currently has a broad or administrative-port "
+                    "allowed entry, though prior allowed entries are unknown or "
+                    "missing. This may require review.",
+                )
+            return ("low", "Firewall rule allowed entries changed.")
+
+        added = _added_entries(prev_entry_list, new_entry_list)
         if not added:
-            removed = _added_entries(new_v, prev_v)
+            removed = _added_entries(new_entry_list, prev_entry_list)
             if removed:
                 return ("low", "Firewall rule's allowed protocol/port entry was removed.")
             return ("low", "Firewall rule allowed entries changed.")
@@ -647,10 +720,23 @@ def _classify_gke_cluster_change(change: Change) -> tuple[str, str]:
             return ("low", "GKE cluster Workload Identity was enabled.")
         return ("low", "GKE cluster Workload Identity state is now unknown or missing.")
 
+    if fp == "shielded_nodes_enabled":
+        # Matches google_cloud_gke_shielded_nodes_disabled (medium), added
+        # during this classification-QA pass — a direct single-field analog
+        # of the sibling network_policy_enabled/workload_identity_enabled
+        # rules already present on this same record type.
+        if _is_falsy_explicit(new_v):
+            return (
+                "medium",
+                "GKE cluster Shielded Nodes was disabled. This may require review.",
+            )
+        if _is_truthy(new_v):
+            return ("low", "GKE cluster Shielded Nodes was enabled.")
+        return ("low", "GKE cluster Shielded Nodes state is now unknown or missing.")
+
     if fp in (
         "cluster_name", "location", "private_cluster_enabled",
-        "master_authorized_networks_count", "shielded_nodes_enabled",
-        "release_channel",
+        "master_authorized_networks_count", "release_channel",
     ):
         return ("low", f"GKE cluster {fp.replace('_', ' ')} changed.")
 
@@ -680,7 +766,13 @@ def _classify_service_account_key_summary_change(change: Change) -> tuple[str, s
                 f"Google Cloud service account user-managed key count reached "
                 f"{n_new}. This may require review.",
             )
-        if n_new > (n_old or 0):
+        # n_old is only compared when it is a known value — an unknown
+        # baseline (n_old is None) must never be coerced to 0, which would
+        # falsely claim "increased" for a count we have no prior evidence
+        # about (the exact bug class found in PagerDuty's classification-QA
+        # pass, applied here proactively even though the connector always
+        # populates this field with a real int today).
+        if n_old is not None and n_new > n_old:
             return (
                 "medium",
                 f"Google Cloud service account user-managed key count "
@@ -693,7 +785,7 @@ def _classify_service_account_key_summary_change(change: Change) -> tuple[str, s
         if n_new is None:
             return ("low", "Google Cloud old user-managed key count is now unknown or missing.")
         n_old = _int_or_none(prev_v)
-        if n_new > (n_old or 0):
+        if n_old is not None and n_new > n_old:
             return (
                 "medium",
                 f"Google Cloud aged (90+ day) service account key count "

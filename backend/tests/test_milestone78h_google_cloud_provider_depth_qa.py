@@ -138,6 +138,8 @@ EXPECTED_RULE_KEYS = {
     "google_cloud_gke_legacy_abac_enabled",
     "google_cloud_gke_network_policy_disabled",
     "google_cloud_gke_workload_identity_disabled",
+    # GKE — classification-QA pass
+    "google_cloud_gke_shielded_nodes_disabled",
     # Service account keys (M78C)
     "google_cloud_service_account_user_managed_keys",
     "google_cloud_service_account_old_keys",

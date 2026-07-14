@@ -183,6 +183,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "google_cloud_gke_legacy_abac_enabled": ("google_cloud", "high", "GKE clusters"),
     "google_cloud_gke_network_policy_disabled": ("google_cloud", "medium", "GKE clusters"),
     "google_cloud_gke_workload_identity_disabled": ("google_cloud", "medium", "GKE clusters"),
+    "google_cloud_gke_shielded_nodes_disabled": ("google_cloud", "medium", "GKE clusters"),
     # Google Cloud — M78C: Service account keys
     "google_cloud_service_account_user_managed_keys": ("google_cloud", "high", "Service account keys"),
     "google_cloud_service_account_old_keys": ("google_cloud", "medium", "Service account keys"),

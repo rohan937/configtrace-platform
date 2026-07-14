@@ -4,11 +4,11 @@ Durable, mostly-static guardrails that pin the full Google Cloud rule
 taxonomy across every registration surface and validate the privacy /
 claim-discipline invariants for the Google Cloud provider:
 
-  TestGoogleCloudRuleRegistration    — all 22 Google Cloud rule keys present
+  TestGoogleCloudRuleRegistration    — all 23 Google Cloud rule keys present
                                        in the module export, registry,
                                        confidence map, rule pack, and
                                        coverage service.
-  TestGoogleCloudFrontendCatalogParity — all 22 keys appear in the TypeScript
+  TestGoogleCloudFrontendCatalogParity — all 23 keys appear in the TypeScript
                                        securityRuleCatalog.ts with matching
                                        severities.
   TestGoogleCloudEvidenceSafety      — fired-rule evidence is flat and carries
@@ -48,7 +48,7 @@ FE_RULE_CATALOG = FRONTEND / "lib" / "securityRuleCatalog.ts"
 
 CANONICAL_PROVIDER = "google_cloud"
 
-# ── Canonical Google Cloud rule set (the 22 shipped rules) ────────────────────
+# ── Canonical Google Cloud rule set (the 23 shipped rules) ────────────────────
 
 ALL_GOOGLE_CLOUD_RULE_KEYS: frozenset[str] = frozenset({
     # IAM
@@ -76,6 +76,7 @@ ALL_GOOGLE_CLOUD_RULE_KEYS: frozenset[str] = frozenset({
     "google_cloud_gke_legacy_abac_enabled",
     "google_cloud_gke_network_policy_disabled",
     "google_cloud_gke_workload_identity_disabled",
+    "google_cloud_gke_shielded_nodes_disabled",
     # Service account keys
     "google_cloud_service_account_user_managed_keys",
     "google_cloud_service_account_old_keys",
@@ -300,8 +301,8 @@ def _all_google_cloud_findings() -> list[Any]:
 # ── TestGoogleCloudRuleRegistration ───────────────────────────────────────────
 
 class TestGoogleCloudRuleRegistration:
-    def test_rule_key_count_is_twenty_two(self) -> None:
-        assert len(ALL_GOOGLE_CLOUD_RULE_KEYS) == 22
+    def test_rule_key_count_is_twenty_three(self) -> None:
+        assert len(ALL_GOOGLE_CLOUD_RULE_KEYS) == 23
 
     def test_module_export_matches_canonical_set(self) -> None:
         from app.services.security_rules.google_cloud import GOOGLE_CLOUD_RULE_KEYS

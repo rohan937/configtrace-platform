@@ -2039,6 +2039,26 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
       "Fires when workloadPool is absent/empty; verified absence of workload identity is the default cluster state.",
   },
   {
+    key: "google_cloud_gke_shielded_nodes_disabled",
+    provider: "google_cloud",
+    severity: "medium",
+    title: "GKE cluster does not have Shielded Nodes enabled",
+    category: "GKE clusters",
+    confidence: "medium",
+    metadataOnly: true,
+    description:
+      "GKE cluster does not have Shielded Nodes enabled, meaning node identity and integrity are not verified via secure boot and a virtual trusted platform module.",
+    whatItChecks:
+      "shielded_nodes_enabled=false on a GKE cluster record.",
+    whyItMatters:
+      "Without Shielded Nodes, node compromise may be harder to detect, which may broaden risk and may require review.",
+    evidence: "cluster_name, project_id, location, shielded_nodes_enabled.",
+    remediation:
+      "Enable Shielded Nodes on the cluster; node pools may need to be recreated.",
+    falsePositiveGuard:
+      "Only fires when shielded_nodes_enabled is explicitly false.",
+  },
+  {
     key: "google_cloud_service_account_user_managed_keys",
     provider: "google_cloud",
     severity: "high",

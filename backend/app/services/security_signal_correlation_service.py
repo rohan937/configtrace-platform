@@ -6588,6 +6588,23 @@ GOOGLE_CLOUD_CORRELATION_RULES: dict[str, dict[str, Any]] = {
         "subject": "Google Cloud GKE workload-identity-disabled risk",
         "evidence_phrase": "GKE configuration activity",
     },
+    "google_cloud_gke_shielded_nodes_disabled": {
+        "correlation_type": "google_cloud_gke_risk_activity_correlation",
+        "activity_types": {
+            "google_cloud.gke_cluster.created",
+            "google_cloud.gke_cluster.updated",
+            "google_cloud.gke_cluster.deleted",
+            "google_cloud.gke_network_policy.updated",
+            "google_cloud.gke_master_auth.updated",
+        },
+        "name_field": "cluster_name",
+        "event_name_field": "gke_cluster_name",
+        "finding_family": "gke",
+        "kind": "GKE cluster",
+        "title": "Google Cloud GKE shielded-nodes risk aligned with GKE activity",
+        "subject": "Google Cloud GKE shielded-nodes-disabled risk",
+        "evidence_phrase": "GKE configuration activity",
+    },
     # ── Service-account keys (aggregate — project + family) ──────────────────
     "google_cloud_service_account_user_managed_keys": {
         "correlation_type": "google_cloud_service_account_key_risk_activity_correlation",

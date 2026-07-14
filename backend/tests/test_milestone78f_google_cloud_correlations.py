@@ -179,8 +179,8 @@ class TestRuleCompleteness:
         missing = m78c - set(GOOGLE_CLOUD_CORRELATION_RULES)
         assert missing == set(), f"M78C rules without correlation: {missing}"
 
-    def test_22_finding_rules_covered(self):
-        assert len(GOOGLE_CLOUD_CORRELATION_RULES) == 22
+    def test_23_finding_rules_covered(self):
+        assert len(GOOGLE_CLOUD_CORRELATION_RULES) == 23
 
     def test_8_distinct_correlation_types(self):
         types = {r["correlation_type"] for r in GOOGLE_CLOUD_CORRELATION_RULES.values()}
@@ -238,6 +238,7 @@ class TestRuleCompleteness:
             "google_cloud_gke_legacy_abac_enabled",
             "google_cloud_gke_network_policy_disabled",
             "google_cloud_gke_workload_identity_disabled",
+            "google_cloud_gke_shielded_nodes_disabled",
         }
         for fk in resource_finding_keys:
             rule = GOOGLE_CLOUD_CORRELATION_RULES[fk]

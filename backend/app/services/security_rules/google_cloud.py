@@ -103,6 +103,11 @@ _RULE_GKE_PUBLIC_CONTROL_PLANE = "google_cloud_gke_public_control_plane"
 _RULE_GKE_LEGACY_ABAC_ENABLED = "google_cloud_gke_legacy_abac_enabled"
 _RULE_GKE_NETWORK_POLICY_DISABLED = "google_cloud_gke_network_policy_disabled"
 _RULE_GKE_WORKLOAD_IDENTITY_DISABLED = "google_cloud_gke_workload_identity_disabled"
+# Classification-QA pass: direct single-field analog of the two sibling
+# rules above, on the same record type — closes a genuine Change-only
+# coverage gap (shielded_nodes_enabled was already fetched, normalized,
+# and diff-tracked, but had no Finding).
+_RULE_GKE_SHIELDED_NODES_DISABLED = "google_cloud_gke_shielded_nodes_disabled"
 
 # M78C — Service account keys
 _RULE_SA_USER_MANAGED_KEYS = "google_cloud_service_account_user_managed_keys"
@@ -139,6 +144,7 @@ GOOGLE_CLOUD_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_GKE_LEGACY_ABAC_ENABLED,
     _RULE_GKE_NETWORK_POLICY_DISABLED,
     _RULE_GKE_WORKLOAD_IDENTITY_DISABLED,
+    _RULE_GKE_SHIELDED_NODES_DISABLED,
     # M78C — Service account keys
     _RULE_SA_USER_MANAGED_KEYS,
     _RULE_SA_OLD_KEYS,
@@ -1199,6 +1205,7 @@ def _eval_gke_cluster(record: dict[str, Any]) -> list[FindingCandidate]:
     legacy_abac_enabled = record.get("legacy_abac_enabled")
     network_policy_enabled = record.get("network_policy_enabled")
     workload_identity_enabled = record.get("workload_identity_enabled")
+    shielded_nodes_enabled = record.get("shielded_nodes_enabled")
 
     # G. Public control plane without authorized networks
     public_without_restrictions = (
@@ -1357,6 +1364,45 @@ def _eval_gke_cluster(record: dict[str, Any]) -> list[FindingCandidate]:
                         "workloadIdentityConfig.workloadPool=<PROJECT_ID>.svc.id.goog.",
                         "Migrate workloads to use Kubernetes service accounts "
                         "annotated with IAM service accounts.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # K. Shielded Nodes disabled (classification-QA pass addition)
+    if shielded_nodes_enabled is False:
+        out.append(
+            FindingCandidate(
+                provider="google_cloud",
+                rule_key=_RULE_GKE_SHIELDED_NODES_DISABLED,
+                finding_key=make_finding_key(
+                    _RULE_GKE_SHIELDED_NODES_DISABLED, record_id
+                ),
+                severity="medium",
+                title="GKE cluster does not have Shielded Nodes enabled",
+                description=(
+                    f"GKE cluster '{cluster_name}' in location '{location}' "
+                    f"in project '{project_id}' does not have Shielded Nodes "
+                    f"enabled. Without Shielded Nodes, node identity and "
+                    f"integrity are not verified via secure boot and a virtual "
+                    f"trusted platform module, which may broaden node-compromise "
+                    f"risk and requires review. {_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_GKE_SHIELDED_NODES_DISABLED,
+                    "cluster_name": cluster_name,
+                    "project_id": project_id,
+                    "location": location,
+                    "shielded_nodes_enabled": False,
+                },
+                remediation={
+                    "summary": "Enable Shielded GKE Nodes on the cluster.",
+                    "steps": [
+                        "Enable Shielded Nodes (shieldedNodes.enabled=true) on "
+                        "the cluster.",
+                        "Recreate node pools as needed, since Shielded Nodes "
+                        "may require a node pool upgrade or recreation.",
                     ],
                 },
                 record_id=record_id,

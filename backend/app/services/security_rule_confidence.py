@@ -183,6 +183,7 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "google_cloud_gke_legacy_abac_enabled": (HIGH, "Only an explicit legacy_abac_enabled=true fires; missing/unknown is skipped."),
     "google_cloud_gke_network_policy_disabled": (MEDIUM, "Only an explicit network_policy_enabled=false fires; missing/unknown (absence of network policy is common) uses medium confidence."),
     "google_cloud_gke_workload_identity_disabled": (MEDIUM, "Fires when workload_identity_enabled=false (no workloadPool configured); absence of workload identity is the default cluster state."),
+    "google_cloud_gke_shielded_nodes_disabled": (MEDIUM, "Fires when shielded_nodes_enabled is explicitly false on a google_cloud_gke_cluster record."),
     # Google Cloud — M78C: Service account keys
     "google_cloud_service_account_user_managed_keys": (HIGH, "Only fires when user_managed_key_count > 0 on the project-level summary record; SA emails and key IDs are never read."),
     "google_cloud_service_account_old_keys": (HIGH, "Only fires when old_user_managed_key_count > 0 or oldest_key_age_days >= 90; computed from validAfterTime timestamps only."),
