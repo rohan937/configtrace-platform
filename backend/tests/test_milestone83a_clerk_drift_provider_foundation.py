@@ -1409,3 +1409,327 @@ class TestClerkRiskClassifier:
                 assert phrase not in reason_lower, (
                     f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
                 )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Section — Change-classification QA pass (dedicated follow-up)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Bug found and fixed in this pass: clerk_instance_settings.sign_in_enabled
+# was tracked in _CLERK_TRACKED_FIELDS_BY_TYPE but had no explicit branch in
+# risk_rules/clerk.py — it silently fell through to the bare
+# "Clerk instance configuration field '...' changed." fallback instead of
+# being grouped with its sibling boolean fields. Severity was unaffected
+# (still "low" either way), but the field is now named explicitly.
+#
+# No other accidentally-fallen-through tracked fields or dead/unreachable
+# classifier branches were found: a full tracked-fields-vs-classifier-branch
+# diff (documented in clerk_change_classification_matrix.md) confirmed every
+# other tracked field across all 10 record types is handled by either a
+# specific or an explicit generic branch, and every classifier branch
+# corresponds to a real tracked field.
+
+
+class TestClerkChangeClassificationQA:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_instance_sign_in_enabled_is_explicitly_named_not_bare_fallback(self):
+        """Regression test for the sign_in_enabled fall-through bug fixed in
+        this classification-QA pass."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_instance_settings", "sign_in_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "low"
+        assert "sign in enabled" in reason.lower()
+        assert "configuration field 'sign_in_enabled'" not in reason.lower()
+
+    # ── Verification posture (category B) ────────────────────────────────────
+
+    def test_email_verification_disabled_is_low_no_dedicated_finding(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_instance_settings", "email_enabled", prev_value=True, new_value=False,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_phone_verification_disabled_is_low_no_dedicated_finding(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_instance_settings", "phone_enabled", prev_value=True, new_value=False,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    # ── SAML / enterprise SSO (category F) ───────────────────────────────────
+
+    def test_application_saml_enabled_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_application", "saml_enabled", prev_value=False, new_value=True,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_application_saml_disabled_is_low_improvement(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_application", "saml_enabled", prev_value=True, new_value=False,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_auth_strategy_saml_enabled_matches_application_severity_convention(self):
+        """auth_strategy's SAML branch mirrors the application-level branch:
+        enabling SAML is medium regardless of the sibling mfa_required
+        value, matching the combined Finding's severity ceiling."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_auth_strategy", "saml_enabled", prev_value=False, new_value=True,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_auth_strategy_saml_disabled_direction_not_overstated(self):
+        """auth_strategy's saml_enabled=False branch is a fully-generic
+        'changed' message that doesn't claim a specific direction — verifies
+        severity stays safe (never high) even though the wording doesn't
+        differentiate direction the way the application-level branch does."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_auth_strategy", "saml_enabled", prev_value=True, new_value=False,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    # ── JWT templates (category J) ───────────────────────────────────────────
+
+    def test_jwt_template_audience_missing_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_jwt_template", "audience_present", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_jwt_template_audience_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_jwt_template", "audience_present", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_jwt_template_lifetime_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_jwt_template", "lifetime_category", prev_value="extended", new_value="standard",
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_jwt_template_claims_count_increase_while_already_broad_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_jwt_template", "claims_count", prev_value=20, new_value=25,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "review threshold" in reason.lower()
+
+    # ── Domains (category H) ─────────────────────────────────────────────────
+
+    def test_domain_verified_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_domain", "verified", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_domain_ssl_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_domain", "ssl_enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    # ── Organization settings (category K) ───────────────────────────────────
+
+    def test_org_admin_role_missing_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_organization_settings", "admin_role_present", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_org_admin_role_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_organization_settings", "admin_role_present", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_org_verified_domains_not_required_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_organization_settings", "verified_domains_required", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_org_role_count_real_zero_still_low_not_error(self):
+        """A genuine, explicit numeric 0 (not None/unknown) must still be
+        handled without error and without a spuriously elevated severity —
+        role_count crossing to a real 0 is a decrease, not an increase over
+        threshold, so it correctly stays low."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_organization_settings", "role_count", prev_value=25, new_value=0,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+
+    def test_org_permission_count_real_zero_from_over_threshold_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_organization_settings", "permission_count", prev_value=60, new_value=0,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+
+    # ── Session policy (category G) ──────────────────────────────────────────
+
+    def test_session_token_rotation_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_session_policy", "token_rotation_enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_session_reverification_disabled_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_session_policy", "reverification_required", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_session_lifetime_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_session_policy", "session_lifetime_category", prev_value="extended", new_value="standard",
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    # ── Redirect URL / webhook combined-condition approximations ────────────
+
+    def test_redirect_url_wildcard_removed_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_redirect_url_config", "wildcard_present", prev_value=True, new_value=False,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_webhook_enabled_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_webhook_endpoint", "enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    # ── Broader unknown-transition sweep across every high/medium field ─────
+
+    def test_broader_unknown_transition_sweep_never_produces_high_or_overstated_medium(self):
+        """Extends the existing unknown-transition sweep to every field this
+        pass identified as carrying a high or medium severity, proving
+        _is_falsy_explicit()/_is_truthy() correctly distinguish None from an
+        explicit False across the whole module, not just the fields already
+        covered by the original detection-QA pass."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+
+        cases = [
+            ("clerk_instance_settings", "mfa_enabled", True, None),
+            ("clerk_instance_settings", "sign_in_mode", "restricted", None),
+            ("clerk_application", "mfa_required", True, None),
+            ("clerk_application", "saml_enabled", False, None),
+            ("clerk_domain", "verified", True, None),
+            ("clerk_domain", "ssl_enabled", True, None),
+            ("clerk_redirect_url_config", "wildcard_present", False, None),
+            ("clerk_redirect_url_config", "custom_scheme_present", False, None),
+            ("clerk_jwt_template", "audience_present", True, None),
+            ("clerk_jwt_template", "lifetime_category", "standard", None),
+            ("clerk_webhook_endpoint", "secret_present", True, None),
+            ("clerk_webhook_endpoint", "url_scheme_category", "https", None),
+            ("clerk_auth_strategy", "mfa_enabled", True, None),
+            ("clerk_auth_strategy", "mfa_required", True, None),
+            ("clerk_organization_settings", "verified_domains_required", True, None),
+            ("clerk_organization_settings", "admin_role_present", True, None),
+            ("clerk_organization_settings", "permission_count", 10, None),
+            ("clerk_organization_settings", "role_count", 5, None),
+            ("clerk_session_policy", "session_lifetime_category", "standard", None),
+            ("clerk_session_policy", "token_rotation_enabled", True, None),
+            ("clerk_session_policy", "reverification_required", True, None),
+        ]
+        for record_type, field, prev, new in cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_clerk_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+            reason_lower = reason.lower()
+            assert "disabled" not in reason_lower or "unknown" in reason_lower or "missing" in reason_lower, (
+                f"{record_type}.{field} unknown transition may overstate certainty: {reason!r}"
+            )
+
+    def test_generic_fallback_never_used_for_security_sensitive_fields(self):
+        """Every field this pass classified as high/medium-capable (MFA,
+        SSL, verification-adjacent, session, webhook signing/scheme, domain
+        verification, JWT audience/lifetime, org admin/verified-domains)
+        must resolve through a field-specific branch, not the bare
+        '<record type> configuration field '...' changed.' fallback used
+        for purely cosmetic/metadata fields."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+
+        security_sensitive = [
+            ("clerk_instance_settings", "mfa_enabled", True, False),
+            ("clerk_application", "mfa_required", True, False),
+            ("clerk_domain", "verified", True, False),
+            ("clerk_domain", "ssl_enabled", True, False),
+            ("clerk_redirect_url_config", "url_scheme_category", "https", "http"),
+            ("clerk_jwt_template", "audience_present", True, False),
+            ("clerk_webhook_endpoint", "secret_present", True, False),
+            ("clerk_auth_strategy", "mfa_enabled", True, False),
+            ("clerk_organization_settings", "admin_role_present", True, False),
+            ("clerk_session_policy", "reverification_required", True, False),
+        ]
+        for record_type, field, prev, new in security_sensitive:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            _, reason = classify_clerk_change(change)
+            assert "configuration field" not in reason.lower(), (
+                f"{record_type}.{field} used the generic bare fallback instead of "
+                f"a field-specific branch: {reason!r}"
+            )

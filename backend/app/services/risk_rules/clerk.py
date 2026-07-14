@@ -173,6 +173,7 @@ def _classify_instance_settings_change(change: Change) -> tuple[str, str]:
     if fp in (
         "email_enabled", "phone_enabled", "username_enabled",
         "password_enabled", "allowlist_enabled", "blocklist_enabled",
+        "sign_in_enabled",
     ):
         return ("low", f"Clerk instance {fp.replace('_', ' ')} changed.")
 
