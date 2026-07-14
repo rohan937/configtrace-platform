@@ -2065,6 +2065,104 @@ _TWILIO_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# ── Terraform Cloud-specific tracked fields ───────────────────────────────────
+
+#: Per-record-type tracked field tuples for Terraform Cloud records (M88A+).
+#: Only the fields listed here are compared field-by-field in compute_diff.
+#: Identity fields (record_type, record_id, resource_id, provider, and each
+#: record's own opaque "*_resource_id" foreign-key fields) are intentionally
+#: excluded — they never change without the record itself being replaced
+#: (added/removed).
+_TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "terraform_cloud_organization": (
+        "workspace_count",
+        "project_count",
+        "policy_set_count",
+        "variable_set_count",
+        "team_count_category",
+        "sso_enabled",
+        "two_factor_requirement_enabled",
+        "cost_estimation_enabled",
+        "collaborator_auth_policy_category",
+    ),
+    "terraform_cloud_workspace": (
+        "execution_mode_category",
+        "terraform_version_category",
+        "auto_apply",
+        "file_triggers_enabled",
+        "queue_all_runs",
+        "speculative_enabled",
+        "global_remote_state",
+        "vcs_connected",
+        "working_directory_present",
+        "trigger_prefix_count",
+        "run_trigger_count",
+        "variable_count",
+        "sensitive_variable_count",
+        "non_sensitive_variable_count",
+        "environment_variable_count",
+        "terraform_variable_count",
+        "notification_count",
+        "team_access_count",
+        "current_state_version_present",
+        "latest_run_status_category",
+    ),
+    "terraform_cloud_project": (
+        "workspace_count",
+        "team_access_count",
+    ),
+    "terraform_cloud_variable_set": (
+        "global_scope",
+        "workspace_count",
+        "project_count",
+        "variable_count",
+        "sensitive_variable_count",
+        "non_sensitive_variable_count",
+        "environment_variable_count",
+        "terraform_variable_count",
+    ),
+    "terraform_cloud_workspace_variable_summary": (
+        "variable_count",
+        "sensitive_variable_count",
+        "non_sensitive_variable_count",
+        "environment_variable_count",
+        "terraform_variable_count",
+        "unprotected_non_sensitive_count",
+    ),
+    "terraform_cloud_policy_set": (
+        "global_scope",
+        "workspace_count",
+        "project_count",
+        "policy_count",
+        "enforcement_level_category",
+        "vcs_connected",
+    ),
+    "terraform_cloud_notification_configuration": (
+        "enabled",
+        "destination_type_category",
+        "trigger_count",
+        "webhook_url_present",
+        "webhook_url_scheme_category",
+        "token_present",
+    ),
+    "terraform_cloud_team_access_summary": (
+        "team_access_count",
+        "admin_access_count",
+        "write_access_count",
+        "read_access_count",
+        "plan_access_count",
+        "custom_permission_count",
+    ),
+    "terraform_cloud_run_trigger": (
+        "sourceable_type_category",
+    ),
+    "terraform_cloud_state_version_summary": (
+        "state_version_present",
+        "state_version_count_category",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2086,6 +2184,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_SENDGRID_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"twilio_"`` look up in
       ``_TWILIO_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"terraform_cloud_"`` look up in
+      ``_TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2113,6 +2213,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _SENDGRID_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("twilio_"):
         return _TWILIO_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("terraform_cloud_"):
+        return _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table

@@ -70,12 +70,19 @@ def _make_change(
     old_value: Any = None,
     new_value: Any = None,
 ) -> MagicMock:
-    """Build a mock Change object for classifier tests."""
+    """Build a mock Change object for classifier tests.
+
+    Uses ``prev_value`` (not ``old_value``) to match the real ``Change`` ORM
+    model / compute_diff output field name — a mismatch here previously let
+    every directional classifier in risk_rules/terraform_cloud.py silently
+    read a nonexistent ``old_value`` attribute (always None) without any
+    test catching it, since the test and the bug agreed with each other.
+    """
     change = MagicMock()
     change.provider_metadata = {"record_type": record_type}
     change.field_path = field_path
     change.change_type = change_type
-    change.old_value = old_value
+    change.prev_value = old_value
     change.new_value = new_value
     return change
 
@@ -577,6 +584,38 @@ def test_classify_write_access_increased_is_high() -> None:
     assert level == "high"
 
 
+def test_classify_plan_access_increased_is_medium() -> None:
+    """plan_access_count is tracked but is a narrower grant than admin/write —
+    medium, not high (matches the project's plan-vs-apply severity convention)."""
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change(
+        "terraform_cloud_team_access_summary",
+        "plan_access_count", "modified", 0, 2
+    )
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+
+def test_classify_plan_access_decreased_is_low() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change(
+        "terraform_cloud_team_access_summary",
+        "plan_access_count", "modified", 2, 0
+    )
+    level, _ = classify_terraform_cloud_change(change)
+    assert level == "low"
+
+
+def test_classify_custom_permission_increased_is_medium() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change(
+        "terraform_cloud_team_access_summary",
+        "custom_permission_count", "modified", 0, 1
+    )
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+
 def test_classify_sensitive_variable_count_decreased_is_high() -> None:
     from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
     change = _make_change(
@@ -585,6 +624,47 @@ def test_classify_sensitive_variable_count_decreased_is_high() -> None:
     )
     level, reason = classify_terraform_cloud_change(change)
     assert level == "high"
+
+
+def test_classifier_reads_real_compute_diff_dict_shape_not_a_mock() -> None:
+    """Regression test for a field-name bug: every directional classifier in
+    risk_rules/terraform_cloud.py previously read a nonexistent 'old_value'
+    key instead of 'prev_value' (the actual key compute_diff/Change use).
+    The bug was invisible because the test helper's mock used the same wrong
+    name. This test builds a plain dict shaped EXACTLY like compute_diff's
+    real output (prev_value/new_value/field_path/change_type/
+    provider_metadata) to prove the classifier reads the real field name.
+    """
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+
+    # sensitive_variable_count decreasing must be "high" — this requires
+    # correctly reading prev_value=5 to compare against new_value=2.
+    real_shaped_change = {
+        "change_type": "modified",
+        "field_path": "sensitive_variable_count",
+        "prev_value": 5,
+        "new_value": 2,
+        "provider_metadata": {"record_type": "terraform_cloud_workspace"},
+    }
+    level, reason = classify_terraform_cloud_change(real_shaped_change)
+    assert level == "high", (
+        f"Expected high (sensitive_variable_count decreased 5->2), got {level!r}: {reason}"
+    )
+
+    # execution_mode_category remote -> local must be "high" specifically
+    # because prev_value=='remote' — if prev_value were misread as None/'',
+    # this would silently downgrade to 'medium'.
+    exec_mode_change = {
+        "change_type": "modified",
+        "field_path": "execution_mode_category",
+        "prev_value": "remote",
+        "new_value": "local",
+        "provider_metadata": {"record_type": "terraform_cloud_workspace"},
+    }
+    level, reason = classify_terraform_cloud_change(exec_mode_change)
+    assert level == "high", (
+        f"Expected high (execution mode remote->local), got {level!r}: {reason}"
+    )
 
 
 def test_classify_policy_enforcement_weakened_mandatory_to_advisory_is_high() -> None:
@@ -732,6 +812,165 @@ def test_classify_no_forbidden_wording_in_reasons() -> None:
             assert phrase not in reason_lower, (
                 f"Forbidden phrase '{phrase}' in reason for {record_type}/{field_path}: {reason!r}"
             )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# E2. Diff tracked fields (drift detection) — QA regression
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Regression coverage for a gap where Terraform Cloud record types had no
+# entry in diff_service's per-provider tracked-fields dispatch. Without an
+# entry, `_tracked_fields_for` fell through every known provider prefix to
+# the Cloudflare-DNS default tuple ("record_type", "name", "content", "ttl",
+# "proxied", "priority", "comment") — none of which exist on any Terraform
+# Cloud record. compute_diff would therefore NEVER detect a modified field
+# on an existing Terraform Cloud record (auto_apply toggled, team access
+# changed, etc.) even though risk_rules.terraform_cloud already classifies
+# the field correctly. Only added/removed records would ever surface.
+
+
+class TestTerraformCloudDiffTrackedFields:
+    def test_all_ten_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE
+        from app.connectors.terraform_cloud_schema import TERRAFORM_CLOUD_RECORD_TYPES
+
+        for record_type in TERRAFORM_CLOUD_RECORD_TYPES:
+            assert record_type in _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_terraform_cloud_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+        from app.connectors.terraform_cloud_schema import TERRAFORM_CLOUD_RECORD_TYPES
+
+        for record_type in TERRAFORM_CLOUD_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own Terraform Cloud fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_auto_apply_change_produces_drift_change(self):
+        """auto_apply False -> True must surface as a Change.
+
+        This is the exact scenario item A (auto-apply enabled/disabled)
+        depends on: if this field isn't tracked, the security finding would
+        still fire on next evaluation, but the Changes timeline would never
+        show the drift event at all.
+        """
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _workspace_record(auto_apply: bool) -> dict:
+            return {
+                "record_type": "terraform_cloud_workspace",
+                "provider": "terraform_cloud",
+                "record_id": "terraform_cloud_workspace:ws123",
+                "resource_id": "ws123",
+                "workspace_resource_id": "ws123",
+                "organization_resource_id": "org123",
+                "execution_mode_category": "remote",
+                "terraform_version_category": "pinned",
+                "auto_apply": auto_apply,
+                "file_triggers_enabled": True,
+                "queue_all_runs": False,
+                "speculative_enabled": True,
+                "global_remote_state": False,
+                "vcs_connected": True,
+                "working_directory_present": False,
+                "trigger_prefix_count": 0,
+                "run_trigger_count": 0,
+                "variable_count": 2,
+                "sensitive_variable_count": 1,
+                "non_sensitive_variable_count": 1,
+                "environment_variable_count": 1,
+                "terraform_variable_count": 1,
+                "notification_count": 0,
+                "team_access_count": 1,
+                "current_state_version_present": True,
+                "latest_run_status_category": "applied",
+            }
+
+        prev = _mock_snapshot([_workspace_record(False)])
+        new = _mock_snapshot([_workspace_record(True)])
+
+        changes = compute_diff(prev, new)
+        auto_apply_changes = [c for c in changes if c["field_path"] == "auto_apply"]
+
+        assert len(auto_apply_changes) == 1
+        assert auto_apply_changes[0]["change_type"] == "modified"
+        assert auto_apply_changes[0]["prev_value"] is False
+        assert auto_apply_changes[0]["new_value"] is True
+
+    def test_admin_access_count_change_produces_drift_change(self):
+        """admin_access_count 0 -> 2 must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _team_access_record(admin_count: int) -> dict:
+            return {
+                "record_type": "terraform_cloud_team_access_summary",
+                "provider": "terraform_cloud",
+                "record_id": "terraform_cloud_team_access_summary:ws123",
+                "resource_id": "ws123",
+                "workspace_resource_id": "ws123",
+                "team_access_count": admin_count + 1,
+                "admin_access_count": admin_count,
+                "write_access_count": 1,
+                "read_access_count": 0,
+                "plan_access_count": 0,
+                "custom_permission_count": 0,
+            }
+
+        prev = _mock_snapshot([_team_access_record(0)])
+        new = _mock_snapshot([_team_access_record(2)])
+
+        changes = compute_diff(prev, new)
+        admin_changes = [c for c in changes if c["field_path"] == "admin_access_count"]
+
+        assert len(admin_changes) == 1
+        assert admin_changes[0]["prev_value"] == 0
+        assert admin_changes[0]["new_value"] == 2
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "terraform_cloud_policy_set",
+            "provider": "terraform_cloud",
+            "record_id": "terraform_cloud_policy_set:ps123",
+            "resource_id": "ps123",
+            "policy_set_resource_id": "ps123",
+            "organization_resource_id": "org123",
+            "global_scope": False,
+            "workspace_count": 3,
+            "project_count": 0,
+            "policy_count": 2,
+            "enforcement_level_category": "mandatory",
+            "vcs_connected": True,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
 
 
 # ══════════════════════════════════════════════════════════════════════════════

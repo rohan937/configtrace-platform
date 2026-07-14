@@ -123,7 +123,7 @@ def _classify_workspace_change(change: Change) -> tuple[str, str]:
     fp = (_get(change, "field_path") or "").lower()
     ct = (_get(change, "change_type") or "").lower()
     new_v = _get(change, "new_value")
-    old_v = _get(change, "old_value")
+    old_v = _get(change, "prev_value")
 
     if ct in ("added", "removed"):
         return (
@@ -283,7 +283,7 @@ def _classify_workspace_change(change: Change) -> tuple[str, str]:
 def _classify_workspace_variable_summary_change(change: Change) -> tuple[str, str]:
     fp = (_get(change, "field_path") or "").lower()
     new_v = _get(change, "new_value")
-    old_v = _get(change, "old_value")
+    old_v = _get(change, "prev_value")
 
     if fp == "sensitive_variable_count":
         try:
@@ -330,7 +330,7 @@ def _classify_variable_set_change(change: Change) -> tuple[str, str]:
     fp = (_get(change, "field_path") or "").lower()
     ct = (_get(change, "change_type") or "").lower()
     new_v = _get(change, "new_value")
-    old_v = _get(change, "old_value")
+    old_v = _get(change, "prev_value")
 
     if ct in ("added", "removed"):
         return (
@@ -394,7 +394,7 @@ def _classify_policy_set_change(change: Change) -> tuple[str, str]:
     fp = (_get(change, "field_path") or "").lower()
     ct = (_get(change, "change_type") or "").lower()
     new_v = _get(change, "new_value")
-    old_v = _get(change, "old_value")
+    old_v = _get(change, "prev_value")
 
     if ct in ("added", "removed"):
         return (
@@ -521,7 +521,7 @@ def _classify_team_access_summary_change(change: Change) -> tuple[str, str]:
     fp = (_get(change, "field_path") or "").lower()
     ct = (_get(change, "change_type") or "").lower()
     new_v = _get(change, "new_value")
-    old_v = _get(change, "old_value")
+    old_v = _get(change, "prev_value")
 
     if ct in ("added", "removed"):
         return (
@@ -570,6 +570,38 @@ def _classify_team_access_summary_change(change: Change) -> tuple[str, str]:
                 "Terraform Cloud configuration evidence may require review.",
             )
         return ("low", "Terraform Cloud workspace team access count decreased.")
+
+    if fp == "plan_access_count":
+        try:
+            n_new = int(new_v or 0)
+            n_old = int(old_v or 0)
+        except (TypeError, ValueError):
+            return ("low", "Terraform Cloud workspace plan access count changed.")
+        if n_new > n_old:
+            return (
+                "medium",
+                f"Terraform Cloud workspace plan-only team access count increased from "
+                f"{n_old} to {n_new}. Terraform Cloud configuration evidence may require review.",
+            )
+        return ("low", "Terraform Cloud workspace plan access count decreased.")
+
+    if fp == "custom_permission_count":
+        try:
+            n_new = int(new_v or 0)
+            n_old = int(old_v or 0)
+        except (TypeError, ValueError):
+            return ("low", "Terraform Cloud workspace custom permission count changed.")
+        if n_new > n_old:
+            return (
+                "medium",
+                f"Terraform Cloud workspace custom-permission team access count increased "
+                f"from {n_old} to {n_new}. Terraform Cloud configuration evidence may "
+                "require review.",
+            )
+        return ("low", "Terraform Cloud workspace custom permission count decreased.")
+
+    if fp == "read_access_count":
+        return ("low", "Terraform Cloud workspace read access count changed.")
 
     return (
         "low",
