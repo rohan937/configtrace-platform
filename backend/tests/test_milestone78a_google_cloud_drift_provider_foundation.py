@@ -1099,6 +1099,7 @@ def test_expansion_framework_no_longer_recommends_google_cloud():
 @pytest.mark.parametrize("module_name", [
     "app.connectors.google_cloud",
     "app.connectors.google_cloud_schema",
+    "app.services.risk_rules.google_cloud",
 ])
 def test_no_forbidden_claims_in_google_cloud_modules(module_name):
     import importlib
@@ -1119,3 +1120,485 @@ def test_no_forbidden_claims_in_google_cloud_capability_notes():
     notes_low = (cap.notes or "").lower()
     for phrase in _FORBIDDEN:
         assert phrase not in notes_low
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 19. Diff tracked fields and risk classification (QA pass)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Google Cloud previously had NO entry in diff_service.py's tracked-fields
+# dispatch (every google_cloud_ record type fell through to the Cloudflare
+# DNS default tuple, so compute_diff could never detect a modified field) and
+# NO risk_rules/google_cloud.py module at all (risk_service.py had no
+# google_cloud_ dispatch branch, so every Google Cloud change silently fell
+# through to the Cloudflare DNS classifier) — despite the provider
+# capability matrix already claiming drift_diff=True and
+# drift_risk_classification=True. Both were built during this QA pass,
+# making that pre-existing capability-matrix claim actually true.
+
+GOOGLE_CLOUD_ALL_RECORD_TYPES = (
+    "google_cloud_project",
+    "google_cloud_iam_policy_summary",
+    "google_cloud_vpc_network",
+    "google_cloud_firewall_rule",
+    "google_cloud_storage_bucket",
+    "google_cloud_sql_instance",
+    "google_cloud_run_service",
+    "google_cloud_gke_cluster",
+    "google_cloud_service_account_key_summary",
+    "google_cloud_secret_manager_summary",
+)
+
+
+class TestGoogleCloudDiffTrackedFields:
+    def test_all_ten_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE
+
+        for record_type in GOOGLE_CLOUD_ALL_RECORD_TYPES:
+            assert record_type in _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_google_cloud_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in GOOGLE_CLOUD_ALL_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own Google Cloud fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_firewall_source_ranges_change_produces_drift_change(self):
+        """source_ranges_summary gaining 0.0.0.0/0 must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _firewall_record(source_ranges: list) -> dict:
+            return {
+                "record_type": "google_cloud_firewall_rule",
+                "provider": "google_cloud",
+                "record_id": "gcp_firewall_fw1",
+                "firewall_id": "fw1",
+                "firewall_name": "test-fw",
+                "network_name": "default",
+                "project_id": "proj-1",
+                "direction": "INGRESS",
+                "priority": 1000,
+                "disabled": False,
+                "source_ranges_summary": source_ranges,
+                "destination_ranges_summary": [],
+                "allowed_summary": [{"protocol": "tcp", "ports": ["443"]}],
+                "denied_summary": [],
+                "target_tag_count": 1,
+                "target_service_account_count": 0,
+                "has_log_config": False,
+            }
+
+        prev = _mock_snapshot([_firewall_record(["10.0.0.0/8"])])
+        new = _mock_snapshot([_firewall_record(["0.0.0.0/0"])])
+
+        changes = compute_diff(prev, new)
+        range_changes = [c for c in changes if c["field_path"] == "source_ranges_summary"]
+
+        assert len(range_changes) == 1
+        assert range_changes[0]["prev_value"] == ["10.0.0.0/8"]
+        assert range_changes[0]["new_value"] == ["0.0.0.0/0"]
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "google_cloud_storage_bucket",
+            "provider": "google_cloud",
+            "record_id": "gcp_storage_bucket1",
+            "bucket_id": "bucket1",
+            "bucket_name": "bucket1",
+            "location": "US",
+            "location_type": "multi-region",
+            "storage_class": "STANDARD",
+            "uniform_bucket_level_access_enabled": True,
+            "public_access_prevention": "enforced",
+            "versioning_enabled": True,
+            "retention_policy_seconds": None,
+            "retention_policy_locked": False,
+            "lifecycle_rule_count": 0,
+            "encryption_default_kms_key_present": False,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE must be
+        classifiable: classify_google_cloud_change must not raise, and must
+        return one of the four known severities, for a representative
+        modified change on each tracked field of each record type."""
+        from app.services.diff_service import _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+
+        for record_type, fields in _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_google_cloud_change(change)
+                assert level in ("low", "medium", "high", "critical"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
+
+
+class TestGoogleCloudRiskClassifier:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_risk_service_dispatches_google_cloud_to_google_cloud_classifier(self):
+        """Regression guard: risk_service.py must route google_cloud_ record
+        types to classify_google_cloud_change, not silently fall through to
+        the Cloudflare DNS classifier (the exact bug this QA pass found and
+        fixed)."""
+        from app.services.risk_service import classify_change
+
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "allusers_binding_present",
+            prev_value=False, new_value=True,
+        )
+        mock_change = MagicMock()
+        mock_change.provider_metadata = change["provider_metadata"]
+        mock_change.field_path = change["field_path"]
+        mock_change.change_type = change["change_type"]
+        mock_change.prev_value = change["prev_value"]
+        mock_change.new_value = change["new_value"]
+        level, reason = classify_change(mock_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+        assert "google cloud" in reason.lower()
+
+    def test_iam_public_member_added_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "allusers_binding_present",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_iam_public_member_removed_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "allusers_binding_present",
+            prev_value=True, new_value=False,
+        )
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_iam_high_severity_broad_role_added_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "role_names",
+            prev_value=["roles/storage.objectViewer"],
+            new_value=["roles/storage.objectViewer", "roles/owner"],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_iam_medium_severity_broad_role_added_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "role_names",
+            prev_value=[],
+            new_value=["roles/iam.serviceAccountAdmin"],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_iam_broad_role_removed_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_iam_policy_summary", "role_names",
+            prev_value=["roles/owner"],
+            new_value=[],
+        )
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_firewall_public_source_range_added_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "source_ranges_summary",
+            prev_value=["10.0.0.0/8"], new_value=["10.0.0.0/8", "0.0.0.0/0"],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_firewall_public_source_range_removed_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "source_ranges_summary",
+            prev_value=["10.0.0.0/8", "0.0.0.0/0"], new_value=["10.0.0.0/8"],
+        )
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_firewall_broad_port_entry_added_is_critical(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "allowed_summary",
+            prev_value=[{"protocol": "tcp", "ports": ["443"]}],
+            new_value=[{"protocol": "tcp", "ports": ["443"]}, {"protocol": "all", "ports": []}],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "critical", f"Expected critical, got {level!r}: {reason}"
+
+    def test_firewall_rdp_port_entry_added_is_critical(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "allowed_summary",
+            prev_value=[],
+            new_value=[{"protocol": "tcp", "ports": ["3389"]}],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "critical", f"Expected critical, got {level!r}: {reason}"
+
+    def test_firewall_ssh_port_entry_added_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "allowed_summary",
+            prev_value=[],
+            new_value=[{"protocol": "tcp", "ports": ["22"]}],
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_firewall_benign_port_entry_added_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "allowed_summary",
+            prev_value=[],
+            new_value=[{"protocol": "tcp", "ports": ["443"]}],
+        )
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_firewall_no_targets_gained_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_firewall_rule", "target_tag_count",
+            prev_value=2, new_value=0,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_bucket_public_access_prevention_disabled_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_storage_bucket", "public_access_prevention",
+            prev_value="enforced", new_value="inherited",
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_bucket_uniform_access_disabled_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_storage_bucket", "uniform_bucket_level_access_enabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_bucket_uniform_access_enabled_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_storage_bucket", "uniform_bucket_level_access_enabled",
+            prev_value=False, new_value=True,
+        )
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_sql_public_ip_enabled_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_sql_instance", "public_ip_enabled",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_sql_backups_disabled_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_sql_instance", "backup_enabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_run_public_invoker_enabled_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_run_service", "public_invoker_allowed",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_gke_legacy_abac_enabled_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_gke_cluster", "legacy_abac_enabled",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_gke_workload_identity_disabled_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_gke_cluster", "workload_identity_enabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_sa_key_count_reaches_five_is_high(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_service_account_key_summary", "user_managed_key_count",
+            prev_value=3, new_value=5,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_sa_key_count_increase_below_five_is_medium(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_service_account_key_summary", "user_managed_key_count",
+            prev_value=1, new_value=2,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_sa_key_count_decrease_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change(
+            "google_cloud_service_account_key_summary", "user_managed_key_count",
+            prev_value=5, new_value=3,
+        )
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_unknown_record_type_is_low(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+        change = self._make_change("google_cloud_unknown_surface", "some_field", prev_value=1, new_value=2)
+        level, _ = classify_google_cloud_change(change)
+        assert level == "low"
+
+    def test_unknown_transitions_never_produce_high_or_critical(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+
+        unknown_cases = [
+            ("google_cloud_iam_policy_summary", "allusers_binding_present", False, None),
+            ("google_cloud_storage_bucket", "uniform_bucket_level_access_enabled", True, None),
+            ("google_cloud_sql_instance", "public_ip_enabled", False, None),
+            ("google_cloud_run_service", "public_invoker_allowed", False, None),
+            ("google_cloud_gke_cluster", "legacy_abac_enabled", False, None),
+            ("google_cloud_service_account_key_summary", "user_managed_key_count", 3, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_google_cloud_change(change)
+            assert level not in ("high", "critical"), (
+                f"{record_type}.{field} unknown transition produced {level!r}: {reason!r}"
+            )
+
+    def test_count_unknown_not_treated_as_zero(self):
+        """A count field's unknown value must not be treated as an explicit
+        zero — this is the exact bug fixed in PagerDuty's classification-QA
+        pass, guarded against here from the start."""
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+
+        change = self._make_change(
+            "google_cloud_service_account_key_summary", "user_managed_key_count",
+            prev_value=3, new_value=None,
+        )
+        level, reason = classify_google_cloud_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_classifier_reads_real_compute_diff_dict_shape_not_a_mock(self):
+        """Regression guard against the exact old_value/prev_value bug class
+        found in Terraform Cloud's first QA pass: builds a plain dict shaped
+        EXACTLY like compute_diff's real output (prev_value/new_value/
+        field_path/change_type/provider_metadata), not a MagicMock, to prove
+        the classifier reads the real field name."""
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+
+        real_shaped_change = {
+            "change_type": "modified",
+            "field_path": "allusers_binding_present",
+            "prev_value": False,
+            "new_value": True,
+            "provider_metadata": {"record_type": "google_cloud_iam_policy_summary"},
+        }
+        level, reason = classify_google_cloud_change(real_shaped_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_no_forbidden_wording_in_reasons(self):
+        from app.services.risk_rules.google_cloud import classify_google_cloud_change
+
+        FORBIDDEN = [
+            "breach", "compromise", "attacker", "leaked", "unauthorized access",
+            "bucket exposed", "buckets exposed", "state exposed",
+            "secret exposed", "secrets exposed", "infrastructure exposed",
+            "customer data exposed", "google cloud data exposed", "data exposed",
+            "exfiltration", "stolen", "fraud", "attack detected",
+        ]
+        test_changes = [
+            self._make_change("google_cloud_iam_policy_summary", "allusers_binding_present", prev_value=False, new_value=True),
+            self._make_change("google_cloud_firewall_rule", "source_ranges_summary", prev_value=["10.0.0.0/8"], new_value=["0.0.0.0/0"]),
+            self._make_change("google_cloud_storage_bucket", "uniform_bucket_level_access_enabled", prev_value=True, new_value=False),
+            self._make_change("google_cloud_sql_instance", "public_ip_enabled", prev_value=False, new_value=True),
+            self._make_change("google_cloud_run_service", "public_invoker_allowed", prev_value=False, new_value=True),
+            self._make_change("google_cloud_gke_cluster", "legacy_abac_enabled", prev_value=False, new_value=True),
+        ]
+        for change in test_changes:
+            _, reason = classify_google_cloud_change(change)
+            reason_lower = reason.lower()
+            for phrase in FORBIDDEN:
+                assert phrase not in reason_lower, (
+                    f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
+                )

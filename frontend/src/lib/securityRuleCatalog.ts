@@ -1738,8 +1738,8 @@ export const SECURITY_RULES: SecurityRuleMeta[] = [
   {
     key: "google_cloud_firewall_rule_no_targets",
     provider: "google_cloud",
-    severity: "medium",
-    severityNote: "Bumps to high when the same rule is also a broad/admin public ingress.",
+    severity: "high",
+    severityNote: "High when the same rule is also a broad/admin public ingress; medium otherwise.",
     title: "Google Cloud firewall rule has no explicit target tags or service accounts",
     category: "Firewall rules",
     confidence: "medium",

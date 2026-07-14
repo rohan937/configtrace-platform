@@ -2545,6 +2545,64 @@ _AUTH0_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "google_cloud_project": (
+        "project_number", "display_name", "lifecycle_state", "parent_type",
+        "create_time", "label_keys",
+    ),
+    "google_cloud_iam_policy_summary": (
+        "binding_count", "role_count", "role_names", "broad_role_count",
+        "user_member_count", "group_member_count",
+        "service_account_member_count", "domain_member_count",
+        "other_member_count", "allusers_binding_present",
+        "allauthenticatedusers_binding_present", "conditional_binding_count",
+    ),
+    "google_cloud_vpc_network": (
+        "network_name", "auto_create_subnetworks", "routing_mode", "mtu",
+        "subnet_count", "peering_count",
+    ),
+    "google_cloud_firewall_rule": (
+        "firewall_name", "network_name", "direction", "priority", "disabled",
+        "source_ranges_summary", "destination_ranges_summary",
+        "allowed_summary", "denied_summary", "target_tag_count",
+        "target_service_account_count", "has_log_config",
+    ),
+    "google_cloud_storage_bucket": (
+        "bucket_name", "location", "location_type", "storage_class",
+        "uniform_bucket_level_access_enabled", "public_access_prevention",
+        "versioning_enabled", "retention_policy_seconds",
+        "retention_policy_locked", "lifecycle_rule_count",
+        "encryption_default_kms_key_present",
+    ),
+    "google_cloud_sql_instance": (
+        "instance_name", "database_version", "region", "state",
+        "public_ip_enabled", "authorized_network_count", "require_ssl",
+        "ssl_mode", "backup_enabled", "deletion_protection_enabled",
+        "point_in_time_recovery_enabled", "availability_type",
+    ),
+    "google_cloud_run_service": (
+        "service_name", "region", "ingress", "launch_stage",
+        "public_invoker_allowed", "invoker_policy_summary",
+        "environment_variable_count", "secret_environment_variable_count",
+    ),
+    "google_cloud_gke_cluster": (
+        "cluster_name", "location", "private_cluster_enabled",
+        "master_authorized_networks_count", "network_policy_enabled",
+        "workload_identity_enabled", "shielded_nodes_enabled",
+        "legacy_abac_enabled", "public_endpoint_enabled", "release_channel",
+    ),
+    "google_cloud_service_account_key_summary": (
+        "service_account_count", "disabled_service_account_count",
+        "user_managed_key_count", "old_user_managed_key_count",
+        "oldest_key_age_days",
+    ),
+    "google_cloud_secret_manager_summary": (
+        "secret_count", "automatic_replication_count",
+        "user_managed_replication_count", "customer_managed_encryption_count",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2582,6 +2640,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_CLERK_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"auth0_"`` look up in
       ``_AUTH0_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"google_cloud_"`` look up in
+      ``_GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2625,6 +2685,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _CLERK_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("auth0_"):
         return _AUTH0_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("google_cloud_"):
+        return _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table

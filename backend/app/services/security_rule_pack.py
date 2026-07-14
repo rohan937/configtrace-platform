@@ -165,7 +165,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "google_cloud_iam_broad_privileged_role": ("google_cloud", "high", "IAM policies"),
     "google_cloud_firewall_public_admin_ingress": ("google_cloud", "critical", "Firewall rules"),
     "google_cloud_firewall_public_broad_ingress": ("google_cloud", "critical", "Firewall rules"),
-    "google_cloud_firewall_rule_no_targets": ("google_cloud", "medium", "Firewall rules"),
+    "google_cloud_firewall_rule_no_targets": ("google_cloud", "high", "Firewall rules"),
     "google_cloud_storage_public_access_prevention_disabled": ("google_cloud", "high", "Cloud Storage buckets"),
     "google_cloud_storage_uniform_access_disabled": ("google_cloud", "medium", "Cloud Storage buckets"),
     "google_cloud_storage_versioning_disabled": ("google_cloud", "low", "Cloud Storage buckets"),
