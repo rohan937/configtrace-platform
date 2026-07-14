@@ -1370,6 +1370,7 @@ _BACKEND_AUTH0_MODULES = [
     "app/connectors/auth0.py",
     "app/connectors/auth0_schema.py",
     "app/services/provider_capability_matrix_service.py",
+    "app/services/risk_rules/auth0.py",
 ]
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -1425,3 +1426,489 @@ def test_auth0_schema_has_no_jwt_shaped_strings():
     assert not re.search(r"eyJ[A-Za-z0-9_-]{10,}", text), (
         "auth0_schema.py contains a JWT-shaped string (eyJ...)"
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Section — Diff tracked fields and risk classification (QA pass)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Auth0 previously had NO entry in diff_service.py's tracked-fields dispatch
+# (every auth0_ record type fell through to the Cloudflare DNS default tuple,
+# so compute_diff could never detect a modified field) and NO
+# risk_rules/auth0.py module at all (risk_service.py had no auth0_ dispatch
+# branch, so every Auth0 change silently fell through to the Cloudflare DNS
+# classifier) — despite the provider capability matrix already claiming
+# drift_diff=True and drift_risk_classification=True. Both were built during
+# this QA pass, making that pre-existing capability-matrix claim actually true.
+
+
+class TestAuth0DiffTrackedFields:
+    def test_all_eight_record_types_have_tracked_fields_entries(self):
+        from app.connectors.auth0_schema import AUTH0_RECORD_TYPES
+        from app.services.diff_service import _AUTH0_TRACKED_FIELDS_BY_TYPE
+
+        for record_type in AUTH0_RECORD_TYPES:
+            assert record_type in _AUTH0_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_auth0_table_not_cloudflare_default(self):
+        from app.connectors.auth0_schema import AUTH0_RECORD_TYPES
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in AUTH0_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own Auth0 fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_jwt_alg_change_produces_drift_change(self):
+        """jwt_alg RS256 -> HS256 must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _application_record(jwt_alg: str) -> dict:
+            return {
+                "record_type": "auth0_application",
+                "provider": "auth0",
+                "record_id": "client_abc",
+                "client_id": "client_abc",
+                "name": "test-app",
+                "app_type": "regular_web",
+                "is_first_party": True,
+                "grant_types_summary": "authorization_code",
+                "callbacks_count": 1,
+                "allowed_logout_urls_count": 1,
+                "allowed_origins_count": 1,
+                "web_origins_count": 1,
+                "jwt_alg": jwt_alg,
+                "oidc_conformant": True,
+                "token_endpoint_auth_method": "client_secret_basic",
+                "refresh_token_rotation_enabled": True,
+                "refresh_token_lifetime_category": "short",
+                "grant_types_count": 1,
+                "grant_password_enabled": False,
+                "grant_implicit_enabled": False,
+                "grant_client_credentials_enabled": False,
+                "grant_authorization_code_enabled": True,
+                "grant_refresh_token_enabled": False,
+                "grant_device_code_enabled": False,
+                "grant_mfa_enabled": False,
+                "wildcard_callback_present": False,
+                "wildcard_logout_url_present": False,
+                "wildcard_allowed_origin_present": False,
+                "localhost_callback_present": False,
+                "localhost_origin_present": False,
+                "callbacks_missing_https": False,
+                "allowed_origins_missing_https": False,
+            }
+
+        prev = _mock_snapshot([_application_record("RS256")])
+        new = _mock_snapshot([_application_record("HS256")])
+
+        changes = compute_diff(prev, new)
+        jwt_changes = [c for c in changes if c["field_path"] == "jwt_alg"]
+
+        assert len(jwt_changes) == 1
+        assert jwt_changes[0]["prev_value"] == "RS256"
+        assert jwt_changes[0]["new_value"] == "HS256"
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "auth0_connection",
+            "provider": "auth0",
+            "record_id": "con_1",
+            "connection_id": "con_1",
+            "name": "database-connection",
+            "strategy": "auth0",
+            "enabled_clients_count": 2,
+            "is_domain_connection": False,
+            "password_policy_category": "good",
+            "mfa_enabled": True,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _AUTH0_TRACKED_FIELDS_BY_TYPE must be classifiable:
+        classify_auth0_change must not raise, and must return one of the
+        three known severities, for a representative modified change on
+        each tracked field of each record type."""
+        from app.services.diff_service import _AUTH0_TRACKED_FIELDS_BY_TYPE
+        from app.services.risk_rules.auth0 import classify_auth0_change
+
+        for record_type, fields in _AUTH0_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_auth0_change(change)
+                assert level in ("low", "medium", "high"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
+
+
+class TestAuth0RiskClassifier:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+        record_id: str = "",
+    ) -> dict:
+        pm = {"record_type": record_type}
+        if record_id:
+            pm["record_id"] = record_id
+        return {
+            "provider_metadata": pm,
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_risk_service_dispatches_auth0_to_auth0_classifier(self):
+        """Regression guard: risk_service.py must route auth0_ record types
+        to classify_auth0_change, not silently fall through to the
+        Cloudflare DNS classifier (the exact bug this QA pass found and
+        fixed)."""
+        from app.services.risk_service import classify_change
+
+        change = self._make_change(
+            "auth0_application", "grant_password_enabled",
+            prev_value=False, new_value=True,
+        )
+        mock_change = MagicMock()
+        mock_change.provider_metadata = change["provider_metadata"]
+        mock_change.field_path = change["field_path"]
+        mock_change.change_type = change["change_type"]
+        mock_change.prev_value = change["prev_value"]
+        mock_change.new_value = change["new_value"]
+        level, reason = classify_change(mock_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+        assert "auth0" in reason.lower()
+
+    def test_password_grant_enabled_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "grant_password_enabled", prev_value=False, new_value=True,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_password_grant_disabled_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "grant_password_enabled", prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_implicit_grant_enabled_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "grant_implicit_enabled", prev_value=False, new_value=True,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_wildcard_callback_present_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "wildcard_callback_present", prev_value=False, new_value=True,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_wildcard_callback_removed_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "wildcard_callback_present", prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_weak_jwt_alg_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "jwt_alg", prev_value="RS256", new_value="HS256",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_jwt_alg_strengthened_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "jwt_alg", prev_value="HS256", new_value="RS256",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_refresh_token_rotation_disabled_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "refresh_token_rotation_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_refresh_token_rotation_enabled_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "refresh_token_rotation_enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_dynamic_client_registration_enabled_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_tenant_settings", "flag_enable_dynamic_client_registration",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_tenant_session_lifetime_extended_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_tenant_settings", "session_lifetime_category",
+            prev_value="standard", new_value="extended",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_connection_weak_password_policy_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_connection", "password_policy_category", prev_value="excellent", new_value="fair",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_connection_password_policy_unset_is_high(self):
+        """Matches security_rules/auth0.py's explicit unknown-posture rule:
+        a database connection's password policy being unset (None) is
+        itself treated as 'not configured' and rated the same as weak."""
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_connection", "password_policy_category", prev_value="good", new_value=None,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_connection_password_policy_strengthened_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_connection", "password_policy_category", prev_value="fair", new_value="excellent",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_connection_mfa_disabled_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_connection", "mfa_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_resource_server_rbac_disabled_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_resource_server", "rbac_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_resource_server_offline_access_enabled_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_resource_server", "allow_offline_access", prev_value=False, new_value=True,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_resource_server_weak_signing_alg_is_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_resource_server", "signing_alg", prev_value="RS256", new_value="HS256",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_custom_domain_not_ready_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_custom_domain", "status", prev_value="ready", new_value="pending_verification",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_custom_domain_ready_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_custom_domain", "status", prev_value="pending_verification", new_value="ready",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_rule_disabled_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_rule", "enabled", prev_value=True, new_value=False,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_mfa_factor_strong_disabled_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_mfa_factor", "enabled", prev_value=True, new_value=False,
+            record_id="auth0_mfa_factor_otp",
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_mfa_factor_non_strong_disabled_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_mfa_factor", "enabled", prev_value=True, new_value=False,
+            record_id="auth0_mfa_factor_recovery-code",
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_callbacks_count_increase_while_already_broad_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "callbacks_count", prev_value=15, new_value=20,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_callbacks_count_decrease_while_still_broad_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "callbacks_count", prev_value=20, new_value=15,
+        )
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_grant_types_count_increase_while_already_broad_is_medium(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change(
+            "auth0_application", "grant_types_count", prev_value=5, new_value=6,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_unknown_record_type_is_low(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+        change = self._make_change("auth0_unknown_surface", "some_field", prev_value=1, new_value=2)
+        level, _ = classify_auth0_change(change)
+        assert level == "low"
+
+    def test_unknown_transitions_never_produce_high(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+
+        unknown_cases = [
+            ("auth0_application", "grant_password_enabled", False, None),
+            ("auth0_application", "grant_implicit_enabled", False, None),
+            ("auth0_application", "wildcard_callback_present", False, None),
+            ("auth0_application", "jwt_alg", "RS256", None),
+            ("auth0_tenant_settings", "flag_enable_dynamic_client_registration", False, None),
+            ("auth0_connection", "mfa_enabled", True, None),
+            ("auth0_resource_server", "signing_alg", "RS256", None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_auth0_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
+    def test_count_unknown_not_treated_as_zero(self):
+        """A count field's unknown value must not be treated as an explicit
+        zero — this is the exact bug fixed in PagerDuty's classification-QA
+        pass, guarded against here from the start."""
+        from app.services.risk_rules.auth0 import classify_auth0_change
+
+        change = self._make_change(
+            "auth0_application", "callbacks_count", prev_value=15, new_value=None,
+        )
+        level, reason = classify_auth0_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_classifier_reads_real_compute_diff_dict_shape_not_a_mock(self):
+        """Regression guard against the exact old_value/prev_value bug class
+        found in Terraform Cloud's first QA pass: builds a plain dict shaped
+        EXACTLY like compute_diff's real output (prev_value/new_value/
+        field_path/change_type/provider_metadata), not a MagicMock, to prove
+        the classifier reads the real field name."""
+        from app.services.risk_rules.auth0 import classify_auth0_change
+
+        real_shaped_change = {
+            "change_type": "modified",
+            "field_path": "grant_password_enabled",
+            "prev_value": False,
+            "new_value": True,
+            "provider_metadata": {"record_type": "auth0_application"},
+        }
+        level, reason = classify_auth0_change(real_shaped_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_no_forbidden_wording_in_reasons(self):
+        from app.services.risk_rules.auth0 import classify_auth0_change
+
+        FORBIDDEN = [
+            "breach", "compromise", "attacker", "leaked", "unauthorized access",
+            "account takeover", "credential exposed", "credentials exposed",
+            "token exposed", "tokens exposed", "secret exposed", "secrets exposed",
+            "user data exposed", "auth0 data exposed", "data exposed",
+            "exfiltration", "stolen", "fraud", "attack detected",
+        ]
+        test_changes = [
+            self._make_change("auth0_application", "grant_password_enabled", prev_value=False, new_value=True),
+            self._make_change("auth0_application", "wildcard_callback_present", prev_value=False, new_value=True),
+            self._make_change("auth0_application", "jwt_alg", prev_value="RS256", new_value="HS256"),
+            self._make_change("auth0_connection", "password_policy_category", prev_value="good", new_value="fair"),
+            self._make_change("auth0_connection", "mfa_enabled", prev_value=True, new_value=False),
+            self._make_change("auth0_resource_server", "rbac_enabled", prev_value=True, new_value=False),
+            self._make_change("auth0_tenant_settings", "flag_enable_dynamic_client_registration", prev_value=False, new_value=True),
+        ]
+        for change in test_changes:
+            _, reason = classify_auth0_change(change)
+            reason_lower = reason.lower()
+            for phrase in FORBIDDEN:
+                assert phrase not in reason_lower, (
+                    f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
+                )

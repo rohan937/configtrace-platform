@@ -2486,6 +2486,65 @@ _CLERK_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_AUTH0_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "auth0_tenant_settings": (
+        "friendly_name_present", "support_email_domain",
+        "default_directory_present", "session_lifetime_category",
+        "idle_session_lifetime_category", "enabled_locales_count",
+        "flag_change_pwd_on_first_login", "flag_enable_client_connections",
+        "flag_enable_apis_section", "flag_enable_pipeline2",
+        "flag_enable_dynamic_client_registration",
+        "flag_enable_custom_domain_in_emails", "flag_universal_login",
+        "flag_enable_legacy_logs_search_v2",
+        "flag_no_disclose_enterprise_connections",
+        "flag_disable_management_api_sms_obfuscation",
+        "flag_enable_adfs_waad_email_verification",
+        "flag_revoke_refresh_token_grant",
+    ),
+    "auth0_application": (
+        "name", "app_type", "is_first_party", "grant_types_summary",
+        "callbacks_count", "allowed_logout_urls_count",
+        "allowed_origins_count", "web_origins_count", "jwt_alg",
+        "oidc_conformant", "token_endpoint_auth_method",
+        "refresh_token_rotation_enabled", "refresh_token_lifetime_category",
+        "grant_types_count", "grant_password_enabled",
+        "grant_implicit_enabled", "grant_client_credentials_enabled",
+        "grant_authorization_code_enabled", "grant_refresh_token_enabled",
+        "grant_device_code_enabled", "grant_mfa_enabled",
+        "wildcard_callback_present", "wildcard_logout_url_present",
+        "wildcard_allowed_origin_present", "localhost_callback_present",
+        "localhost_origin_present", "callbacks_missing_https",
+        "allowed_origins_missing_https",
+    ),
+    "auth0_connection": (
+        "name", "strategy", "enabled_clients_count", "is_domain_connection",
+        "password_policy_category", "mfa_enabled",
+    ),
+    "auth0_resource_server": (
+        "name", "identifier_present", "signing_alg",
+        "token_lifetime_category", "allow_offline_access",
+        "skip_consent_for_verifiable_first_party_clients", "rbac_enabled",
+        "scopes_count",
+    ),
+    "auth0_rule": (
+        "name", "enabled", "order", "script_present",
+        "script_length_category", "stage",
+    ),
+    "auth0_action": (
+        "name", "status", "runtime", "trigger_id", "code_present",
+        "code_length_category", "deployed_version_present",
+        "dependencies_count", "secrets_count",
+    ),
+    "auth0_mfa_factor": (
+        "enabled", "trial_expired", "provider_category",
+    ),
+    "auth0_custom_domain": (
+        "domain_present", "status", "type", "primary",
+        "verification_method_category", "tls_policy_category",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2521,6 +2580,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_DATADOG_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"clerk_"`` look up in
       ``_CLERK_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"auth0_"`` look up in
+      ``_AUTH0_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2562,6 +2623,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _DATADOG_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("clerk_"):
         return _CLERK_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("auth0_"):
+        return _AUTH0_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table
