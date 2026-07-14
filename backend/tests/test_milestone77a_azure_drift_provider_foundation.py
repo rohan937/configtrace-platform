@@ -45,7 +45,7 @@ import inspect
 import json
 import types
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1177,6 +1177,500 @@ def test_no_forbidden_claims_in_azure_schema_docstring():
         assert phrase not in module_doc, (
             f"Forbidden phrase {phrase!r} found in azure_schema module docstring"
         )
+
+
+def test_no_forbidden_claims_in_azure_risk_rules_module():
+    import inspect
+
+    import app.services.risk_rules.azure as azure_risk_module
+
+    src = inspect.getsource(azure_risk_module).lower()
+    for phrase in _FORBIDDEN:
+        assert phrase not in src, (
+            f"Forbidden phrase {phrase!r} found in risk_rules/azure.py"
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 20. Diff tracked fields and risk classification (QA pass)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Azure previously had NO entry in diff_service.py's tracked-fields dispatch
+# (every azure_ record type fell through to the Cloudflare DNS default tuple,
+# so compute_diff could never detect a modified field) and NO
+# risk_rules/azure.py module at all (risk_service.py had no azure_ dispatch
+# branch, so every Azure change silently fell through to the Cloudflare DNS
+# classifier) — despite the provider capability matrix already claiming
+# drift_diff=True and drift_risk_classification=True. Both were built during
+# this QA pass, making that pre-existing capability-matrix claim actually true.
+#
+# The NSG list-diffing logic (rules_summary) proactively applies the
+# None-vs-empty-list lesson learned in Google Cloud's classification-QA pass
+# from the very start, rather than needing a follow-up pass to find the bug.
+
+AZURE_ALL_RECORD_TYPES = (
+    "azure_subscription",
+    "azure_resource_group",
+    "azure_network_security_group",
+    "azure_storage_account",
+    "azure_key_vault",
+    "azure_role_assignment",
+    "azure_app_service",
+    "azure_sql_server",
+    "azure_aks_cluster",
+)
+
+
+class TestAzureDiffTrackedFields:
+    def test_all_nine_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _AZURE_TRACKED_FIELDS_BY_TYPE
+
+        for record_type in AZURE_ALL_RECORD_TYPES:
+            assert record_type in _AZURE_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_azure_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in AZURE_ALL_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own Azure fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_nsg_rules_summary_change_produces_drift_change(self):
+        """rules_summary gaining a public SSH rule must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _nsg_record(rules: list) -> dict:
+            return {
+                "record_type": "azure_network_security_group",
+                "provider": "azure",
+                "record_id": "azure_nsg_nsg1",
+                "nsg_id": "nsg1",
+                "nsg_name": "test-nsg",
+                "resource_group": "rg1",
+                "location": "eastus",
+                "rule_count": len(rules),
+                "inbound_allow_rule_count": len(rules),
+                "public_inbound_rule_count": len(rules),
+                "rules_summary": rules,
+            }
+
+        safe_rule = {
+            "rule_name": "allow-https",
+            "direction": "Inbound",
+            "access": "Allow",
+            "priority": 100,
+            "protocol": "Tcp",
+            "source_address_prefix": "*",
+            "source_port_range": "*",
+            "destination_address_prefix": "*",
+            "destination_port_range": "443",
+        }
+        ssh_rule = dict(safe_rule, rule_name="allow-ssh", destination_port_range="22")
+
+        prev = _mock_snapshot([_nsg_record([safe_rule])])
+        new = _mock_snapshot([_nsg_record([safe_rule, ssh_rule])])
+
+        changes = compute_diff(prev, new)
+        rule_changes = [c for c in changes if c["field_path"] == "rules_summary"]
+
+        assert len(rule_changes) == 1
+        assert rule_changes[0]["prev_value"] == [safe_rule]
+        assert rule_changes[0]["new_value"] == [safe_rule, ssh_rule]
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "azure_storage_account",
+            "provider": "azure",
+            "record_id": "azure_storage_acct1",
+            "account_id": "acct1",
+            "account_name": "teststorage",
+            "resource_group": "rg1",
+            "location": "eastus",
+            "kind": "StorageV2",
+            "sku_name": "Standard_LRS",
+            "allow_blob_public_access": False,
+            "public_network_access": "Enabled",
+            "minimum_tls_version": "TLS1_2",
+            "supports_https_traffic_only": True,
+            "shared_access_key_enabled": False,
+            "network_default_action": "Deny",
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _AZURE_TRACKED_FIELDS_BY_TYPE must be classifiable:
+        classify_azure_change must not raise, and must return one of the
+        four known severities, for a representative modified change on
+        each tracked field of each record type."""
+        from app.services.diff_service import _AZURE_TRACKED_FIELDS_BY_TYPE
+        from app.services.risk_rules.azure import classify_azure_change
+
+        for record_type, fields in _AZURE_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_azure_change(change)
+                assert level in ("low", "medium", "high", "critical"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
+
+
+class TestAzureRiskClassifier:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_risk_service_dispatches_azure_to_azure_classifier(self):
+        """Regression guard: risk_service.py must route azure_ record types
+        to classify_azure_change, not silently fall through to the
+        Cloudflare DNS classifier (the exact bug this QA pass found and
+        fixed)."""
+        from app.services.risk_service import classify_change
+
+        change = self._make_change(
+            "azure_storage_account", "allow_blob_public_access",
+            prev_value=False, new_value=True,
+        )
+        mock_change = MagicMock()
+        mock_change.provider_metadata = change["provider_metadata"]
+        mock_change.field_path = change["field_path"]
+        mock_change.change_type = change["change_type"]
+        mock_change.prev_value = change["prev_value"]
+        mock_change.new_value = change["new_value"]
+        level, reason = classify_change(mock_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+        assert "azure" in reason.lower()
+
+    def test_storage_public_blob_access_enabled_is_high(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_storage_account", "allow_blob_public_access",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_storage_public_blob_access_disabled_is_low(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_storage_account", "allow_blob_public_access",
+            prev_value=True, new_value=False,
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_storage_shared_key_access_enabled_is_medium(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_storage_account", "shared_access_key_enabled",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_storage_https_only_disabled_is_high(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_storage_account", "supports_https_traffic_only",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_role_assignment_owner_granted_is_high(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_role_assignment", "role_definition_name",
+            prev_value="Reader", new_value="Owner",
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_role_assignment_owner_removed_is_low(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_role_assignment", "role_definition_name",
+            prev_value="Owner", new_value="Reader",
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_nsg_public_ssh_rule_added_is_high(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        safe_rule = {
+            "rule_name": "allow-https", "direction": "Inbound", "access": "Allow",
+            "priority": 100, "protocol": "Tcp", "source_address_prefix": "*",
+            "source_port_range": "*", "destination_address_prefix": "*",
+            "destination_port_range": "443",
+        }
+        ssh_rule = dict(safe_rule, rule_name="allow-ssh", destination_port_range="22")
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[safe_rule], new_value=[safe_rule, ssh_rule],
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_nsg_public_rdp_rule_added_is_critical(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        rdp_rule = {
+            "rule_name": "allow-rdp", "direction": "Inbound", "access": "Allow",
+            "priority": 100, "protocol": "Tcp", "source_address_prefix": "0.0.0.0/0",
+            "source_port_range": "*", "destination_address_prefix": "*",
+            "destination_port_range": "3389",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[rdp_rule],
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "critical", f"Expected critical, got {level!r}: {reason}"
+
+    def test_nsg_broad_all_ports_rule_added_is_critical(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        broad_rule = {
+            "rule_name": "allow-all", "direction": "Inbound", "access": "Allow",
+            "priority": 100, "protocol": "*", "source_address_prefix": "Internet",
+            "source_port_range": "*", "destination_address_prefix": "*",
+            "destination_port_range": "*",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[broad_rule],
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "critical", f"Expected critical, got {level!r}: {reason}"
+
+    def test_nsg_benign_rule_added_is_low(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        safe_rule = {
+            "rule_name": "allow-https", "direction": "Inbound", "access": "Allow",
+            "priority": 100, "protocol": "Tcp", "source_address_prefix": "*",
+            "source_port_range": "*", "destination_address_prefix": "*",
+            "destination_port_range": "443",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[safe_rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_nsg_public_rule_removed_is_low(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        ssh_rule = {
+            "rule_name": "allow-ssh", "direction": "Inbound", "access": "Allow",
+            "priority": 100, "protocol": "Tcp", "source_address_prefix": "*",
+            "source_port_range": "*", "destination_address_prefix": "*",
+            "destination_port_range": "22",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[ssh_rule], new_value=[],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_nsg_rules_summary_unknown_baseline_does_not_claim_added(self):
+        """The None-vs-empty-list lesson from Google Cloud's classification-QA
+        pass, applied proactively from the start: a genuinely unknown
+        previous rules_summary must not make every current rule look
+        newly 'added'."""
+        from app.services.risk_rules.azure import classify_azure_change
+        rdp_rule = {
+            "rule_name": "allow-rdp", "direction": "Inbound", "access": "Allow",
+            "priority": 100, "protocol": "Tcp", "source_address_prefix": "0.0.0.0/0",
+            "source_port_range": "*", "destination_address_prefix": "*",
+            "destination_port_range": "3389",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=None, new_value=[rdp_rule],
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "critical", f"Expected critical, got {level!r}: {reason}"
+        assert "added" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_nsg_rules_summary_unknown_new_value_is_low_unknown(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[{"protocol": "Tcp"}], new_value=None,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_key_vault_purge_protection_disabled_is_medium(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_key_vault", "purge_protection_enabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_key_vault_soft_delete_disabled_is_medium(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_key_vault", "soft_delete_enabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_app_service_https_only_disabled_is_high(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_app_service", "https_only", prev_value=True, new_value=False,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_sql_server_public_network_access_enabled_is_medium(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_sql_server", "public_network_access",
+            prev_value="Disabled", new_value="Enabled",
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_aks_local_accounts_enabled_is_medium(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_aks_cluster", "local_account_disabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_aks_network_policy_removed_is_medium(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change(
+            "azure_aks_cluster", "network_policy",
+            prev_value="azure", new_value="none",
+        )
+        level, reason = classify_azure_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_unknown_record_type_is_low(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = self._make_change("azure_unknown_surface", "some_field", prev_value=1, new_value=2)
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_unknown_transitions_never_produce_high_or_critical(self):
+        from app.services.risk_rules.azure import classify_azure_change
+
+        unknown_cases = [
+            ("azure_storage_account", "allow_blob_public_access", False, None),
+            ("azure_key_vault", "purge_protection_enabled", True, None),
+            ("azure_app_service", "https_only", True, None),
+            ("azure_sql_server", "public_network_access", "Disabled", None),
+            ("azure_aks_cluster", "local_account_disabled", True, None),
+            ("azure_role_assignment", "role_definition_name", "Reader", None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_azure_change(change)
+            assert level not in ("high", "critical"), (
+                f"{record_type}.{field} unknown transition produced {level!r}: {reason!r}"
+            )
+
+    def test_classifier_reads_real_compute_diff_dict_shape_not_a_mock(self):
+        """Regression guard against the exact old_value/prev_value bug class
+        found in Terraform Cloud's first QA pass: builds a plain dict shaped
+        EXACTLY like compute_diff's real output (prev_value/new_value/
+        field_path/change_type/provider_metadata), not a MagicMock, to prove
+        the classifier reads the real field name."""
+        from app.services.risk_rules.azure import classify_azure_change
+
+        real_shaped_change = {
+            "change_type": "modified",
+            "field_path": "allow_blob_public_access",
+            "prev_value": False,
+            "new_value": True,
+            "provider_metadata": {"record_type": "azure_storage_account"},
+        }
+        level, reason = classify_azure_change(real_shaped_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_no_forbidden_wording_in_reasons(self):
+        from app.services.risk_rules.azure import classify_azure_change
+
+        FORBIDDEN = [
+            "breach", "compromise", "attacker", "leaked", "unauthorized access",
+            "storage exposed", "database exposed", "key vault exposed",
+            "vault exposed", "secret exposed", "secrets exposed",
+            "infrastructure exposed", "customer data exposed",
+            "azure data exposed", "data exposed",
+            "exfiltration", "stolen", "fraud", "attack detected",
+        ]
+        test_changes = [
+            self._make_change("azure_storage_account", "allow_blob_public_access", prev_value=False, new_value=True),
+            self._make_change("azure_network_security_group", "rules_summary", prev_value=[], new_value=[{
+                "rule_name": "r", "direction": "Inbound", "access": "Allow",
+                "source_address_prefix": "*", "destination_port_range": "22",
+            }]),
+            self._make_change("azure_key_vault", "purge_protection_enabled", prev_value=True, new_value=False),
+            self._make_change("azure_role_assignment", "role_definition_name", prev_value="Reader", new_value="Owner"),
+            self._make_change("azure_app_service", "https_only", prev_value=True, new_value=False),
+            self._make_change("azure_sql_server", "public_network_access", prev_value="Disabled", new_value="Enabled"),
+            self._make_change("azure_aks_cluster", "local_account_disabled", prev_value=True, new_value=False),
+        ]
+        for change in test_changes:
+            _, reason = classify_azure_change(change)
+            reason_lower = reason.lower()
+            for phrase in FORBIDDEN:
+                assert phrase not in reason_lower, (
+                    f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
+                )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

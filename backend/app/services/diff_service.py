@@ -2603,6 +2603,56 @@ _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_AZURE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "azure_subscription": (
+        "display_name", "state", "tenant_id", "authorization_source",
+    ),
+    "azure_resource_group": (
+        "location", "provisioning_state", "tag_keys",
+    ),
+    "azure_network_security_group": (
+        "nsg_name", "resource_group", "location", "rule_count",
+        "inbound_allow_rule_count", "public_inbound_rule_count",
+        "rules_summary",
+    ),
+    "azure_storage_account": (
+        "account_name", "resource_group", "location", "kind", "sku_name",
+        "allow_blob_public_access", "public_network_access",
+        "minimum_tls_version", "supports_https_traffic_only",
+        "shared_access_key_enabled", "network_default_action",
+    ),
+    "azure_key_vault": (
+        "vault_name", "resource_group", "location",
+        "enable_rbac_authorization", "public_network_access",
+        "soft_delete_enabled", "purge_protection_enabled",
+        "access_policy_count", "network_default_action",
+    ),
+    "azure_role_assignment": (
+        "scope_type", "resource_group", "role_definition_id",
+        "role_definition_name", "principal_type", "condition_present",
+        "created_on", "updated_on",
+    ),
+    "azure_app_service": (
+        "app_name", "resource_group", "location", "kind", "https_only",
+        "public_network_access", "client_cert_enabled", "ftps_state",
+        "min_tls_version", "auth_enabled", "app_settings_count",
+        "connection_string_count",
+    ),
+    "azure_sql_server": (
+        "server_name", "resource_group", "location", "public_network_access",
+        "minimum_tls_version", "azure_ad_only_authentication",
+        "firewall_rule_count", "has_allow_azure_services_rule",
+    ),
+    "azure_aks_cluster": (
+        "cluster_name", "resource_group", "location",
+        "private_cluster_enabled", "local_account_disabled",
+        "azure_rbac_enabled", "network_plugin", "network_policy",
+        "public_network_access", "api_server_authorized_ip_range_count",
+        "authorized_ip_ranges_configured",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2642,6 +2692,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_AUTH0_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"google_cloud_"`` look up in
       ``_GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"azure_"`` look up in
+      ``_AZURE_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2687,6 +2739,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _AUTH0_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("google_cloud_"):
         return _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("azure_"):
+        return _AZURE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table
