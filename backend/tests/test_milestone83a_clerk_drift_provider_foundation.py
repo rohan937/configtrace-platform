@@ -41,6 +41,7 @@ from __future__ import annotations
 import inspect
 import re
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1010,3 +1011,401 @@ def test_no_real_clerk_key_shapes_in_test_file():
     assert not re.search(r"sk_live_[A-Za-z0-9]{20,}", src), (
         "Real Clerk secret key shape found in test file — use CLERK_TEST_SECRET_KEY_PLACEHOLDER"
     )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Section — Diff tracked fields and risk classification (QA pass)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Clerk previously had NO entry in diff_service.py's tracked-fields dispatch
+# (every clerk_ record type fell through to the Cloudflare DNS default tuple,
+# so compute_diff could never detect a modified field) and NO
+# risk_rules/clerk.py module at all (risk_service.py had no clerk_ dispatch
+# branch, so every Clerk change silently fell through to the Cloudflare DNS
+# classifier). Both were built during this QA pass.
+
+
+class TestClerkDiffTrackedFields:
+    def test_all_ten_record_types_have_tracked_fields_entries(self):
+        from app.connectors.clerk_schema import CLERK_RECORD_TYPES
+        from app.services.diff_service import _CLERK_TRACKED_FIELDS_BY_TYPE
+
+        for record_type in CLERK_RECORD_TYPES:
+            assert record_type in _CLERK_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_clerk_table_not_cloudflare_default(self):
+        from app.connectors.clerk_schema import CLERK_RECORD_TYPES
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in CLERK_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own Clerk fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_mfa_enabled_change_produces_drift_change(self):
+        """mfa_enabled True -> False must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _instance_record(mfa_enabled: bool) -> dict:
+            return {
+                "record_type": "clerk_instance_settings",
+                "provider": "clerk",
+                "record_id": "clerk_instance_settings_main",
+                "environment_type": "production",
+                "sign_up_enabled": True,
+                "sign_in_enabled": True,
+                "email_enabled": True,
+                "phone_enabled": False,
+                "username_enabled": False,
+                "password_enabled": True,
+                "social_provider_count": 1,
+                "mfa_enabled": mfa_enabled,
+                "mfa_factor_count": 1 if mfa_enabled else 0,
+                "session_lifetime_category": "standard",
+                "allowed_redirect_count": 2,
+                "domain_count": 1,
+                "webhook_count": 1,
+                "allowlist_enabled": False,
+                "blocklist_enabled": False,
+                "sign_in_mode": "public",
+            }
+
+        prev = _mock_snapshot([_instance_record(True)])
+        new = _mock_snapshot([_instance_record(False)])
+
+        changes = compute_diff(prev, new)
+        mfa_changes = [c for c in changes if c["field_path"] == "mfa_enabled"]
+
+        assert len(mfa_changes) == 1
+        assert mfa_changes[0]["prev_value"] is True
+        assert mfa_changes[0]["new_value"] is False
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "clerk_webhook_endpoint",
+            "provider": "clerk",
+            "record_id": "wh1",
+            "enabled": True,
+            "url_present": True,
+            "url_scheme_category": "https",
+            "event_count": 3,
+            "secret_present": True,
+            "description_present": False,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _CLERK_TRACKED_FIELDS_BY_TYPE must be classifiable:
+        classify_clerk_change must not raise, and must return one of the
+        three known severities, for a representative modified change on
+        each tracked field of each record type."""
+        from app.services.diff_service import _CLERK_TRACKED_FIELDS_BY_TYPE
+        from app.services.risk_rules.clerk import classify_clerk_change
+
+        for record_type, fields in _CLERK_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_clerk_change(change)
+                assert level in ("low", "medium", "high"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
+
+
+class TestClerkRiskClassifier:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_risk_service_dispatches_clerk_to_clerk_classifier(self):
+        """Regression guard: risk_service.py must route clerk_ record types
+        to classify_clerk_change, not silently fall through to the
+        Cloudflare DNS classifier (the exact bug this QA pass found and
+        fixed)."""
+        from app.services.risk_service import classify_change
+
+        change = self._make_change(
+            "clerk_instance_settings", "mfa_enabled",
+            prev_value=True, new_value=False,
+        )
+        mock_change = MagicMock()
+        mock_change.provider_metadata = change["provider_metadata"]
+        mock_change.field_path = change["field_path"]
+        mock_change.change_type = change["change_type"]
+        mock_change.prev_value = change["prev_value"]
+        mock_change.new_value = change["new_value"]
+        level, reason = classify_change(mock_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+        assert "clerk" in reason.lower()
+
+    def test_instance_mfa_disabled_is_high(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_instance_settings", "mfa_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_instance_mfa_enabled_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_instance_settings", "mfa_enabled", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_application_mfa_not_required_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_application", "mfa_required", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_application_mfa_required_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_application", "mfa_required", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_domain_ssl_disabled_is_high(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_domain", "ssl_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_domain_unverified_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_domain", "verified", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_redirect_url_http_scheme_is_high(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_redirect_url_config", "url_scheme_category",
+            prev_value="https", new_value="http",
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_redirect_url_https_restored_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_redirect_url_config", "url_scheme_category",
+            prev_value="http", new_value="https",
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_webhook_secret_removed_is_high(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_webhook_endpoint", "secret_present", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_webhook_secret_added_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_webhook_endpoint", "secret_present", prev_value=False, new_value=True,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_webhook_non_https_scheme_is_high(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_webhook_endpoint", "url_scheme_category",
+            prev_value="https", new_value="unknown",
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_auth_strategy_mfa_enabled_disabled_is_high(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_auth_strategy", "mfa_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_session_lifetime_extended_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_session_policy", "session_lifetime_category",
+            prev_value="standard", new_value="extended",
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_session_token_rotation_disabled_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_session_policy", "token_rotation_enabled",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    # ── Count-threshold "any increase while over threshold" tests ───────────
+    #
+    # Learned from Datadog's classification-QA pass (a crossing-only bug),
+    # applied proactively here rather than needing a second pass to fix it.
+
+    def test_application_redirect_url_count_increase_while_already_broad_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_application", "redirect_url_count", prev_value=15, new_value=20,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "review threshold" in reason.lower()
+
+    def test_organization_permission_count_increase_while_already_broad_is_medium(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_organization_settings", "permission_count", prev_value=60, new_value=70,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_organization_permission_count_decrease_while_still_broad_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change(
+            "clerk_organization_settings", "permission_count", prev_value=70, new_value=60,
+        )
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_unknown_record_type_is_low(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        change = self._make_change("clerk_unknown_surface", "some_field", prev_value=1, new_value=2)
+        level, _ = classify_clerk_change(change)
+        assert level == "low"
+
+    def test_unknown_transitions_never_produce_high(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+
+        unknown_cases = [
+            ("clerk_instance_settings", "mfa_enabled", True, None),
+            ("clerk_application", "mfa_required", True, None),
+            ("clerk_domain", "ssl_enabled", True, None),
+            ("clerk_webhook_endpoint", "secret_present", True, None),
+            ("clerk_auth_strategy", "mfa_enabled", True, None),
+            ("clerk_organization_settings", "permission_count", 60, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_clerk_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
+    def test_count_unknown_not_treated_as_zero(self):
+        """A count field's unknown value must not be treated as an explicit
+        zero — the exact bug fixed in PagerDuty's classification-QA pass,
+        guarded against here from the start via _int_or_none()."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+
+        change = self._make_change(
+            "clerk_organization_settings", "permission_count", prev_value=60, new_value=None,
+        )
+        level, reason = classify_clerk_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+
+    def test_classifier_reads_real_compute_diff_dict_shape_not_a_mock(self):
+        """Regression guard against the exact old_value/prev_value bug class
+        found in Terraform Cloud's first QA pass: builds a plain dict shaped
+        EXACTLY like compute_diff's real output (prev_value/new_value/
+        field_path/change_type/provider_metadata), not a MagicMock, to prove
+        the classifier reads the real field name."""
+        from app.services.risk_rules.clerk import classify_clerk_change
+
+        real_shaped_change = {
+            "change_type": "modified",
+            "field_path": "mfa_enabled",
+            "prev_value": True,
+            "new_value": False,
+            "provider_metadata": {"record_type": "clerk_instance_settings"},
+        }
+        level, reason = classify_clerk_change(real_shaped_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_no_forbidden_wording_in_reasons(self):
+        from app.services.risk_rules.clerk import classify_clerk_change
+
+        FORBIDDEN = [
+            "breach", "compromise", "attacker", "leaked", "unauthorized access",
+            "account takeover", "credential exposed", "credentials exposed",
+            "token exposed", "tokens exposed", "secret exposed", "secrets exposed",
+            "user data exposed", "clerk data exposed", "data exposed",
+            "exfiltration", "stolen", "fraud", "attack detected",
+        ]
+        test_changes = [
+            self._make_change("clerk_instance_settings", "mfa_enabled", prev_value=True, new_value=False),
+            self._make_change("clerk_application", "mfa_required", prev_value=True, new_value=False),
+            self._make_change("clerk_domain", "ssl_enabled", prev_value=True, new_value=False),
+            self._make_change("clerk_redirect_url_config", "url_scheme_category", prev_value="https", new_value="http"),
+            self._make_change("clerk_webhook_endpoint", "secret_present", prev_value=True, new_value=False),
+            self._make_change("clerk_auth_strategy", "mfa_enabled", prev_value=True, new_value=False),
+            self._make_change("clerk_session_policy", "session_lifetime_category", prev_value="standard", new_value="extended"),
+        ]
+        for change in test_changes:
+            _, reason = classify_clerk_change(change)
+            reason_lower = reason.lower()
+            for phrase in FORBIDDEN:
+                assert phrase not in reason_lower, (
+                    f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
+                )

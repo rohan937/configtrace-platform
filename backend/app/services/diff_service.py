@@ -2429,6 +2429,63 @@ _DATADOG_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_CLERK_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "clerk_instance_settings": (
+        "environment_type", "sign_up_enabled", "sign_in_enabled",
+        "email_enabled", "phone_enabled", "username_enabled",
+        "password_enabled", "social_provider_count", "mfa_enabled",
+        "mfa_factor_count", "session_lifetime_category",
+        "allowed_redirect_count", "domain_count", "webhook_count",
+        "allowlist_enabled", "blocklist_enabled", "sign_in_mode",
+    ),
+    "clerk_application": (
+        "name", "application_type", "enabled", "oauth_provider_count",
+        "redirect_url_count", "allowed_origin_count", "jwt_template_count",
+        "organization_enabled", "mfa_required", "sign_up_enabled",
+        "sign_in_enabled", "password_enabled", "saml_enabled",
+    ),
+    "clerk_domain": (
+        "domain_present", "domain_type", "verified", "primary",
+        "ssl_enabled", "dns_status_category", "proxy_enabled",
+    ),
+    "clerk_redirect_url_config": (
+        "url_present", "url_scheme_category", "wildcard_present",
+        "localhost_present", "custom_scheme_present",
+    ),
+    "clerk_jwt_template": (
+        "name", "enabled", "claims_count", "custom_claims_present",
+        "audience_present", "lifetime_category", "algorithm",
+        "issuer_present",
+    ),
+    "clerk_webhook_endpoint": (
+        "enabled", "url_present", "url_scheme_category", "event_count",
+        "secret_present", "description_present",
+    ),
+    "clerk_email_sms_settings": (
+        "email_enabled", "sms_enabled", "custom_sender_present",
+        "template_customization_present",
+    ),
+    "clerk_auth_strategy": (
+        "password_enabled", "oauth_enabled", "social_provider_count",
+        "saml_enabled", "mfa_enabled", "mfa_required", "passkey_enabled",
+        "magic_link_enabled", "email_otp_enabled", "phone_otp_enabled",
+    ),
+    "clerk_organization_settings": (
+        "organizations_enabled", "max_allowed_memberships_category",
+        "admin_delete_enabled", "domains_enabled",
+        "domains_enrollment_mode_category", "verified_domains_required",
+        "invitation_enabled", "admin_role_present", "role_count",
+        "permission_count",
+    ),
+    "clerk_session_policy": (
+        "session_lifetime_category", "inactivity_timeout_category",
+        "single_session_mode", "url_based_session_syncing",
+        "token_rotation_enabled", "device_tracking_enabled",
+        "reverification_required",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2462,6 +2519,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_PAGERDUTY_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"datadog_"`` look up in
       ``_DATADOG_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"clerk_"`` look up in
+      ``_CLERK_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2501,6 +2560,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _PAGERDUTY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("datadog_"):
         return _DATADOG_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("clerk_"):
+        return _CLERK_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table

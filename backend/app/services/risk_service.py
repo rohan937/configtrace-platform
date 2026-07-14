@@ -19,6 +19,8 @@ Design decisions
     (``app.services.risk_rules.github``).
   - Record types starting with ``"vercel_"`` → Vercel rule set
     (``app.services.risk_rules.vercel``).
+  - Record types starting with ``"clerk_"`` → Clerk rule set
+    (``app.services.risk_rules.clerk``).
   - All other records → Cloudflare DNS rule set
     (``app.services.risk_rules.cloudflare_dns``).
   This approach works without a DB lookup: the record type is embedded in
@@ -135,6 +137,10 @@ def classify_change(change: Change) -> tuple[str, str]:
     if record_type.startswith("datadog_"):
         from app.services.risk_rules.datadog import classify_datadog_change
         return classify_datadog_change(change)
+
+    if record_type.startswith("clerk_"):
+        from app.services.risk_rules.clerk import classify_clerk_change
+        return classify_clerk_change(change)
 
     if record_type == "cloudflare_ruleset":
         from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change
