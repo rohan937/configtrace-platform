@@ -277,8 +277,6 @@ class TestGetWorkspaceUsage:
         db_session.commit()
 
     def test_counts_only_non_deleted_integrations(self, db_session, test_user):
-        from datetime import datetime, timezone
-
         from app.models.integration import Integration
         from app.models.workspace import Workspace, WorkspaceMember
         from app.services.billing_service import get_workspace_usage
@@ -299,18 +297,19 @@ class TestGetWorkspaceUsage:
             provider="cloudflare",
             display_name="active",
             workspace_id=ws.id,
-            encrypted_credentials="x",
-            credentials_iv="y",
+            encrypted_credentials=b"x",
+            credential_iv=b"y",
         )
-        # Soft-deleted integration
+        # Soft-deleted integration — excluded via status='deleted', the same
+        # field the Integration model uses (there is no deleted_at column).
         deleted = Integration(
             user_id=test_user.id,
             provider="github",
             display_name="deleted",
             workspace_id=ws.id,
-            encrypted_credentials="x",
-            credentials_iv="y",
-            deleted_at=datetime.now(timezone.utc),
+            encrypted_credentials=b"x",
+            credential_iv=b"y",
+            status="deleted",
         )
         db_session.add_all([active, deleted])
         db_session.commit()
@@ -321,6 +320,106 @@ class TestGetWorkspaceUsage:
         # Cleanup
         db_session.delete(active)
         db_session.delete(deleted)
+        db_session.delete(member)
+        db_session.delete(ws)
+        db_session.commit()
+
+    def test_counts_non_deleted_regardless_of_active_paused_or_error_status(
+        self, db_session, test_user
+    ):
+        """Usage matches the Integrations page's "connected" definition:
+        every non-deleted row counts, whatever its active/paused/
+        needs_reconnect/error status (see integration_service.get_integrations_by_workspace,
+        which filters ONLY on status != 'deleted'). This is a regression test
+        for the bug where billing counted ALL historical rows including
+        deleted ones, showing "5 / 3" while the Integrations page showed "2".
+        """
+        from app.models.integration import Integration
+        from app.models.workspace import Workspace, WorkspaceMember
+        from app.services.billing_service import get_workspace_usage
+
+        ws = Workspace(
+            name=f"usage-statuses-{uuid.uuid4().hex[:6]}", created_by_user_id=test_user.id
+        )
+        db_session.add(ws)
+        db_session.flush()
+        member = WorkspaceMember(
+            workspace_id=ws.id, user_id=test_user.id, role="owner"
+        )
+        db_session.add(member)
+
+        statuses = ["active", "paused", "needs_reconnect", "error", "deleted", "deleted"]
+        integrations = [
+            Integration(
+                user_id=test_user.id,
+                provider="cloudflare",
+                display_name=f"int-{i}",
+                workspace_id=ws.id,
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
+                status=status,
+            )
+            for i, status in enumerate(statuses)
+        ]
+        db_session.add_all(integrations)
+        db_session.commit()
+
+        # 4 non-deleted rows (active, paused, needs_reconnect, error) + 2 deleted.
+        usage = get_workspace_usage(ws.id, db_session)
+        assert usage["integrations"] == 4
+
+        # Cleanup
+        for i in integrations:
+            db_session.delete(i)
+        db_session.delete(member)
+        db_session.delete(ws)
+        db_session.commit()
+
+    def test_usage_matches_integrations_list_connected_count(self, db_session, test_user):
+        """get_workspace_usage must return the same count as the Integrations
+        list endpoint's `total` (get_integrations_by_workspace), for the same
+        workspace and same rows."""
+        from app.models.integration import Integration
+        from app.models.workspace import Workspace, WorkspaceMember
+        from app.services import integration_service
+        from app.services.billing_service import get_workspace_usage
+
+        ws = Workspace(
+            name=f"usage-parity-{uuid.uuid4().hex[:6]}", created_by_user_id=test_user.id
+        )
+        db_session.add(ws)
+        db_session.flush()
+        member = WorkspaceMember(
+            workspace_id=ws.id, user_id=test_user.id, role="owner"
+        )
+        db_session.add(member)
+
+        statuses = ["active", "active", "needs_reconnect", "deleted", "deleted", "deleted"]
+        integrations = [
+            Integration(
+                user_id=test_user.id,
+                provider="cloudflare",
+                display_name=f"int-{i}",
+                workspace_id=ws.id,
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
+                status=status,
+            )
+            for i, status in enumerate(statuses)
+        ]
+        db_session.add_all(integrations)
+        db_session.commit()
+
+        usage = get_workspace_usage(ws.id, db_session)
+        connected_rows = integration_service.get_integrations_by_workspace(
+            workspace_id=ws.id, db=db_session
+        )
+
+        assert usage["integrations"] == len(connected_rows) == 3
+
+        # Cleanup
+        for i in integrations:
+            db_session.delete(i)
         db_session.delete(member)
         db_session.delete(ws)
         db_session.commit()
@@ -385,8 +484,8 @@ class TestLimitEnforcement:
                 provider="cloudflare",
                 display_name=f"int-{i}",
                 workspace_id=ws.id,
-                encrypted_credentials="x",
-                credentials_iv="y",
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
             )
             for i in range(3)
         ]
@@ -400,6 +499,82 @@ class TestLimitEnforcement:
         assert "integration_limit_exceeded" in exc_info.value.detail.get("error", "")
         assert exc_info.value.detail["limit"] == 3
         assert exc_info.value.detail["current_plan"] == "free"
+
+        for i in integrations:
+            db_session.delete(i)
+        db_session.delete(billing)
+        db_session.delete(member)
+        db_session.delete(ws)
+        db_session.commit()
+
+    def test_integration_limit_ignores_deleted_rows(self, db_session, test_user):
+        """Free plan (limit 3) with 2 active + 3 deleted rows still allows
+        adding one more — deleted (disconnected) rows must not count against
+        the limit, even though 5 historical rows exist."""
+        from app.models.integration import Integration
+        from app.services.billing_service import assert_can_create_integration
+
+        ws, member, billing = self._make_workspace_with_billing(
+            db_session, test_user, "free"
+        )
+        statuses = ["active", "active", "deleted", "deleted", "deleted"]
+        integrations = [
+            Integration(
+                user_id=test_user.id,
+                provider="cloudflare",
+                display_name=f"int-{i}",
+                workspace_id=ws.id,
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
+                status=status,
+            )
+            for i, status in enumerate(statuses)
+        ]
+        db_session.add_all(integrations)
+        db_session.commit()
+
+        # 2 connected rows (active), limit is 3 — should not raise, even
+        # though 5 total rows exist for this workspace.
+        assert_can_create_integration(ws.id, db_session)
+
+        for i in integrations:
+            db_session.delete(i)
+        db_session.delete(billing)
+        db_session.delete(member)
+        db_session.delete(ws)
+        db_session.commit()
+
+    def test_integration_limit_raises_at_limit_including_non_active_connected_rows(
+        self, db_session, test_user
+    ):
+        """A row with status='error' or 'needs_reconnect' is still connected
+        (matches the Integrations page), so it counts toward the limit."""
+        from app.models.integration import Integration
+        from app.services.billing_service import assert_can_create_integration
+        from fastapi import HTTPException
+
+        ws, member, billing = self._make_workspace_with_billing(
+            db_session, test_user, "free"
+        )
+        statuses = ["active", "active", "needs_reconnect"]
+        integrations = [
+            Integration(
+                user_id=test_user.id,
+                provider="cloudflare",
+                display_name=f"int-{i}",
+                workspace_id=ws.id,
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
+                status=status,
+            )
+            for i, status in enumerate(statuses)
+        ]
+        db_session.add_all(integrations)
+        db_session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            assert_can_create_integration(ws.id, db_session)
+        assert exc_info.value.status_code == 402
 
         for i in integrations:
             db_session.delete(i)
@@ -481,8 +656,8 @@ class TestLimitEnforcement:
                 provider="cloudflare",
                 display_name=f"int-{i}",
                 workspace_id=ws.id,
-                encrypted_credentials="x",
-                credentials_iv="y",
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
             )
             for i in range(4)
         ]
@@ -767,6 +942,58 @@ class TestBillingRouter:
         db_session.delete(ws)
         db_session.commit()
 
+    def test_billing_usage_matches_integrations_list_total(
+        self, client, db_session, test_user
+    ):
+        """GET /workspaces/{id}/billing usage.integrations must equal the
+        `total` returned by GET /integrations?workspace_id=... — the two
+        pages must never disagree on how many integrations are "connected".
+        """
+        from app.models.integration import Integration
+
+        ws, member = self._make_workspace(db_session, test_user)
+
+        statuses = ["active", "active", "needs_reconnect", "deleted", "deleted"]
+        integrations = [
+            Integration(
+                user_id=test_user.id,
+                provider="cloudflare",
+                display_name=f"int-{i}",
+                workspace_id=ws.id,
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
+                status=status,
+            )
+            for i, status in enumerate(statuses)
+        ]
+        db_session.add_all(integrations)
+        db_session.commit()
+
+        billing_resp = client.get(f"/workspaces/{ws.id}/billing")
+        assert billing_resp.status_code == 200
+        billing_usage = billing_resp.json()["usage"]["integrations"]
+
+        list_resp = client.get("/integrations", params={"workspace_id": str(ws.id)})
+        assert list_resp.status_code == 200
+        list_total = list_resp.json()["total"]
+
+        assert billing_usage == list_total == 3
+
+        # Cleanup
+        from app.models.billing import WorkspaceBilling
+        billing = (
+            db_session.query(WorkspaceBilling)
+            .filter_by(workspace_id=ws.id)
+            .first()
+        )
+        if billing:
+            db_session.delete(billing)
+        for i in integrations:
+            db_session.delete(i)
+        db_session.delete(member)
+        db_session.delete(ws)
+        db_session.commit()
+
     def test_checkout_returns_503_when_stripe_not_configured(
         self, client, db_session, test_user, monkeypatch
     ):
@@ -895,8 +1122,8 @@ class TestIntegrationLimitViaHTTP:
                 provider="cloudflare",
                 display_name=f"cf-{i}",
                 workspace_id=ws.id,
-                encrypted_credentials="x",
-                credentials_iv="y",
+                encrypted_credentials=b"x",
+                credential_iv=b"y",
             )
             for i in range(3)
         ]

@@ -176,11 +176,22 @@ def _effective_plan(billing: WorkspaceBilling) -> str:
 
 
 def get_workspace_usage(workspace_id: uuid.UUID, db: Session) -> Dict[str, int]:
-    """Return current counts for limit enforcement."""
+    """Return current counts for limit enforcement.
+
+    Integration count uses the exact same "connected" definition as the
+    Integrations list endpoint (``integration_service.get_integrations_by_workspace``):
+    every non-deleted row counts, regardless of ``active``/``paused``/
+    ``needs_reconnect``/``error`` status. Only ``status == 'deleted'``
+    (soft-deleted) rows are excluded. This keeps the billing usage count
+    identical to what the Integrations page shows as "N integrations
+    connected" — a workspace can't see 2 connected integrations on one page
+    and "5 / 3 · At limit" on another.
+    """
     integration_count = (
         db.query(func.count(Integration.id))
         .filter(
             Integration.workspace_id == workspace_id,
+            Integration.status != "deleted",
         )
         .scalar()
         or 0
