@@ -1702,6 +1702,74 @@ class TestDatadogRiskClassifier:
         level, reason = classify_datadog_change(change)
         assert level == "medium", f"Expected medium, got {level!r}: {reason}"
 
+    # ── Change-classification QA pass regression tests ───────────────────────
+    #
+    # Bug found and fixed: scopes_count and permission_count only fired
+    # medium at the exact moment of crossing the review threshold
+    # (`(n_old or 0) <= THRESHOLD`). An increase while ALREADY over the
+    # threshold (e.g. 15 -> 20, both above the threshold of 10) silently
+    # fell through to the generic "changed from X to Y" low branch instead
+    # of medium — inconsistent with the established cross-provider
+    # convention (e.g. Jira's permission_grant_count) where any increase
+    # while over the threshold is medium, not just the crossing transition.
+
+    def test_application_key_scopes_increase_while_already_broad_is_medium(self):
+        from app.services.risk_rules.datadog import classify_datadog_change
+        change = self._make_change(
+            DATADOG_APPLICATION_KEY_METADATA, "scopes_count", prev_value=15, new_value=20,
+        )
+        level, reason = classify_datadog_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_role_permission_count_increase_while_already_broad_is_medium(self):
+        from app.services.risk_rules.datadog import classify_datadog_change
+        change = self._make_change(
+            DATADOG_ROLE, "permission_count", prev_value=30, new_value=40,
+        )
+        level, reason = classify_datadog_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_application_key_scopes_decrease_while_still_broad_is_low(self):
+        """Decreasing scope count is treated as improvement even if the
+        count remains above the threshold, consistent with the
+        cross-provider convention that direction (not absolute state)
+        drives the Change classifier's severity."""
+        from app.services.risk_rules.datadog import classify_datadog_change
+        change = self._make_change(
+            DATADOG_APPLICATION_KEY_METADATA, "scopes_count", prev_value=20, new_value=15,
+        )
+        level, _ = classify_datadog_change(change)
+        assert level == "low"
+
+    def test_role_permission_count_decrease_while_still_broad_is_low(self):
+        from app.services.risk_rules.datadog import classify_datadog_change
+        change = self._make_change(
+            DATADOG_ROLE, "permission_count", prev_value=40, new_value=30,
+        )
+        level, _ = classify_datadog_change(change)
+        assert level == "low"
+
+    def test_slo_monitor_count_real_zero_still_triggers_medium(self):
+        """Confirms a genuine, explicit int 0 still triggers the intended
+        medium classification after the _int_or_none() defensive rewrite —
+        the unknown-handling fix must not have broken real zero-detection."""
+        from app.services.risk_rules.datadog import classify_datadog_change
+        change = self._make_change(
+            DATADOG_SLO, "monitor_count", prev_value=2, new_value=0,
+        )
+        level, reason = classify_datadog_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_slo_monitor_count_unknown_is_low_not_zero(self):
+        from app.services.risk_rules.datadog import classify_datadog_change
+        change = self._make_change(
+            DATADOG_SLO, "monitor_count", prev_value=2, new_value=None,
+        )
+        level, reason = classify_datadog_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "unknown or missing" in reason.lower()
+        assert "lost all linked monitors" not in reason.lower()
+
     def test_unknown_record_type_is_low(self):
         from app.services.risk_rules.datadog import classify_datadog_change
         change = self._make_change("datadog_unknown_surface", "some_field", prev_value=1, new_value=2)

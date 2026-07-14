@@ -410,11 +410,11 @@ def _classify_application_key_change(change: Change) -> tuple[str, str]:
         n_new = _int_or_none(new_v)
         if n_new is None:
             return ("low", "Datadog application key scope count is now unknown or missing.")
-        if n_new > _BROAD_SCOPES_THRESHOLD and (n_old or 0) <= _BROAD_SCOPES_THRESHOLD:
+        if n_new > _BROAD_SCOPES_THRESHOLD and n_new > (n_old or 0):
             return (
                 "medium",
                 f"Datadog key metadata changed — application key scope count increased "
-                f"from {n_old} to {n_new}, crossing the broad-scope review threshold. "
+                f"from {n_old} to {n_new}, exceeding the broad-scope review threshold. "
                 "Datadog configuration evidence may require review.",
             )
         if n_old is not None and n_new < n_old:
@@ -441,11 +441,11 @@ def _classify_role_change(change: Change) -> tuple[str, str]:
         n_new = _int_or_none(new_v)
         if n_new is None:
             return ("low", "Datadog role permission count is now unknown or missing.")
-        if n_new > _HIGH_PERMISSION_THRESHOLD and (n_old or 0) <= _HIGH_PERMISSION_THRESHOLD:
+        if n_new > _HIGH_PERMISSION_THRESHOLD and n_new > (n_old or 0):
             return (
                 "medium",
                 f"Datadog role permission count increased from {n_old} to {n_new}, "
-                "crossing the broad-access review threshold. Datadog configuration "
+                "exceeding the broad-access review threshold. Datadog configuration "
                 "evidence may require review.",
             )
         if n_old is not None and n_new < n_old:
