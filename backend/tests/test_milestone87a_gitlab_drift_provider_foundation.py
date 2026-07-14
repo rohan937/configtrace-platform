@@ -932,6 +932,256 @@ class TestDriftRiskClassifier:
             )
 
 
+# ── G1b. Change-classification QA pass ────────────────────────────────────────
+
+
+class TestGitLabChangeClassificationQA:
+    """Dedicated change-classification QA pass, following the detection QA
+    pass committed as 28412a7. Covers wording-accuracy fixes for
+    unknown/missing transitions, two genuine classification gaps
+    (container_registry_enabled, group shared_runners_setting_category,
+    runner shared_runner_enabled, MR approval_rule_count/
+    author_approval_allowed), and removal of a dead classifier branch
+    (code_owner_approval_required inside the MR approval summary
+    classifier, which can never be reached because that field only exists
+    on gitlab_branch_protection records).
+    """
+
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    # ── A. Project/group visibility unknown-transition wording ──────────────
+
+    def test_project_visibility_public_to_unknown_is_low_not_more_restrictive(self) -> None:
+        change = self._make_change(
+            GITLAB_PROJECT, "visibility_category", prev_value="public", new_value="unknown"
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "more restrictive" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_project_visibility_to_private_says_private_not_generic(self) -> None:
+        change = self._make_change(
+            GITLAB_PROJECT, "visibility_category", prev_value="public", new_value="private"
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "private" in reason.lower()
+
+    def test_group_visibility_public_to_unknown_is_low_not_more_restrictive(self) -> None:
+        change = self._make_change(
+            GITLAB_GROUP, "visibility_category", prev_value="public", new_value="unknown"
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "more restrictive" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    # ── B. Branch protection force-push unknown transition ──────────────────
+
+    def test_force_push_true_to_unknown_is_low_not_hardened_wording(self) -> None:
+        change = self._make_change(
+            GITLAB_BRANCH_PROTECTION, "allow_force_push", prev_value=True, new_value=None
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "hardened" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_force_push_true_to_false_is_low_hardened_wording(self) -> None:
+        change = self._make_change(
+            GITLAB_BRANCH_PROTECTION, "allow_force_push", prev_value=True, new_value=False
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "hardened" in reason.lower()
+
+    # ── F. Webhook unknown transitions ───────────────────────────────────────
+
+    def test_webhook_ssl_true_to_unknown_is_low_not_enabled_wording(self) -> None:
+        change = self._make_change(
+            GITLAB_WEBHOOK, "ssl_verification_enabled", prev_value=True, new_value=None
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "was enabled" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_webhook_secret_true_to_unknown_is_low_not_added_wording(self) -> None:
+        change = self._make_change(
+            GITLAB_WEBHOOK, "secret_token_present", prev_value=True, new_value=None
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "was added" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_webhook_url_scheme_other_is_low_not_https_wording(self) -> None:
+        change = self._make_change(
+            GITLAB_WEBHOOK, "url_scheme", prev_value="https", new_value="other"
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "changed to https" not in reason.lower()
+
+    def test_webhook_url_scheme_https_still_says_https(self) -> None:
+        change = self._make_change(
+            GITLAB_WEBHOOK, "url_scheme", prev_value="http", new_value="https"
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "https" in reason.lower()
+
+    # ── G. Newly-added classification gap fixes ──────────────────────────────
+
+    def test_container_registry_enabled_is_medium(self) -> None:
+        change = self._make_change(
+            GITLAB_PROJECT, "container_registry_enabled", prev_value=False, new_value=True
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_container_registry_disabled_is_low(self) -> None:
+        change = self._make_change(
+            GITLAB_PROJECT, "container_registry_enabled", prev_value=True, new_value=False
+        )
+        level, _ = classify_gitlab_change(change)
+        assert level == "low"
+
+    def test_group_shared_runners_setting_enabled_is_medium(self) -> None:
+        change = self._make_change(
+            GITLAB_GROUP, "shared_runners_setting_category",
+            prev_value="disabled_locked", new_value="enabled",
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_runner_summary_shared_runner_enabled_is_medium(self) -> None:
+        change = self._make_change(
+            GITLAB_RUNNER_SUMMARY, "shared_runner_enabled", prev_value=False, new_value=True
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_runner_summary_shared_runner_disabled_is_low(self) -> None:
+        change = self._make_change(
+            GITLAB_RUNNER_SUMMARY, "shared_runner_enabled", prev_value=True, new_value=False
+        )
+        level, _ = classify_gitlab_change(change)
+        assert level == "low"
+
+    # ── C. MR approval_rule_count vs approvals_required ──────────────────────
+
+    def test_mr_approval_rule_count_decreased_is_medium(self) -> None:
+        change = self._make_change(
+            GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "approval_rule_count",
+            prev_value=3, new_value=1,
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+        assert "approval rule count" in reason.lower()
+
+    def test_mr_approval_rule_count_increased_is_low(self) -> None:
+        change = self._make_change(
+            GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "approval_rule_count",
+            prev_value=1, new_value=3,
+        )
+        level, _ = classify_gitlab_change(change)
+        assert level == "low"
+
+    def test_mr_approval_rule_count_and_approvals_required_are_not_confused(self) -> None:
+        """approval_rule_count (number of rule objects) and approvals_required
+        (number of approvals needed to merge) are different GitLab concepts;
+        the classifier must produce distinct wording for each field_path even
+        when given the same numeric values, and must not cross-reference the
+        other field's name in its reason string.
+        """
+        rule_count_change = self._make_change(
+            GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "approval_rule_count",
+            prev_value=2, new_value=0,
+        )
+        required_change = self._make_change(
+            GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "approvals_required",
+            prev_value=2, new_value=0,
+        )
+        _, rule_count_reason = classify_gitlab_change(rule_count_change)
+        _, required_reason = classify_gitlab_change(required_change)
+
+        assert rule_count_reason != required_reason
+        assert "approval rule count" in rule_count_reason.lower()
+        assert "approval rule count" not in required_reason.lower()
+        assert "required approvals" in required_reason.lower()
+        assert "required approvals" not in rule_count_reason.lower()
+
+    def test_author_approval_allowed_true_is_medium(self) -> None:
+        change = self._make_change(
+            GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "author_approval_allowed",
+            prev_value=False, new_value=True,
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_author_approval_allowed_false_is_low(self) -> None:
+        change = self._make_change(
+            GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "author_approval_allowed",
+            prev_value=True, new_value=False,
+        )
+        level, _ = classify_gitlab_change(change)
+        assert level == "low"
+
+    def test_mr_summary_code_owner_approval_required_is_dead_field_falls_generic(self) -> None:
+        """code_owner_approval_required is not a field of
+        gitlab_merge_request_approval_summary (it only exists on
+        gitlab_branch_protection records) — compute_diff can never emit
+        this field_path for this record_type. The classifier must not have
+        a dedicated branch for it under this record type; confirm it falls
+        to the generic per-record-type fallback rather than returning the
+        branch-protection-flavored 'medium' response, which would only
+        cause confusion if this dead code were ever mistakenly reachable.
+        """
+        change = self._make_change(
+            GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "code_owner_approval_required",
+            prev_value=True, new_value=False,
+        )
+        level, reason = classify_gitlab_change(change)
+        assert level == "low"
+        assert "field 'code_owner_approval_required' changed" in reason.lower()
+
+    # ── I. Unknown/missing sweep across all newly-fixed fields ───────────────
+
+    def test_unknown_transitions_never_produce_high(self) -> None:
+        unknown_cases = [
+            (GITLAB_PROJECT, "visibility_category", "public", "unknown"),
+            (GITLAB_GROUP, "visibility_category", "public", None),
+            (GITLAB_BRANCH_PROTECTION, "allow_force_push", True, None),
+            (GITLAB_WEBHOOK, "ssl_verification_enabled", True, None),
+            (GITLAB_WEBHOOK, "secret_token_present", True, None),
+            (GITLAB_WEBHOOK, "url_scheme", "https", None),
+            (GITLAB_GROUP, "membership_lock", True, None),
+            (GITLAB_MERGE_REQUEST_APPROVAL_SUMMARY, "author_approval_allowed", False, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_gitlab_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
+
 # ── G2. Diff tracked fields (QA pass) ─────────────────────────────────────────
 
 

@@ -142,9 +142,14 @@ def _classify_project_change(change: Change) -> tuple[str, str]:
                 "GitLab project visibility changed to internal. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v == "private":
+            return (
+                "low",
+                "GitLab project visibility changed to private (restricted).",
+            )
         return (
             "low",
-            "GitLab project visibility changed to a more restrictive setting.",
+            "GitLab project visibility category is now unknown or missing.",
         )
 
     if fp == "archived":
@@ -232,6 +237,18 @@ def _classify_project_change(change: Change) -> tuple[str, str]:
             "GitLab project shared runners were disabled.",
         )
 
+    if fp == "container_registry_enabled":
+        if new_v is True or new_v == "true":
+            return (
+                "medium",
+                "GitLab project container registry was enabled. "
+                "GitLab configuration evidence may require review.",
+            )
+        return (
+            "low",
+            "GitLab project container registry was disabled.",
+        )
+
     return (
         "low",
         f"GitLab project configuration field '{fp}' changed.",
@@ -265,9 +282,14 @@ def _classify_group_change(change: Change) -> tuple[str, str]:
                 "GitLab group visibility changed to internal. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v == "private":
+            return (
+                "low",
+                "GitLab group visibility changed to private (restricted).",
+            )
         return (
             "low",
-            "GitLab group visibility changed to a more restrictive setting.",
+            "GitLab group visibility category is now unknown or missing.",
         )
 
     if fp == "two_factor_requirement_enabled":
@@ -289,9 +311,26 @@ def _classify_group_change(change: Change) -> tuple[str, str]:
                 "GitLab group membership lock was disabled. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "GitLab group membership lock was enabled.",
+            )
         return (
             "low",
-            "GitLab group membership lock was enabled.",
+            "GitLab group membership lock setting is now unknown or missing.",
+        )
+
+    if fp == "shared_runners_setting_category":
+        if new_v == "enabled":
+            return (
+                "medium",
+                "GitLab group shared runners setting was enabled. "
+                "GitLab configuration evidence may require review.",
+            )
+        return (
+            "low",
+            "GitLab group shared runners setting changed.",
         )
 
     return (
@@ -328,9 +367,14 @@ def _classify_branch_protection_change(change: Change) -> tuple[str, str]:
                 "GitLab branch protection: force push was enabled. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v is False or new_v == "false":
+            return (
+                "low",
+                "GitLab branch protection: force push was disabled (hardened).",
+            )
         return (
             "low",
-            "GitLab branch protection: force push was disabled (hardened).",
+            "GitLab branch protection: force push setting is now unknown or missing.",
         )
 
     if fp == "code_owner_approval_required":
@@ -420,9 +464,14 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
                 "GitLab webhook SSL verification was disabled. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "GitLab webhook SSL verification was enabled.",
+            )
         return (
             "low",
-            "GitLab webhook SSL verification was enabled.",
+            "GitLab webhook SSL verification setting is now unknown or missing.",
         )
 
     if fp == "secret_token_present":
@@ -432,9 +481,14 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
                 "GitLab webhook secret token was removed. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "GitLab webhook secret token was added.",
+            )
         return (
             "low",
-            "GitLab webhook secret token was added.",
+            "GitLab webhook secret token presence is now unknown or missing.",
         )
 
     if fp == "url_scheme":
@@ -444,9 +498,14 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
                 "GitLab webhook URL scheme changed to HTTP (non-encrypted). "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v == "https":
+            return (
+                "low",
+                "GitLab webhook URL scheme changed to HTTPS.",
+            )
         return (
             "low",
-            "GitLab webhook URL scheme changed to HTTPS.",
+            "GitLab webhook URL scheme is now unknown or missing.",
         )
 
     if fp == "event_count":
@@ -658,6 +717,23 @@ def _classify_runner_change(change: Change) -> tuple[str, str]:
             f"GitLab paused runner count changed from {old_n} to {new_n}.",
         )
 
+    if fp == "shared_runner_enabled":
+        if new_v is True or new_v == "true":
+            return (
+                "medium",
+                "GitLab shared runners are now enabled for this project or group. "
+                "GitLab configuration evidence may require review.",
+            )
+        if new_v is False or new_v == "false":
+            return (
+                "low",
+                "GitLab shared runners were disabled for this project or group.",
+            )
+        return (
+            "low",
+            "GitLab shared runner setting is now unknown or missing.",
+        )
+
     return (
         "low",
         f"GitLab runner summary field '{fp}' changed.",
@@ -696,16 +772,38 @@ def _classify_mr_approval_change(change: Change) -> tuple[str, str]:
             f"GitLab MR required approvals changed from {old_n} to {new_n}.",
         )
 
-    if fp == "code_owner_approval_required":
-        if new_v is False or new_v == "false":
+    if fp == "approval_rule_count":
+        try:
+            old_n = int(prev_v or 0)
+            new_n = int(new_v or 0)
+        except (ValueError, TypeError):
+            old_n, new_n = 0, 0
+        if new_n < old_n:
             return (
                 "medium",
-                "GitLab MR code owner approval requirement was disabled. "
+                f"GitLab MR approval rule count decreased from {old_n} to {new_n}. "
                 "GitLab configuration evidence may require review.",
             )
         return (
             "low",
-            "GitLab MR code owner approval requirement was enabled.",
+            f"GitLab MR approval rule count changed from {old_n} to {new_n}.",
+        )
+
+    if fp == "author_approval_allowed":
+        if new_v is True or new_v == "true":
+            return (
+                "medium",
+                "GitLab MR authors are now allowed to approve their own merge "
+                "requests. GitLab configuration evidence may require review.",
+            )
+        if new_v is False or new_v == "false":
+            return (
+                "low",
+                "GitLab MR author self-approval was disabled.",
+            )
+        return (
+            "low",
+            "GitLab MR author approval setting is now unknown or missing.",
         )
 
     if fp == "disable_overriding_approvers_per_merge_request":
@@ -715,9 +813,14 @@ def _classify_mr_approval_change(change: Change) -> tuple[str, str]:
                 "GitLab MR approvers can now be overridden per merge request. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "GitLab MR approver override was disabled.",
+            )
         return (
             "low",
-            "GitLab MR approver override was disabled.",
+            "GitLab MR approver override setting is now unknown or missing.",
         )
 
     if fp == "reset_approvals_on_push":
@@ -727,9 +830,14 @@ def _classify_mr_approval_change(change: Change) -> tuple[str, str]:
                 "GitLab MR approval reset on push was disabled. "
                 "GitLab configuration evidence may require review.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "GitLab MR approval reset on push was enabled.",
+            )
         return (
             "low",
-            "GitLab MR approval reset on push was enabled.",
+            "GitLab MR approval reset on push setting is now unknown or missing.",
         )
 
     return (
