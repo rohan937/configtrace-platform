@@ -108,6 +108,10 @@ def classify_change(change: Change) -> tuple[str, str]:
         from app.services.risk_rules.sendgrid import classify_sendgrid_change
         return classify_sendgrid_change(change)
 
+    if record_type.startswith("twilio_"):
+        from app.services.risk_rules.twilio import classify_twilio_change
+        return classify_twilio_change(change)
+
     if record_type.startswith("gitlab_"):
         from app.services.risk_rules.gitlab import classify_gitlab_change
         return classify_gitlab_change(change)

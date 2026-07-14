@@ -1252,3 +1252,193 @@ class TestFetchReturnsSafeRecords:
         conn = TwilioConnector()
         with pytest.raises(AuthenticationError):
             conn.fetch({})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Diff tracked fields (drift detection) — QA regression
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Regression coverage for a gap where Twilio record types had no entry in
+# diff_service's per-provider tracked-fields dispatch. Without an entry,
+# `_tracked_fields_for` fell through every known provider prefix to the
+# Cloudflare-DNS default tuple ("record_type", "name", "content", "ttl",
+# "proxied", "priority", "comment") — none of which exist on any Twilio
+# record. compute_diff would therefore NEVER detect a modified field on an
+# existing Twilio record (webhook removed, account suspended, code length
+# shortened, etc.) even though the connector normalizes and the
+# security-rules evaluator can already classify the field correctly. Only
+# added/removed records would ever surface, since those don't depend on
+# tracked fields at all.
+
+
+class TestTwilioDiffTrackedFields:
+    def test_all_five_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _TWILIO_TRACKED_FIELDS_BY_TYPE
+        from app.connectors.twilio_schema import TWILIO_RECORD_TYPES
+
+        for record_type in TWILIO_RECORD_TYPES:
+            assert record_type in _TWILIO_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_twilio_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in (
+            "twilio_account",
+            "twilio_incoming_phone_number",
+            "twilio_messaging_service",
+            "twilio_verify_service",
+            "twilio_api_key_summary",
+        ):
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own Twilio fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_phone_number_sms_webhook_removed_produces_drift_change(self):
+        """sms_url_configured True → False must surface as a Change.
+
+        This is the exact scenario item D/E depend on: if this field isn't
+        tracked, the security finding would still fire on next evaluation,
+        but the Changes timeline would never show the drift event at all.
+        """
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _phone_record(sms_configured: bool) -> dict:
+            return {
+                "record_id": "PN123",
+                "record_type": "twilio_incoming_phone_number",
+                "provider_resource_id": "incoming_phone_numbers/PN123",
+                "phone_number_sid": "PN123",
+                "friendly_name": "Main line",
+                "phone_number_last4": "1234",
+                "iso_country": "US",
+                "capability_voice": True,
+                "capability_sms": True,
+                "capability_mms": False,
+                "capability_fax": False,
+                "sms_url_configured": sms_configured,
+                "voice_url_configured": True,
+                "status_callback_configured": False,
+                "address_requirements": "none",
+                "emergency_status": "Active",
+            }
+
+        prev = _mock_snapshot([_phone_record(True)])
+        new = _mock_snapshot([_phone_record(False)])
+
+        changes = compute_diff(prev, new)
+        sms_changes = [c for c in changes if c["field_path"] == "sms_url_configured"]
+
+        assert len(sms_changes) == 1
+        assert sms_changes[0]["change_type"] == "modified"
+        assert sms_changes[0]["prev_value"] is True
+        assert sms_changes[0]["new_value"] is False
+
+    def test_account_status_change_produces_drift_change(self):
+        """status 'active' → 'suspended' must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _account_record(status: str) -> dict:
+            return {
+                "record_id": "twilio_account_ACxxxxxx",
+                "record_type": "twilio_account",
+                "provider_resource_id": "accounts/ACxxxxxx",
+                "account_sid_prefix": "ACxxxxxx",
+                "friendly_name": "My Account",
+                "status": status,
+                "account_type": "Full",
+                "subaccount_count": 0,
+            }
+
+        prev = _mock_snapshot([_account_record("active")])
+        new = _mock_snapshot([_account_record("suspended")])
+
+        changes = compute_diff(prev, new)
+        status_changes = [c for c in changes if c["field_path"] == "status"]
+
+        assert len(status_changes) == 1
+        assert status_changes[0]["prev_value"] == "active"
+        assert status_changes[0]["new_value"] == "suspended"
+
+    def test_verify_service_code_length_change_produces_drift_change(self):
+        """code_length 6 → 4 must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _verify_record(code_length: int) -> dict:
+            return {
+                "record_id": "VA123",
+                "record_type": "twilio_verify_service",
+                "provider_resource_id": "verify_services/VA123",
+                "verify_service_sid": "VA123",
+                "friendly_name": "Login Verify",
+                "code_length": code_length,
+                "lookup_enabled": False,
+                "psd2_enabled": False,
+                "do_not_share_warning_enabled": True,
+                "skip_sms_to_landlines": False,
+                "default_template_sid_present": True,
+            }
+
+        prev = _mock_snapshot([_verify_record(6)])
+        new = _mock_snapshot([_verify_record(4)])
+
+        changes = compute_diff(prev, new)
+        code_changes = [c for c in changes if c["field_path"] == "code_length"]
+
+        assert len(code_changes) == 1
+        assert code_changes[0]["prev_value"] == 6
+        assert code_changes[0]["new_value"] == 4
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_id": "MG123",
+            "record_type": "twilio_messaging_service",
+            "provider_resource_id": "messaging_services/MG123",
+            "messaging_service_sid": "MG123",
+            "friendly_name": "Marketing",
+            "inbound_request_url_configured": True,
+            "fallback_url_configured": False,
+            "status_callback_url_configured": False,
+            "smart_encoding": True,
+            "validity_period": 14400,
+            "area_code_geomatch": False,
+            "sticky_sender": True,
+            "mms_converter": False,
+            "use_inbound_webhook_on_number": False,
+            "number_count": 3,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []

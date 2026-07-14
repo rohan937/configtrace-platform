@@ -2001,6 +2001,64 @@ _SENDGRID_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# ── Twilio-specific tracked fields ────────────────────────────────────────────
+
+#: Per-record-type tracked field tuples for Twilio records (M79A+).
+#: Only the fields listed here are compared field-by-field in compute_diff.
+#: Identity fields (record_id, record_type, provider_resource_id, and each
+#: record's own opaque SID field) are intentionally excluded — they never
+#: change without the record itself being replaced (added/removed).
+_TWILIO_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "twilio_account": (
+        "friendly_name",
+        "status",
+        "account_type",
+        "subaccount_count",
+    ),
+    "twilio_incoming_phone_number": (
+        "friendly_name",
+        "phone_number_last4",
+        "iso_country",
+        "capability_voice",
+        "capability_sms",
+        "capability_mms",
+        "capability_fax",
+        "sms_url_configured",
+        "voice_url_configured",
+        "status_callback_configured",
+        "address_requirements",
+        "emergency_status",
+    ),
+    "twilio_messaging_service": (
+        "friendly_name",
+        "inbound_request_url_configured",
+        "fallback_url_configured",
+        "status_callback_url_configured",
+        "smart_encoding",
+        "validity_period",
+        "area_code_geomatch",
+        "sticky_sender",
+        "mms_converter",
+        "use_inbound_webhook_on_number",
+        "number_count",
+    ),
+    "twilio_verify_service": (
+        "friendly_name",
+        "code_length",
+        "lookup_enabled",
+        "psd2_enabled",
+        "do_not_share_warning_enabled",
+        "skip_sms_to_landlines",
+        "default_template_sid_present",
+    ),
+    "twilio_api_key_summary": (
+        "friendly_name",
+        "date_created",
+        "date_updated",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2020,6 +2078,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_SHOPIFY_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"sendgrid_"`` look up in
       ``_SENDGRID_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"twilio_"`` look up in
+      ``_TWILIO_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2045,6 +2105,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _SHOPIFY_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("sendgrid_"):
         return _SENDGRID_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("twilio_"):
+        return _TWILIO_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table
