@@ -1298,6 +1298,103 @@ class TestPagerDutyRiskClassifier:
         level, reason = classify_pagerduty_change(real_shaped_change)
         assert level == "high", f"Expected high, got {level!r}: {reason}"
 
+    # ── Change-classification QA pass regression tests ───────────────────────
+    #
+    # Critical bug found and fixed: _int_pair coerced None/unknown to 0 via
+    # int(new_v or 0), which meant every count field's "unknown" transition
+    # was silently reported as "dropped to zero" — a false high/medium
+    # severity claim, not just a wording issue. Replaced with _int_or_none,
+    # which returns None (not 0) for missing/unparseable values so the
+    # classifier can distinguish "confirmed zero" from "unknown."
+
+    def test_escalation_rule_count_unknown_is_low_not_dropped_to_zero(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_ESCALATION_POLICY, "escalation_rule_count", prev_value=2, new_value=None,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "dropped to zero" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_escalation_target_count_unknown_is_low_not_dropped_to_zero(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_ESCALATION_POLICY, "target_count", prev_value=3, new_value=None,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "lost all escalation targets" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_schedule_user_count_unknown_is_low_not_dropped_to_zero(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_SCHEDULE, "user_count", prev_value=2, new_value=None,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "dropped to zero" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_response_play_responder_count_unknown_is_low_not_dropped_to_zero(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_RESPONSE_PLAY, "responder_count", prev_value=2, new_value=None,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "dropped to zero" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_webhook_event_count_unknown_is_low_not_dropped_to_zero(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+        change = self._make_change(
+            PAGERDUTY_WEBHOOK_SUBSCRIPTION, "event_count", prev_value=2, new_value=None,
+        )
+        level, reason = classify_pagerduty_change(change)
+        assert level == "low", f"Expected low, got {level!r}: {reason}"
+        assert "dropped to zero" not in reason.lower()
+        assert "unknown or missing" in reason.lower()
+
+    def test_count_fields_explicit_zero_still_fires_correctly(self):
+        """Confirm the fix didn't break the genuine zero-detection path —
+        an explicit int 0 must still trigger the high/medium branch."""
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+
+        cases = [
+            (PAGERDUTY_ESCALATION_POLICY, "escalation_rule_count", 2, 0, "high"),
+            (PAGERDUTY_ESCALATION_POLICY, "target_count", 3, 0, "high"),
+            (PAGERDUTY_SCHEDULE, "user_count", 2, 0, "high"),
+            (PAGERDUTY_RESPONSE_PLAY, "responder_count", 2, 0, "high"),
+            (PAGERDUTY_WEBHOOK_SUBSCRIPTION, "event_count", 2, 0, "medium"),
+        ]
+        for record_type, field, prev, new, expected in cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_pagerduty_change(change)
+            assert level == expected, (
+                f"{record_type}.{field} 0-value expected {expected!r}, got {level!r}: {reason}"
+            )
+
+    def test_unknown_transitions_never_produce_high_qa_pass(self):
+        from app.services.risk_rules.pagerduty import classify_pagerduty_change
+
+        unknown_cases = [
+            (PAGERDUTY_ESCALATION_POLICY, "escalation_rule_count", 2, None),
+            (PAGERDUTY_ESCALATION_POLICY, "target_count", 3, None),
+            (PAGERDUTY_SCHEDULE, "user_count", 2, None),
+            (PAGERDUTY_RESPONSE_PLAY, "responder_count", 2, None),
+            (PAGERDUTY_WEBHOOK_SUBSCRIPTION, "event_count", 2, None),
+            (PAGERDUTY_SERVICE, "integration_count", 2, None),
+            (PAGERDUTY_EVENT_ORCHESTRATION, "route_count", 2, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_pagerduty_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
     def test_no_forbidden_wording_in_reasons(self):
         from app.services.risk_rules.pagerduty import classify_pagerduty_change
 

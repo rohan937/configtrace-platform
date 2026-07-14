@@ -39,6 +39,8 @@ exposed, data exposed.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from app.models.change import Change
 
 
@@ -61,11 +63,20 @@ def _is_falsy_explicit(val: object) -> bool:
     return False
 
 
-def _int_pair(prev_v: object, new_v: object) -> tuple[int, int]:
+def _int_or_none(val: object) -> Optional[int]:
+    """Coerce to int, but return None (not 0) for missing/unparseable values.
+
+    This is deliberately distinct from a bare ``int(val or 0)`` coercion:
+    a count that is genuinely unknown/missing must never be silently
+    treated as an explicit ``0`` — doing so would let an unknown transition
+    falsely trigger a "dropped to zero" high/medium finding.
+    """
+    if isinstance(val, bool) or val is None:
+        return None
     try:
-        return int(prev_v or 0), int(new_v or 0)
+        return int(val)
     except (TypeError, ValueError):
-        return 0, 0
+        return None
 
 
 # ── pagerduty_service ───────────────────────────────────────────────────────────
@@ -124,14 +135,20 @@ def _classify_service_change(change: Change) -> tuple[str, str]:
         return ("low", f"PagerDuty service alert creation category changed to {new_v}.")
 
     if fp == "integration_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty service integration count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return ("medium", "PagerDuty service integration count dropped to zero. PagerDuty configuration evidence may require review.")
         return ("low", f"PagerDuty service integration count changed from {n_old} to {n_new}.")
 
     if fp == "team_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty service team count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return ("low", "PagerDuty service team count dropped to zero.")
         return ("low", f"PagerDuty service team count changed from {n_old} to {n_new}.")
 
@@ -151,8 +168,11 @@ def _classify_escalation_policy_change(change: Change) -> tuple[str, str]:
         return ("low", "PagerDuty escalation policy configuration record was added or removed during sync.")
 
     if fp == "escalation_rule_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty escalation policy rule count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return (
                 "high",
                 "PagerDuty escalation policy dropped to zero escalation rules — "
@@ -162,14 +182,17 @@ def _classify_escalation_policy_change(change: Change) -> tuple[str, str]:
         return ("low", f"PagerDuty escalation policy rule count changed from {n_old} to {n_new}.")
 
     if fp == "target_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty escalation policy target count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return (
                 "high",
                 "PagerDuty escalation policy lost all escalation targets. "
                 "PagerDuty configuration evidence may require review.",
             )
-        if n_new > 0 and n_new < n_old:
+        if n_new > 0 and n_old is not None and n_new < n_old:
             return (
                 "medium",
                 f"PagerDuty escalation policy target count decreased from {n_old} to {n_new}. "
@@ -178,8 +201,11 @@ def _classify_escalation_policy_change(change: Change) -> tuple[str, str]:
         return ("low", f"PagerDuty escalation policy target count changed from {n_old} to {n_new}.")
 
     if fp == "escalation_level_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 1 and n_old > 1:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty escalation policy level count is now unknown or missing.")
+        if n_new == 1 and n_old is not None and n_old > 1:
             return (
                 "medium",
                 "PagerDuty escalation policy dropped to a single escalation level. "
@@ -195,8 +221,11 @@ def _classify_escalation_policy_change(change: Change) -> tuple[str, str]:
         return ("low", "PagerDuty escalation policy schedule-target presence is now unknown or missing.")
 
     if fp == "team_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty escalation policy team count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return ("low", "PagerDuty escalation policy team count dropped to zero.")
         return ("low", f"PagerDuty escalation policy team count changed from {n_old} to {n_new}.")
 
@@ -216,15 +245,18 @@ def _classify_schedule_change(change: Change) -> tuple[str, str]:
         return ("low", "PagerDuty schedule configuration record was added or removed during sync.")
 
     if fp == "user_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty schedule on-call user count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return (
                 "high",
                 "PagerDuty schedule dropped to zero on-call users — coverage "
                 "may no longer be defined for this schedule. "
                 "PagerDuty configuration evidence may require review.",
             )
-        if n_new > 0 and n_new < n_old:
+        if n_new > 0 and n_old is not None and n_new < n_old:
             return (
                 "medium",
                 f"PagerDuty schedule on-call coverage decreased from {n_old} to {n_new} users. "
@@ -233,8 +265,11 @@ def _classify_schedule_change(change: Change) -> tuple[str, str]:
         return ("low", f"PagerDuty schedule user count changed from {n_old} to {n_new}.")
 
     if fp == "layer_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty schedule layer count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return (
                 "medium",
                 "PagerDuty schedule dropped to zero layers. "
@@ -243,8 +278,11 @@ def _classify_schedule_change(change: Change) -> tuple[str, str]:
         return ("low", f"PagerDuty schedule layer count changed from {n_old} to {n_new}.")
 
     if fp == "team_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty schedule team count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return ("low", "PagerDuty schedule team count dropped to zero.")
         return ("low", f"PagerDuty schedule team count changed from {n_old} to {n_new}.")
 
@@ -343,7 +381,10 @@ def _classify_webhook_subscription_change(change: Change) -> tuple[str, str]:
         return ("low", f"PagerDuty webhook subscription filter scope changed to {new_v}.")
 
     if fp == "event_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty webhook subscription event count is now unknown or missing.")
         if n_new == 0:
             return (
                 "medium",
@@ -368,8 +409,11 @@ def _classify_event_orchestration_change(change: Change) -> tuple[str, str]:
         return ("low", "PagerDuty event orchestration record was added or removed during sync.")
 
     if fp == "route_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty event orchestration route count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return (
                 "medium",
                 "PagerDuty event orchestration dropped to zero routes. "
@@ -409,14 +453,17 @@ def _classify_response_play_change(change: Change) -> tuple[str, str]:
         return ("low", "PagerDuty response play record was added or removed during sync.")
 
     if fp == "responder_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
-        if n_new == 0 and n_old > 0:
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty response play responder count is now unknown or missing.")
+        if n_new == 0 and (n_old or 0) > 0:
             return (
                 "high",
                 "PagerDuty response play dropped to zero responders. "
                 "PagerDuty configuration evidence may require review.",
             )
-        if n_new > 0 and n_new < n_old:
+        if n_new > 0 and n_old is not None and n_new < n_old:
             return (
                 "medium",
                 f"PagerDuty response play responder count decreased from {n_old} to {n_new}. "
@@ -434,7 +481,10 @@ def _classify_response_play_change(change: Change) -> tuple[str, str]:
         return ("low", f"PagerDuty response play runnability changed to {new_v}.")
 
     if fp == "subscriber_count":
-        n_old, n_new = _int_pair(prev_v, new_v)
+        n_old = _int_or_none(prev_v)
+        n_new = _int_or_none(new_v)
+        if n_new is None:
+            return ("low", "PagerDuty response play subscriber count is now unknown or missing.")
         return ("low", f"PagerDuty response play subscriber count changed from {n_old} to {n_new}.")
 
     return ("low", f"PagerDuty response play field '{fp}' changed.")
