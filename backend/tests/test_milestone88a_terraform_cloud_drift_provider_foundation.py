@@ -778,6 +778,91 @@ def test_classify_non_terraform_record_type_returns_something() -> None:
     assert level == "low"
 
 
+def test_classify_auto_apply_true_to_unknown_is_low_not_disabled_wording() -> None:
+    """true -> unknown/missing must not claim 'disabled' and must not be high."""
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_workspace", "auto_apply", "modified", True, None)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+    assert "disabled" not in reason
+    assert "unknown or missing" in reason
+
+
+def test_classify_auto_apply_explicit_false_is_low_disabled_wording() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_workspace", "auto_apply", "modified", True, False)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+    assert "disabled" in reason
+
+
+def test_classify_global_remote_state_true_to_unknown_is_low_not_disabled_wording() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_workspace", "global_remote_state", "modified", True, None)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+    assert "disabled" not in reason
+    assert "unknown or missing" in reason
+
+
+def test_classify_global_remote_state_disabled_is_improvement_low() -> None:
+    """Restoration case: global remote state sharing explicitly turned off."""
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_workspace", "global_remote_state", "modified", True, False)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+    assert "disabled" in reason
+
+
+def test_classify_vcs_reconnected_is_improvement_low() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_workspace", "vcs_connected", "modified", False, True)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+
+
+def test_classify_variable_set_global_scope_true_to_unknown_is_low() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_variable_set", "global_scope", "modified", True, None)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+    assert "unknown or missing" in reason
+
+
+def test_classify_policy_set_vcs_disconnected_is_medium() -> None:
+    """GAP fix: policy_set.vcs_connected is tracked but previously had no
+    dedicated classification branch and fell through to the generic low
+    fallback."""
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_policy_set", "vcs_connected", "modified", True, False)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+
+def test_classify_policy_set_vcs_reconnected_is_low() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_policy_set", "vcs_connected", "modified", False, True)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+
+
+def test_classify_project_team_access_increased_is_medium() -> None:
+    """GAP fix: terraform_cloud_project.team_access_count is tracked but
+    previously had no dedicated classification branch and fell through to
+    the generic low fallback."""
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_project", "team_access_count", "modified", 1, 3)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+
+def test_classify_project_team_access_decreased_is_low() -> None:
+    from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+    change = _make_change("terraform_cloud_project", "team_access_count", "modified", 3, 1)
+    level, reason = classify_terraform_cloud_change(change)
+    assert level == "low"
+
+
 def test_classify_no_forbidden_wording_in_reasons() -> None:
     """No classifier reason string may use forbidden wording."""
     from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
@@ -971,6 +1056,33 @@ class TestTerraformCloudDiffTrackedFields:
         new = _mock_snapshot([dict(record)])
 
         assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE must be
+        classifiable: classify_terraform_cloud_change must not raise, and
+        must return one of the three known severities, for a representative
+        modified change on each tracked field of each record type — even
+        when it falls through to the generic per-record-type fallback.
+        """
+        from app.services.diff_service import _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE
+        from app.services.risk_rules.terraform_cloud import classify_terraform_cloud_change
+
+        for record_type, fields in _TERRAFORM_CLOUD_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_terraform_cloud_change(change)
+                assert level in ("low", "medium", "high"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

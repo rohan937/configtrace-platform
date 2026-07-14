@@ -139,7 +139,12 @@ def _classify_workspace_change(change: Change) -> tuple[str, str]:
                 "automatically without manual confirmation. "
                 "Terraform Cloud configuration evidence may require review.",
             )
-        return ("low", "Terraform Cloud workspace auto-apply was disabled.")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Terraform Cloud workspace auto-apply was disabled.")
+        return (
+            "low",
+            "Terraform Cloud workspace auto-apply value is now unknown or missing.",
+        )
 
     if fp == "global_remote_state":
         if _is_truthy(new_v):
@@ -149,7 +154,12 @@ def _classify_workspace_change(change: Change) -> tuple[str, str]:
                 "all workspaces in the organization may now access this workspace's "
                 "state outputs. Terraform Cloud configuration evidence may require review.",
             )
-        return ("low", "Terraform Cloud workspace global remote state sharing was disabled.")
+        if _is_falsy_explicit(new_v):
+            return ("low", "Terraform Cloud workspace global remote state sharing was disabled.")
+        return (
+            "low",
+            "Terraform Cloud workspace global remote state sharing value is now unknown or missing.",
+        )
 
     if fp == "vcs_connected":
         if _is_falsy_explicit(new_v):
@@ -346,10 +356,15 @@ def _classify_variable_set_change(change: Change) -> tuple[str, str]:
                 "all workspaces in the organization now inherit these variables. "
                 "Terraform Cloud configuration evidence may require review.",
             )
+        if _is_falsy_explicit(new_v):
+            return (
+                "medium",
+                "Terraform Cloud variable set global scope was removed. "
+                "Terraform Cloud configuration evidence may require review.",
+            )
         return (
-            "medium",
-            "Terraform Cloud variable set global scope was removed. "
-            "Terraform Cloud configuration evidence may require review.",
+            "low",
+            "Terraform Cloud variable set global scope value is now unknown or missing.",
         )
 
     if fp == "sensitive_variable_count":
@@ -457,6 +472,16 @@ def _classify_policy_set_change(change: Change) -> tuple[str, str]:
                 "Terraform Cloud configuration evidence may require review.",
             )
         return ("low", "Terraform Cloud policy set workspace scope increased.")
+
+    if fp == "vcs_connected":
+        if _is_falsy_explicit(new_v):
+            return (
+                "medium",
+                "Terraform Cloud policy set VCS connection was removed — policy "
+                "definitions may no longer sync from source control. "
+                "Terraform Cloud configuration evidence may require review.",
+            )
+        return ("low", "Terraform Cloud policy set VCS connection was added.")
 
     return (
         "low",
@@ -615,12 +640,29 @@ def _classify_team_access_summary_change(change: Change) -> tuple[str, str]:
 def _classify_project_change(change: Change) -> tuple[str, str]:
     ct = (_get(change, "change_type") or "").lower()
     fp = (_get(change, "field_path") or "").lower()
+    new_v = _get(change, "new_value")
+    old_v = _get(change, "prev_value")
 
     if ct in ("added", "removed"):
         return (
             "low",
             "Terraform Cloud project record was added or removed during sync.",
         )
+
+    if fp == "team_access_count":
+        try:
+            n_new = int(new_v or 0)
+            n_old = int(old_v or 0)
+        except (TypeError, ValueError):
+            return ("low", "Terraform Cloud project team access count changed.")
+        if n_new > n_old:
+            return (
+                "medium",
+                f"Terraform Cloud project team access count increased from {n_old} to {n_new} — "
+                "access may now be broadened across all workspaces in this project. "
+                "Terraform Cloud configuration evidence may require review.",
+            )
+        return ("low", "Terraform Cloud project team access count decreased.")
 
     return (
         "low",
