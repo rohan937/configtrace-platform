@@ -1061,3 +1061,331 @@ def test_n9_linear_all_security_caps_false() -> None:
         assert getattr(sec, attr) is False, (
             f"Linear security capability {attr!r} should be False"
         )
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Section O — Diff tracked fields and risk classification (QA pass)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Linear previously had NO entry in diff_service.py's tracked-fields dispatch
+# (every linear_ record type fell through to the Cloudflare DNS default
+# tuple, so compute_diff could never detect a modified field) and NO
+# risk_rules/linear.py module at all (risk_service.py had no linear_
+# dispatch branch, so every Linear change silently fell through to the
+# Cloudflare DNS classifier). Both were built during this QA pass.
+
+
+class TestLinearDiffTrackedFields:
+    def test_all_nine_record_types_have_tracked_fields_entries(self):
+        from app.services.diff_service import _LINEAR_TRACKED_FIELDS_BY_TYPE
+
+        for record_type in LINEAR_RECORD_TYPES:
+            assert record_type in _LINEAR_TRACKED_FIELDS_BY_TYPE, (
+                f"{record_type!r} has no tracked-fields entry — modified-field "
+                "changes for this record type will never be detected by compute_diff"
+            )
+
+    def test_tracked_fields_dispatch_uses_linear_table_not_cloudflare_default(self):
+        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+
+        for record_type in LINEAR_RECORD_TYPES:
+            fields = _tracked_fields_for({"record_type": record_type})
+            assert fields != _TRACKED_FIELDS, (
+                f"{record_type!r} is falling through to the Cloudflare DNS "
+                "default tracked-fields tuple instead of its own Linear fields"
+            )
+            assert fields, f"{record_type!r} resolved to an empty tracked-fields tuple"
+
+    def test_webhook_secret_present_change_produces_drift_change(self):
+        """webhook_secret_present True -> False must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _webhook_record(secret_present: bool) -> dict:
+            return {
+                "record_type": "linear_webhook",
+                "provider": "linear",
+                "record_id": "linear_webhook:wh1",
+                "resource_id": "wh1",
+                "webhook_resource_types_count": 2,
+                "webhook_enabled": True,
+                "webhook_secret_present": secret_present,
+                "webhook_url_present": True,
+                "webhook_url_scheme_category": "https",
+                "team_id": None,
+                "webhook_has_comment_type": False,
+                "webhook_has_attachment_type": False,
+            }
+
+        prev = _mock_snapshot([_webhook_record(True)])
+        new = _mock_snapshot([_webhook_record(False)])
+
+        changes = compute_diff(prev, new)
+        secret_changes = [c for c in changes if c["field_path"] == "webhook_secret_present"]
+
+        assert len(secret_changes) == 1
+        assert secret_changes[0]["prev_value"] is True
+        assert secret_changes[0]["new_value"] is False
+
+    def test_team_private_change_produces_drift_change(self):
+        """private_team False -> True must surface as a Change."""
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        def _team_record(private: bool) -> dict:
+            return {
+                "record_type": "linear_team",
+                "provider": "linear",
+                "record_id": "linear_team:t1",
+                "resource_id": "t1",
+                "resource_name": "test-team",
+                "private_team": private,
+                "team_visibility_category": "private" if private else "public",
+                "member_count_category": "small",
+                "project_count": 2,
+                "auto_archive_enabled": True,
+                "cycle_enabled": True,
+                "cycle_duration_category": "short",
+                "workflow_state_count": 5,
+                "has_backlog_state": True,
+                "has_started_state": True,
+                "has_completed_state": True,
+                "has_canceled_state": True,
+                "label_count": 3,
+                "webhook_count": 1,
+            }
+
+        prev = _mock_snapshot([_team_record(False)])
+        new = _mock_snapshot([_team_record(True)])
+
+        changes = compute_diff(prev, new)
+        private_changes = [c for c in changes if c["field_path"] == "private_team"]
+
+        assert len(private_changes) == 1
+        assert private_changes[0]["prev_value"] is False
+        assert private_changes[0]["new_value"] is True
+
+    def test_no_spurious_change_when_records_are_identical(self):
+        from app.models.snapshot import Snapshot
+        from app.services.diff_service import compute_diff
+
+        def _mock_snapshot(state: list[dict]) -> MagicMock:
+            snap = MagicMock(spec=Snapshot)
+            snap.state = state
+            return snap
+
+        record = {
+            "record_type": "linear_integration",
+            "provider": "linear",
+            "record_id": "linear_integration:i1",
+            "resource_id": "i1",
+            "integration_type_category": "slack",
+            "integration_enabled": True,
+            "team_id": None,
+        }
+        prev = _mock_snapshot([dict(record)])
+        new = _mock_snapshot([dict(record)])
+
+        assert compute_diff(prev, new) == []
+
+    def test_every_tracked_field_classifies_without_error_or_invalid_severity(self):
+        """Every field in _LINEAR_TRACKED_FIELDS_BY_TYPE must be classifiable:
+        classify_linear_change must not raise, and must return one of the
+        three known severities, for a representative modified change on
+        each tracked field of each record type.
+        """
+        from app.services.diff_service import _LINEAR_TRACKED_FIELDS_BY_TYPE
+        from app.services.risk_rules.linear import classify_linear_change
+
+        for record_type, fields in _LINEAR_TRACKED_FIELDS_BY_TYPE.items():
+            for field in fields:
+                change = {
+                    "change_type": "modified",
+                    "field_path": field,
+                    "prev_value": 1,
+                    "new_value": 2,
+                    "provider_metadata": {"record_type": record_type},
+                }
+                level, reason = classify_linear_change(change)
+                assert level in ("low", "medium", "high"), (
+                    f"{record_type}.{field} returned invalid severity {level!r}"
+                )
+                assert isinstance(reason, str) and reason, (
+                    f"{record_type}.{field} returned an empty reason string"
+                )
+
+
+class TestLinearRiskClassifier:
+    def _make_change(
+        self,
+        record_type: str,
+        field_path: str = "",
+        change_type: str = "modified",
+        prev_value: Any = None,
+        new_value: Any = None,
+    ) -> dict:
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_risk_service_dispatches_linear_to_linear_classifier(self):
+        """Regression guard: risk_service.py must route linear_ record types
+        to classify_linear_change, not silently fall through to the
+        Cloudflare DNS classifier (the exact bug this QA pass found and
+        fixed)."""
+        from app.services.risk_service import classify_change
+
+        change = self._make_change(
+            "linear_webhook", "webhook_secret_present", prev_value=True, new_value=False,
+        )
+        mock_change = MagicMock()
+        mock_change.provider_metadata = change["provider_metadata"]
+        mock_change.field_path = change["field_path"]
+        mock_change.change_type = change["change_type"]
+        mock_change.prev_value = change["prev_value"]
+        mock_change.new_value = change["new_value"]
+        level, reason = classify_change(mock_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+        assert "linear" in reason.lower()
+
+    def test_webhook_secret_removed_is_high(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_WEBHOOK, "webhook_secret_present", prev_value=True, new_value=False,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_webhook_secret_added_is_low(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_WEBHOOK, "webhook_secret_present", prev_value=False, new_value=True,
+        )
+        level, _ = classify_linear_change(change)
+        assert level == "low"
+
+    def test_webhook_non_https_is_high(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_WEBHOOK, "webhook_url_scheme_category", prev_value="https", new_value="non_https",
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_webhook_https_restored_is_low(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_WEBHOOK, "webhook_url_scheme_category", prev_value="non_https", new_value="https",
+        )
+        level, _ = classify_linear_change(change)
+        assert level == "low"
+
+    def test_team_visibility_broadened_is_medium(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_TEAM, "private_team", prev_value=True, new_value=False,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_team_made_private_is_low(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_TEAM, "private_team", prev_value=False, new_value=True,
+        )
+        level, _ = classify_linear_change(change)
+        assert level == "low"
+
+    def test_project_lost_lead_is_medium(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_PROJECT, "lead_present", prev_value=True, new_value=False,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_integration_disabled_is_medium(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change(
+            LINEAR_INTEGRATION, "integration_enabled", prev_value=True, new_value=False,
+        )
+        level, reason = classify_linear_change(change)
+        assert level == "medium", f"Expected medium, got {level!r}: {reason}"
+
+    def test_unknown_record_type_is_low(self):
+        from app.services.risk_rules.linear import classify_linear_change
+        change = self._make_change("linear_unknown_surface", "some_field", prev_value=1, new_value=2)
+        level, _ = classify_linear_change(change)
+        assert level == "low"
+
+    def test_unknown_transitions_never_produce_high(self):
+        from app.services.risk_rules.linear import classify_linear_change
+
+        unknown_cases = [
+            (LINEAR_TEAM, "private_team", True, None),
+            (LINEAR_PROJECT, "lead_present", True, None),
+            (LINEAR_WEBHOOK, "webhook_secret_present", True, None),
+            (LINEAR_WEBHOOK, "webhook_url_scheme_category", "https", None),
+            (LINEAR_INTEGRATION, "integration_enabled", True, None),
+        ]
+        for record_type, field, prev, new in unknown_cases:
+            change = self._make_change(record_type, field, prev_value=prev, new_value=new)
+            level, reason = classify_linear_change(change)
+            assert level != "high", (
+                f"{record_type}.{field} unknown transition produced 'high': {reason!r}"
+            )
+
+    def test_classifier_reads_real_compute_diff_dict_shape_not_a_mock(self):
+        """Regression guard against the exact old_value/prev_value bug class
+        found in Terraform Cloud's first QA pass: builds a plain dict shaped
+        EXACTLY like compute_diff's real output (prev_value/new_value/
+        field_path/change_type/provider_metadata), not a MagicMock, to prove
+        the classifier reads the real field name."""
+        from app.services.risk_rules.linear import classify_linear_change
+
+        real_shaped_change = {
+            "change_type": "modified",
+            "field_path": "webhook_secret_present",
+            "prev_value": True,
+            "new_value": False,
+            "provider_metadata": {"record_type": "linear_webhook"},
+        }
+        level, reason = classify_linear_change(real_shaped_change)
+        assert level == "high", f"Expected high, got {level!r}: {reason}"
+
+    def test_no_forbidden_wording_in_reasons(self):
+        from app.services.risk_rules.linear import classify_linear_change
+
+        FORBIDDEN = [
+            "breach", "compromise", "attacker", "leaked", "unauthorized access",
+            "exfiltration", "stolen", "fraud", "attack detected",
+            "issue exposed", "ticket exposed", "secret exposed", "data exposed",
+        ]
+        test_changes = [
+            self._make_change(LINEAR_TEAM, "private_team", prev_value=True, new_value=False),
+            self._make_change(LINEAR_WEBHOOK, "webhook_secret_present", prev_value=True, new_value=False),
+            self._make_change(LINEAR_WEBHOOK, "webhook_url_scheme_category", prev_value="https", new_value="non_https"),
+            self._make_change(LINEAR_PROJECT, "lead_present", prev_value=True, new_value=False),
+            self._make_change(LINEAR_INTEGRATION, "integration_enabled", prev_value=True, new_value=False),
+        ]
+        for change in test_changes:
+            _, reason = classify_linear_change(change)
+            reason_lower = reason.lower()
+            for phrase in FORBIDDEN:
+                assert phrase not in reason_lower, (
+                    f"Forbidden phrase {phrase!r} found in risk reason: {reason!r}"
+                )

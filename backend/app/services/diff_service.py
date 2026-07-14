@@ -2290,6 +2290,47 @@ _JIRA_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+_LINEAR_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "linear_workspace": (
+        "resource_name", "url_key_present", "logo_present", "team_count",
+        "webhook_count", "integration_count",
+    ),
+    "linear_team": (
+        "resource_name", "private_team", "team_visibility_category",
+        "member_count_category", "project_count", "auto_archive_enabled",
+        "cycle_enabled", "cycle_duration_category", "workflow_state_count",
+        "has_backlog_state", "has_started_state", "has_completed_state",
+        "has_canceled_state", "label_count", "webhook_count",
+    ),
+    "linear_project": (
+        "resource_name", "project_status_category", "project_health_category",
+        "lead_present", "member_count_category", "issue_count_category",
+        "team_count",
+    ),
+    "linear_workflow_state": (
+        "resource_name", "state_type_category", "position_category", "team_id",
+    ),
+    "linear_label": (
+        "resource_name", "is_group_label", "parent_id_present", "team_id",
+    ),
+    "linear_webhook": (
+        "webhook_resource_types_count", "webhook_enabled",
+        "webhook_secret_present", "webhook_url_present",
+        "webhook_url_scheme_category", "team_id", "webhook_has_comment_type",
+        "webhook_has_attachment_type",
+    ),
+    "linear_view": (
+        "resource_name", "view_shared", "filter_count_category", "team_id",
+    ),
+    "linear_cycle": (
+        "resource_name", "active", "team_id", "issue_count_category",
+    ),
+    "linear_integration": (
+        "integration_type_category", "integration_enabled", "team_id",
+    ),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2317,6 +2358,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_GITLAB_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"jira_"`` look up in
       ``_JIRA_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"linear_"`` look up in
+      ``_LINEAR_TRACKED_FIELDS_BY_TYPE``.
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2350,6 +2393,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _GITLAB_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("jira_"):
         return _JIRA_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("linear_"):
+        return _LINEAR_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Falls back to _TRACKED_FIELDS if the type is not in the table
