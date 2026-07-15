@@ -534,18 +534,21 @@ class SupabaseConnector(BaseConnector):
             data = self._get(f"/v1/projects/{project_ref}/functions", access_token)
         except ConnectorError as exc:
             if exc.status_code == 403:
+                # Return an empty list rather than a synthetic "_access_denied"
+                # placeholder record. A placeholder with a record_id distinct
+                # from every real function's record_id would make compute_diff()
+                # show ALL previously-known Edge Functions as "removed" (their
+                # ids vanish from this snapshot) AND the placeholder itself as
+                # "added" — a burst of false-removal noise on a permission
+                # hiccup, then another burst when the token is fixed and the
+                # placeholder disappears while real functions "reappear".
+                # Matches the safer pattern already used by
+                # _fetch_custom_domain for its own optional-endpoint failures.
                 logger.warning(
                     "supabase: 403 fetching edge functions for %s — skipping.",
                     project_ref,
                 )
-                return [{
-                    "record_type": SUPABASE_EDGE_FUNCTION,
-                    "record_id": f"supabase_edge_function:{project_ref}:_access_denied",
-                    "config_fetch_warnings": [
-                        "HTTP 403 fetching Edge Functions. "
-                        "The access token may lack the necessary Management API permissions."
-                    ],
-                }]
+                return []
             raise
 
         if not isinstance(data, list):
@@ -603,18 +606,19 @@ class SupabaseConnector(BaseConnector):
             )
         except ConnectorError as exc:
             if exc.status_code == 403:
+                # Return an empty list rather than a synthetic "_access_denied"
+                # placeholder record — see the identical rationale in
+                # _fetch_edge_functions. A placeholder with a fabricated
+                # record_id (distinct from every real "{schema}.{table}" id)
+                # would make compute_diff() show EVERY table's RLS status as
+                # "removed — the table may have been dropped" on a mere
+                # permission hiccup, which is exactly the kind of false-alarm
+                # noise this surface must avoid.
                 logger.warning(
                     "supabase: 403 fetching RLS status for %s — skipping.",
                     project_ref,
                 )
-                return [{
-                    "record_type": SUPABASE_RLS_STATUS,
-                    "record_id": f"supabase_rls_status:{project_ref}:_access_denied",
-                    "config_fetch_warnings": [
-                        "HTTP 403 fetching RLS status from database/tables endpoint. "
-                        "The access token may lack the necessary Management API permissions."
-                    ],
-                }]
+                return []
             raise
 
         if not isinstance(data, list):
@@ -792,18 +796,17 @@ class SupabaseConnector(BaseConnector):
             )
         except ConnectorError as exc:
             if exc.status_code == 403:
+                # Return an empty list rather than a synthetic "_access_denied"
+                # placeholder record — see the identical rationale in
+                # _fetch_edge_functions / _fetch_rls_status. A placeholder
+                # with a fabricated record_id would make every real CIDR
+                # entry (or the "unrestricted" sentinel) look "removed" on a
+                # mere permission hiccup.
                 logger.warning(
                     "supabase: 403 fetching network restrictions for %s — skipping.",
                     project_ref,
                 )
-                return [{
-                    "record_type": SUPABASE_NETWORK_RESTRICTION,
-                    "record_id": f"supabase_network_restriction:{project_ref}:_access_denied",
-                    "config_fetch_warnings": [
-                        "HTTP 403 fetching Network Restrictions. "
-                        "The access token may lack the necessary Management API permissions."
-                    ],
-                }]
+                return []
             raise
 
         if not isinstance(data, dict):

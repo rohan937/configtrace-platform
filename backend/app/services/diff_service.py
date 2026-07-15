@@ -1966,6 +1966,19 @@ _SUPABASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "supabase_rls_status": (
         "rls_enabled",
         "rls_forced",
+        # M71A — per-table public-policy posture (pg_policies metadata only).
+        # These are emitted by the connector (merged from
+        # _fetch_database_policies) and evaluated by the
+        # supabase_public_select_sensitive_table / supabase_public_write_policy
+        # Security Findings, but were missing here entirely — compute_diff()
+        # never detected a table gaining/losing a public policy as a Change,
+        # only whole-table add/remove and the rls_enabled/rls_forced flags.
+        "policy_count",
+        "has_public_select_policy",
+        "has_public_insert_policy",
+        "has_public_update_policy",
+        "has_public_delete_policy",
+        "exposed_to_anon",
         "config_fetch_warnings",
     ),
     "supabase_api_config": (
@@ -3095,6 +3108,28 @@ def _build_provider_metadata(
     # with livemode already present.
     if record.get("record_type") == "stripe_payment_link":
         metadata["livemode"] = context_record.get("livemode")
+
+    # Supabase risk classifiers read several identifying fields directly from
+    # provider_metadata (table_name/schema_name, function_name/slug, cidr,
+    # custom_domain, provider_name) that none of the generic record_name/
+    # record_content stanza above ever populated (these records don't carry a
+    # "name" field). Without this stanza, e.g. the critical "RLS disabled"
+    # copy showed only the schema ("table 'public'") with the table name
+    # silently dropped — masked by tests that hand-built provider_metadata
+    # directly, matching the same gap pattern found for Shopify/Cloudflare/
+    # Vercel/GitHub/Stripe earlier this session.
+    if record.get("record_type") == "supabase_rls_status":
+        metadata["table_name"] = context_record.get("table_name") or ""
+        metadata["schema_name"] = context_record.get("schema_name") or "public"
+    if record.get("record_type") == "supabase_edge_function":
+        metadata["function_name"] = context_record.get("function_name") or ""
+        metadata["slug"] = context_record.get("slug") or ""
+    if record.get("record_type") == "supabase_network_restriction":
+        metadata["cidr"] = context_record.get("cidr") or ""
+    if record.get("record_type") == "supabase_custom_domain":
+        metadata["custom_domain"] = context_record.get("custom_domain") or ""
+    if record.get("record_type") == "supabase_oauth_provider":
+        metadata["provider_name"] = context_record.get("provider_name") or ""
 
     return metadata
 

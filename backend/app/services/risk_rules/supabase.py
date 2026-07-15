@@ -518,6 +518,64 @@ def _classify_rls_status_change(change: object) -> tuple[str, str]:
             "RLS now applies to table owners as well.",
         )
 
+    # ── M71A — per-table public-policy posture ────────────────────────────────
+    if fp == "has_public_select_policy":
+        if new_v is True:
+            return (
+                "high",
+                f"A policy targeting the public/anon role was added allowing SELECT "
+                f"on table {full_name!r}. This may expose data depending on grants "
+                "and application access. Verify this is intentional.",
+            )
+        return (
+            "low",
+            f"The public/anon SELECT policy on table {full_name!r} was removed.",
+        )
+
+    if fp in (
+        "has_public_insert_policy",
+        "has_public_update_policy",
+        "has_public_delete_policy",
+    ):
+        if new_v is True:
+            return (
+                "high",
+                f"A policy targeting the public/anon role was added allowing a "
+                f"write ({fp.replace('has_public_', '').replace('_policy', '')}) "
+                f"on table {full_name!r}. This may allow broad writes depending on "
+                "grants and application access. Verify this is intentional.",
+            )
+        return (
+            "low",
+            f"A public/anon write policy on table {full_name!r} was removed.",
+        )
+
+    if fp == "exposed_to_anon":
+        if new_v is True:
+            return (
+                "medium",
+                f"Table {full_name!r} now has at least one policy targeting the "
+                "public/anon role. Review the table's policies for intended access.",
+            )
+        return (
+            "low",
+            f"Table {full_name!r} no longer has any policy targeting the "
+            "public/anon role.",
+        )
+
+    if fp == "policy_count":
+        prev_v = _get(change, "prev_value")
+        try:
+            if int(new_v) < int(prev_v):
+                return (
+                    "medium",
+                    f"The policy count for table {full_name!r} decreased. "
+                    "Verify access is still scoped as intended.",
+                )
+        except (TypeError, ValueError):
+            pass
+        return ("low", f"The policy count for table {full_name!r} changed.")
+
     return ("medium", f"An RLS configuration field changed for table {full_name!r}.")
 
 
