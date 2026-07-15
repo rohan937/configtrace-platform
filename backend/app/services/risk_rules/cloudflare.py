@@ -263,28 +263,46 @@ def _classify_zone_setting(
         # ``value`` is typically a dict like
         # {"enabled": True, "max_age": 31536000, ...}.  We detect changes
         # by reading enabled/max_age on prev and new dicts.
+        #
+        # Only an explicit ``enabled`` key in a real dict counts as a known
+        # state — a missing/non-dict value (None, malformed, or a dict
+        # without the key) is genuinely unknown and must never be treated
+        # as an explicit False. Previously this used `bool(d.get("enabled",
+        # False))`, which silently coerced "unknown" to "disabled" and could
+        # claim "HSTS was disabled" for a True -> None/missing transition.
         prev_d = prev_value if isinstance(prev_value, dict) else {}
         new_d = new_value if isinstance(new_value, dict) else {}
-        prev_enabled = bool(prev_d.get("enabled", False))
-        new_enabled = bool(new_d.get("enabled", False))
-        if prev_enabled and not new_enabled:
+        prev_enabled = prev_d.get("enabled") if "enabled" in prev_d else None
+        new_enabled = new_d.get("enabled") if "enabled" in new_d else None
+        prev_enabled = bool(prev_enabled) if isinstance(prev_enabled, bool) else None
+        new_enabled = bool(new_enabled) if isinstance(new_enabled, bool) else None
+
+        if prev_enabled is True and new_enabled is False:
             return (
                 "high",
                 "HSTS was disabled on this zone.  Browsers will no longer be "
                 "told to enforce HTTPS, which may weaken HTTPS posture for "
                 "returning visitors.",
             )
-        prev_age = int(prev_d.get("max_age") or 0)
-        new_age = int(new_d.get("max_age") or 0)
-        if prev_enabled and new_enabled and new_age and new_age < prev_age // 2:
-            return (
-                "high",
-                f"HSTS max_age was lowered from {prev_age} to {new_age} "
-                "seconds — browsers will cache the HTTPS-only policy for a "
-                "shorter window.",
-            )
-        if not prev_enabled and new_enabled:
+        if prev_enabled is False and new_enabled is True:
             return ("low", "HSTS was enabled — HTTPS posture improved.")
+
+        if prev_enabled is True and new_enabled is None:
+            return (
+                "low",
+                "HSTS state on this zone is now unknown or missing.",
+            )
+
+        if prev_enabled is True and new_enabled is True:
+            prev_age = _int_or_none(prev_d.get("max_age"))
+            new_age = _int_or_none(new_d.get("max_age"))
+            if prev_age is not None and new_age is not None and new_age < prev_age // 2:
+                return (
+                    "high",
+                    f"HSTS max_age was lowered from {prev_age} to {new_age} "
+                    "seconds — browsers will cache the HTTPS-only policy for a "
+                    "shorter window.",
+                )
 
     # ── Browser integrity check / security level ──────────────────────────────
     if setting_id == "browser_check":
@@ -503,9 +521,15 @@ def _classify_worker_route(
                 f"A worker route on {host or 'a hostname'} was disabled.  "
                 "The configured worker will not run for matching requests.",
             )
+        if new_s in ("true", "1", "on"):
+            return (
+                "low",
+                f"A worker route on {host or 'a hostname'} was re-enabled.",
+            )
         return (
             "low",
-            f"A worker route on {host or 'a hostname'} was re-enabled.",
+            f"A worker route on {host or 'a hostname'} enabled state is now "
+            "unknown or missing.",
         )
 
     return (
@@ -603,12 +627,18 @@ def _classify_access_application(
     if change_type == "modified" and field_path == "visibility":
         new_s = _str(new_value).lower()
         if new_s == "public":
+            # NOTE: "visibility" reflects Cloudflare's app_launcher_visible
+            # flag — whether the app appears as a tile in the Access App
+            # Launcher (a portal for already-authenticated users). It does
+            # NOT control whether Access policies gate the app; that is
+            # governed entirely by the app's attached cloudflare_access_policy
+            # records. Copy here must not claim authentication was bypassed.
             return (
-                "critical",
-                f"Cloudflare Access application '{name}' visibility was "
-                "changed to 'public'.  The previously-protected internal app "
-                "may now be reachable without authentication — verify this "
-                "is intentional and review access logs.",
+                "low",
+                f"Cloudflare Access application '{name}' became visible in "
+                "the App Launcher.  This changes whether the app is listed "
+                "for authenticated users — it does not, by itself, change "
+                "which Access policies gate the app.",
             )
 
     if change_type == "modified" and field_path == "enabled":
@@ -619,9 +649,15 @@ def _classify_access_application(
                 f"Cloudflare Access application '{name}' was disabled.  The "
                 "authentication barrier is no longer enforced for this app.",
             )
+        if new_s in ("true", "1", "on"):
+            return (
+                "low",
+                f"Cloudflare Access application '{name}' was re-enabled.",
+            )
         return (
             "low",
-            f"Cloudflare Access application '{name}' was re-enabled.",
+            f"Cloudflare Access application '{name}' enabled state is now "
+            "unknown or missing.",
         )
 
     if change_type == "modified" and field_path == "allowed_idps_count":
@@ -698,6 +734,12 @@ def _classify_access_policy(
                 f"Cloudflare Access policy '{name}' decision was relaxed from "
                 "'deny' to 'allow'.  Verify the change is intentional.",
             )
+        if not new_s:
+            return (
+                "low",
+                f"Cloudflare Access policy '{name}' decision state is now "
+                "unknown or missing.",
+            )
         return (
             "medium",
             f"Cloudflare Access policy '{name}' decision changed from "
@@ -713,9 +755,15 @@ def _classify_access_policy(
                 "policies on the application may still enforce access, but "
                 "this one no longer applies.",
             )
+        if new_s in ("true", "1", "on"):
+            return (
+                "low",
+                f"Cloudflare Access policy '{name}' was re-enabled.",
+            )
         return (
             "low",
-            f"Cloudflare Access policy '{name}' was re-enabled.",
+            f"Cloudflare Access policy '{name}' enabled state is now "
+            "unknown or missing.",
         )
 
     if change_type == "modified" and field_path == "include_count":
@@ -809,6 +857,12 @@ def _classify_waf_rule(
                 f"WAF rule '{description}' action was strengthened from "
                 f"'{prev_s}' to '{new_s}'.",
             )
+        if not new_s:
+            return (
+                "low",
+                f"WAF rule '{description}' action state is now unknown or "
+                "missing.",
+            )
         return (
             "medium",
             f"WAF rule '{description}' action changed from '{prev_s}' to "
@@ -823,9 +877,15 @@ def _classify_waf_rule(
                 f"WAF rule '{description}' was disabled.  The attack pattern "
                 "it covered is no longer filtered at the edge.",
             )
+        if new_s in ("true", "1", "on"):
+            return (
+                "low",
+                f"WAF rule '{description}' was re-enabled.",
+            )
         return (
             "low",
-            f"WAF rule '{description}' was re-enabled.",
+            f"WAF rule '{description}' enabled state is now unknown or "
+            "missing.",
         )
 
     if change_type == "modified" and field_path == "expression_hash":

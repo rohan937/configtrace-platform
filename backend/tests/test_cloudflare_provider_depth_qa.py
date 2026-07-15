@@ -57,6 +57,9 @@ ALL_CLOUDFLARE_RULE_KEYS: frozenset[str] = frozenset({
     # Access-policy rules (M68.3) — the two previously missing registrations
     "cloudflare_access_policy_bypass",
     "cloudflare_access_policy_disabled",
+    # Change-classification-QA pass — two new high-signal, low-noise rules
+    "cloudflare_page_rule_http_forward",
+    "cloudflare_access_application_disabled",
 })
 
 # Severity expected per rule (matches security_rules/cloudflare.py)
@@ -71,6 +74,8 @@ EXPECTED_SEVERITY: dict[str, str] = {
     "cloudflare_dns_private_origin": "high",
     "cloudflare_access_policy_bypass": "high",
     "cloudflare_access_policy_disabled": "medium",
+    "cloudflare_page_rule_http_forward": "medium",
+    "cloudflare_access_application_disabled": "high",
 }
 
 # Category expected per rule (matches rule pack)
@@ -85,6 +90,8 @@ EXPECTED_CATEGORY: dict[str, str] = {
     "cloudflare_dns_private_origin": "DNS",
     "cloudflare_access_policy_bypass": "Access control",
     "cloudflare_access_policy_disabled": "Access control",
+    "cloudflare_page_rule_http_forward": "Page Rules",
+    "cloudflare_access_application_disabled": "Access control",
 }
 
 FORBIDDEN_PHRASES = [
@@ -119,7 +126,7 @@ FORBIDDEN_EVIDENCE_KEYS = [
 # ── Section A: Rule key inventory ─────────────────────────────────────────────
 
 def test_cloudflare_rule_key_count() -> None:
-    assert len(ALL_CLOUDFLARE_RULE_KEYS) == 10
+    assert len(ALL_CLOUDFLARE_RULE_KEYS) == 12
 
 
 def test_all_cloudflare_rule_keys_are_strings() -> None:
@@ -633,6 +640,96 @@ def test_cloudflare_evaluator_dispatches_correctly() -> None:
     ]
     assert "cloudflare_access_policy_bypass" in rule_keys
     assert "cloudflare_access_policy_disabled" in rule_keys
+
+
+def test_cloudflare_page_rule_http_forward_dispatches_via_evaluator() -> None:
+    from app.services.security_finding_evaluator import evaluate_record
+    from app.connectors.cloudflare_schema import CLOUDFLARE_PAGE_RULE
+
+    record = {
+        "record_type": CLOUDFLARE_PAGE_RULE,
+        "record_id": "pr-dispatch-test",
+        "target_url_pattern": "example.com/*",
+        "actions_summary": "forwarding_url:to=http://insecure.example.com,301",
+        "rule_kind": "redirect",
+        "priority": 1,
+        "status": "active",
+    }
+    findings = evaluate_record(record, "cloudflare")
+    rule_keys = [
+        f.rule_key if hasattr(f, "rule_key") else f.get("rule_key", "")
+        for f in findings
+    ]
+    assert "cloudflare_page_rule_http_forward" in rule_keys
+
+
+def test_cloudflare_page_rule_https_forward_does_not_fire() -> None:
+    from app.services.security_rules.cloudflare import evaluate
+    record = {
+        "record_type": "cloudflare_page_rule",
+        "record_id": "pr-safe",
+        "target_url_pattern": "example.com/*",
+        "actions_summary": "forwarding_url:to=https://secure.example.com,301",
+        "rule_kind": "redirect",
+    }
+    assert evaluate(record) == []
+
+
+def test_cloudflare_page_rule_non_forwarding_does_not_fire() -> None:
+    from app.services.security_rules.cloudflare import evaluate
+    record = {
+        "record_type": "cloudflare_page_rule",
+        "record_id": "pr-cache",
+        "target_url_pattern": "example.com/*",
+        "actions_summary": "cache_level:cache_everything",
+        "rule_kind": "cache_rule",
+    }
+    assert evaluate(record) == []
+
+
+def test_cloudflare_access_application_disabled_dispatches_via_evaluator() -> None:
+    from app.services.security_finding_evaluator import evaluate_record
+    from app.connectors.cloudflare_schema import CLOUDFLARE_ACCESS_APPLICATION
+
+    record = {
+        "record_type": CLOUDFLARE_ACCESS_APPLICATION,
+        "record_id": "app-dispatch-test",
+        "name": "Internal Admin",
+        "type": "self_hosted",
+        "domain": "admin.example.com",
+        "visibility": "private",
+        "enabled": False,
+        "session_duration": "24h",
+        "allowed_idps_count": 1,
+    }
+    findings = evaluate_record(record, "cloudflare")
+    rule_keys = [
+        f.rule_key if hasattr(f, "rule_key") else f.get("rule_key", "")
+        for f in findings
+    ]
+    assert "cloudflare_access_application_disabled" in rule_keys
+
+
+def test_cloudflare_access_application_enabled_does_not_fire() -> None:
+    from app.services.security_rules.cloudflare import evaluate
+    record = {
+        "record_type": "cloudflare_access_application",
+        "record_id": "app-safe",
+        "name": "Internal Admin",
+        "enabled": True,
+    }
+    assert evaluate(record) == []
+
+
+def test_cloudflare_access_application_enabled_absent_does_not_fire() -> None:
+    """Unknown/missing 'enabled' must never be treated as an explicit False."""
+    from app.services.security_rules.cloudflare import evaluate
+    record = {
+        "record_type": "cloudflare_access_application",
+        "record_id": "app-unknown",
+        "name": "Internal Admin",
+    }
+    assert evaluate(record) == []
 
 
 def test_cloudflare_evaluate_returns_empty_for_unknown_type() -> None:

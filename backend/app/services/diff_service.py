@@ -2987,6 +2987,37 @@ def _build_provider_metadata(
     if record.get("record_type") == "shopify_domain":
         metadata["primary"] = context_record.get("primary")
 
+    # Cloudflare expanded surfaces (page rules, worker routes, Access
+    # applications/policies, WAF rules) carry their own identifying/display
+    # field that the risk classifier reads directly from provider_metadata —
+    # none of these record types have a "name" or "content" key, so the
+    # generic record_name/record_content stanza above never populates them.
+    # Previously NO stanza existed for any of them, so every classifier
+    # silently fell back to the opaque record_id: for hostname-dependent
+    # classifiers (page rule, worker route) this meant `_is_production_
+    # hostname()` evaluated on a dotless ID string, which its own apex
+    # heuristic (<=2 dot-separated labels) treats as "apex" — i.e. every
+    # page rule and worker route was silently classified as production
+    # traffic regardless of its real target. For the others (Access
+    # application/policy, WAF rule) it only meant a wrong display name in
+    # copy (e.g. "WAF rule 'r1' was disabled" instead of the real
+    # description), not a severity error, but was still a real
+    # provider_metadata gap masked only by tests that hand-built
+    # provider_metadata directly.
+    if record.get("record_type") == "cloudflare_page_rule":
+        metadata["target_url_pattern"] = context_record.get("target_url_pattern") or ""
+        metadata["rule_kind"] = context_record.get("rule_kind") or ""
+    if record.get("record_type") == "cloudflare_worker_route":
+        metadata["pattern"] = context_record.get("pattern") or ""
+    if record.get("record_type") == "cloudflare_access_application":
+        metadata["name"] = context_record.get("name") or ""
+        metadata["domain"] = context_record.get("domain") or ""
+    if record.get("record_type") == "cloudflare_access_policy":
+        metadata["name"] = context_record.get("name") or ""
+        metadata["decision"] = context_record.get("decision") or ""
+    if record.get("record_type") == "cloudflare_waf_rule":
+        metadata["description"] = context_record.get("description") or ""
+
     return metadata
 
 

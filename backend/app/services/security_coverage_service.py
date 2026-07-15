@@ -107,6 +107,8 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
     "cloudflare_dns_private_origin": ("A", "AAAA"),
     "cloudflare_access_policy_bypass": ("cloudflare_access_policy",),
     "cloudflare_access_policy_disabled": ("cloudflare_access_policy",),
+    "cloudflare_page_rule_http_forward": ("cloudflare_page_rule",),
+    "cloudflare_access_application_disabled": ("cloudflare_access_application",),
     # Supabase
     "supabase_rls_disabled": ("supabase_rls_status",),
     "supabase_anonymous_access_enabled": ("supabase_auth_config",),

@@ -64,6 +64,8 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "cloudflare_dns_private_origin",
         "cloudflare_access_policy_bypass",
         "cloudflare_access_policy_disabled",
+        "cloudflare_page_rule_http_forward",
+        "cloudflare_access_application_disabled",
         # Supabase
         "supabase_rls_disabled",
         "supabase_anonymous_access_enabled",

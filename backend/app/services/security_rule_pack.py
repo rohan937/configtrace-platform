@@ -88,6 +88,8 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "cloudflare_dns_private_origin": ("cloudflare", "high", "DNS"),
     "cloudflare_access_policy_bypass": ("cloudflare", "high", "Access control"),
     "cloudflare_access_policy_disabled": ("cloudflare", "medium", "Access control"),
+    "cloudflare_page_rule_http_forward": ("cloudflare", "medium", "Page Rules"),
+    "cloudflare_access_application_disabled": ("cloudflare", "high", "Access control"),
     # Supabase
     "supabase_rls_disabled": ("supabase", "high", "RLS"),
     "supabase_anonymous_access_enabled": ("supabase", "medium", "Auth"),

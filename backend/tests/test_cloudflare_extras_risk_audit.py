@@ -462,7 +462,13 @@ class TestWorkerScript:
 
 class TestAccessApplication:
 
-    def test_E1_app_visibility_made_public_is_critical(self):
+    def test_E1_app_visibility_made_public_is_low_not_critical(self):
+        """Regression guard: 'visibility' reflects Cloudflare's
+        app_launcher_visible flag (App Launcher listing only) — it does NOT
+        control whether Access policies gate the app. A prior version of
+        this classifier incorrectly claimed the app 'may now be reachable
+        without authentication', which is factually inaccurate for this
+        field. Only cloudflare_access_policy governs actual gating."""
         c = _ch(
             record_type="cloudflare_access_application",
             field_path="visibility",
@@ -470,8 +476,10 @@ class TestAccessApplication:
             pm_extra={"name": "Admin Panel", "domain": "admin.example.com"},
         )
         level, reason = classify_cloudflare_change(c)
-        assert level == "critical"
-        assert "public" in reason.lower()
+        assert level == "low"
+        assert "app launcher" in reason.lower()
+        assert "without authentication" not in reason.lower()
+        assert "reachable" not in reason.lower()
 
     def test_E2_app_disabled_is_critical(self):
         c = _ch(
@@ -922,6 +930,9 @@ class TestRealComputeDiffIntegration:
         assert level == "high"
 
     def test_I5_access_application_visibility_public_detected(self):
+        """visibility reflects App Launcher listing only, not authentication
+        gating — expected severity is low (see risk_rules/cloudflare.py's
+        _classify_access_application 'visibility' branch)."""
         prev = [{
             "record_type": "cloudflare_access_application", "record_id": "a1",
             "name": "internal", "type": "self_hosted", "domain": "admin.example.com",
@@ -932,7 +943,7 @@ class TestRealComputeDiffIntegration:
         changes = _real_changes(prev, new)
         assert len(changes) == 1
         level, reason = classify_cloudflare_change(changes[0])
-        assert level == "critical", f"expected critical, got {level} ({reason})"
+        assert level == "low", f"expected low, got {level} ({reason})"
 
     def test_I6_access_policy_decision_bypass_detected(self):
         prev = [{
@@ -999,6 +1010,123 @@ class TestRealComputeDiffIntegration:
         from app.services.diff_service import _tracked_fields_for
         fields = _tracked_fields_for({"record_type": "cloudflare_totally_unknown_type"})
         assert fields == ()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# I2. provider_metadata enrichment — regression guard against a systemic gap
+# found in this classification-QA pass: NO stanza in _build_provider_metadata
+# ever populated the identifying/display field each of these 5 classifiers
+# reads directly from provider_metadata (target_url_pattern, pattern, name,
+# domain, description). Every classify_cloudflare_change() call for these
+# record types silently fell back to the opaque record_id. For the two
+# hostname-dependent classifiers (page rule, worker route) this was a real
+# severity bug: _is_production_hostname() evaluated on a dotless ID string,
+# which its own apex heuristic (<=2 dot-separated labels) treats as "apex" —
+# so every page rule and worker route was silently classified as production
+# traffic regardless of its real target, entirely masked by every existing
+# test because they all hand-built provider_metadata directly via pm_extra.
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestProviderMetadataEnrichment:
+    def test_page_rule_real_hostname_survives_real_compute_diff(self):
+        prev = [{
+            "record_type": "cloudflare_page_rule", "record_id": "pr1",
+            "target_url_pattern": "admin.example.com/*",
+            "actions_summary": "always_use_https", "rule_kind": "page_rule",
+            "priority": 1, "status": "active", "modified_on": None,
+        }]
+        new = [{**prev[0], "status": "disabled"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        assert changes[0]["provider_metadata"]["target_url_pattern"] == "admin.example.com/*"
+        _, reason = classify_cloudflare_change(changes[0])
+        assert "admin.example.com" in reason
+        assert "pr1" not in reason
+
+    def test_page_rule_non_production_hostname_is_medium_not_high(self):
+        """Regression guard: previously the record_id fallback made every
+        page rule look like an apex/production hostname, so a non-prod
+        hostname's rule-disabled severity was wrongly inflated to high."""
+        prev = [{
+            "record_type": "cloudflare_page_rule", "record_id": "pr2",
+            "target_url_pattern": "staging-internal.example.com/admin/*",
+            "actions_summary": "cache_level:bypass", "rule_kind": "page_rule",
+            "priority": 1, "status": "active", "modified_on": None,
+        }]
+        new = [{**prev[0], "status": "disabled"}]
+        changes = _real_changes(prev, new)
+        level, reason = classify_cloudflare_change(changes[0])
+        assert level == "medium", f"expected medium for non-prod hostname, got {level} ({reason})"
+
+    def test_worker_route_real_pattern_survives_real_compute_diff(self):
+        prev = [{
+            "record_type": "cloudflare_worker_route", "record_id": "w1",
+            "pattern": "internal-tool.example.com/*", "script_name": "s1",
+            "enabled": True, "modified_on": None,
+        }]
+        new = [{**prev[0], "enabled": False}]
+        changes = _real_changes(prev, new)
+        assert changes[0]["provider_metadata"]["pattern"] == "internal-tool.example.com/*"
+        level, reason = classify_cloudflare_change(changes[0])
+        assert level == "medium", f"expected medium for non-prod pattern, got {level} ({reason})"
+        assert "w1" not in reason
+
+    def test_access_application_real_name_survives_real_compute_diff(self):
+        prev = [{
+            "record_type": "cloudflare_access_application", "record_id": "a1",
+            "name": "Admin Panel", "type": "self_hosted",
+            "domain": "admin.example.com", "visibility": "private",
+            "enabled": True, "session_duration": "24h",
+            "allowed_idps_count": 2, "modified_on": None,
+        }]
+        new = [{**prev[0], "enabled": False}]
+        changes = _real_changes(prev, new)
+        assert changes[0]["provider_metadata"]["name"] == "Admin Panel"
+        _, reason = classify_cloudflare_change(changes[0])
+        assert "Admin Panel" in reason
+        assert "a1" not in reason
+
+    def test_access_policy_real_name_survives_real_compute_diff(self):
+        prev = [{
+            "record_type": "cloudflare_access_policy", "record_id": "pol1",
+            "application_id": "a1", "name": "Default allow", "decision": "allow",
+            "enabled": True, "precedence": 1, "include_count": 1,
+            "exclude_count": 0, "require_count": 0, "modified_on": None,
+        }]
+        new = [{**prev[0], "enabled": False}]
+        changes = _real_changes(prev, new)
+        assert changes[0]["provider_metadata"]["name"] == "Default allow"
+        _, reason = classify_cloudflare_change(changes[0])
+        assert "Default allow" in reason
+        assert "pol1" not in reason
+
+    def test_waf_rule_real_description_survives_real_compute_diff(self):
+        prev = [{
+            "record_type": "cloudflare_waf_rule", "record_id": "r1",
+            "ruleset_id": "rs1", "description": "block sqli", "action": "block",
+            "enabled": True, "expression_hash": "aaa", "modified_on": None,
+        }]
+        new = [{**prev[0], "enabled": False}]
+        changes = _real_changes(prev, new)
+        assert changes[0]["provider_metadata"]["description"] == "block sqli"
+        _, reason = classify_cloudflare_change(changes[0])
+        assert "block sqli" in reason
+        assert "r1" not in reason
+
+    def test_access_policy_decision_survives_for_added_event(self):
+        """The 'added' branch reads provider_metadata['decision'] directly
+        (no field_path exists for a whole-record add event)."""
+        new_record = {
+            "record_type": "cloudflare_access_policy", "record_id": "pol2",
+            "application_id": "a1", "name": "Bypass rule", "decision": "bypass",
+            "enabled": True, "precedence": 1, "include_count": 1,
+            "exclude_count": 0, "require_count": 0, "modified_on": None,
+        }
+        changes = _real_changes([], [new_record])
+        assert len(changes) == 1
+        assert changes[0]["provider_metadata"]["decision"] == "bypass"
+        level, reason = classify_cloudflare_change(changes[0])
+        assert level == "high", f"expected high for a new bypass policy, got {level} ({reason})"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
