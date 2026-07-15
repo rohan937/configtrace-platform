@@ -791,3 +791,95 @@ class TestCountUnknownBaselineSafety:
         level, reason = _classify(c)
         assert level == "high"
         assert "increased from 0 to 2" in reason.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# L. Same-sync context-field timing — regression guard against a second
+# provider_metadata bug found in this classification-QA pass: context fields
+# (topic / policy_type / primary) were read from the OLD (prev) record even
+# for "modified" Changes, so if the context field itself changed in the same
+# sync round as the field being classified, severity was scoped against the
+# stale context instead of the current one. Fixed by preferring the NEW
+# record (alt_record) for these context fields when both are available.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestSameSyncContextTiming:
+    def test_L1_domain_becomes_primary_and_loses_ssl_same_sync_is_high(self):
+        """Regression guard: previously classified 'low' because the
+        ssl_enabled Change's 'primary' context came from the prev record
+        (primary=False), even though the domain became primary in the same
+        sync round."""
+        prev = {
+            "record_type": "shopify_domain", "record_id": "d1",
+            "name": "store.example.com", "domain_id_hash": "h",
+            "host": "store.example.com", "ssl_enabled": True,
+            "primary": False, "verified": True, "managed_by_shopify": True,
+        }
+        new = {**prev, "ssl_enabled": False, "primary": True}
+        changes = _real_changes([prev], [new])
+        ssl_changes = [c for c in changes if c["field_path"] == "ssl_enabled"]
+        assert len(ssl_changes) == 1
+        assert ssl_changes[0]["provider_metadata"].get("primary") is True
+        level, reason = _classify(ssl_changes[0])
+        assert level == "high", (
+            f"domain becoming primary + losing SSL in the same sync must be "
+            f"high; got {level} ({reason})"
+        )
+
+    def test_L2_domain_loses_primary_and_ssl_same_sync_is_low(self):
+        """Symmetric case: a domain losing primary status in the same sync
+        it loses SSL should be scoped as non-primary (low), not high."""
+        prev = {
+            "record_type": "shopify_domain", "record_id": "d2",
+            "name": "old.example.com", "domain_id_hash": "h2",
+            "host": "old.example.com", "ssl_enabled": True,
+            "primary": True, "verified": True, "managed_by_shopify": True,
+        }
+        new = {**prev, "ssl_enabled": False, "primary": False}
+        changes = _real_changes([prev], [new])
+        ssl_changes = [c for c in changes if c["field_path"] == "ssl_enabled"]
+        assert ssl_changes[0]["provider_metadata"].get("primary") is False
+        level, _ = _classify(ssl_changes[0])
+        assert level == "low"
+
+    def test_L3_webhook_topic_becomes_critical_and_downgrades_to_http_same_sync_is_critical(self):
+        """Regression guard: previously classified 'high' because the
+        endpoint_scheme/is_https Changes' 'topic' context came from the prev
+        record (products/update), even though the topic became a critical
+        topic (orders/create) in the same sync round."""
+        prev = {
+            "record_type": "shopify_webhook_subscription", "record_id": "abc",
+            "name": "products/update -> x.com", "topic": "products/update",
+            "endpoint_domain": "x.com", "endpoint_scheme": "https", "is_https": True,
+            "endpoint_path_hash": "h1", "endpoint_path_length": 5,
+            "format": "json", "api_version": "2024-01",
+        }
+        new = {**prev, "topic": "orders/create", "endpoint_scheme": "http", "is_https": False}
+        changes = _real_changes([prev], [new])
+        scheme_changes = [c for c in changes if c["field_path"] == "endpoint_scheme"]
+        https_changes = [c for c in changes if c["field_path"] == "is_https"]
+        assert len(scheme_changes) == 1 and len(https_changes) == 1
+        for change in (scheme_changes[0], https_changes[0]):
+            assert change["provider_metadata"].get("topic") == "orders/create"
+            level, reason = _classify(change)
+            assert level == "critical", (
+                f"{change['field_path']} downgrade alongside a topic change to a "
+                f"critical topic in the same sync must be critical; got {level} ({reason})"
+            )
+
+    def test_L4_webhook_topic_becomes_non_critical_same_sync_is_high_not_critical(self):
+        """Symmetric case: a topic changing away from a critical topic in the
+        same sync as an HTTP downgrade should not be scoped as critical."""
+        prev = {
+            "record_type": "shopify_webhook_subscription", "record_id": "abc2",
+            "name": "orders/create -> x.com", "topic": "orders/create",
+            "endpoint_domain": "x.com", "endpoint_scheme": "https", "is_https": True,
+            "endpoint_path_hash": "h2", "endpoint_path_length": 5,
+            "format": "json", "api_version": "2024-01",
+        }
+        new = {**prev, "topic": "products/update", "endpoint_scheme": "http", "is_https": False}
+        changes = _real_changes([prev], [new])
+        scheme_changes = [c for c in changes if c["field_path"] == "endpoint_scheme"]
+        assert scheme_changes[0]["provider_metadata"].get("topic") == "products/update"
+        level, _ = _classify(scheme_changes[0])
+        assert level == "high"

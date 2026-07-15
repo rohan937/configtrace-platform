@@ -2879,8 +2879,16 @@ def _build_provider_metadata(
     # fields were ever included here), which meant critical-topic webhooks
     # were systematically under-classified (e.g. "high" instead of
     # "critical" for an orders/create webhook downgraded to plain HTTP).
+    #
+    # For "modified" changes, prefer alt_record (the NEW record) for this
+    # context: if topic and endpoint_scheme both change in the same sync
+    # round, the field being classified (e.g. endpoint_scheme) should be
+    # scoped against the topic it belongs to *going forward*, not the topic
+    # it had before the sync. Falls back to record (added/removed have no
+    # alt_record) when alt_record is unavailable.
+    context_record = alt_record if alt_record is not None else record
     if record.get("record_type") == "shopify_webhook_subscription":
-        metadata["topic"] = record.get("topic") or ""
+        metadata["topic"] = context_record.get("topic") or ""
         # is_https / endpoint_scheme are also read directly from
         # provider_metadata by the risk classifier's "added" branch (a whole-
         # record event has no per-field field_path to read them from).
@@ -2893,14 +2901,17 @@ def _build_provider_metadata(
     # policy is removed or cleared. Same under-classification bug class as
     # the webhook topic above — this was previously never populated.
     if record.get("record_type") == "shopify_store_policy":
-        metadata["policy_type"] = record.get("policy_type") or ""
+        metadata["policy_type"] = context_record.get("policy_type") or ""
 
     # Shopify domains carry the ``primary`` flag, which the risk classifier
     # needs to scope SSL/verification severity to the primary domain only —
     # mirroring the shopify_domain_ssl_missing / shopify_domain_unverified
-    # Security Findings, which only evaluate the primary domain.
+    # Security Findings, which only evaluate the primary domain. Uses the
+    # NEW record's primary flag (via context_record) so a domain that just
+    # became primary in this same sync round is scoped correctly for any
+    # other field (e.g. ssl_enabled) that changed alongside it.
     if record.get("record_type") == "shopify_domain":
-        metadata["primary"] = record.get("primary")
+        metadata["primary"] = context_record.get("primary")
 
     return metadata
 
