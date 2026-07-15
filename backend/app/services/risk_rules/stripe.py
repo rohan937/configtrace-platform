@@ -450,15 +450,21 @@ def _classify_billing_portal_config_change(change: Change) -> tuple[str, str]:
             "A new Stripe customer billing portal configuration was created.",
         )
 
-    old = _get(change, "prev_value") or {}
-    new = _get(change, "new_value") or {}
-    if not isinstance(old, dict):
-        old = {}
-    if not isinstance(new, dict):
-        new = {}
+    # Modified: field_path/prev_value/new_value are the SCALAR field values
+    # produced by real compute_diff() (one Change per changed field) — never
+    # whole prev/new record dicts. A previous version of this function read
+    # prev_value/new_value as dicts (e.g. old.get("active")), which only
+    # matched hand-built test Changes that passed whole dicts; every real
+    # compute_diff()-produced Change has scalar prev_value/new_value, so that
+    # version's `isinstance(..., dict)` guard reset `old`/`new` to `{}` on
+    # every real field change, silently collapsing the entire severity chain
+    # below to the final generic "low" fallback. Fixed to dispatch on
+    # field_path like every other Stripe classifier in this module.
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
 
     # active disabled
-    if old.get("active") is True and new.get("active") is False:
+    if fp == "active" and nv is False:
         return (
             "medium",
             "The Stripe customer billing portal configuration was deactivated. "
@@ -466,7 +472,7 @@ def _classify_billing_portal_config_change(change: Change) -> tuple[str, str]:
         )
 
     # payment_method_update_enabled disabled
-    if old.get("payment_method_update_enabled") is True and new.get("payment_method_update_enabled") is False:
+    if fp == "payment_method_update_enabled" and nv is False:
         return (
             "medium",
             "Payment method updates were disabled in the Stripe billing portal. "
@@ -474,17 +480,16 @@ def _classify_billing_portal_config_change(change: Change) -> tuple[str, str]:
         )
 
     # subscription_cancel_enabled changed
-    if old.get("subscription_cancel_enabled") != new.get("subscription_cancel_enabled"):
-        enabled_now = new.get("subscription_cancel_enabled")
+    if fp == "subscription_cancel_enabled":
         return (
             "medium",
             f"Subscription self-cancellation in the billing portal was "
-            f"{'enabled' if enabled_now else 'disabled'}. "
+            f"{'enabled' if nv else 'disabled'}. "
             "Confirm this change is intentional.",
         )
 
     # customer_update_allowed_updates changed
-    if old.get("customer_update_allowed_updates") != new.get("customer_update_allowed_updates"):
+    if fp == "customer_update_allowed_updates":
         return (
             "medium",
             "The set of customer-editable fields in the billing portal changed. "
@@ -492,7 +497,7 @@ def _classify_billing_portal_config_change(change: Change) -> tuple[str, str]:
         )
 
     # subscription_update_allowed_updates changed
-    if old.get("subscription_update_allowed_updates") != new.get("subscription_update_allowed_updates"):
+    if fp == "subscription_update_allowed_updates":
         return (
             "medium",
             "Subscription update options in the billing portal changed. "
@@ -500,7 +505,7 @@ def _classify_billing_portal_config_change(change: Change) -> tuple[str, str]:
         )
 
     # login_page_enabled disabled
-    if old.get("login_page_enabled") is True and new.get("login_page_enabled") is False:
+    if fp == "login_page_enabled" and nv is False:
         return (
             "medium",
             "The billing portal login page was disabled. "
@@ -508,33 +513,41 @@ def _classify_billing_portal_config_change(change: Change) -> tuple[str, str]:
         )
 
     # subscription_cancel_mode changed
-    if old.get("subscription_cancel_mode") != new.get("subscription_cancel_mode"):
+    if fp == "subscription_cancel_mode":
         return (
             "low",
             f"Subscription cancellation timing changed to "
-            f"\"{new.get('subscription_cancel_mode')}\". "
+            f"\"{nv}\". "
             "Customers will experience different cancellation behaviour.",
         )
 
     # subscription_pause_enabled changed
-    if old.get("subscription_pause_enabled") != new.get("subscription_pause_enabled"):
+    if fp == "subscription_pause_enabled":
         return (
             "low",
             "Subscription pause capability in the billing portal changed.",
         )
 
     # invoice_history_enabled changed
-    if old.get("invoice_history_enabled") != new.get("invoice_history_enabled"):
+    if fp == "invoice_history_enabled":
         return (
             "low",
             "Invoice history visibility in the billing portal changed.",
         )
 
     # is_default changed
-    if old.get("is_default") != new.get("is_default"):
+    if fp == "is_default":
         return (
             "low",
             "The default billing portal configuration assignment changed.",
+        )
+
+    # return_url_domain changed — not in the original priority chain but a
+    # real tracked field; treat as a low-severity informational change.
+    if fp == "return_url_domain":
+        return (
+            "low",
+            "The billing portal return URL domain changed.",
         )
 
     return (

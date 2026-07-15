@@ -697,53 +697,99 @@ class TestStripeBillingPortalRisk:
         assert level == "low"
 
     def test_active_disabled_is_medium(self):
+        """Regression guard (Stripe detection-QA pass): prev_value/new_value
+        are the SCALAR field values real compute_diff() produces, never
+        whole prev/new record dicts — the classifier previously read
+        old.get("active")/new.get("active") on what would always be `{}`
+        for a real Change, silently collapsing every billing-portal severity
+        branch to the generic low fallback."""
         level, _ = self._classify(
             change_type="modified",
             field_path="active",
-            old_value={"active": True},
-            new_value={"active": False},
+            old_value=True,
+            new_value=False,
         )
         assert level == "medium"
 
     def test_payment_method_update_disabled_is_medium(self):
         level, _ = self._classify(
             change_type="modified",
-            old_value={"payment_method_update_enabled": True},
-            new_value={"payment_method_update_enabled": False},
+            field_path="payment_method_update_enabled",
+            old_value=True,
+            new_value=False,
         )
         assert level == "medium"
 
     def test_subscription_cancel_changed_is_medium(self):
         level, _ = self._classify(
             change_type="modified",
-            old_value={"subscription_cancel_enabled": False},
-            new_value={"subscription_cancel_enabled": True},
+            field_path="subscription_cancel_enabled",
+            old_value=False,
+            new_value=True,
         )
         assert level == "medium"
 
     def test_customer_update_allowed_changed_is_medium(self):
         level, _ = self._classify(
             change_type="modified",
-            old_value={"customer_update_allowed_updates": ["email"]},
-            new_value={"customer_update_allowed_updates": ["email", "address"]},
+            field_path="customer_update_allowed_updates",
+            old_value=["email"],
+            new_value=["email", "address"],
         )
         assert level == "medium"
 
     def test_subscription_cancel_mode_changed_is_low(self):
         level, _ = self._classify(
             change_type="modified",
-            old_value={"subscription_cancel_mode": "at_period_end"},
-            new_value={"subscription_cancel_mode": "immediately"},
+            field_path="subscription_cancel_mode",
+            old_value="at_period_end",
+            new_value="immediately",
         )
         assert level == "low"
 
     def test_invoice_history_changed_is_low(self):
         level, _ = self._classify(
             change_type="modified",
-            old_value={"invoice_history_enabled": True},
-            new_value={"invoice_history_enabled": False},
+            field_path="invoice_history_enabled",
+            old_value=True,
+            new_value=False,
         )
         assert level == "low"
+
+    def test_real_compute_diff_active_disabled_is_medium(self):
+        """Exercises the real compute_diff() -> classify_stripe_change()
+        pipeline (not a hand-built Change) to guard against the shape bug
+        recurring."""
+        from app.services.diff_service import compute_diff
+        from app.services.risk_rules.stripe import classify_stripe_change
+
+        class _FakeSnapshot:
+            def __init__(self, state):
+                self.state = state
+
+        base = {
+            "record_type": "stripe_billing_portal_config", "record_id": "bpc_1",
+            "name": "default", "active": True, "is_default": True,
+            "login_page_enabled": True, "return_url_domain": "example.com",
+            "customer_update_enabled": True,
+            "customer_update_allowed_updates": ["address"],
+            "invoice_history_enabled": True,
+            "payment_method_update_enabled": True,
+            "subscription_cancel_enabled": True,
+            "subscription_cancel_mode": "immediately",
+            "subscription_cancel_reason_enabled": True,
+            "subscription_update_enabled": True,
+            "subscription_update_allowed_updates": ["price"],
+            "subscription_pause_enabled": True,
+        }
+        prev = [dict(base)]
+        new = [{**base, "login_page_enabled": False}]
+        changes = compute_diff(_FakeSnapshot(prev), _FakeSnapshot(new))
+        matching = [c for c in changes if c["field_path"] == "login_page_enabled"]
+        assert len(matching) == 1, "login_page_enabled change was not detected by compute_diff"
+        level, reason = classify_stripe_change(matching[0])
+        assert level == "medium", f"expected medium, got {level} ({reason})"
+        assert "login page" in reason.lower()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

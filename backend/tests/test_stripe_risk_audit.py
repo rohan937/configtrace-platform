@@ -358,10 +358,17 @@ class TestBillingPortalConfig:
         assert level == "low"
 
     def test_D3_active_disabled_is_medium(self):
+        """Regression guard (Stripe detection-QA pass): field_path/prev_value/
+        new_value must be the SCALAR values real compute_diff() produces for
+        a "modified" Change — never whole prev/new record dicts. The
+        classifier previously read prev_value/new_value as dicts, which
+        only matched this test's (unrealistic) shape and silently collapsed
+        every real field-level Change to the generic low fallback."""
         c = _change(
             record_type="stripe_billing_portal_config",
-            prev_value={"active": True,  "payment_method_update_enabled": True},
-            new_value={"active": False, "payment_method_update_enabled": True},
+            field_path="active",
+            prev_value=True,
+            new_value=False,
         )
         level, _ = _classify(c)
         assert level == "medium"
@@ -369,8 +376,9 @@ class TestBillingPortalConfig:
     def test_D4_payment_method_update_disabled_is_medium(self):
         c = _change(
             record_type="stripe_billing_portal_config",
-            prev_value={"active": True, "payment_method_update_enabled": True},
-            new_value={"active": True, "payment_method_update_enabled": False},
+            field_path="payment_method_update_enabled",
+            prev_value=True,
+            new_value=False,
         )
         level, _ = _classify(c)
         assert level == "medium"
@@ -378,8 +386,9 @@ class TestBillingPortalConfig:
     def test_D5_subscription_cancel_enabled_changed_is_medium(self):
         c = _change(
             record_type="stripe_billing_portal_config",
-            prev_value={"active": True, "subscription_cancel_enabled": True},
-            new_value={"active": True, "subscription_cancel_enabled": False},
+            field_path="subscription_cancel_enabled",
+            prev_value=True,
+            new_value=False,
         )
         level, _ = _classify(c)
         assert level == "medium"
@@ -387,8 +396,9 @@ class TestBillingPortalConfig:
     def test_D6_login_page_disabled_is_medium(self):
         c = _change(
             record_type="stripe_billing_portal_config",
-            prev_value={"active": True, "login_page_enabled": True},
-            new_value={"active": True, "login_page_enabled": False},
+            field_path="login_page_enabled",
+            prev_value=True,
+            new_value=False,
         )
         level, _ = _classify(c)
         assert level == "medium"
@@ -396,8 +406,9 @@ class TestBillingPortalConfig:
     def test_D7_subscription_pause_changed_is_low(self):
         c = _change(
             record_type="stripe_billing_portal_config",
-            prev_value={"active": True, "subscription_pause_enabled": True},
-            new_value={"active": True, "subscription_pause_enabled": False},
+            field_path="subscription_pause_enabled",
+            prev_value=True,
+            new_value=False,
         )
         level, _ = _classify(c)
         assert level == "low"

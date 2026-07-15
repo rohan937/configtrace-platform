@@ -320,6 +320,25 @@ _STRIPE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "subscription_update_allowed_updates",
         "subscription_pause_enabled",
     ),
+    # M73A — Payment Links. Only fields the connector actually populates are
+    # tracked here; the schema also defines line_item_count/
+    # line_item_price_ids/subscription_data_trial_period_days, which
+    # risk_rules/stripe.py has classifier branches for but the connector's
+    # _fetch_payment_links() never populates (line items aren't expanded) —
+    # left untracked/GAP rather than invented.
+    "stripe_payment_link": (
+        "active",
+        "allow_promotion_codes",
+        "automatic_tax_enabled",
+        "after_completion_type",
+        "after_completion_redirect_origin",
+        "success_url_origin",
+        "customer_creation",
+        "payment_method_collection",
+        "payment_method_types_count",
+        "application_fee_amount",
+        "application_fee_percent",
+    ),
 }
 
 # ── Cloudflare-specific tracked fields (M57.7) ────────────────────────────────
@@ -3063,6 +3082,19 @@ def _build_provider_metadata(
     # text in risk copy; only "record_name" is populated generically.
     if record.get("record_type") == "github_automation_permissions":
         metadata["name"] = context_record.get("name") or ""
+
+    # Stripe payment links carry a livemode flag that
+    # _is_production_payment_link() reads directly from provider_metadata to
+    # decide whether a removed/disabled link gets "high" (production) or
+    # "medium" (test-mode) severity. Without this stanza, pm.get("livemode")
+    # was always missing, so the classifier's "assume production when
+    # missing" fallback made every payment link — test-mode or not — always
+    # classify as production. Not a severity understatement (the fallback is
+    # conservative), but it meant the test/live distinction never actually
+    # worked in production, masked by tests that hand-built provider_metadata
+    # with livemode already present.
+    if record.get("record_type") == "stripe_payment_link":
+        metadata["livemode"] = context_record.get("livemode")
 
     return metadata
 
