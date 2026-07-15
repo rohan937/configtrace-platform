@@ -173,6 +173,10 @@ def classify_github_change(change: Any) -> tuple[str, str]:
         return _classify_security_features(pm, change_type, field_path, prev_value, new_value)
     if record_type == "github_pages":
         return _classify_pages(change_type, field_path, prev_value, new_value)
+    if record_type == "github_automation_permissions":
+        return _classify_automation_permissions(
+            pm, change_type, field_path, prev_value, new_value
+        )
 
     # Unknown GitHub record type — safe low-severity fallback.
     return (
@@ -1892,4 +1896,101 @@ def _classify_pages(
         "low",
         "GitHub Pages configuration changed; no specific risk pattern "
         "matched.",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# I. github_automation_permissions
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _classify_automation_permissions(
+    pm: dict,
+    change_type: str,
+    field_path: str,
+    prev_value: Any,
+    new_value: Any,
+) -> tuple[str, str]:
+    """Rules for ``github_automation_permissions`` records.
+
+    Tracks the authenticated credential's own repo-permission level and
+    classic-PAT OAuth scope posture — a broadening here means the credential
+    ConfigTrace (or another automation) uses now has a larger blast radius,
+    not that the repository itself was reconfigured.
+    """
+    name = _str(pm.get("name") or pm.get("record_id"))
+
+    if change_type == "modified" and field_path == "repository_permission_admin":
+        if _to_bool(new_value) is True:
+            return (
+                "high",
+                f"The automation credential for '{name}' was granted admin "
+                "repository permission. Admin access broadens the "
+                "credential's blast radius beyond what monitoring usually "
+                "requires.",
+            )
+        return (
+            "low",
+            f"The automation credential for '{name}' no longer has admin "
+            "repository permission.",
+        )
+
+    if change_type == "modified" and field_path in (
+        "repository_permission_push",
+        "repository_permission_maintain",
+    ):
+        if _to_bool(new_value) is True:
+            return (
+                "medium",
+                f"The automation credential for '{name}' was granted write "
+                f"permission ('{field_path}'). Read-only access is usually "
+                "sufficient for monitoring integrations.",
+            )
+        return (
+            "low",
+            f"The automation credential for '{name}' lost write permission "
+            f"('{field_path}').",
+        )
+
+    if change_type == "modified" and field_path == "broad_permission_count":
+        prev_n = _to_int(prev_value)
+        new_n = _to_int(new_value)
+        if new_n > prev_n:
+            return (
+                "medium",
+                f"The automation credential for '{name}' now holds "
+                f"{new_n} broad repository permission(s) (previously "
+                f"{prev_n}). Verify the credential's scope is intentional.",
+            )
+        return (
+            "low",
+            f"The automation credential for '{name}' broad-permission count "
+            f"decreased from {prev_n} to {new_n}.",
+        )
+
+    if change_type == "modified" and field_path == "token_broad_scopes":
+        if _to_bool(new_value) is True:
+            return (
+                "medium",
+                f"The classic PAT used for '{name}' now carries broad OAuth "
+                "scope(s) (e.g. 'repo', 'admin:org'). Consider a "
+                "fine-grained token or GitHub App scoped to what's needed.",
+            )
+        return (
+            "low",
+            f"The classic PAT used for '{name}' no longer carries broad "
+            "OAuth scopes.",
+        )
+
+    if change_type == "modified" and field_path == "credential_type":
+        return (
+            "low",
+            f"The automation credential type for '{name}' changed from "
+            f"'{prev_value}' to '{new_value}'.",
+        )
+
+    return (
+        "low",
+        f"Automation credential posture for '{name}' changed; no specific "
+        "risk pattern matched.",
     )

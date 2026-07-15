@@ -221,6 +221,32 @@ _GITHUB_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "pages_https_enforced",
         "pages_visibility",
     ),
+    # M69.5A — repository rulesets (modern branch protection). Only safe
+    # aggregate fields emitted by the connector are tracked here.
+    "github_ruleset": (
+        "target",
+        "enforcement",
+        "branch_patterns_count",
+        "targets_protected_branch",
+        "bypass_actor_count",
+        "required_status_checks_count",
+        "restrict_force_pushes",
+        "restrict_deletions",
+        "required_pr_reviews_required",
+        "require_signed_commits",
+        "requires_linear_history",
+        "requires_code_scanning",
+    ),
+    # M69.5B — automation credential / token permission posture.
+    "github_automation_permissions": (
+        "credential_type",
+        "repository_permission_admin",
+        "repository_permission_maintain",
+        "repository_permission_push",
+        "broad_permission_count",
+        "token_broad_scopes",
+        "token_scope_count",
+    ),
 }
 
 
@@ -3017,6 +3043,26 @@ def _build_provider_metadata(
         metadata["decision"] = context_record.get("decision") or ""
     if record.get("record_type") == "cloudflare_waf_rule":
         metadata["description"] = context_record.get("description") or ""
+
+    # GitHub rulesets carry a friendly name and a "targets a protected
+    # branch" heuristic that the risk classifier reads directly from
+    # provider_metadata (via pm.get("name") / pm.get("targets_protected_
+    # branch")) to decide critical-vs-high severity for removal/weakening
+    # events. Neither field is populated by the generic record_name/
+    # record_content stanza above, so without this stanza every ruleset
+    # change was silently capped at "high" even when it targeted main/
+    # release branches — the same provider-metadata gap pattern found for
+    # Shopify/Cloudflare/Vercel earlier this session.
+    if record.get("record_type") == "github_ruleset":
+        metadata["name"] = context_record.get("name") or ""
+        metadata["targets_protected_branch"] = bool(
+            context_record.get("targets_protected_branch")
+        )
+
+    # GitHub automation-permissions records use pm.get("name") for display
+    # text in risk copy; only "record_name" is populated generically.
+    if record.get("record_type") == "github_automation_permissions":
+        metadata["name"] = context_record.get("name") or ""
 
     return metadata
 
