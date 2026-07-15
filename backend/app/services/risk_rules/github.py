@@ -243,6 +243,14 @@ def _classify_repo_settings(
             "unarchived.",
         )
 
+    # Repository unarchived — restores normal read/write access.
+    if change_type == "modified" and field_path == "archived" and new_value is False:
+        return (
+            "low",
+            "Repository was unarchived. Pushes, issue creation, and pull "
+            "requests are permitted again.",
+        )
+
     # Repository made private — visibility reduced (generally a safer change).
     if (
         change_type == "modified"
@@ -730,6 +738,28 @@ def _classify_webhook(
             "data exposure.",
         )
 
+    # Webhook added using a plain http:// URL, or with SSL verification
+    # already disabled — the new webhook is insecure from the moment it's
+    # created, so this must not be under-classified as a routine addition.
+    if change_type == "added":
+        new_record = new_value if isinstance(new_value, dict) else {}
+        added_url = str(new_record.get("url") or "").lower()
+        if added_url.startswith("http://"):
+            return (
+                "critical",
+                "A new repository webhook was added using a plain http:// "
+                "delivery URL. GitHub event payloads and signature headers "
+                "would be sent in cleartext, which may allow interception or "
+                "tampering.",
+            )
+        if new_record.get("insecure_ssl_enabled") is True:
+            return (
+                "high",
+                "A new repository webhook was added with SSL verification "
+                "disabled for deliveries. This weakens delivery transport "
+                "verification and may require review.",
+            )
+
     # ── MEDIUM ────────────────────────────────────────────────────────────────
 
     # Webhook added — a new delivery endpoint has been connected.
@@ -849,10 +879,14 @@ def _classify_actions_permissions(
         )
 
     # Allowed actions broadened to allow any action from any repository.
+    # HIGH (not medium): matches the equivalent static
+    # github_actions_broad_permissions Security Finding's severity — a
+    # transition into this state should not be rated below the equivalent
+    # already-broad state.
     if change_type == "modified" and field_path == "allowed_actions":
         if str(new_value).lower() == "all":
             return (
-                "medium",
+                "high",
                 "Actions permissions changed to 'all'. Any action from any "
                 "repository or publisher can now run in workflows.",
             )
@@ -971,11 +1005,15 @@ def _classify_environment_protection(
 
     # reviewers_count decreased
     if field_path == "reviewers_count":
-        try:
-            old_count = int(prev_value or 0)
-            new_count = int(new_value or 0)
-        except (ValueError, TypeError):
-            old_count, new_count = 0, 0
+        old_count = _to_int_or_none(prev_value)
+        new_count = _to_int_or_none(new_value)
+        if old_count is None or new_count is None:
+            return (
+                "medium",
+                f"{env_label} required-reviewer count changed but the previous "
+                "or new count could not be determined. Review this "
+                "environment's required reviewers manually.",
+            )
         if new_count < old_count:
             return (
                 "high",
@@ -1007,11 +1045,14 @@ def _classify_environment_protection(
 
     # wait_timer changed
     if field_path == "wait_timer":
-        try:
-            old_t = int(prev_value or 0)
-            new_t = int(new_value or 0)
-        except (ValueError, TypeError):
-            old_t, new_t = 0, 0
+        old_t = _to_int_or_none(prev_value)
+        new_t = _to_int_or_none(new_value)
+        if old_t is None or new_t is None:
+            return (
+                "low",
+                f"{env_label} wait timer changed but the previous or new "
+                "value could not be determined.",
+            )
         if new_t < old_t:
             return (
                 "medium",
@@ -1059,11 +1100,41 @@ def _to_int(v: Any) -> int:
         return 0
 
 
-def _to_bool(v: Any) -> bool:
+def _to_int_or_none(v: Any) -> int | None:
+    """Coerce *v* to ``int``, preserving unknown (``None``/unparseable) as
+    ``None`` rather than silently defaulting to 0. Use this (never
+    ``_to_int``'s ``int(v or 0)``-style default) for any comparison whose
+    result text asserts a specific previous/new count — an unknown count
+    must never be described as if it were a confirmed zero."""
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_bool(v: Any) -> bool | None:
+    """Coerce *v* to a bool, preserving unknown as ``None``.
+
+    Every caller checks the result with ``is True`` / ``is False`` — ``None``
+    fails both checks and falls through to a non-committal branch, so this
+    never overstates an unknown posture as an explicit enabled/disabled
+    state. Previously this returned ``False`` for ``None``/unrecognised
+    input, which meant an unknown ruleset or automation-permission boolean
+    (e.g. ``restrict_force_pushes`` becoming unavailable) was silently
+    classified as if it had been explicitly disabled.
+    """
+    if v is None:
+        return None
     if isinstance(v, bool):
         return v
     s = _str(v).strip().lower()
-    return s in ("true", "1", "on", "yes")
+    if s in ("true", "1", "on", "yes"):
+        return True
+    if s in ("false", "0", "off", "no"):
+        return False
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1119,8 +1190,15 @@ def _classify_ruleset(
 
     # Bypass actors.
     if change_type == "modified" and field_path == "bypass_actor_count":
-        prev_n = _to_int(prev_value)
-        new_n = _to_int(new_value)
+        prev_n = _to_int_or_none(prev_value)
+        new_n = _to_int_or_none(new_value)
+        if prev_n is None or new_n is None:
+            return (
+                "medium",
+                f"Ruleset '{name}' bypass-actor count changed but the previous "
+                "or new count could not be determined. Review the ruleset's "
+                "bypass actors manually.",
+            )
         if new_n > prev_n:
             sev = "critical" if targets_prot else "high"
             return (
@@ -1138,8 +1216,15 @@ def _classify_ruleset(
 
     # Required status checks.
     if change_type == "modified" and field_path == "required_status_checks_count":
-        prev_n = _to_int(prev_value)
-        new_n = _to_int(new_value)
+        prev_n = _to_int_or_none(prev_value)
+        new_n = _to_int_or_none(new_value)
+        if prev_n is None or new_n is None:
+            return (
+                "medium",
+                f"Ruleset '{name}' required-status-check count changed but the "
+                "previous or new count could not be determined. Review the "
+                "ruleset's required status checks manually.",
+            )
         if new_n < prev_n:
             return (
                 "high",
@@ -1155,11 +1240,19 @@ def _classify_ruleset(
 
     # Required PR reviews toggled.
     if change_type == "modified" and field_path == "required_pr_reviews_required":
-        if _to_bool(new_value) is False:
+        new_b = _to_bool(new_value)
+        if new_b is False:
             return (
                 "high",
                 f"Ruleset '{name}' no longer requires pull request reviews. "
                 "Changes can be merged without peer approval.",
+            )
+        if new_b is None:
+            return (
+                "medium",
+                f"Ruleset '{name}' pull-request-review requirement changed to "
+                "an unrecognised value. Review the ruleset's PR-review "
+                "requirement manually.",
             )
         return (
             "low",
@@ -1168,12 +1261,20 @@ def _classify_ruleset(
 
     # Force pushes / deletions allowed.
     if change_type == "modified" and field_path == "restrict_force_pushes":
-        if _to_bool(new_value) is False:
+        new_b = _to_bool(new_value)
+        if new_b is False:
             sev = "critical" if targets_prot else "high"
             return (
                 sev,
                 f"Ruleset '{name}' no longer restricts force-pushes.  History "
                 "rewrites are now permitted on covered branches.",
+            )
+        if new_b is None:
+            return (
+                "medium",
+                f"Ruleset '{name}' force-push restriction changed to an "
+                "unrecognised value. Review the ruleset's force-push "
+                "restriction manually.",
             )
         return (
             "low",
@@ -1181,12 +1282,20 @@ def _classify_ruleset(
         )
 
     if change_type == "modified" and field_path == "restrict_deletions":
-        if _to_bool(new_value) is False:
+        new_b = _to_bool(new_value)
+        if new_b is False:
             sev = "critical" if targets_prot else "high"
             return (
                 sev,
                 f"Ruleset '{name}' no longer restricts deletions.  Covered "
                 "branches/tags can now be deleted.",
+            )
+        if new_b is None:
+            return (
+                "medium",
+                f"Ruleset '{name}' deletion restriction changed to an "
+                "unrecognised value. Review the ruleset's deletion "
+                "restriction manually.",
             )
         return (
             "low",
@@ -1195,8 +1304,14 @@ def _classify_ruleset(
 
     # Branch patterns broadened.
     if change_type == "modified" and field_path == "branch_patterns_count":
-        prev_n = _to_int(prev_value)
-        new_n = _to_int(new_value)
+        prev_n = _to_int_or_none(prev_value)
+        new_n = _to_int_or_none(new_value)
+        if prev_n is None or new_n is None:
+            return (
+                "low",
+                f"Ruleset '{name}' branch-pattern count changed but the "
+                "previous or new count could not be determined.",
+            )
         if new_n > prev_n:
             return (
                 "medium",
@@ -1206,10 +1321,18 @@ def _classify_ruleset(
 
     # Signed commits.
     if change_type == "modified" and field_path == "require_signed_commits":
-        if _to_bool(new_value) is False:
+        new_b = _to_bool(new_value)
+        if new_b is False:
             return (
                 "high",
                 f"Ruleset '{name}' no longer requires signed commits.",
+            )
+        if new_b is None:
+            return (
+                "medium",
+                f"Ruleset '{name}' signed-commit requirement changed to an "
+                "unrecognised value. Review the ruleset's signed-commit "
+                "requirement manually.",
             )
         return ("low", f"Ruleset '{name}' now requires signed commits.")
 
@@ -1892,6 +2015,12 @@ def _classify_pages(
             "able to reach the Pages site over plain HTTP.",
         )
 
+    if change_type == "modified" and field_path == "pages_https_enforced" and new_value is True:
+        return (
+            "low",
+            "GitHub Pages HTTPS enforcement was enabled.",
+        )
+
     return (
         "low",
         "GitHub Pages configuration changed; no specific risk pattern "
@@ -1921,13 +2050,21 @@ def _classify_automation_permissions(
     name = _str(pm.get("name") or pm.get("record_id"))
 
     if change_type == "modified" and field_path == "repository_permission_admin":
-        if _to_bool(new_value) is True:
+        new_b = _to_bool(new_value)
+        if new_b is True:
             return (
                 "high",
                 f"The automation credential for '{name}' was granted admin "
                 "repository permission. Admin access broadens the "
                 "credential's blast radius beyond what monitoring usually "
                 "requires.",
+            )
+        if new_b is None:
+            return (
+                "medium",
+                f"The automation credential for '{name}' admin-permission "
+                "posture changed to an unrecognised value. Review the "
+                "credential's repository permissions manually.",
             )
         return (
             "low",
@@ -1939,12 +2076,20 @@ def _classify_automation_permissions(
         "repository_permission_push",
         "repository_permission_maintain",
     ):
-        if _to_bool(new_value) is True:
+        new_b = _to_bool(new_value)
+        if new_b is True:
             return (
                 "medium",
                 f"The automation credential for '{name}' was granted write "
                 f"permission ('{field_path}'). Read-only access is usually "
                 "sufficient for monitoring integrations.",
+            )
+        if new_b is None:
+            return (
+                "medium",
+                f"The automation credential for '{name}' write-permission "
+                f"posture ('{field_path}') changed to an unrecognised value. "
+                "Review the credential's repository permissions manually.",
             )
         return (
             "low",
@@ -1953,8 +2098,15 @@ def _classify_automation_permissions(
         )
 
     if change_type == "modified" and field_path == "broad_permission_count":
-        prev_n = _to_int(prev_value)
-        new_n = _to_int(new_value)
+        prev_n = _to_int_or_none(prev_value)
+        new_n = _to_int_or_none(new_value)
+        if prev_n is None or new_n is None:
+            return (
+                "medium",
+                f"The automation credential for '{name}' broad-permission "
+                "count changed but the previous or new count could not be "
+                "determined. Review the credential's permissions manually.",
+            )
         if new_n > prev_n:
             return (
                 "medium",
@@ -1969,12 +2121,20 @@ def _classify_automation_permissions(
         )
 
     if change_type == "modified" and field_path == "token_broad_scopes":
-        if _to_bool(new_value) is True:
+        new_b = _to_bool(new_value)
+        if new_b is True:
             return (
                 "medium",
                 f"The classic PAT used for '{name}' now carries broad OAuth "
                 "scope(s) (e.g. 'repo', 'admin:org'). Consider a "
                 "fine-grained token or GitHub App scoped to what's needed.",
+            )
+        if new_b is None:
+            return (
+                "medium",
+                f"The classic PAT used for '{name}' broad-scope posture "
+                "changed to an unrecognised value. Review the token's OAuth "
+                "scopes manually.",
             )
         return (
             "low",

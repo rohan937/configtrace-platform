@@ -155,9 +155,17 @@ def test_creates_active_finding_for_http_webhook(test_user, db_session):
     assert len(findings) == 1
     f = findings[0]
     assert f.finding_key.startswith("github_webhook_http")
-    assert f.severity == "critical"
+    # Stale expectation from before the critical -> high severity
+    # recalibration (confirmed consistent across evaluator, rule pack,
+    # confidence, coverage, and frontend catalog in the GitHub detection-QA
+    # pass, commit 49955d9). This test was missed by that pass; fixed here.
+    assert f.severity == "high"
     assert f.title == "GitHub webhook uses plain HTTP"
-    assert f.evidence["url"] == "http://example.com/github-webhook"
+    # Stale key: evidence stores only the URL scheme/host (never the full
+    # URL, matching the sensitive-data minimization convention), not "url".
+    assert f.evidence["url_scheme"] == "http"
+    assert f.evidence["url_host"] == "example.com"
+    assert f.evidence["uses_http"] is True
     assert f.provider == "github"
 
     _cleanup(db_session, ws.id)

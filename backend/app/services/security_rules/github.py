@@ -30,11 +30,10 @@ Deferred GitHub rules (intentionally NOT implemented — see report)
   "expected private" signal, so we cannot tell intended-private from
   intentionally-public. Flagging every public repo would be wrong. Deferred
   until an expected-visibility setting exists.
-* Broad Actions permissions (``allowed_actions == "all"``): reliably captured,
-  but "all" is GitHub's common default and is not, on its own, a current
-  danger. Too low-signal / high false-positive to surface as an exposure.
-* ``github_ruleset``: overlaps with branch protection semantics and would
-  double-count; deferred to avoid conflicting findings.
+* ``github_ruleset`` used to overlap with branch protection semantics; it is
+  now evaluated separately via clearly-named ``github_ruleset_*`` rule keys
+  (see below) so ruleset findings never collide with legacy branch-protection
+  findings.
 """
 
 from __future__ import annotations

@@ -662,7 +662,11 @@ def test_actions_enabled_is_medium():
     assert level == "medium"
 
 
-def test_actions_allowed_changed_to_all_is_medium():
+def test_actions_allowed_changed_to_all_is_high():
+    """GitHub change-classification QA (message 2): bumped from medium to
+    high so the transition is never rated below the equivalent static
+    github_actions_broad_permissions Security Finding, which is severity
+    'high'."""
     change = _change(
         record_type="github_actions_permissions",
         field_path="allowed_actions",
@@ -670,7 +674,7 @@ def test_actions_allowed_changed_to_all_is_medium():
         new_value="all",
     )
     level, reason = classify_github_change(change)
-    assert level == "medium"
+    assert level == "high"
     assert "all" in reason.lower()
 
 
