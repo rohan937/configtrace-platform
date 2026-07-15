@@ -306,6 +306,33 @@ class TestVercelConnectorFetch:
         assert prod_vars[0]["key"] == "DATABASE_URL"
 
     @patch("httpx.get")
+    def test_fetch_never_emits_unreachable_expansion_record_types(self, mock_get):
+        """Regression guard for this classification-QA pass (task I): the 7
+        'M59.12 expansion' record types (vercel_deployment,
+        vercel_team_member, vercel_edge_config_item, vercel_cron_job,
+        vercel_integration_installation, vercel_function_runtime,
+        vercel_firewall_rule) have classifier + schema + mock-only test
+        coverage but are never fetched by the connector. This must remain
+        true — if the connector is ever extended to actually fetch one of
+        these, this test should be updated deliberately, not silently."""
+        mock_get.side_effect = self._mock_responses()
+        records = self._make_connector().fetch(CREDS)
+        types = {r["record_type"] for r in records}
+        unreachable = {
+            "vercel_deployment",
+            "vercel_team_member",
+            "vercel_edge_config_item",
+            "vercel_cron_job",
+            "vercel_integration_installation",
+            "vercel_function_runtime",
+            "vercel_firewall_rule",
+        }
+        assert not (types & unreachable), (
+            f"Connector unexpectedly emitted a previously-unreachable record "
+            f"type: {types & unreachable}"
+        )
+
+    @patch("httpx.get")
     def test_fetch_pagination_followed(self, mock_get):
         """Connector follows cursor pagination for env vars."""
         project_resp = _make_response(200, RAW_PROJECT)
@@ -615,6 +642,22 @@ class TestVercelRiskClassification:
         ))
         assert level == "low"
 
+    def test_domain_verified_unknown_is_low_not_high_or_verified_claim(self):
+        """Regression guard: previously an unconditional 'else' branch
+        claimed 'was successfully verified' for ANY non-False new_value,
+        including None (unknown/missing) — false certainty."""
+        level, reason = classify_vercel_change(self._change(
+            change_type="modified",
+            record_type=VERCEL_DOMAIN,
+            record_name="app.example.com",
+            field_path="verified",
+            prev_value=True,
+            new_value=None,
+        ))
+        assert level == "low"
+        assert "unknown" in reason.lower()
+        assert "successfully verified" not in reason.lower()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Diff service: tracked fields for vercel_ types
@@ -707,6 +750,54 @@ class TestDiffServiceVercel:
         for change in changes:
             level, _ = classify_vercel_change(change)
             assert level == "high", f"{change['field_path']} expected high, got {level}"
+
+    def test_real_compute_diff_detects_project_production_branch_change(self):
+        """Real compute_diff() -> classify_vercel_change() integration for
+        vercel_project — proves provider_metadata['record_name'] is built
+        correctly and read by the classifier, not just asserted via a
+        hand-built mock."""
+        from app.services.diff_service import compute_diff
+        from app.services.risk_rules.vercel import classify_vercel_change
+
+        class _FakeSnap:
+            def __init__(self, state):
+                self.state = state
+
+        prev = [{
+            "record_type": "vercel_project", "record_id": "prj_1", "name": "my-app",
+            "git_branch": "main", "git_repository": "org/repo", "framework": "nextjs",
+            "build_command": None, "install_command": None, "root_directory": None,
+            "output_directory": None, "node_version": "20.x",
+            "sso_protection": None, "password_protection": None,
+        }]
+        new = [{**prev[0], "git_branch": "staging"}]
+        changes = compute_diff(_FakeSnap(prev), _FakeSnap(new))
+        assert len(changes) == 1
+        level, reason = classify_vercel_change(changes[0])
+        assert level == "high"
+        assert "'main' to 'staging'" in reason
+
+    def test_real_compute_diff_detects_domain_unverified(self):
+        """Real compute_diff() -> classify_vercel_change() integration for
+        vercel_domain."""
+        from app.services.diff_service import compute_diff
+        from app.services.risk_rules.vercel import classify_vercel_change
+
+        class _FakeSnap:
+            def __init__(self, state):
+                self.state = state
+
+        prev = [{
+            "record_type": "vercel_domain", "record_id": "d1",
+            "name": "app.example.com", "verified": True,
+            "redirect": None, "git_branch": None,
+        }]
+        new = [{**prev[0], "verified": False}]
+        changes = compute_diff(_FakeSnap(prev), _FakeSnap(new))
+        assert len(changes) == 1
+        level, reason = classify_vercel_change(changes[0])
+        assert level == "high"
+        assert "app.example.com" in reason
 
     def test_cloudflare_record_still_uses_dns_fields(self):
         from app.services.diff_service import _tracked_fields_for

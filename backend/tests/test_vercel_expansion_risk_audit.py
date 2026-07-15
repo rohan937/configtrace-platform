@@ -423,6 +423,50 @@ class TestDeploymentProtection:
         level, _ = classify_vercel_change(c)
         assert level == "low"
 
+    def test_E10_sso_enabled_unknown_is_low_not_enabled_claim(self):
+        """Regression guard: an unconditional 'else' branch previously
+        claimed 'SSO was enabled' for any new_value that wasn't explicitly
+        False, including None (unknown/missing)."""
+        c = _ch(record_type="vercel_deployment_protection",
+                field_path="sso_enabled",
+                prev_value=True, new_value=None,
+                pm_extra={"record_id": "prj_10", "name": "prod-app"})
+        level, reason = classify_vercel_change(c)
+        assert level == "low"
+        assert "unknown" in reason.lower()
+        assert "was enabled" not in reason.lower()
+
+    def test_E11_password_enabled_unknown_is_low_not_enabled_claim(self):
+        c = _ch(record_type="vercel_deployment_protection",
+                field_path="password_enabled",
+                prev_value=True, new_value=None,
+                pm_extra={"record_id": "prj_11", "name": "prod-app"})
+        level, reason = classify_vercel_change(c)
+        assert level == "low"
+        assert "unknown" in reason.lower()
+        assert "was enabled" not in reason.lower()
+
+    def test_E12_protection_bypass_unknown_is_low_not_removed_claim(self):
+        c = _ch(record_type="vercel_deployment_protection",
+                field_path="protection_bypass_for_automation",
+                prev_value=True, new_value=None,
+                pm_extra={"record_id": "prj_12", "name": "prod-app"})
+        level, reason = classify_vercel_change(c)
+        assert level == "low"
+        assert "unknown" in reason.lower()
+        assert "was removed" not in reason.lower()
+
+    def test_E13_protection_bypass_false_to_none_is_unknown_not_high(self):
+        """Also confirm the risky-direction branch requires an explicit
+        True, not just 'not False'."""
+        c = _ch(record_type="vercel_deployment_protection",
+                field_path="protection_bypass_for_automation",
+                prev_value=False, new_value=None,
+                pm_extra={"record_id": "prj_13", "name": "prod-app"})
+        level, reason = classify_vercel_change(c)
+        assert level != "high"
+        assert "unknown" in reason.lower()
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # F. vercel_integration_installation

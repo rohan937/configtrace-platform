@@ -496,11 +496,15 @@ def _classify_domain_change(
                     "Vercel cannot serve traffic for unverified domains. "
                     "Check DNS configuration and re-verify ownership to restore service.",
                 )
-            # False → True (verified)
+            if new_value is True:
+                return (
+                    "low",
+                    f"Domain '{domain}' was successfully verified. "
+                    "Vercel can now serve traffic for this domain.",
+                )
             return (
                 "low",
-                f"Domain '{domain}' was successfully verified. "
-                "Vercel can now serve traffic for this domain.",
+                f"Domain '{domain}' verification state is now unknown or missing.",
             )
 
         if field_path == "redirect":
@@ -1203,43 +1207,61 @@ def _classify_deployment_protection_change(
     pid = str(pm.get("name") or pm.get("record_id") or "unknown")
 
     if field_path == "sso_enabled":
-        if prev_value is True and new_value is False:
+        if new_value is False:
             return (
                 "high",
                 f"Vercel Authentication (SSO) was disabled on project {pid}. "
                 "Preview/protected deployments may now be reachable without "
                 "team-member sign-in — verify the change is intentional.",
             )
+        if new_value is True:
+            return (
+                "low",
+                f"Vercel Authentication (SSO) was enabled on project {pid}.",
+            )
         return (
             "low",
-            f"Vercel Authentication (SSO) was enabled on project {pid}.",
+            f"Vercel Authentication (SSO) state on project {pid} is now "
+            "unknown or missing.",
         )
 
     if field_path == "password_enabled":
-        if prev_value is True and new_value is False:
+        if new_value is False:
             return (
                 "high",
                 f"Vercel password protection was disabled on project {pid}. "
                 "Preview/protected deployments may now be reachable without "
                 "a password.",
             )
+        if new_value is True:
+            return (
+                "low",
+                f"Vercel password protection was enabled on project {pid}.",
+            )
         return (
             "low",
-            f"Vercel password protection was enabled on project {pid}.",
+            f"Vercel password protection state on project {pid} is now "
+            "unknown or missing.",
         )
 
     if field_path == "protection_bypass_for_automation":
-        if prev_value is False and new_value is True:
+        if new_value is True:
             return (
                 "high",
                 f"Vercel deployment-protection bypass for automation was "
                 f"enabled on project {pid}.  Automation tokens can now skip "
                 "the protection barrier — verify the change is intentional.",
             )
+        if new_value is False:
+            return (
+                "low",
+                f"Vercel deployment-protection bypass was removed on project "
+                f"{pid}.",
+            )
         return (
             "low",
-            f"Vercel deployment-protection bypass was removed on project "
-            f"{pid}.",
+            f"Vercel deployment-protection bypass state on project {pid} is "
+            "now unknown or missing.",
         )
 
     if field_path == "trusted_ips_count":
