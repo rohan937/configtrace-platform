@@ -875,3 +875,82 @@ class TestSecretSafety:
                 assert bad not in r, f"forbidden phrase {bad!r} in: {reason!r}"
             # Hedged language present in severe scenarios.
             assert ("may " in r) or ("could " in r) or ("verify" in r)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# T. Count-unknown-baseline safety — regression guard against the
+# PagerDuty-style unknown-to-zero bug found in this detection-QA pass: five
+# count fields across three classifiers used ``int(value or 0)``, which
+# silently coerced a genuinely unknown prior count to 0 and could make any
+# real count look like "increased from 0".
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class TestCountUnknownBaselineSafety:
+    def test_T1_trusted_ips_count_unknown_prev_does_not_claim_specific_increase(self):
+        c = _ch(record_type="vercel_deployment_protection",
+                field_path="trusted_ips_count", prev_value=None, new_value=5,
+                pm_extra={"record_id": "p1", "name": "prod"})
+        level, reason = classify_vercel_change(c)
+        assert "from 0 to" not in reason.lower()
+        assert level != "high"
+
+    def test_T2_trusted_ips_count_real_zero_baseline_still_detects_increase(self):
+        c = _ch(record_type="vercel_deployment_protection",
+                field_path="trusted_ips_count", prev_value=0, new_value=5,
+                pm_extra={"record_id": "p2", "name": "prod"})
+        level, reason = classify_vercel_change(c)
+        assert level == "high"
+        assert "from 0 to 5" in reason.lower()
+
+    def test_T3_integration_project_count_unknown_prev_does_not_claim_specific_increase(self):
+        c = _ch(record_type="vercel_integration_installation",
+                field_path="project_count", prev_value=None, new_value=3,
+                pm_extra={"record_id": "i1", "name": "some-app"})
+        level, reason = classify_vercel_change(c)
+        assert "from 0 to" not in reason.lower()
+        assert level != "high"
+
+    def test_T4_integration_project_count_real_zero_baseline_still_detects_increase(self):
+        c = _ch(record_type="vercel_integration_installation",
+                field_path="project_count", prev_value=0, new_value=3,
+                pm_extra={"record_id": "i2", "name": "some-app"})
+        level, reason = classify_vercel_change(c)
+        assert level == "high"
+        assert "from 0 to 3" in reason.lower()
+
+    def test_T5_max_duration_unknown_prev_does_not_claim_specific_increase(self):
+        c = _ch(record_type="vercel_function_runtime",
+                field_path="default_max_duration_seconds",
+                prev_value=None, new_value=60,
+                pm_extra={"record_id": "f1", "name": "app"})
+        level, reason = classify_vercel_change(c)
+        assert "from 0s to" not in reason.lower()
+        assert level != "high"
+
+    def test_T6_public_function_route_count_unknown_prev_does_not_claim_specific_increase(self):
+        c = _ch(record_type="vercel_function_runtime",
+                field_path="public_function_route_count",
+                prev_value=None, new_value=4,
+                pm_extra={"record_id": "f2", "name": "app"})
+        level, reason = classify_vercel_change(c)
+        assert "from 0 to" not in reason.lower()
+        assert level != "high"
+
+    def test_T7_public_function_route_count_real_zero_baseline_still_detects_increase(self):
+        c = _ch(record_type="vercel_function_runtime",
+                field_path="public_function_route_count",
+                prev_value=0, new_value=4,
+                pm_extra={"record_id": "f3", "name": "app"})
+        level, reason = classify_vercel_change(c)
+        assert level == "high"
+        assert "from 0 to 4" in reason.lower()
+
+    def test_T8_edge_function_count_unknown_prev_does_not_raise(self):
+        c = _ch(record_type="vercel_function_runtime",
+                field_path="edge_function_count",
+                prev_value=None, new_value=2,
+                pm_extra={"record_id": "f4", "name": "app"})
+        level, reason = classify_vercel_change(c)
+        assert level == "low"
+        assert "unknown" in reason.lower()

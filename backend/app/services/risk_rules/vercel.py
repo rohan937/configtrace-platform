@@ -743,6 +743,22 @@ def _has_credential_prefix(s: str) -> bool:
     return any(s.startswith(p) for p in _VERCEL_CREDENTIAL_PREFIX_BLOCKLIST)
 
 
+def _int_or_none(val: object) -> "int | None":
+    """Coerce to int, but return None (not 0) for missing/unparseable values.
+
+    A count that is genuinely unknown/missing must never be silently
+    treated as an explicit ``0`` — doing so would let an unknown baseline
+    falsely claim an "increase" (the PagerDuty-style bug this session keeps
+    finding across providers).
+    """
+    if isinstance(val, bool) or val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def _safe_branch_label(value: object) -> str:
     s = str(value or "")
     if not s or len(s) > 80:
@@ -1227,22 +1243,32 @@ def _classify_deployment_protection_change(
         )
 
     if field_path == "trusted_ips_count":
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        if new_n > prev_n:
+        prev_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and prev_n is not None and new_n > prev_n:
             return (
                 "high",
                 f"Vercel trusted-IP allowlist was broadened on project {pid} "
                 f"(from {prev_n} to {new_n}).  More IPs can now bypass "
                 "deployment protection.",
             )
+        if new_n is not None and prev_n is None and new_n > 0:
+            return (
+                "medium",
+                f"Vercel trusted-IP allowlist on project {pid} now has "
+                f"{new_n} entries, though the prior count is unknown or "
+                "missing.  Review the allowlist.",
+            )
+        if new_n is not None and prev_n is not None:
+            return (
+                "low",
+                f"Vercel trusted-IP allowlist was narrowed on project {pid} "
+                f"(from {prev_n} to {new_n}).",
+            )
         return (
             "low",
-            f"Vercel trusted-IP allowlist was narrowed on project {pid} "
-            f"(from {prev_n} to {new_n}).",
+            f"Vercel trusted-IP allowlist count on project {pid} is now "
+            "unknown or missing.",
         )
 
     if field_path == "trusted_ips_cidr_hash":
@@ -1332,23 +1358,32 @@ def _classify_integration_installation_change(
             )
 
     if field_path == "project_count":
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        if new_n > prev_n:
-            sev = "high"
+        prev_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and prev_n is not None and new_n > prev_n:
             return (
-                sev,
+                "high",
                 f"Vercel integration '{name}' project scope broadened from "
                 f"{prev_n} to {new_n} projects.  Verify the additional "
                 "projects were intentionally connected.",
             )
+        if new_n is not None and prev_n is None and new_n > 0:
+            return (
+                "medium",
+                f"Vercel integration '{name}' now covers {new_n} project(s), "
+                "though the prior count is unknown or missing.  Verify the "
+                "scope is intentional.",
+            )
+        if new_n is not None and prev_n is not None:
+            return (
+                "low",
+                f"Vercel integration '{name}' project scope narrowed from "
+                f"{prev_n} to {new_n} projects.",
+            )
         return (
             "low",
-            f"Vercel integration '{name}' project scope narrowed from "
-            f"{prev_n} to {new_n} projects.",
+            f"Vercel integration '{name}' project scope count is now unknown "
+            "or missing.",
         )
 
     return (
@@ -1407,22 +1442,31 @@ def _classify_function_runtime_change(
         )
 
     if field_path == "default_max_duration_seconds":
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        if new_n > prev_n:
+        prev_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and prev_n is not None and new_n > prev_n:
             return (
                 "medium",
                 f"Vercel project {pid} default function max_duration was "
                 f"raised from {prev_n}s to {new_n}s.  Verify the new limit "
                 "is intentional (may increase cost).",
             )
+        if new_n is not None and prev_n is None:
+            return (
+                "low",
+                f"Vercel project {pid} default function max_duration is now "
+                f"{new_n}s, though the prior value is unknown or missing.",
+            )
+        if new_n is not None and prev_n is not None:
+            return (
+                "low",
+                f"Vercel project {pid} default function max_duration was "
+                f"lowered from {prev_n}s to {new_n}s.",
+            )
         return (
             "low",
-            f"Vercel project {pid} default function max_duration was lowered "
-            f"from {prev_n}s to {new_n}s.",
+            f"Vercel project {pid} default function max_duration is now "
+            "unknown or missing.",
         )
 
     if field_path == "default_memory_mb":
@@ -1433,12 +1477,9 @@ def _classify_function_runtime_change(
         )
 
     if field_path == "public_function_route_count":
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        if new_n > prev_n:
+        prev_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and prev_n is not None and new_n > prev_n:
             return (
                 "high",
                 f"Vercel project {pid} public function route count "
@@ -1446,23 +1487,44 @@ def _classify_function_runtime_change(
                 "publicly reachable — verify each new route applies the "
                 "intended auth/rate-limiting.",
             )
+        if new_n is not None and prev_n is None and new_n > 0:
+            return (
+                "medium",
+                f"Vercel project {pid} now has {new_n} public function "
+                "route(s), though the prior count is unknown or missing. "
+                "Verify each route applies the intended auth/rate-limiting.",
+            )
+        if new_n is not None and prev_n is not None:
+            return (
+                "low",
+                f"Vercel project {pid} public function route count decreased "
+                f"from {prev_n} to {new_n}.",
+            )
         return (
             "low",
-            f"Vercel project {pid} public function route count decreased "
-            f"from {prev_n} to {new_n}.",
+            f"Vercel project {pid} public function route count is now "
+            "unknown or missing.",
         )
 
     if field_path in ("edge_function_count", "serverless_function_count"):
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        direction = "increased" if new_n > prev_n else "decreased"
+        prev_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and prev_n is not None:
+            direction = "increased" if new_n > prev_n else "decreased"
+            return (
+                "low",
+                f"Vercel project {pid} {field_path} {direction} from {prev_n} "
+                f"to {new_n}.",
+            )
+        if new_n is not None and prev_n is None:
+            return (
+                "low",
+                f"Vercel project {pid} {field_path} is now {new_n}, though "
+                "the prior count is unknown or missing.",
+            )
         return (
             "low",
-            f"Vercel project {pid} {field_path} {direction} from {prev_n} "
-            f"to {new_n}.",
+            f"Vercel project {pid} {field_path} is now unknown or missing.",
         )
 
     return (

@@ -672,6 +672,42 @@ class TestDiffServiceVercel:
         fields = _tracked_fields_for(record)
         assert fields == ()
 
+    def test_tracked_fields_vercel_deployment_protection(self):
+        """Regression guard: vercel_deployment_protection was previously
+        missing entirely from the tracked-fields map, so compute_diff never
+        detected SSO/password/preview-protection drift even though the
+        connector's fetch() already emits this record and a classifier
+        already existed for it."""
+        from app.services.diff_service import _tracked_fields_for
+        record = {"record_type": "vercel_deployment_protection"}
+        fields = _tracked_fields_for(record)
+        assert "sso_enabled" in fields
+        assert "password_enabled" in fields
+        assert "preview_deployments_protected" in fields
+
+    def test_real_compute_diff_detects_deployment_protection_disabled(self):
+        """Real compute_diff() -> classify_vercel_change() integration, not a
+        hand-built mock: proves the previously-undetected SSO-disable is now
+        both tracked and classified as high."""
+        from app.services.diff_service import compute_diff
+        from app.services.risk_rules.vercel import classify_vercel_change
+
+        class _FakeSnap:
+            def __init__(self, state):
+                self.state = state
+
+        prev = [{
+            "record_type": "vercel_deployment_protection", "record_id": "prj_1",
+            "name": "my-app", "sso_enabled": True, "password_enabled": False,
+            "preview_deployments_protected": True,
+        }]
+        new = [{**prev[0], "sso_enabled": False, "preview_deployments_protected": False}]
+        changes = compute_diff(_FakeSnap(prev), _FakeSnap(new))
+        assert len(changes) == 2, "expected sso_enabled and preview_deployments_protected changes"
+        for change in changes:
+            level, _ = classify_vercel_change(change)
+            assert level == "high", f"{change['field_path']} expected high, got {level}"
+
     def test_cloudflare_record_still_uses_dns_fields(self):
         from app.services.diff_service import _tracked_fields_for
         record = {"record_type": "A"}

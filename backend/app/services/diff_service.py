@@ -135,6 +135,19 @@ _VERCEL_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "hook_name",   # user-visible name change
         "hook_ref",    # target branch/ref change
     ),
+    # Deployment protection posture — previously missing entirely, so
+    # compute_diff never detected SSO/password/preview-protection drift even
+    # though the connector's core fetch() path already emits this record and
+    # risk_rules.vercel._classify_deployment_protection_change already
+    # existed to classify it. Only the fields _extract_deployment_protection
+    # actually populates are tracked here (the record's other TypedDict
+    # fields — trusted_ips_count, protection_bypass_for_automation, etc. —
+    # are not yet emitted by the connector, so tracking them would be inert).
+    "vercel_deployment_protection": (
+        "sso_enabled",
+        "password_enabled",
+        "preview_deployments_protected",
+    ),
 }
 
 #: Per-record-type tracked field tuples for GitHub records.
