@@ -27,6 +27,8 @@ Shop domain is included in context but access token is NEVER referenced.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from app.models.change import Change
 
 
@@ -35,6 +37,33 @@ def _get(obj: object, field: str) -> object:
     if isinstance(obj, dict):
         return obj.get(field)
     return getattr(obj, field, None)
+
+
+def _int_or_none(val: object) -> Optional[int]:
+    """Coerce to int, but return None (not 0) for missing/unparseable values.
+
+    A count that is genuinely unknown/missing must never be silently
+    treated as an explicit ``0`` — doing so would let an unknown baseline
+    falsely claim an "increase" (the exact PagerDuty-style bug this session
+    keeps finding across providers).
+    """
+    if isinstance(val, bool) or val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_explicit_bool(val: object, expected: bool) -> bool:
+    """True only when *val* is an explicit bool/string match for *expected*.
+
+    None/missing values must never be treated as an explicit True or False —
+    the classifier must not overstate certainty on unknown transitions.
+    """
+    if expected:
+        return val is True or val == "true"
+    return val is False or val == "false"
 
 
 # ── shopify_shop_metadata ─────────────────────────────────────────────────────
@@ -54,17 +83,22 @@ def _classify_shop_metadata_change(change: Change) -> tuple[str, str]:
     # materially changes public storefront exposure: a previously private /
     # pre-launch storefront becomes reachable by any visitor.
     if fp == "password_enabled":
-        if new_v is False or new_v == "false":
+        if _is_explicit_bool(new_v, False):
             return (
                 "high",
                 "Shopify storefront password protection was disabled. "
                 "The store is now publicly accessible without a password — "
                 "confirm this was an intentional launch event.",
             )
+        if _is_explicit_bool(new_v, True):
+            return (
+                "low",
+                "Shopify storefront password protection was enabled. "
+                "Visitors must now enter a password to access the storefront.",
+            )
         return (
             "low",
-            "Shopify storefront password protection was enabled. "
-            "Visitors must now enter a password to access the storefront.",
+            "Shopify storefront password protection state is now unknown or missing.",
         )
 
     # Plan name change — could be upgrade or downgrade
@@ -77,57 +111,77 @@ def _classify_shop_metadata_change(change: Change) -> tuple[str, str]:
 
     # Payment eligibility — high impact if lost
     if fp == "eligible_for_payments":
-        if new_v is False or new_v == "false":
+        if _is_explicit_bool(new_v, False):
             return (
                 "high",
                 "This Shopify store is no longer eligible for payments. "
                 "Customers cannot complete purchases until this is resolved.",
             )
+        if _is_explicit_bool(new_v, True):
+            return (
+                "medium",
+                "Shopify store payment eligibility was restored.",
+            )
         return (
-            "medium",
-            "Shopify store payment eligibility was restored.",
+            "low",
+            "Shopify store payment eligibility state is now unknown or missing.",
         )
 
     # Checkout API support
     if fp == "checkout_api_supported":
-        if new_v is False or new_v == "false":
+        if _is_explicit_bool(new_v, False):
             return (
                 "medium",
                 "Shopify Checkout API support was disabled. "
                 "Custom checkout integrations may stop functioning.",
             )
+        if _is_explicit_bool(new_v, True):
+            return (
+                "low",
+                "Shopify Checkout API support was enabled.",
+            )
         return (
             "low",
-            "Shopify Checkout API support was enabled.",
+            "Shopify Checkout API support state is now unknown or missing.",
         )
 
     # Storefront presence
     if fp == "has_storefront":
-        if new_v is False or new_v == "false":
+        if _is_explicit_bool(new_v, False):
             return (
                 "high",
                 "The Shopify storefront was disabled. "
                 "The store is no longer publicly visible.",
             )
+        if _is_explicit_bool(new_v, True):
+            return (
+                "low",
+                "Shopify storefront was enabled.",
+            )
         return (
             "low",
-            "Shopify storefront was enabled.",
+            "Shopify storefront presence state is now unknown or missing.",
         )
 
     # Extra payments agreement required — payment processing may stall until
     # the operator accepts the new agreement, so this is high-impact for
     # commerce flow.
     if fp == "requires_extra_payments_agreement":
-        if new_v is True or new_v == "true":
+        if _is_explicit_bool(new_v, True):
             return (
                 "high",
                 "Shopify now requires an extra payments provider agreement. "
                 "Payment processing may be suspended until the agreement is "
                 "accepted in Shopify Admin.",
             )
+        if _is_explicit_bool(new_v, False):
+            return (
+                "low",
+                "Shopify extra payments provider agreement requirement was cleared.",
+            )
         return (
             "low",
-            "Shopify extra payments provider agreement requirement was cleared.",
+            "Shopify extra payments provider agreement state is now unknown or missing.",
         )
 
     # Currency change — operationally significant
@@ -265,7 +319,7 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
     # high otherwise. (HTTP delivery of orders/payments is a customer-data
     # exposure event.)
     if fp == "is_https":
-        if new_v is False or new_v == "false":
+        if _is_explicit_bool(new_v, False):
             if is_critical_topic:
                 return (
                     "critical",
@@ -278,9 +332,14 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
                 "A Shopify webhook endpoint was changed to use plain HTTP (not HTTPS). "
                 "Event payloads will be transmitted unencrypted.",
             )
+        if _is_explicit_bool(new_v, True):
+            return (
+                "low",
+                "A Shopify webhook endpoint was upgraded to HTTPS.",
+            )
         return (
             "low",
-            "A Shopify webhook endpoint was upgraded to HTTPS.",
+            "A Shopify webhook endpoint HTTPS state is now unknown or missing.",
         )
 
     # Endpoint domain change — events now delivered to a different server.
@@ -305,7 +364,8 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
 
     # Endpoint scheme change
     if fp == "endpoint_scheme":
-        if str(new_v).lower() in ("http", ""):
+        new_scheme = new_v.lower() if isinstance(new_v, str) else ""
+        if new_scheme == "http":
             if is_critical_topic:
                 return (
                     "critical",
@@ -318,9 +378,14 @@ def _classify_webhook_change(change: Change) -> tuple[str, str]:
                 "A Shopify webhook endpoint scheme was downgraded from HTTPS to HTTP. "
                 "Event payloads will be transmitted unencrypted.",
             )
+        if new_scheme == "https":
+            return (
+                "low",
+                "A Shopify webhook endpoint scheme changed to HTTPS.",
+            )
         return (
             "low",
-            "A Shopify webhook endpoint scheme changed to HTTPS.",
+            "A Shopify webhook endpoint scheme is now unknown or missing.",
         )
 
     # Path hash / length change — same domain, different path
@@ -421,9 +486,15 @@ def _classify_store_policy_change(change: Change) -> tuple[str, str]:
                 f"A Shopify store policy was cleared or removed: {policy_type or 'unknown type'}. "
                 "Legal compliance may be affected.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                f"A Shopify store policy was created: {policy_type or 'unknown type'}.",
+            )
         return (
             "low",
-            f"A Shopify store policy was created: {policy_type or 'unknown type'}.",
+            f"Shopify store policy presence state is now unknown or missing: "
+            f"{policy_type or 'unknown type'}.",
         )
 
     # Body hash change — policy text changed (hash-only; raw text never stored)
@@ -493,31 +564,38 @@ def _classify_app_scope_summary_change(change: Change) -> tuple[str, str]:
 
     # sensitive_scope_count increased
     if field_path == "sensitive_scope_count":
-        try:
-            old_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (ValueError, TypeError):
-            old_n, new_n = 0, 0
-        if new_n > old_n:
+        old_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and old_n is not None and new_n > old_n:
             return (
                 "high",
                 f"The number of sensitive Shopify scopes (orders, customers, "
                 f"payments) increased from {old_n} to {new_n}. "
                 "Review newly granted scopes and rotate credentials if unexpected.",
             )
+        if new_n is not None and old_n is None and new_n > 0:
+            return (
+                "medium",
+                f"Shopify now has {new_n} sensitive scope(s) granted (orders, "
+                "customers, payments), though the prior count is unknown or "
+                "missing. Review granted scopes.",
+            )
 
     # write_scope_count increased
     if field_path == "write_scope_count":
-        try:
-            old_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (ValueError, TypeError):
-            old_n, new_n = 0, 0
-        if new_n > old_n:
+        old_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and old_n is not None and new_n > old_n:
             return (
                 "high",
                 f"Write-access Shopify scopes increased from {old_n} to {new_n}. "
                 "The app can now modify more store data — confirm this is intended.",
+            )
+        if new_n is not None and old_n is None and new_n > 0:
+            return (
+                "medium",
+                f"Shopify now has {new_n} write-access scope(s) granted, though "
+                "the prior count is unknown or missing. Review granted scopes.",
             )
 
     # Customer/order/payment scope newly present. Payment scopes give the
@@ -542,24 +620,28 @@ def _classify_app_scope_summary_change(change: Change) -> tuple[str, str]:
                 "Verify this permission is required and rotate credentials if unexpected.",
             )
 
-    # scope_count increased
+    # scope_count increased / decreased
     if field_path == "scope_count":
-        try:
-            old_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (ValueError, TypeError):
-            old_n, new_n = 0, 0
-        if new_n > old_n:
+        old_n = _int_or_none(prev_value)
+        new_n = _int_or_none(new_value)
+        if new_n is not None and old_n is not None:
+            if new_n > old_n:
+                return (
+                    "medium",
+                    f"Shopify app scope count increased from {old_n} to {new_n}. "
+                    "Review the scope_names field to identify newly granted permissions.",
+                )
+            if new_n < old_n:
+                return (
+                    "medium",
+                    f"Shopify app scope count decreased from {old_n} to {new_n}. "
+                    "Some permissions may have been revoked.",
+                )
+        elif new_n is not None and old_n is None:
             return (
-                "medium",
-                f"Shopify app scope count increased from {old_n} to {new_n}. "
-                "Review the scope_names field to identify newly granted permissions.",
-            )
-        if new_n < old_n:
-            return (
-                "medium",
-                f"Shopify app scope count decreased from {old_n} to {new_n}. "
-                "Some permissions may have been revoked.",
+                "low",
+                f"Shopify app scope count is now {new_n}, though the prior "
+                "count is unknown or missing.",
             )
 
     # scope_hash or scope_names changed
@@ -576,6 +658,105 @@ def _classify_app_scope_summary_change(change: Change) -> tuple[str, str]:
     )
 
 
+# ── shopify_domain ────────────────────────────────────────────────────────────
+
+
+def _classify_domain_change(change: Change) -> tuple[str, str]:
+    """Risk rules for ``shopify_domain`` records — M74A.
+
+    Mirrors the ``shopify_domain_ssl_missing`` (high) and
+    ``shopify_domain_unverified`` (medium) Security Findings, which only
+    evaluate the *primary* domain. ``primary`` is carried in
+    ``provider_metadata`` (a snapshot-level context field, not itself the
+    changed field) so ssl/verified severity can be scoped the same way.
+    """
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_v = _get(change, "new_value")
+    pm = _get(change, "provider_metadata") or {}
+    is_primary = pm.get("primary") is True if isinstance(pm, dict) else False
+
+    if ct in ("added", "removed"):
+        return (
+            "low",
+            "Shopify domain configuration record was added or removed during sync.",
+        )
+
+    if fp == "ssl_enabled":
+        if _is_explicit_bool(new_v, False):
+            if is_primary:
+                return (
+                    "high",
+                    "Shopify domain SSL posture changed — the primary domain no "
+                    "longer has SSL enabled. This may require review.",
+                )
+            return (
+                "low",
+                "Shopify domain SSL posture changed — a non-primary domain no "
+                "longer has SSL enabled.",
+            )
+        if _is_explicit_bool(new_v, True):
+            return (
+                "low",
+                "Shopify domain SSL was enabled.",
+            )
+        return (
+            "low",
+            "Shopify domain SSL state is now unknown or missing.",
+        )
+
+    if fp == "verified":
+        if _is_explicit_bool(new_v, False):
+            if is_primary:
+                return (
+                    "medium",
+                    "Shopify domain verification posture changed — the primary "
+                    "domain is now unverified. This may require review.",
+                )
+            return (
+                "low",
+                "Shopify domain verification posture changed — a non-primary "
+                "domain is now unverified.",
+            )
+        if _is_explicit_bool(new_v, True):
+            return (
+                "low",
+                "Shopify domain was verified.",
+            )
+        return (
+            "low",
+            "Shopify domain verification state is now unknown or missing.",
+        )
+
+    if fp == "primary":
+        if _is_explicit_bool(new_v, True):
+            return (
+                "low",
+                "Shopify domain primary-domain status was granted to this domain. "
+                "This may require review.",
+            )
+        if _is_explicit_bool(new_v, False):
+            return (
+                "low",
+                "Shopify domain primary-domain status was removed from this domain.",
+            )
+        return (
+            "low",
+            "Shopify domain primary-domain state is now unknown or missing.",
+        )
+
+    if fp in ("host", "managed_by_shopify"):
+        return (
+            "low",
+            f"Shopify domain {fp.replace('_', ' ')} changed.",
+        )
+
+    return (
+        "low",
+        f"Shopify domain configuration field '{fp}' changed.",
+    )
+
+
 def classify_shopify_change(change: Change) -> tuple[str, str]:
     """Return ``(risk_level, risk_reason)`` for a Shopify change.
 
@@ -584,6 +765,7 @@ def classify_shopify_change(change: Change) -> tuple[str, str]:
       * ``shopify_webhook_subscription`` → webhook rules
       * ``shopify_store_policy``         → store policy rules
       * ``shopify_app_scope_summary``    → app scope rules (M57.9)
+      * ``shopify_domain``               → domain SSL/verification rules (M74A)
 
     Args:
         change: A ``Change`` ORM instance (or a plain dict, for testing).
@@ -606,6 +788,8 @@ def classify_shopify_change(change: Change) -> tuple[str, str]:
         return _classify_store_policy_change(change)
     if record_type == "shopify_app_scope_summary":
         return _classify_app_scope_summary_change(change)
+    if record_type == "shopify_domain":
+        return _classify_domain_change(change)
 
     # Fallback for unknown shopify_ subtypes
     return (

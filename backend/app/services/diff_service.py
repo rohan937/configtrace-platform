@@ -1934,6 +1934,16 @@ _SHOPIFY_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "scope_hash",
         "scope_names",
     ),
+    # M74A — shop domain posture (previously missing entirely: domain SSL/
+    # verification/primary drift was never tracked as a Change, even though
+    # the corresponding Security Findings already evaluate the current state).
+    "shopify_domain": (
+        "host",
+        "ssl_enabled",
+        "primary",
+        "verified",
+        "managed_by_shopify",
+    ),
 }
 
 
@@ -2860,6 +2870,37 @@ def _build_provider_metadata(
     if record.get("record_type") == "aws_cloudtrail_trail":
         metadata["is_organization_trail"] = bool(record.get("is_organization_trail"))
         metadata["is_multi_region_trail"] = bool(record.get("is_multi_region_trail"))
+
+    # Shopify webhook subscriptions carry the event topic, which the risk
+    # classifier needs to decide whether a plain-HTTP / removed / domain-
+    # changed webhook belongs to a critical topic family (orders, customers,
+    # checkouts, ...). Without this, classify_shopify_change silently saw
+    # topic="" for every field-level Change (only whole-record identity
+    # fields were ever included here), which meant critical-topic webhooks
+    # were systematically under-classified (e.g. "high" instead of
+    # "critical" for an orders/create webhook downgraded to plain HTTP).
+    if record.get("record_type") == "shopify_webhook_subscription":
+        metadata["topic"] = record.get("topic") or ""
+        # is_https / endpoint_scheme are also read directly from
+        # provider_metadata by the risk classifier's "added" branch (a whole-
+        # record event has no per-field field_path to read them from).
+        metadata["is_https"] = record.get("is_https")
+        metadata["endpoint_scheme"] = record.get("endpoint_scheme") or ""
+
+    # Shopify store policies carry the policy type, which the risk classifier
+    # needs to distinguish legally/compliance-critical policies (privacy,
+    # refund, terms of service) from operational ones (shipping) when a
+    # policy is removed or cleared. Same under-classification bug class as
+    # the webhook topic above — this was previously never populated.
+    if record.get("record_type") == "shopify_store_policy":
+        metadata["policy_type"] = record.get("policy_type") or ""
+
+    # Shopify domains carry the ``primary`` flag, which the risk classifier
+    # needs to scope SSL/verification severity to the primary domain only —
+    # mirroring the shopify_domain_ssl_missing / shopify_domain_unverified
+    # Security Findings, which only evaluate the primary domain.
+    if record.get("record_type") == "shopify_domain":
+        metadata["primary"] = record.get("primary")
 
     return metadata
 

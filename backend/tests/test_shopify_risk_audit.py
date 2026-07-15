@@ -545,3 +545,249 @@ class TestSafetyInvariants:
                 assert bad not in lower, (
                     f"reason contains forbidden phrase {bad!r}: {reason!r}"
                 )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# H. Real compute_diff integration — regression guard against the mock-shape
+# bug found in this classification-QA pass: provider_metadata built by the
+# real diff pipeline previously never carried "topic" / "policy_type" /
+# "primary", so every test above (using a hand-built MagicMock with those
+# keys set directly) was blind to a systematic under-classification bug in
+# production. These tests exercise the REAL compute_diff() -> Change dict
+# pipeline, not a mock.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _FakeSnapshot:
+    def __init__(self, state: list[dict]):
+        self.state = state
+
+
+def _real_changes(prev_records: list[dict], new_records: list[dict]):
+    from app.services.diff_service import compute_diff
+    return compute_diff(_FakeSnapshot(prev_records), _FakeSnapshot(new_records))
+
+
+class TestRealComputeDiffIntegration:
+    def test_H1_webhook_critical_topic_https_downgrade_via_real_diff_is_critical(self):
+        """Regression guard: previously classified as 'high' in production
+        because provider_metadata never carried 'topic'."""
+        base = {
+            "record_type": "shopify_webhook_subscription", "record_id": "abc",
+            "name": "orders/create -> x.com", "topic": "orders/create",
+            "endpoint_domain": "x.com", "endpoint_path_hash": "h1",
+            "endpoint_path_length": 5, "format": "json", "api_version": "2024-01",
+        }
+        prev = {**base, "endpoint_scheme": "https", "is_https": True}
+        new = {**base, "endpoint_scheme": "http", "is_https": False}
+        changes = _real_changes([prev], [new])
+        assert changes, "expected is_https/endpoint_scheme changes to be detected"
+        for change in changes:
+            level, reason = _classify(change)
+            assert level == "critical", (
+                f"{change['field_path']} on a critical-topic webhook downgraded to "
+                f"HTTP via real compute_diff must be critical; got {level} ({reason})"
+            )
+
+    def test_H2_webhook_non_critical_topic_https_downgrade_via_real_diff_is_high(self):
+        base = {
+            "record_type": "shopify_webhook_subscription", "record_id": "abc2",
+            "name": "products/update -> x.com", "topic": "products/update",
+            "endpoint_domain": "x.com", "endpoint_path_hash": "h2",
+            "endpoint_path_length": 5, "format": "json", "api_version": "2024-01",
+        }
+        prev = {**base, "endpoint_scheme": "https", "is_https": True}
+        new = {**base, "endpoint_scheme": "http", "is_https": False}
+        changes = _real_changes([prev], [new])
+        for change in changes:
+            level, _ = _classify(change)
+            assert level == "high"
+
+    def test_H3_legal_policy_removed_via_real_diff_is_high(self):
+        """Regression guard: previously classified as 'medium' in production
+        because provider_metadata never carried 'policy_type'."""
+        prev = {
+            "record_type": "shopify_store_policy", "record_id": "p1",
+            "name": "privacy_policy policy", "policy_type": "privacy_policy",
+            "present": True, "body_hash": "aaa", "body_length": 100,
+        }
+        new = {**prev, "present": False, "body_hash": None, "body_length": 0}
+        changes = _real_changes([prev], [new])
+        present_changes = [c for c in changes if c["field_path"] == "present"]
+        assert len(present_changes) == 1
+        level, reason = _classify(present_changes[0])
+        assert level == "high", (
+            f"privacy_policy cleared via real compute_diff must be high; got {level} ({reason})"
+        )
+
+    def test_H4_operational_policy_removed_via_real_diff_is_medium(self):
+        prev = {
+            "record_type": "shopify_store_policy", "record_id": "p2",
+            "name": "shipping_policy policy", "policy_type": "shipping_policy",
+            "present": True, "body_hash": "bbb", "body_length": 50,
+        }
+        new = {**prev, "present": False, "body_hash": None, "body_length": 0}
+        changes = _real_changes([prev], [new])
+        present_changes = [c for c in changes if c["field_path"] == "present"]
+        level, _ = _classify(present_changes[0])
+        assert level == "medium"
+
+    def test_H5_webhook_added_critical_topic_http_via_real_diff_is_critical(self):
+        new = {
+            "record_type": "shopify_webhook_subscription", "record_id": "abc3",
+            "name": "orders/create -> evil.com", "topic": "orders/create",
+            "endpoint_domain": "evil.com", "endpoint_scheme": "http", "is_https": False,
+            "endpoint_path_hash": "h3", "endpoint_path_length": 5,
+            "format": "json", "api_version": "2024-01",
+        }
+        changes = _real_changes([], [new])
+        assert len(changes) == 1
+        level, _ = _classify(changes[0])
+        assert level == "critical"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# I. shopify_domain — newly tracked/classified in this pass (was previously
+# missing from _SHOPIFY_TRACKED_FIELDS_BY_TYPE entirely, so no domain Change
+# was ever produced, even though the Security Findings already evaluate it).
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDomainClassification:
+    def _domain_change(self, field_path, new_value, prev_value=None, primary=True):
+        return _change(
+            record_type="shopify_domain",
+            field_path=field_path,
+            new_value=new_value,
+            prev_value=prev_value,
+            extra_metadata={"primary": primary},
+        )
+
+    def test_I1_primary_domain_ssl_disabled_is_high(self):
+        c = self._domain_change("ssl_enabled", False, prev_value=True, primary=True)
+        level, _ = _classify(c)
+        assert level == "high"
+
+    def test_I2_non_primary_domain_ssl_disabled_is_low(self):
+        c = self._domain_change("ssl_enabled", False, prev_value=True, primary=False)
+        level, _ = _classify(c)
+        assert level == "low"
+
+    def test_I3_primary_domain_ssl_enabled_is_low(self):
+        c = self._domain_change("ssl_enabled", True, prev_value=False, primary=True)
+        level, _ = _classify(c)
+        assert level == "low"
+
+    def test_I4_primary_domain_unverified_is_medium(self):
+        c = self._domain_change("verified", False, prev_value=True, primary=True)
+        level, _ = _classify(c)
+        assert level == "medium"
+
+    def test_I5_non_primary_domain_unverified_is_low(self):
+        c = self._domain_change("verified", False, prev_value=True, primary=False)
+        level, _ = _classify(c)
+        assert level == "low"
+
+    def test_I6_ssl_unknown_missing_is_low_not_high(self):
+        c = self._domain_change("ssl_enabled", None, prev_value=True, primary=True)
+        level, reason = _classify(c)
+        assert level == "low"
+        assert "unknown" in reason.lower()
+
+    def test_I7_added_removed_is_low(self):
+        c = _change(record_type="shopify_domain", change_type="added")
+        level, _ = _classify(c)
+        assert level == "low"
+
+    def test_I8_real_compute_diff_detects_primary_domain_ssl_disabled(self):
+        prev = {
+            "record_type": "shopify_domain", "record_id": "d1",
+            "name": "store.example.com", "domain_id_hash": "h",
+            "host": "store.example.com", "ssl_enabled": True,
+            "primary": True, "verified": True, "managed_by_shopify": True,
+        }
+        new = {**prev, "ssl_enabled": False}
+        changes = _real_changes([prev], [new])
+        ssl_changes = [c for c in changes if c["field_path"] == "ssl_enabled"]
+        assert len(ssl_changes) == 1, "shopify_domain ssl_enabled change must now be tracked"
+        level, reason = _classify(ssl_changes[0])
+        assert level == "high", f"expected high, got {level} ({reason})"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# J. Unknown/missing transitions must never overstate certainty — the
+# classifier's "else" branches previously claimed an explicit opposite state
+# (e.g. "password protection was enabled") even when new_value was None.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestUnknownTransitionSafety:
+    @pytest.mark.parametrize("field_path", [
+        "password_enabled", "eligible_for_payments", "has_storefront",
+        "checkout_api_supported", "requires_extra_payments_agreement",
+    ])
+    def test_J1_shop_metadata_unknown_boolean_is_low_and_says_unknown(self, field_path):
+        c = _change(record_type="shopify_shop_metadata", field_path=field_path, new_value=None)
+        level, reason = _classify(c)
+        assert level not in ("high", "critical"), f"{field_path} unknown must not be high/critical, got {level}"
+        assert "unknown" in reason.lower() or "missing" in reason.lower()
+
+    def test_J2_webhook_is_https_unknown_is_low_and_says_unknown(self):
+        c = _change(record_type="shopify_webhook_subscription", field_path="is_https", new_value=None)
+        level, reason = _classify(c)
+        assert level not in ("high", "critical")
+        assert "unknown" in reason.lower()
+
+    def test_J3_webhook_endpoint_scheme_unknown_is_low_and_says_unknown(self):
+        c = _change(record_type="shopify_webhook_subscription", field_path="endpoint_scheme", new_value=None)
+        level, reason = _classify(c)
+        assert level not in ("high", "critical")
+        assert "unknown" in reason.lower()
+
+    def test_J4_store_policy_present_unknown_is_low_and_says_unknown(self):
+        c = _change(record_type="shopify_store_policy", field_path="present", new_value=None,
+                    policy_type="privacy_policy")
+        level, reason = _classify(c)
+        assert level not in ("high", "critical")
+        assert "unknown" in reason.lower()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# K. Count-unknown-baseline safety — a genuinely unknown prior count must
+# never be coerced to 0, which would make any real count look like an
+# "increase from 0".
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestCountUnknownBaselineSafety:
+    def test_K1_sensitive_scope_count_unknown_prev_does_not_claim_increase_wording(self):
+        c = _change(record_type="shopify_app_scope_summary",
+                    field_path="sensitive_scope_count", new_value=2, prev_value=None)
+        level, reason = _classify(c)
+        assert level != "high" or "unknown" in reason.lower() or "though" in reason.lower()
+        assert "increased from" not in reason.lower()
+
+    def test_K2_write_scope_count_unknown_prev_does_not_claim_increase_wording(self):
+        c = _change(record_type="shopify_app_scope_summary",
+                    field_path="write_scope_count", new_value=3, prev_value=None)
+        level, reason = _classify(c)
+        assert "increased from" not in reason.lower()
+
+    def test_K3_scope_count_unknown_prev_does_not_claim_increase_wording(self):
+        c = _change(record_type="shopify_app_scope_summary",
+                    field_path="scope_count", new_value=5, prev_value=None)
+        level, reason = _classify(c)
+        assert "increased from" not in reason.lower()
+        assert level == "low"
+
+    def test_K4_scope_count_real_zero_baseline_still_detects_increase(self):
+        """A real (explicit) 0 baseline must still be treated as a real
+        baseline — only a genuinely missing/None baseline is unknown."""
+        c = _change(record_type="shopify_app_scope_summary",
+                    field_path="scope_count", new_value=5, prev_value=0)
+        level, reason = _classify(c)
+        assert level == "medium"
+        assert "increased from 0 to 5" in reason.lower()
+
+    def test_K5_sensitive_scope_count_real_zero_baseline_still_detects_increase(self):
+        c = _change(record_type="shopify_app_scope_summary",
+                    field_path="sensitive_scope_count", new_value=2, prev_value=0)
+        level, reason = _classify(c)
+        assert level == "high"
+        assert "increased from 0 to 2" in reason.lower()
