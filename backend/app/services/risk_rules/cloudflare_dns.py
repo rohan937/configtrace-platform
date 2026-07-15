@@ -45,7 +45,7 @@ Design decisions
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Optional
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -732,15 +732,16 @@ def classify_cloudflare_ruleset_change(change: object) -> tuple[str, str]:
     change_type: str = (_get(change, "change_type") or "").lower()
     field_path: str = (_get(change, "field_path") or "").lower()
     # The canonical Change model field is ``prev_value`` (see
-    # app/models/change.py).  Older code paths in this classifier read
-    # ``old_value``; keep that as a fallback for plain-dict callers that still
-    # use the legacy key, but prefer ``prev_value`` so real ORM rows classify
-    # correctly.
+    # app/models/change.py) — this is the ONLY field real Change rows and
+    # real compute_diff() dict output ever populate. A previous "legacy
+    # old_value fallback" here was removed: ``old_value`` is not a real
+    # field anywhere in this codebase, and the fallback's
+    # ``getattr(obj, "old_value", None)`` was actively dangerous with
+    # MagicMock-based test doubles — MagicMock auto-vivifies unset
+    # attributes instead of returning the None default, so a test
+    # deliberately passing ``prev_value=None`` (to test the unknown-baseline
+    # path) would silently get a fake fallback value instead.
     old_value = _get(change, "prev_value")
-    if old_value is None:
-        legacy = _get(change, "old_value")
-        if legacy is not None:
-            old_value = legacy
     new_value = _get(change, "new_value")
 
     # 1. Ruleset removed — WAF protection gap
@@ -763,85 +764,126 @@ def classify_cloudflare_ruleset_change(change: object) -> tuple[str, str]:
 
     # ── Modified field rules ──────────────────────────────────────────────────
 
-    def _int(v: object) -> int:
+    def _int_or_none(v: object) -> Optional[int]:
+        """Coerce to int, but return None (not 0) for missing/unparseable
+        values.  A count that is genuinely unknown/missing must never be
+        silently treated as an explicit ``0`` — doing so would let an
+        unknown baseline falsely claim an "increase"."""
+        if isinstance(v, bool) or v is None:
+            return None
         try:
             return int(v)  # type: ignore[arg-type]
         except (TypeError, ValueError):
-            return 0
+            return None
 
     # 3. skip_count increased — more bypass rules
     if field_path == "skip_count":
-        old_n, new_n = _int(old_value), _int(new_value)
-        if new_n > old_n:
-            return (
-                "high",
-                f"WAF ruleset skip_count increased from {old_n} to {new_n}. "
-                "Additional rules now bypass WAF checks, potentially widening attack surface.",
-            )
-        if new_n < old_n:
+        old_n, new_n = _int_or_none(old_value), _int_or_none(new_value)
+        if old_n is not None and new_n is not None:
+            if new_n > old_n:
+                return (
+                    "high",
+                    f"WAF ruleset skip_count increased from {old_n} to {new_n}. "
+                    "Additional rules now bypass WAF checks, potentially widening attack surface.",
+                )
+            if new_n < old_n:
+                return (
+                    "low",
+                    f"WAF ruleset skip_count decreased from {old_n} to {new_n}. "
+                    "Fewer WAF bypass rules — security posture improved.",
+                )
+        elif new_n is not None:
             return (
                 "low",
-                f"WAF ruleset skip_count decreased from {old_n} to {new_n}. "
-                "Fewer WAF bypass rules — security posture improved.",
+                f"WAF ruleset skip_count is now {new_n}, though the prior "
+                "count is unknown or missing.",
             )
 
     # 4. block_count decreased — fewer blocking rules
     if field_path == "block_count":
-        old_n, new_n = _int(old_value), _int(new_value)
-        if new_n < old_n:
-            return (
-                "high",
-                f"WAF ruleset block_count decreased from {old_n} to {new_n}. "
-                "Fewer rules are actively blocking attacks.",
-            )
-        if new_n > old_n:
+        old_n, new_n = _int_or_none(old_value), _int_or_none(new_value)
+        if old_n is not None and new_n is not None:
+            if new_n < old_n:
+                return (
+                    "high",
+                    f"WAF ruleset block_count decreased from {old_n} to {new_n}. "
+                    "Fewer rules are actively blocking attacks.",
+                )
+            if new_n > old_n:
+                return (
+                    "low",
+                    f"WAF ruleset block_count increased from {old_n} to {new_n}. "
+                    "More rules are actively blocking attacks — security posture improved.",
+                )
+        elif new_n is not None:
             return (
                 "low",
-                f"WAF ruleset block_count increased from {old_n} to {new_n}. "
-                "More rules are actively blocking attacks — security posture improved.",
+                f"WAF ruleset block_count is now {new_n}, though the prior "
+                "count is unknown or missing.",
             )
 
     # 5. enabled_rule_count decreased — more rules disabled
     if field_path == "enabled_rule_count":
-        old_n, new_n = _int(old_value), _int(new_value)
-        if new_n < old_n:
-            return (
-                "high",
-                f"WAF enabled rule count decreased from {old_n} to {new_n}. "
-                "Disabled rules provide no protection.",
-            )
-        if new_n > old_n:
+        old_n, new_n = _int_or_none(old_value), _int_or_none(new_value)
+        if old_n is not None and new_n is not None:
+            if new_n < old_n:
+                return (
+                    "high",
+                    f"WAF enabled rule count decreased from {old_n} to {new_n}. "
+                    "Disabled rules provide no protection.",
+                )
+            if new_n > old_n:
+                return (
+                    "low",
+                    f"WAF enabled rule count increased from {old_n} to {new_n}. "
+                    "More rules are now active — protection expanded.",
+                )
+        elif new_n is not None:
             return (
                 "low",
-                f"WAF enabled rule count increased from {old_n} to {new_n}. "
-                "More rules are now active — protection expanded.",
+                f"WAF enabled_rule_count is now {new_n}, though the prior "
+                "count is unknown or missing.",
             )
 
     # 6–7. rule_count changed
     if field_path == "rule_count":
-        old_n, new_n = _int(old_value), _int(new_value)
-        if new_n < old_n:
+        old_n, new_n = _int_or_none(old_value), _int_or_none(new_value)
+        if old_n is not None and new_n is not None:
+            if new_n < old_n:
+                return (
+                    "medium",
+                    f"WAF ruleset rule_count decreased from {old_n} to {new_n}. "
+                    "Rules were removed — verify this was intentional.",
+                )
+            if new_n > old_n:
+                return (
+                    "medium",
+                    f"WAF ruleset rule_count increased from {old_n} to {new_n}. "
+                    "New rules were added to the ruleset.",
+                )
+        elif new_n is not None:
             return (
-                "medium",
-                f"WAF ruleset rule_count decreased from {old_n} to {new_n}. "
-                "Rules were removed — verify this was intentional.",
-            )
-        if new_n > old_n:
-            return (
-                "medium",
-                f"WAF ruleset rule_count increased from {old_n} to {new_n}. "
-                "New rules were added to the ruleset.",
+                "low",
+                f"WAF ruleset rule_count is now {new_n}, though the prior "
+                "count is unknown or missing.",
             )
 
     # 8. challenge_count / managed_challenge_count changed
     if field_path in ("challenge_count", "managed_challenge_count"):
-        old_n, new_n = _int(old_value), _int(new_value)
-        direction = "increased" if new_n > old_n else "decreased"
-        return (
-            "medium",
-            f"WAF {field_path.replace('_count', '')} rule count {direction} "
-            f"from {old_n} to {new_n}.",
-        )
+        old_n, new_n = _int_or_none(old_value), _int_or_none(new_value)
+        if old_n is not None and new_n is not None:
+            direction = "increased" if new_n > old_n else "decreased"
+            return (
+                "medium",
+                f"WAF {field_path.replace('_count', '')} rule count {direction} "
+                f"from {old_n} to {new_n}.",
+            )
+        if new_n is not None:
+            return (
+                "low",
+                f"WAF {field_path} is now {new_n}, though the prior count is "
+                "unknown or missing.",
+            )
 
     # 9. version changed — administrative update
     if field_path == "version":

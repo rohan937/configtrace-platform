@@ -25,16 +25,23 @@ import pytest
 def _make_change(
     change_type: str,
     field_path: str = "",
-    old_value: Any = None,
+    prev_value: Any = None,
     new_value: Any = None,
     record_type: str = "cloudflare_ruleset",
     phase: str = "http_request_firewall_managed",
 ) -> dict:
-    """Build a minimal change dict for risk-rule tests."""
+    """Build a minimal change dict for risk-rule tests.
+
+    Uses ``prev_value`` — the ONLY field real Change rows and real
+    compute_diff() dict output ever populate (see app/models/change.py).
+    This helper previously built dicts keyed ``old_value``, a stale/legacy
+    name that only worked because the classifier had a defensive fallback
+    for it; that fallback has since been removed as a mock-shape hazard.
+    """
     return {
         "change_type": change_type,
         "field_path":  field_path,
-        "old_value":   old_value,
+        "prev_value":  prev_value,
         "new_value":   new_value,
         "provider_metadata": {
             "record_type": record_type,
@@ -361,11 +368,17 @@ class TestCloudflareRulesetDiffTrackedFields:
         fields = _tracked_fields_for({"record_type": "A"})
         assert fields == _TRACKED_FIELDS
 
-    def test_unknown_cloudflare_type_falls_back_to_tracked_fields(self):
-        """An unrecognised cloudflare_ type should fall back to _TRACKED_FIELDS."""
-        from app.services.diff_service import _tracked_fields_for, _TRACKED_FIELDS
+    def test_unknown_cloudflare_type_returns_empty_not_dns_fields(self):
+        """An unrecognised cloudflare_ type must return () (no fields
+        diffed), matching every other provider's convention — NOT the
+        DNS-record _TRACKED_FIELDS tuple. Falling back to _TRACKED_FIELDS
+        was the exact bug (found in this QA pass) that left 7 of 9
+        Cloudflare record types undetectable: their field shapes don't
+        match DNS's, so the fallback silently produced zero real Change
+        rows."""
+        from app.services.diff_service import _tracked_fields_for
         fields = _tracked_fields_for({"record_type": "cloudflare_future_surface"})
-        assert fields == _TRACKED_FIELDS
+        assert fields == ()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -400,7 +413,7 @@ class TestCloudflareRulesetRiskRules:
         level, reason = self._classify(
             change_type="modified",
             field_path="skip_count",
-            old_value=1, new_value=3,
+            prev_value=1, new_value=3,
         )
         assert level == "high"
         assert "skip" in reason.lower()
@@ -409,7 +422,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="skip_count",
-            old_value=3, new_value=1,
+            prev_value=3, new_value=1,
         )
         assert level == "low"
 
@@ -418,7 +431,7 @@ class TestCloudflareRulesetRiskRules:
         level, reason = self._classify(
             change_type="modified",
             field_path="block_count",
-            old_value=5, new_value=2,
+            prev_value=5, new_value=2,
         )
         assert level == "high"
         assert "block" in reason.lower()
@@ -427,7 +440,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="block_count",
-            old_value=2, new_value=5,
+            prev_value=2, new_value=5,
         )
         assert level == "low"
 
@@ -436,7 +449,7 @@ class TestCloudflareRulesetRiskRules:
         level, reason = self._classify(
             change_type="modified",
             field_path="enabled_rule_count",
-            old_value=10, new_value=6,
+            prev_value=10, new_value=6,
         )
         assert level == "high"
 
@@ -444,7 +457,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="enabled_rule_count",
-            old_value=6, new_value=10,
+            prev_value=6, new_value=10,
         )
         assert level == "low"
 
@@ -453,7 +466,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="rule_count",
-            old_value=5, new_value=3,
+            prev_value=5, new_value=3,
         )
         assert level == "medium"
 
@@ -461,7 +474,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="rule_count",
-            old_value=3, new_value=7,
+            prev_value=3, new_value=7,
         )
         assert level == "medium"
 
@@ -470,7 +483,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="challenge_count",
-            old_value=0, new_value=2,
+            prev_value=0, new_value=2,
         )
         assert level == "medium"
 
@@ -478,7 +491,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="managed_challenge_count",
-            old_value=1, new_value=0,
+            prev_value=1, new_value=0,
         )
         assert level == "medium"
 
@@ -487,7 +500,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="version",
-            old_value="2", new_value="3",
+            prev_value="2", new_value="3",
         )
         assert level == "low"
 
@@ -496,7 +509,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="phase",
-            old_value="http_request_firewall_custom",
+            prev_value="http_request_firewall_custom",
             new_value="http_request_firewall_managed",
         )
         assert level == "medium"
@@ -505,7 +518,7 @@ class TestCloudflareRulesetRiskRules:
         level, _ = self._classify(
             change_type="modified",
             field_path="kind",
-            old_value="zone", new_value="managed",
+            prev_value="zone", new_value="managed",
         )
         assert level == "medium"
 
@@ -537,7 +550,7 @@ class TestRiskServiceRoutingM577:
         change = {
             "change_type": "modified",
             "field_path": "content",
-            "old_value": "1.2.3.4",
+            "prev_value": "1.2.3.4",
             "new_value": "5.6.7.8",
             "provider_metadata": {"record_type": "A"},
         }
@@ -551,7 +564,7 @@ class TestRiskServiceRoutingM577:
         change = {
             "change_type": "added",
             "field_path": "",
-            "old_value": None,
+            "prev_value": None,
             "new_value": None,
             "provider_metadata": {"record_type": "cloudflare_dns_record"},
         }

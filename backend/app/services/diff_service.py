@@ -322,6 +322,62 @@ _CLOUDFLARE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "managed_challenge_count",
         "execute_count",
     ),
+    # M59.5/M59.7 expansion surfaces — previously MISSING from this dict
+    # entirely, so every one of these 7 record types silently fell back to
+    # the DNS-record ``_TRACKED_FIELDS`` tuple below (record_type, name,
+    # content, ttl, proxied, priority, comment) via the ``.get(rt,
+    # _TRACKED_FIELDS)`` fallback in ``_tracked_fields_for()``. Since none of
+    # these record types share that field shape (aside from incidental
+    # overlaps like "name" or "priority"), compute_diff never detected real
+    # drift for them — e.g. a zone's SSL mode going "strict" → "off", or a
+    # WAF rule's action going "block" → "allow", produced ZERO Change rows,
+    # even though risk_rules/cloudflare.py already had full classifier logic
+    # for every one of these fields.
+    "cloudflare_zone_setting": (
+        "value",
+        "editable",
+    ),
+    "cloudflare_page_rule": (
+        "target_url_pattern",
+        "actions_summary",
+        "rule_kind",
+        "priority",
+        "status",
+    ),
+    "cloudflare_worker_route": (
+        "pattern",
+        "script_name",
+        "enabled",
+    ),
+    "cloudflare_worker_script": (
+        "script_etag",
+        "env_var_count",
+        "binding_count",
+    ),
+    "cloudflare_access_application": (
+        "name",
+        "type",
+        "domain",
+        "visibility",
+        "enabled",
+        "session_duration",
+        "allowed_idps_count",
+    ),
+    "cloudflare_access_policy": (
+        "name",
+        "decision",
+        "enabled",
+        "precedence",
+        "include_count",
+        "exclude_count",
+        "require_count",
+    ),
+    "cloudflare_waf_rule": (
+        "description",
+        "action",
+        "enabled",
+        "expression_hash",
+    ),
 }
 
 # ── AWS-specific tracked fields ───────────────────────────────────────────────
@@ -2766,9 +2822,14 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _AZURE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
-        # Falls back to _TRACKED_FIELDS if the type is not in the table
-        # (preserves backward-compat for any future cloudflare_ types).
-        return _CLOUDFLARE_TRACKED_FIELDS_BY_TYPE.get(rt, _TRACKED_FIELDS)
+        # Unknown cloudflare_* subtypes return () (empty), matching every
+        # other provider's convention above — NOT the DNS-record
+        # _TRACKED_FIELDS tuple. Falling back to _TRACKED_FIELDS here was
+        # the exact bug that left 7 of 9 Cloudflare record types
+        # undetectable: their field shapes don't match DNS's
+        # (record_type, name, content, ttl, proxied, priority, comment), so
+        # the fallback silently produced zero real Change rows.
+        return _CLOUDFLARE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     return _TRACKED_FIELDS
 
 

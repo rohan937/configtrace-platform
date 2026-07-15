@@ -49,6 +49,21 @@ def _str(v: Any) -> str:
     return str(v) if v is not None else ""
 
 
+def _int_or_none(v: Any) -> "int | None":
+    """Coerce to int, but return None (not 0) for missing/unparseable values.
+
+    A count that is genuinely unknown/missing must never be silently
+    treated as an explicit ``0`` — doing so would let an unknown baseline
+    falsely claim an "increase".
+    """
+    if isinstance(v, bool) or v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Production-hostname / known-domain heuristics
 # ─────────────────────────────────────────────────────────────────────────────
@@ -529,18 +544,22 @@ def _classify_worker_script(
 
     if change_type == "modified" and field_path == "env_var_count":
         # Important: we never inspect or reveal env var VALUES — only the count.
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        direction = "increased" if new_n > prev_n else "decreased"
-        return (
-            "medium",
-            f"Worker script '{script_name or 'unknown'}' env var binding count "
-            f"{direction} from {prev_n} to {new_n}.  Verify the change is "
-            "intentional.  ConfigTrace never reads or stores env var values.",
-        )
+        prev_n, new_n = _int_or_none(prev_value), _int_or_none(new_value)
+        if prev_n is not None and new_n is not None:
+            direction = "increased" if new_n > prev_n else "decreased"
+            return (
+                "medium",
+                f"Worker script '{script_name or 'unknown'}' env var binding count "
+                f"{direction} from {prev_n} to {new_n}.  Verify the change is "
+                "intentional.  ConfigTrace never reads or stores env var values.",
+            )
+        if new_n is not None:
+            return (
+                "low",
+                f"Worker script '{script_name or 'unknown'}' env var binding "
+                f"count is now {new_n}, though the prior count is unknown or "
+                "missing.  ConfigTrace never reads or stores env var values.",
+            )
 
     if change_type == "modified" and field_path == "binding_count":
         return (
@@ -606,31 +625,35 @@ def _classify_access_application(
         )
 
     if change_type == "modified" and field_path == "allowed_idps_count":
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        if new_n == 0 and prev_n > 0:
+        prev_n, new_n = _int_or_none(prev_value), _int_or_none(new_value)
+        if prev_n is not None and new_n is not None:
+            if new_n == 0 and prev_n > 0:
+                return (
+                    "high",
+                    f"Cloudflare Access application '{name}' has had all "
+                    "identity providers removed.  Users may no longer be able to "
+                    "authenticate, or the app may have been opened to anonymous "
+                    "access — verify.",
+                )
+            if new_n < prev_n:
+                return (
+                    "medium",
+                    f"Cloudflare Access application '{name}' had identity "
+                    f"provider(s) removed ({prev_n} → {new_n}).  Verify users "
+                    "can still authenticate.",
+                )
             return (
-                "high",
-                f"Cloudflare Access application '{name}' has had all "
-                "identity providers removed.  Users may no longer be able to "
-                "authenticate, or the app may have been opened to anonymous "
-                "access — verify.",
+                "low",
+                f"Cloudflare Access application '{name}' had identity provider(s) "
+                f"added ({prev_n} → {new_n}).",
             )
-        if new_n < prev_n:
+        if new_n is not None:
             return (
-                "medium",
-                f"Cloudflare Access application '{name}' had identity "
-                f"provider(s) removed ({prev_n} → {new_n}).  Verify users "
-                "can still authenticate.",
+                "low",
+                f"Cloudflare Access application '{name}' now has {new_n} "
+                "identity provider(s) configured, though the prior count is "
+                "unknown or missing.",
             )
-        return (
-            "low",
-            f"Cloudflare Access application '{name}' had identity provider(s) "
-            f"added ({prev_n} → {new_n}).",
-        )
 
     if change_type == "modified" and field_path == "session_duration":
         return (
@@ -696,23 +719,27 @@ def _classify_access_policy(
         )
 
     if change_type == "modified" and field_path == "include_count":
-        try:
-            prev_n = int(prev_value or 0)
-            new_n = int(new_value or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
-        if new_n > prev_n:
+        prev_n, new_n = _int_or_none(prev_value), _int_or_none(new_value)
+        if prev_n is not None and new_n is not None:
+            if new_n > prev_n:
+                return (
+                    "high",
+                    f"Cloudflare Access policy '{name}' include list was broadened "
+                    f"({prev_n} → {new_n}).  More users/groups/emails may now "
+                    "match this policy — verify intentional.",
+                )
             return (
-                "high",
-                f"Cloudflare Access policy '{name}' include list was broadened "
-                f"({prev_n} → {new_n}).  More users/groups/emails may now "
-                "match this policy — verify intentional.",
+                "low",
+                f"Cloudflare Access policy '{name}' include list was narrowed "
+                f"({prev_n} → {new_n}).",
             )
-        return (
-            "low",
-            f"Cloudflare Access policy '{name}' include list was narrowed "
-            f"({prev_n} → {new_n}).",
-        )
+        if new_n is not None:
+            return (
+                "low",
+                f"Cloudflare Access policy '{name}' include list now has "
+                f"{new_n} entries, though the prior count is unknown or "
+                "missing.",
+            )
 
     if change_type == "added":
         new_decision = _str(pm.get("decision")).lower()

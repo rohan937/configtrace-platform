@@ -846,3 +846,222 @@ class TestSecretSafety:
             r = reason.lower()
             for bad in bad_phrases:
                 assert bad not in r, f"Forbidden phrase {bad!r} in: {reason!r}"
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# I. Real compute_diff() integration — regression guard against the detection
+# bug found in this QA pass: _CLOUDFLARE_TRACKED_FIELDS_BY_TYPE only had an
+# entry for cloudflare_ruleset. All 7 of these record types silently fell
+# back to the DNS-record _TRACKED_FIELDS tuple (record_type, name, content,
+# ttl, proxied, priority, comment), which shares almost no real field names
+# with these record shapes — so compute_diff() produced ZERO Change rows for
+# real drift (e.g. a zone's SSL mode going "strict" -> "off"), even though
+# every classifier branch above already existed and was fully tested via
+# hand-built MagicMock Changes. These tests exercise the REAL
+# compute_diff() -> classify_cloudflare_change() pipeline, not a mock.
+# ═════════════════════════════════════════════════════════════════════════════
+
+class _FakeSnapshot:
+    def __init__(self, state: list[dict]):
+        self.state = state
+
+
+def _real_changes(prev_records: list[dict], new_records: list[dict]):
+    from app.services.diff_service import compute_diff
+    return compute_diff(_FakeSnapshot(prev_records), _FakeSnapshot(new_records))
+
+
+class TestRealComputeDiffIntegration:
+    def test_I1_zone_setting_ssl_off_detected_and_critical(self):
+        prev = [{
+            "record_type": "cloudflare_zone_setting", "record_id": "ssl",
+            "setting_id": "ssl", "value": "strict", "editable": True,
+            "modified_on": None,
+        }]
+        new = [{**prev[0], "value": "off"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1, "expected the zone setting 'value' change to be detected"
+        level, reason = classify_cloudflare_change(changes[0])
+        assert level == "critical", f"expected critical, got {level} ({reason})"
+
+    def test_I2_page_rule_disabled_detected(self):
+        prev = [{
+            "record_type": "cloudflare_page_rule", "record_id": "p1",
+            "target_url_pattern": "example.com/*", "actions_summary": "always_use_https",
+            "rule_kind": "page_rule", "priority": 1, "status": "active",
+            "modified_on": None,
+        }]
+        new = [{**prev[0], "status": "disabled"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        level, _ = classify_cloudflare_change(changes[0])
+        assert level in ("medium", "high")
+
+    def test_I3_worker_route_script_changed_detected(self):
+        prev = [{
+            "record_type": "cloudflare_worker_route", "record_id": "w1",
+            "pattern": "api.example.com/*", "script_name": "old-script",
+            "enabled": True, "modified_on": None,
+        }]
+        new = [{**prev[0], "script_name": "new-script"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        level, _ = classify_cloudflare_change(changes[0])
+        assert level in ("high", "critical")
+
+    def test_I4_worker_script_etag_changed_detected(self):
+        prev = [{
+            "record_type": "cloudflare_worker_script", "record_id": "s1",
+            "script_name": "s1", "script_etag": "aaa", "env_var_count": 2,
+            "binding_count": 3, "modified_on": None,
+        }]
+        new = [{**prev[0], "script_etag": "bbb"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        level, _ = classify_cloudflare_change(changes[0])
+        assert level == "high"
+
+    def test_I5_access_application_visibility_public_detected(self):
+        prev = [{
+            "record_type": "cloudflare_access_application", "record_id": "a1",
+            "name": "internal", "type": "self_hosted", "domain": "admin.example.com",
+            "visibility": "private", "enabled": True, "session_duration": "24h",
+            "allowed_idps_count": 2, "modified_on": None,
+        }]
+        new = [{**prev[0], "visibility": "public"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        level, reason = classify_cloudflare_change(changes[0])
+        assert level == "critical", f"expected critical, got {level} ({reason})"
+
+    def test_I6_access_policy_decision_bypass_detected(self):
+        prev = [{
+            "record_type": "cloudflare_access_policy", "record_id": "pol1",
+            "application_id": "a1", "name": "default", "decision": "allow",
+            "enabled": True, "precedence": 1, "include_count": 1,
+            "exclude_count": 0, "require_count": 0, "modified_on": None,
+        }]
+        new = [{**prev[0], "decision": "bypass"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        level, _ = classify_cloudflare_change(changes[0])
+        assert level == "high"
+
+    def test_I7_waf_rule_action_block_to_allow_detected(self):
+        prev = [{
+            "record_type": "cloudflare_waf_rule", "record_id": "r1",
+            "ruleset_id": "rs1", "description": "block sqli", "action": "block",
+            "enabled": True, "expression_hash": "aaa", "modified_on": None,
+        }]
+        new = [{**prev[0], "action": "allow"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        level, reason = classify_cloudflare_change(changes[0])
+        assert level == "critical", f"expected critical, got {level} ({reason})"
+
+    def test_I8_dns_record_content_change_detected_and_routes_to_dns_classifier(self):
+        """DNS records use bare type strings (e.g. "A") and must route to
+        classify_dns_change(), never to classify_cloudflare_change()."""
+        from app.services.risk_service import classify_change
+
+        prev = [{
+            "record_type": "A", "record_id": "d1", "name": "api.example.com",
+            "content": "1.1.1.1", "ttl": 1, "proxied": True, "priority": None,
+            "comment": None, "modified_on": None,
+        }]
+        new = [{**prev[0], "content": "2.2.2.2"}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        assert changes[0]["field_path"] == "content"
+        level, _ = classify_change(changes[0])
+        assert level in ("low", "medium", "high", "critical")
+
+    def test_I9_ruleset_enabled_rule_count_change_detected(self):
+        prev = [{
+            "record_type": "cloudflare_ruleset", "record_id": "rs1", "name": "Managed",
+            "kind": "managed", "phase": "http_request_firewall_managed",
+            "version": "1", "rule_count": 10, "enabled_rule_count": 10,
+            "block_count": 5, "log_count": 0, "skip_count": 0,
+            "challenge_count": 0, "managed_challenge_count": 0, "execute_count": 0,
+            "last_updated": None,
+        }]
+        new = [{**prev[0], "enabled_rule_count": 5}]
+        changes = _real_changes(prev, new)
+        assert len(changes) == 1
+        assert changes[0]["field_path"] == "enabled_rule_count"
+        level, _ = classify_change(changes[0])
+        assert level == "high"
+
+    def test_I10_unmapped_cloudflare_subtype_returns_empty_not_dns_fields(self):
+        """Regression guard for the tracked-fields fallback fix: a genuinely
+        unmapped cloudflare_* subtype must return () (no fields diffed), NOT
+        the DNS-record _TRACKED_FIELDS tuple."""
+        from app.services.diff_service import _tracked_fields_for
+        fields = _tracked_fields_for({"record_type": "cloudflare_totally_unknown_type"})
+        assert fields == ()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# J. Count-unknown-baseline safety — regression guard against the
+# PagerDuty-style unknown-to-zero bug found in this QA pass: env_var_count,
+# allowed_idps_count, and include_count all used int(value or 0), which
+# silently coerced a genuinely unknown prior count to 0.
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestCountUnknownBaselineSafety:
+    def test_J1_worker_script_env_var_count_unknown_prev_does_not_claim_specific_direction(self):
+        c = _ch(record_type="cloudflare_worker_script", field_path="env_var_count",
+                prev_value=None, new_value=3, pm_extra={"script_name": "s1"})
+        level, reason = classify_cloudflare_change(c)
+        assert "increased from 0" not in reason.lower()
+        assert "decreased from 0" not in reason.lower()
+        assert level != "high"
+
+    def test_J2_worker_script_env_var_count_real_zero_baseline_still_detects_increase(self):
+        c = _ch(record_type="cloudflare_worker_script", field_path="env_var_count",
+                prev_value=0, new_value=3, pm_extra={"script_name": "s1"})
+        level, reason = classify_cloudflare_change(c)
+        assert level == "medium"
+        assert "increased from 0 to 3" in reason.lower()
+
+    def test_J3_access_application_allowed_idps_count_unknown_prev_is_not_high(self):
+        """Regression guard: previously new_n==0 with prev_n coerced from
+        None to 0 would NOT fire the 'all removed' high branch (0==0 is not
+        > 0), but any other unknown-to-zero coercion path must still not
+        claim a specific removal count."""
+        c = _ch(record_type="cloudflare_access_application",
+                field_path="allowed_idps_count",
+                prev_value=None, new_value=2, pm_extra={"name": "Internal"})
+        level, reason = classify_cloudflare_change(c)
+        assert "→" not in reason or "unknown" in reason.lower()
+        assert level != "high"
+
+    def test_J4_access_policy_include_count_unknown_prev_does_not_claim_broadened(self):
+        c = _ch(record_type="cloudflare_access_policy", field_path="include_count",
+                prev_value=None, new_value=5, pm_extra={"name": "default"})
+        level, reason = classify_cloudflare_change(c)
+        assert "broadened" not in reason.lower()
+        assert level != "high"
+
+    def test_J5_access_policy_include_count_real_zero_baseline_still_detects_broadening(self):
+        c = _ch(record_type="cloudflare_access_policy", field_path="include_count",
+                prev_value=0, new_value=5, pm_extra={"name": "default"})
+        level, reason = classify_cloudflare_change(c)
+        assert level == "high"
+        assert "0 → 5" in reason
+
+    def test_J6_ruleset_skip_count_unknown_prev_does_not_claim_specific_increase(self):
+        from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change
+        c = _ch(record_type="cloudflare_ruleset", field_path="skip_count",
+                prev_value=None, new_value=4)
+        level, reason = classify_cloudflare_ruleset_change(c)
+        assert "increased from" not in reason.lower()
+        assert level != "high"
+
+    def test_J7_ruleset_skip_count_real_zero_baseline_still_detects_increase(self):
+        from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change
+        c = _ch(record_type="cloudflare_ruleset", field_path="skip_count",
+                prev_value=0, new_value=4)
+        level, reason = classify_cloudflare_ruleset_change(c)
+        assert level == "high"
+        assert "increased from 0 to 4" in reason.lower()
