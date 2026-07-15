@@ -98,6 +98,8 @@ EXPECTED_RULE_KEYS = {
     # Storage (M77B)
     "azure_storage_public_blob_access", "azure_storage_public_network_access",
     "azure_storage_weak_tls", "azure_storage_shared_key_enabled",
+    # Storage (classification-QA addition)
+    "azure_storage_https_only_disabled",
     # Key Vault (M77B)
     "azure_key_vault_public_network_access",
     "azure_key_vault_purge_protection_disabled",

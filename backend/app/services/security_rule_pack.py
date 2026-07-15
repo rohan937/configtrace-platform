@@ -145,6 +145,7 @@ _RULE_META: dict[str, tuple[str, str, str]] = {
     "azure_storage_public_network_access": ("azure", "high", "Storage accounts"),
     "azure_storage_weak_tls": ("azure", "medium", "Storage accounts"),
     "azure_storage_shared_key_enabled": ("azure", "medium", "Storage accounts"),
+    "azure_storage_https_only_disabled": ("azure", "high", "Storage accounts"),
     "azure_key_vault_public_network_access": ("azure", "high", "Key Vaults"),
     "azure_key_vault_purge_protection_disabled": ("azure", "high", "Key Vaults"),
     "azure_key_vault_soft_delete_disabled": ("azure", "medium", "Key Vaults"),

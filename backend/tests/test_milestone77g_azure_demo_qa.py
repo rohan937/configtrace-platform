@@ -442,4 +442,4 @@ def test_m77f_correlation_rules_still_registered():
     from app.services.security_signal_correlation_service import (
         AZURE_CORRELATION_RULES,
     )
-    assert len(AZURE_CORRELATION_RULES) == 20
+    assert len(AZURE_CORRELATION_RULES) == 21

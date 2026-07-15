@@ -121,6 +121,7 @@ KNOWN_RULE_KEYS: frozenset[str] = frozenset(
         "azure_storage_public_network_access",
         "azure_storage_weak_tls",
         "azure_storage_shared_key_enabled",
+        "azure_storage_https_only_disabled",
         "azure_key_vault_public_network_access",
         "azure_key_vault_purge_protection_disabled",
         "azure_key_vault_soft_delete_disabled",

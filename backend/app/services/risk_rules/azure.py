@@ -18,7 +18,8 @@ critical — an NSG rule allows broad public inbound access on all
 high     — a broad privileged role (Owner/Contributor/User Access
            Administrator) is granted; an NSG rule gains a public SSH
            ingress entry; a storage account's public blob access is
-           enabled; App Service HTTPS-only is disabled.
+           enabled; a storage account's HTTPS-only traffic requirement is
+           disabled; App Service HTTPS-only is disabled.
 
 medium   — storage/Key Vault/SQL public network access is enabled;
            storage shared-key access is enabled; storage/App Service/SQL
@@ -370,10 +371,9 @@ def _classify_storage_account_change(change: Change) -> tuple[str, str]:
         return ("low", "Azure storage account shared-key access state is now unknown or missing.")
 
     if fp == "supports_https_traffic_only":
-        # Change-only signal: no dedicated Security Finding exists yet for
-        # storage-account-level supports_https_traffic_only (see
-        # azure_detection_matrix.md, category S) — classified per this
-        # task's HTTPS-only severity convention, mirroring the analogous
+        # Backed by the azure_storage_https_only_disabled Security Finding
+        # (added in the Azure classification-QA pass) — high severity matches
+        # the Finding directly, and mirrors the analogous
         # azure_app_service_https_disabled rule (high) on a sibling record type.
         if _is_falsy_explicit(new_v):
             return (
@@ -572,9 +572,14 @@ def _classify_app_service_change(change: Change) -> tuple[str, str]:
         return ("low", "Azure App Service public network access changed.")
 
     if fp == "client_cert_enabled":
-        # Change-only signal: no dedicated Security Finding exists yet for
-        # client_cert_enabled (see azure_detection_matrix.md, category S) —
-        # classified per this task's App-Service posture convention.
+        # Change-only signal, kept intentionally (reviewed in the Azure
+        # classification-QA pass): client certificate / mTLS auth is an
+        # opt-in App Service hardening feature, not a usually-on default like
+        # HTTPS — most correctly configured App Services never enable it, so
+        # a Finding would fire on the overwhelming majority of records with
+        # near-zero signal (unlike supports_https_traffic_only, which has a
+        # clear "usually on, this is a regression" story and did get a
+        # Finding). Classified per this task's App-Service posture convention.
         if _is_falsy_explicit(new_v):
             return (
                 "medium",

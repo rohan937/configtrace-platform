@@ -18,11 +18,15 @@ compromise, unauthorized access, or data exposure". It never asserts that
 secrets were leaked, customer data was disclosed, an attacker is present,
 data was exposed, or a breach / attack occurred.
 
-M77B record types (10 rules)
------------------------------
+M77B record types (10 rules) + classification-QA addition (1 rule)
+--------------------------------------------------------------------
 - ``azure_network_security_group`` → public admin ingress / broad public ingress
 - ``azure_storage_account``        → public blob access / public network access /
-                                      weak TLS / shared-key authorization
+                                      weak TLS / shared-key authorization /
+                                      HTTPS-only disabled (added in the Azure
+                                      classification-QA pass — direct analog of
+                                      ``azure_app_service_https_disabled`` on a
+                                      sibling record type)
 - ``azure_key_vault``              → public network access / purge protection /
                                       soft delete / legacy access policies
 
@@ -77,6 +81,7 @@ _RULE_STORAGE_PUBLIC_BLOB_ACCESS = "azure_storage_public_blob_access"
 _RULE_STORAGE_PUBLIC_NETWORK_ACCESS = "azure_storage_public_network_access"
 _RULE_STORAGE_WEAK_TLS = "azure_storage_weak_tls"
 _RULE_STORAGE_SHARED_KEY_ENABLED = "azure_storage_shared_key_enabled"
+_RULE_STORAGE_HTTPS_ONLY_DISABLED = "azure_storage_https_only_disabled"
 _RULE_KEY_VAULT_PUBLIC_NETWORK_ACCESS = "azure_key_vault_public_network_access"
 _RULE_KEY_VAULT_PURGE_PROTECTION_DISABLED = "azure_key_vault_purge_protection_disabled"
 _RULE_KEY_VAULT_SOFT_DELETE_DISABLED = "azure_key_vault_soft_delete_disabled"
@@ -106,6 +111,7 @@ AZURE_RULE_KEYS: frozenset[str] = frozenset({
     _RULE_STORAGE_PUBLIC_NETWORK_ACCESS,
     _RULE_STORAGE_WEAK_TLS,
     _RULE_STORAGE_SHARED_KEY_ENABLED,
+    _RULE_STORAGE_HTTPS_ONLY_DISABLED,
     _RULE_KEY_VAULT_PUBLIC_NETWORK_ACCESS,
     _RULE_KEY_VAULT_PURGE_PROTECTION_DISABLED,
     _RULE_KEY_VAULT_SOFT_DELETE_DISABLED,
@@ -452,6 +458,7 @@ def _eval_storage_account(record: dict[str, Any]) -> list[FindingCandidate]:
     network_default_action = get_str(record, "network_default_action")
     minimum_tls_version = get_str(record, "minimum_tls_version")
     shared_access_key_enabled = record.get("shared_access_key_enabled")
+    supports_https_traffic_only = record.get("supports_https_traffic_only")
 
     # C. Storage account public blob access enabled
     if allow_blob_public_access is True:
@@ -617,6 +624,42 @@ def _eval_storage_account(record: dict[str, Any]) -> list[FindingCandidate]:
                         "(RBAC).",
                         "Set allowSharedKeyAccess=false on the storage "
                         "account.",
+                    ],
+                },
+                record_id=record_id,
+            )
+        )
+
+    # K. Storage account HTTPS-only traffic disabled — direct analog of
+    # azure_app_service_https_disabled on a sibling record type.
+    if supports_https_traffic_only is False:
+        out.append(
+            FindingCandidate(
+                provider="azure",
+                rule_key=_RULE_STORAGE_HTTPS_ONLY_DISABLED,
+                finding_key=make_finding_key(_RULE_STORAGE_HTTPS_ONLY_DISABLED, record_id),
+                severity="high",
+                title="Azure Storage account does not require HTTPS-only traffic",
+                description=(
+                    f"Storage account '{account_name}' in resource group "
+                    f"'{resource_group}' has supportsHttpsTrafficOnly=false, "
+                    f"which permits unencrypted HTTP connections to Blob/Queue/"
+                    f"Table/File endpoints. This may allow plaintext traffic and "
+                    f"may require review. "
+                    f"{_common_disclaimer()}"
+                ),
+                evidence={
+                    "rule": _RULE_STORAGE_HTTPS_ONLY_DISABLED,
+                    "account_name": account_name,
+                    "resource_group": resource_group,
+                    "location": location,
+                    "supports_https_traffic_only": False,
+                },
+                remediation={
+                    "summary": "Enable 'Secure transfer required' (HTTPS-only) on the storage account.",
+                    "steps": [
+                        "Set supportsHttpsTrafficOnly=true on the storage account.",
+                        "Confirm dependent clients support HTTPS endpoints.",
                     ],
                 },
                 record_id=record_id,

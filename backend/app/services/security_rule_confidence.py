@@ -142,6 +142,7 @@ RULE_CONFIDENCE: dict[str, tuple[str, str]] = {
     "azure_nsg_public_admin_ingress": (HIGH, "Only Inbound+Allow rules from canonical public prefixes (*, 0.0.0.0/0, ::/0, Internet, Any) on a known admin/database/cache/search port fire."),
     "azure_nsg_public_broad_ingress": (HIGH, "Only Inbound+Allow rules from canonical public prefixes with a broad/all-port destination range fire."),
     "azure_storage_public_blob_access": (HIGH, "Only an explicit allowBlobPublicAccess=true on the storage account fires; container ACLs are not claimed."),
+    "azure_storage_https_only_disabled": (HIGH, "Only an explicit supportsHttpsTrafficOnly=false on the storage account fires; missing/unknown is skipped."),
     "azure_storage_public_network_access": (HIGH, "Only an explicit publicNetworkAccess=Enabled fires; severity bumps to high when defaultAction=Allow is also explicit."),
     "azure_storage_weak_tls": (HIGH, "Only explicit minimumTlsVersion=TLS1_0/TLS1_1 fires; missing/unknown is skipped."),
     "azure_storage_shared_key_enabled": (HIGH, "Only an explicit allowSharedKeyAccess=true fires; missing/unknown is skipped."),

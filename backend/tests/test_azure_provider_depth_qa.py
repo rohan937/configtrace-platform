@@ -54,6 +54,7 @@ ALL_AZURE_RULE_KEYS: frozenset[str] = frozenset({
     "azure_storage_public_network_access",
     "azure_storage_weak_tls",
     "azure_storage_shared_key_enabled",
+    "azure_storage_https_only_disabled",
     "azure_key_vault_public_network_access",
     "azure_key_vault_purge_protection_disabled",
     "azure_key_vault_soft_delete_disabled",
@@ -74,6 +75,7 @@ ALL_AZURE_RULE_KEYS: frozenset[str] = frozenset({
 EXPECTED_SEVERITY: dict[str, Any] = {
     "azure_nsg_public_admin_ingress": ("high", "critical"),
     "azure_storage_public_blob_access": "high",
+    "azure_storage_https_only_disabled": "high",
     "azure_key_vault_public_network_access": ("high", "critical"),
     "azure_role_assignment_broad_privilege": ("high", "critical"),
     "azure_app_service_https_disabled": "high",
@@ -192,6 +194,7 @@ def _all_azure_findings() -> list[Any]:
             "network_default_action": "Allow",
             "minimum_tls_version": "TLS1_0",
             "shared_access_key_enabled": True,
+            "supports_https_traffic_only": False,
         },
         # Key Vault: public network + purge + soft delete + rbac disabled.
         {
@@ -254,8 +257,8 @@ def _all_azure_findings() -> list[Any]:
 # ── TestAzureRuleRegistration ─────────────────────────────────────────────────
 
 class TestAzureRuleRegistration:
-    def test_rule_key_count_is_twenty(self) -> None:
-        assert len(ALL_AZURE_RULE_KEYS) == 20
+    def test_rule_key_count_is_twenty_one(self) -> None:
+        assert len(ALL_AZURE_RULE_KEYS) == 21
 
     def test_module_export_matches_canonical_set(self) -> None:
         from app.services.security_rules.azure import AZURE_RULE_KEYS

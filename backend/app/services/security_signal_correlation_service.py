@@ -5784,6 +5784,18 @@ AZURE_CORRELATION_RULES: dict[str, dict[str, Any]] = {
         "subject": "Azure Storage shared-key access risk",
         "evidence_phrase": "storage account configuration activity",
     },
+    "azure_storage_https_only_disabled": {
+        "correlation_type": "azure_storage_risk_activity_correlation",
+        "activity_types": {
+            "azure.storage_account.updated", "azure.storage_account.deleted",
+        },
+        "name_field": "account_name",
+        "event_name_field": "storage_account_name",
+        "kind": "Storage account",
+        "title": "Azure Storage HTTPS-only risk aligned with storage activity",
+        "subject": "Azure Storage HTTPS-only-disabled risk",
+        "evidence_phrase": "storage account configuration activity",
+    },
     # ── Key Vault rules ──────────────────────────────────────────────────────
     "azure_key_vault_public_network_access": {
         "correlation_type": "azure_key_vault_risk_activity_correlation",

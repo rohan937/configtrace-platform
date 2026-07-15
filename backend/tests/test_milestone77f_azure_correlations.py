@@ -151,8 +151,8 @@ class TestRuleCompleteness:
         missing = m77c - set(AZURE_CORRELATION_RULES)
         assert missing == set(), f"M77C rules without correlation: {missing}"
 
-    def test_20_finding_rules_covered(self):
-        assert len(AZURE_CORRELATION_RULES) == 20
+    def test_21_finding_rules_covered(self):
+        assert len(AZURE_CORRELATION_RULES) == 21
 
     def test_7_distinct_correlation_types(self):
         types = {r["correlation_type"] for r in AZURE_CORRELATION_RULES.values()}

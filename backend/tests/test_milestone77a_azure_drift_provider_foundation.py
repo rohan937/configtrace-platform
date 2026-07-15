@@ -1674,8 +1674,245 @@ class TestAzureRiskClassifier:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Supplementary: normalizer edge cases
+# Classification-QA pass: NSG list-diff stress tests, storage HTTPS-only
+# Finding, and count/threshold safety.
 # ═══════════════════════════════════════════════════════════════════════════════
+
+class TestAzureNsgListDiffStressTests:
+    """Task 5 stress tests: source prefixes, dest ports, reordering, malformed
+    shapes, and the additional public-source/admin-port literals."""
+
+    def _make_change(self, record_type, field_path="", change_type="modified", prev_value=None, new_value=None):
+        return {
+            "provider_metadata": {"record_type": record_type},
+            "field_path": field_path,
+            "change_type": change_type,
+            "prev_value": prev_value,
+            "new_value": new_value,
+        }
+
+    def test_nsg_internet_literal_source_added_is_high_or_critical(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        rule = {
+            "rule_name": "allow-ssh", "direction": "Inbound", "access": "Allow",
+            "source_address_prefix": "Internet", "destination_port_range": "22",
+            "protocol": "Tcp",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level in ("high", "critical")
+
+    def test_nsg_ipv6_any_literal_source_added_is_high_or_critical(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        rule = {
+            "rule_name": "allow-rdp", "direction": "Inbound", "access": "Allow",
+            "source_address_prefix": "::/0", "destination_port_range": "3389",
+            "protocol": "Tcp",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "critical"
+
+    def test_nsg_database_port_added_is_critical(self):
+        """Admin/database ports beyond SSH/RDP (e.g. 3306 MySQL) must reach critical."""
+        from app.services.risk_rules.azure import classify_azure_change
+        rule = {
+            "rule_name": "allow-mysql", "direction": "Inbound", "access": "Allow",
+            "source_address_prefix": "0.0.0.0/0", "destination_port_range": "3306",
+            "protocol": "Tcp",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "critical"
+
+    def test_nsg_destination_port_range_string_opens_admin_port_is_critical(self):
+        """destination_port_range as a range string (e.g. '3380-3390') that
+        contains an admin port must still be caught."""
+        from app.services.risk_rules.azure import classify_azure_change
+        rule = {
+            "rule_name": "allow-range", "direction": "Inbound", "access": "Allow",
+            "source_address_prefix": "*", "destination_port_range": "3380-3390",
+            "protocol": "Tcp",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "critical"
+
+    def test_nsg_removed_0000_source_is_improvement_not_high(self):
+        """Removing a broad-public rule (0.0.0.0/0) must never be classified
+        as high/critical — it's a restoration, not a new risk."""
+        from app.services.risk_rules.azure import classify_azure_change
+        rdp_rule = {
+            "rule_name": "allow-rdp", "direction": "Inbound", "access": "Allow",
+            "source_address_prefix": "0.0.0.0/0", "destination_port_range": "3389",
+            "protocol": "Tcp",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[rdp_rule], new_value=[],
+        )
+        level, reason = classify_azure_change(change)
+        assert level not in ("high", "critical"), f"removal produced {level!r}: {reason!r}"
+
+    def test_nsg_reordering_only_does_not_create_false_risk(self):
+        """Reordering the same two benign rules must not be treated as a
+        newly-added risky rule (the added-rules diff is set-based, not
+        position-based, so pure reordering yields no added rules)."""
+        from app.services.risk_rules.azure import classify_azure_change
+        rule_a = {
+            "rule_name": "allow-https", "direction": "Inbound", "access": "Allow",
+            "source_address_prefix": "*", "destination_port_range": "443",
+            "protocol": "Tcp",
+        }
+        rule_b = {
+            "rule_name": "allow-http", "direction": "Inbound", "access": "Allow",
+            "source_address_prefix": "*", "destination_port_range": "80",
+            "protocol": "Tcp",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[rule_a, rule_b], new_value=[rule_b, rule_a],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_nsg_malformed_rule_missing_keys_does_not_raise(self):
+        """A rule dict missing expected keys (connector never emits this
+        shape, but the classifier must not assume it) must not raise and
+        must not produce a false high/critical."""
+        from app.services.risk_rules.azure import classify_azure_change
+        malformed_rule = {"rule_name": "weird"}
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[malformed_rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_nsg_outbound_public_rule_is_not_flagged(self):
+        """Direction=Outbound must never be treated as risky ingress, even
+        with a broad source/port — only Inbound+Allow is evaluated."""
+        from app.services.risk_rules.azure import classify_azure_change
+        outbound_rule = {
+            "rule_name": "outbound-any", "direction": "Outbound", "access": "Allow",
+            "source_address_prefix": "*", "destination_port_range": "*",
+            "protocol": "*",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[outbound_rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+    def test_nsg_deny_rule_is_not_flagged(self):
+        """access=Deny must never be treated as risky, even with a broad
+        source/port — only Allow rules grant access."""
+        from app.services.risk_rules.azure import classify_azure_change
+        deny_rule = {
+            "rule_name": "deny-all", "direction": "Inbound", "access": "Deny",
+            "source_address_prefix": "*", "destination_port_range": "*",
+            "protocol": "*",
+        }
+        change = self._make_change(
+            "azure_network_security_group", "rules_summary",
+            prev_value=[], new_value=[deny_rule],
+        )
+        level, _ = classify_azure_change(change)
+        assert level == "low"
+
+
+class TestAzureStorageHttpsOnlyFinding:
+    """Positive/negative/unknown tests for the azure_storage_https_only_disabled
+    Security Finding added in this classification-QA pass."""
+
+    def _record(self, **overrides):
+        base = {
+            "record_type": "azure_storage_account",
+            "record_id": "/sub/s/sa",
+            "account_name": "acct", "resource_group": "rg", "location": "eastus",
+        }
+        base.update(overrides)
+        return base
+
+    def test_https_only_disabled_fires_high(self):
+        from app.services.security_rules.azure import evaluate, _RULE_STORAGE_HTTPS_ONLY_DISABLED
+        findings = evaluate(self._record(supports_https_traffic_only=False))
+        matches = [f for f in findings if f.rule_key == _RULE_STORAGE_HTTPS_ONLY_DISABLED]
+        assert len(matches) == 1
+        assert matches[0].severity == "high"
+
+    def test_https_only_enabled_does_not_fire(self):
+        from app.services.security_rules.azure import evaluate, _RULE_STORAGE_HTTPS_ONLY_DISABLED
+        findings = evaluate(self._record(supports_https_traffic_only=True))
+        matches = [f for f in findings if f.rule_key == _RULE_STORAGE_HTTPS_ONLY_DISABLED]
+        assert matches == []
+
+    def test_https_only_unknown_missing_does_not_fire(self):
+        from app.services.security_rules.azure import evaluate, _RULE_STORAGE_HTTPS_ONLY_DISABLED
+        findings = evaluate(self._record())
+        matches = [f for f in findings if f.rule_key == _RULE_STORAGE_HTTPS_ONLY_DISABLED]
+        assert matches == []
+
+    def test_https_only_registered_in_all_registries(self):
+        from app.services.security_rule_registry import KNOWN_RULE_KEYS
+        from app.services.security_rule_confidence import RULE_CONFIDENCE
+        from app.services.security_rule_pack import _RULE_META
+        from app.services.security_coverage_service import RULE_RECORD_TYPES
+        key = "azure_storage_https_only_disabled"
+        assert key in KNOWN_RULE_KEYS
+        assert key in RULE_CONFIDENCE
+        assert key in _RULE_META
+        assert _RULE_META[key][0] == "azure"
+        assert _RULE_META[key][1] == "high"
+        assert key in RULE_RECORD_TYPES
+
+    def test_https_only_change_classification_matches_finding_severity(self):
+        from app.services.risk_rules.azure import classify_azure_change
+        change = {
+            "provider_metadata": {"record_type": "azure_storage_account"},
+            "field_path": "supports_https_traffic_only",
+            "change_type": "modified",
+            "prev_value": True,
+            "new_value": False,
+        }
+        level, _ = classify_azure_change(change)
+        assert level == "high"
+
+
+class TestAzureCountThresholdSafety:
+    """Task 6: Azure has no count-threshold rules, but _int_or_none() must
+    still be safe if ever exercised, and no unknown-to-zero coercion pattern
+    exists anywhere in the module."""
+
+    def test_int_or_none_treats_missing_as_none_not_zero(self):
+        from app.services.risk_rules.azure import _int_or_none
+        assert _int_or_none(None) is None
+        assert _int_or_none("not-a-number") is None
+        assert _int_or_none(True) is None  # bool is not a count
+        assert _int_or_none(0) == 0
+        assert _int_or_none(5) == 5
+
+    def test_no_unknown_to_zero_coercion_pattern_in_source(self):
+        import inspect
+        from app.services.risk_rules import azure as azure_risk_rules
+        source = inspect.getsource(azure_risk_rules)
+        assert "or 0)" not in source, (
+            "Found an unknown-to-zero coercion pattern in risk_rules/azure.py"
+        )
+
 
 class TestNormalizerEdgeCases:
     """Normalizers handle malformed / empty input without raising."""

@@ -81,6 +81,7 @@ ALL_AZURE_RULE_KEYS = M77C_RULE_KEYS | {
     "azure_storage_public_network_access",
     "azure_storage_weak_tls",
     "azure_storage_shared_key_enabled",
+    "azure_storage_https_only_disabled",
     "azure_key_vault_public_network_access",
     "azure_key_vault_purge_protection_disabled",
     "azure_key_vault_soft_delete_disabled",
@@ -752,7 +753,7 @@ class TestDispatchNegatives:
 
 
 class TestRuleKeyParity:
-    def test_azure_rule_keys_module_has_all_20(self):
+    def test_azure_rule_keys_module_has_all_21(self):
         assert AZURE_RULE_KEYS == ALL_AZURE_RULE_KEYS
 
     def test_m77c_keys_in_registry(self):
