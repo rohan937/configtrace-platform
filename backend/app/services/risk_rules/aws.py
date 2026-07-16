@@ -436,8 +436,10 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
     # ACL WRITE for authenticated AWS users (any AWS account)
     if fp == "acl_authenticated_users_write":
         if nv is True:
+            # Matches the aws_s3_public_acl Finding, which treats
+            # authenticated-users-write the same as all-users-write ("critical").
             return (
-                "high",
+                "critical",
                 f"S3 bucket {bucket_name!r} now allows WRITE access for all "
                 "authenticated AWS users via ACL. Any AWS account can modify "
                 "or delete objects in this bucket.",
@@ -457,8 +459,10 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
     # ACL READ for authenticated AWS users
     if fp == "acl_authenticated_users_read":
         if nv is True:
+            # Matches the aws_s3_public_acl Finding, which treats
+            # authenticated-users-read the same as all-users-read ("high").
             return (
-                "medium",
+                "high",
                 f"S3 bucket {bucket_name!r} now allows READ access for all "
                 "authenticated AWS users via ACL. Any AWS account can list and "
                 "read objects in this bucket.",
@@ -478,9 +482,11 @@ def _classify_s3_change(change: object) -> tuple[str, str]:  # noqa: C901 (compl
     # Public principal in bucket policy
     if fp == "public_principals_detected":
         if nv is True and pv is not True:
-            level = "critical" if sensitive else "high"
+            # Matches the aws_s3_public_policy Finding, which fires "critical"
+            # unconditionally for this signal — the Change severity must not
+            # be downgraded to "high" for a non-"sensitive"-named bucket.
             return (
-                level,
+                "critical",
                 f"The bucket policy for S3 bucket {bucket_name!r} now contains "
                 "a public principal (* or all AWS accounts). This may allow "
                 "unauthenticated or cross-account access to bucket contents. "
@@ -1798,9 +1804,12 @@ def _classify_iam_access_key_change(change: object) -> tuple[str, str]:
         return ("low", f"IAM access key {record_id!r} status changed.")
 
     if fp == "last_used_age_days":
-        if isinstance(nv, int) and nv > 90:
+        # Matches the aws_access_key_unused Finding's threshold (>= 90 days,
+        # "medium") — the Change severity/threshold must not be lower than
+        # the equivalent static Finding for the identical fact pattern.
+        if isinstance(nv, int) and nv >= 90:
             return (
-                "low",
+                "medium",
                 f"IAM access key {record_id!r} has not been used in "
                 f"{nv} days. Consider deactivating or removing stale keys.",
             )
@@ -2176,9 +2185,11 @@ def _classify_iam_policy_attachment_change(change: object) -> tuple[str, str]:
                 "services and resources.",
             )
         if "poweruser" in pn_lower or "fullaccess" in pn_lower:
-            level = "high" if sensitive else "medium"
+            # Matches the aws_iam_broad_policy_attached Finding, which fires
+            # "high" unconditionally for PowerUserAccess/IAMFullAccess —
+            # do not downgrade to "medium" for a non-"sensitive"-named principal.
             return (
-                level,
+                "high",
                 f"Policy {policy_name!r} was attached to {principal_type} "
                 f"{principal_name!r}. This may grant broad access to AWS services. "
                 "Verify this attachment is intentional.",
@@ -4972,6 +4983,12 @@ def _classify_elbv2_load_balancer_change(change: object) -> tuple[str, str]:
                 f"Deletion protection was disabled on load balancer '{name}'. "
                 "Confirm this was intentional for a production load balancer.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether deletion protection is enabled on load balancer '{name}' "
+                "could not be determined. Review the current configuration manually.",
+            )
         return "low", f"Deletion protection was enabled on load balancer '{name}'."
 
     if fp == "access_logs_enabled":
@@ -4980,6 +4997,12 @@ def _classify_elbv2_load_balancer_change(change: object) -> tuple[str, str]:
                 "high",
                 f"Access logging was disabled for load balancer '{name}'. "
                 "Review your security monitoring and audit logging requirements.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether access logging is enabled for load balancer '{name}' "
+                "could not be determined. Review the current configuration manually.",
             )
         return "low", f"Access logging was enabled for load balancer '{name}'."
 
@@ -4998,6 +5021,13 @@ def _classify_elbv2_load_balancer_change(change: object) -> tuple[str, str]:
                 "high",
                 f"Invalid header field dropping was disabled on load balancer '{name}'. "
                 "This may increase exposure to header injection attacks.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether invalid header field dropping is enabled on load "
+                f"balancer '{name}' could not be determined. Review the "
+                "current configuration manually.",
             )
         return "low", f"Invalid header field dropping was enabled on load balancer '{name}'."
 
@@ -5400,6 +5430,12 @@ def _classify_wafv2_web_acl_change(change: object) -> tuple[str, str]:
                 f"WAF logging was disabled for Web ACL '{name}'. "
                 "Review your security monitoring requirements.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether WAF logging is enabled for Web ACL '{name}' could "
+                "not be determined. Review the current configuration manually.",
+            )
         return "low", f"WAF logging was enabled for Web ACL '{name}'."
 
     if fp == "associated_resource_count":
@@ -5510,6 +5546,12 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 "Audit log delivery may have stopped. "
                 "Review whether this change was intentional and check the trail status.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether CloudTrail trail '{name}' is logging could not be "
+                "determined. Review the current trail status manually.",
+            )
         # Logging re-enabled
         return (
             "low",
@@ -5524,6 +5566,12 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 f"CloudTrail trail '{name}' is no longer multi-region. "
                 "Events from other regions may no longer be captured in this trail.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether CloudTrail trail '{name}' is multi-region could not "
+                "be determined. Review the current trail configuration manually.",
+            )
         return "low", f"CloudTrail trail '{name}' is now multi-region."
 
     if fp == "include_global_service_events":
@@ -5534,6 +5582,13 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 f"CloudTrail trail '{name}' no longer logs global service events (IAM, STS). "
                 "IAM activity may not be captured.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether CloudTrail trail '{name}' logs global service "
+                "events could not be determined. Review the current "
+                "configuration manually.",
+            )
         return "low", f"CloudTrail trail '{name}' now includes global service events."
 
     if fp == "is_organization_trail":
@@ -5542,6 +5597,12 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 "critical",
                 f"CloudTrail trail '{name}' is no longer an organization trail. "
                 "Member account activity may no longer be captured centrally.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether CloudTrail trail '{name}' is an organization trail "
+                "could not be determined. Review the current configuration manually.",
             )
         return "low", f"CloudTrail trail '{name}' is now an organization trail."
 
@@ -5554,6 +5615,13 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 "Log file integrity can no longer be verified. "
                 "Review whether this meets your audit requirements.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether CloudTrail log file validation is enabled on trail "
+                f"'{name}' could not be determined. Review the current "
+                "configuration manually.",
+            )
         return "low", f"CloudTrail log file validation was enabled on trail '{name}'."
 
     if fp == "kms_key_id_present":
@@ -5563,6 +5631,12 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 sev,
                 f"KMS encryption was removed from CloudTrail trail '{name}'. "
                 "Log files may no longer be encrypted at rest.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether CloudTrail trail '{name}' has KMS encryption could "
+                "not be determined. Review the current configuration manually.",
             )
         return "low", f"KMS encryption was added to CloudTrail trail '{name}'."
 
@@ -5586,6 +5660,12 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 "medium",
                 f"CloudTrail trail '{name}' SNS notification topic was removed.",
             )
+        if nv is None:
+            return (
+                "low",
+                f"Whether CloudTrail trail '{name}' has an SNS notification "
+                "topic could not be determined.",
+            )
         return "low", f"CloudTrail trail '{name}' SNS notification topic was added."
 
     if fp == "cloud_watch_logs_enabled":
@@ -5593,6 +5673,12 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
             return (
                 "medium",
                 f"CloudTrail trail '{name}' CloudWatch Logs integration was removed.",
+            )
+        if nv is None:
+            return (
+                "low",
+                f"Whether CloudTrail trail '{name}' has CloudWatch Logs "
+                "integration could not be determined.",
             )
         return "low", f"CloudTrail trail '{name}' CloudWatch Logs integration was added."
 
@@ -5603,6 +5689,12 @@ def _classify_cloudtrail_trail_change(change: object) -> tuple[str, str]:
                 sev,
                 f"CloudTrail trail '{name}' no longer logs management events. "
                 "API calls that create, modify, and delete AWS resources may not be captured.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether CloudTrail trail '{name}' logs management events "
+                "could not be determined. Review the current configuration manually.",
             )
         return "low", f"CloudTrail trail '{name}' management event logging was re-enabled."
 
@@ -5716,6 +5808,13 @@ def _classify_cloudtrail_event_data_store_change(change: object) -> tuple[str, s
                 f"Termination protection was disabled on event data store '{name}'. "
                 "Confirm this change is intentional.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether termination protection is enabled on event data "
+                f"store '{name}' could not be determined. Review the current "
+                "configuration manually.",
+            )
         return "low", f"Termination protection was enabled on event data store '{name}'."
 
     if fp == "retention_period":
@@ -5735,6 +5834,12 @@ def _classify_cloudtrail_event_data_store_change(change: object) -> tuple[str, s
                 "high",
                 f"KMS encryption was removed from event data store '{name}'.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether event data store '{name}' has KMS encryption could "
+                "not be determined. Review the current configuration manually.",
+            )
         return "low", f"KMS encryption was added to event data store '{name}'."
 
     if fp in ("multi_region_enabled", "organization_enabled"):
@@ -5742,6 +5847,12 @@ def _classify_cloudtrail_event_data_store_change(change: object) -> tuple[str, s
             return (
                 "medium",
                 f"Event data store '{name}' {fp.replace('_', ' ')} was disabled.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether event data store '{name}' {fp.replace('_', ' ')} "
+                "could not be determined. Review the current configuration manually.",
             )
         return "low", f"Event data store '{name}' {fp.replace('_', ' ')} was enabled."
 
@@ -5836,6 +5947,13 @@ def _classify_guardduty_detector_change(change: object) -> tuple[str, str]:
                 f"GuardDuty {feature_label} protection was disabled in '{name}'. "
                 "Detection coverage for this feature may be reduced.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether GuardDuty {feature_label} protection is enabled in "
+                f"'{name}' could not be determined. Review the current "
+                "configuration manually.",
+            )
         return "low", f"GuardDuty {feature_label} protection was enabled in '{name}'."
 
     if fp == "member_count" or fp == "active_member_count":
@@ -5855,6 +5973,13 @@ def _classify_guardduty_detector_change(change: object) -> tuple[str, str]:
                 "high",
                 f"GuardDuty administrator account association was removed in '{name}'. "
                 "Centralized threat detection management may be affected.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether GuardDuty has an administrator account association "
+                f"in '{name}' could not be determined. Review the current "
+                "configuration manually.",
             )
         return "low", f"GuardDuty administrator account association was added in '{name}'."
 
@@ -5912,6 +6037,12 @@ def _classify_guardduty_publishing_destination_change(change: object) -> tuple[s
                 "medium",
                 f"KMS key was removed from GuardDuty publishing destination in '{name}'.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether GuardDuty publishing destination '{name}' has a KMS "
+                "key could not be determined. Review the current configuration manually.",
+            )
         return "low", f"KMS key was added to GuardDuty publishing destination in '{name}'."
 
     if fp == "destination_arn_present":
@@ -5920,6 +6051,13 @@ def _classify_guardduty_publishing_destination_change(change: object) -> tuple[s
                 "high",
                 f"GuardDuty publishing destination ARN was removed in '{name}'. "
                 "Findings will not be delivered.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether GuardDuty publishing destination '{name}' has a "
+                "destination ARN could not be determined. Review the current "
+                "configuration manually.",
             )
         return "low", f"GuardDuty publishing destination ARN was added in '{name}'."
 
@@ -5960,6 +6098,12 @@ def _classify_securityhub_account_change(change: object) -> tuple[str, str]:
                 "Compliance findings and standards will no longer be monitored. "
                 "Review whether this change was intentional.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether Security Hub is enabled in '{name}' could not be "
+                "determined. Review the current configuration manually.",
+            )
         return "low", f"Security Hub was enabled in '{name}'."
 
     if fp == "enabled_standards_count":
@@ -5989,6 +6133,13 @@ def _classify_securityhub_account_change(change: object) -> tuple[str, str]:
                 f"Security Hub auto-enable controls was disabled in '{name}'. "
                 "New controls will not automatically be enabled for existing standards.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether Security Hub auto-enable controls is enabled in "
+                f"'{name}' could not be determined. Review the current "
+                "configuration manually.",
+            )
         return "low", f"Security Hub auto-enable controls was enabled in '{name}'."
 
     if fp == "enabled_products_count":
@@ -6009,6 +6160,13 @@ def _classify_securityhub_account_change(change: object) -> tuple[str, str]:
                 sev,
                 f"Security Hub finding aggregator was removed in '{name}'. "
                 "Multi-region finding aggregation may be affected.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether Security Hub finding aggregator is present in "
+                f"'{name}' could not be determined. Review the current "
+                "configuration manually.",
             )
         return "low", f"Security Hub finding aggregator was added in '{name}'."
 
@@ -6179,6 +6337,13 @@ def _classify_ecs_cluster_change(change: object) -> tuple[str, str]:
                 f"Container Insights was disabled on ECS cluster '{name}'. "
                 "Observability and operational metrics will be reduced.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether Container Insights is enabled on ECS cluster "
+                f"'{name}' could not be determined. Review the current "
+                "configuration manually.",
+            )
         return "low", f"Container Insights was enabled on ECS cluster '{name}'."
 
     if fp == "has_fargate_capacity":
@@ -6253,6 +6418,13 @@ def _classify_ecs_service_change(change: object) -> tuple[str, str]:
                 f"Deployment circuit breaker was disabled on ECS service '{name}'. "
                 "Failed deployments will not automatically roll back.",
             )
+        if nv is None:
+            return (
+                "low",
+                f"Whether the deployment circuit breaker is enabled on ECS "
+                f"service '{name}' could not be determined. Review the "
+                "current configuration manually.",
+            )
         return "low", f"Deployment circuit breaker was enabled on ECS service '{name}'."
 
     if fp == "circuit_breaker_rollback":
@@ -6260,6 +6432,12 @@ def _classify_ecs_service_change(change: object) -> tuple[str, str]:
             return (
                 "low",
                 f"Deployment circuit breaker rollback was disabled on ECS service '{name}'.",
+            )
+        if nv is None:
+            return (
+                "low",
+                f"Whether deployment circuit breaker rollback is enabled on "
+                f"ECS service '{name}' could not be determined.",
             )
         return "low", f"Deployment circuit breaker rollback was enabled on ECS service '{name}'."
 
@@ -6324,6 +6502,13 @@ def _classify_ecs_task_definition_change(change: object) -> tuple[str, str]:
                 "Privileged containers have full access to the host; "
                 "this significantly increases the blast radius of a container compromise.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether ECS task definition '{name}' contains a privileged "
+                "container could not be determined. Review the current "
+                "configuration manually.",
+            )
         return "low", f"ECS task definition '{name}' no longer has privileged containers."
 
     if fp == "secret_ref_count":
@@ -6374,6 +6559,12 @@ def _classify_ecs_task_definition_change(change: object) -> tuple[str, str]:
                 f"ECS task definition '{name}' no longer has read-only root filesystem containers. "
                 "Consider enabling readonlyRootFilesystem for container hardening.",
             )
+        if nv is None:
+            return (
+                "low",
+                f"Whether ECS task definition '{name}' has read-only root "
+                "filesystem containers could not be determined.",
+            )
         return "low", f"ECS task definition '{name}' now has read-only root filesystem containers."
 
     if fp == "has_efs_volume":
@@ -6416,6 +6607,13 @@ def _classify_eks_cluster_change(change: object) -> tuple[str, str]:
                 "from any IP address (0.0.0.0/0). "
                 "Restrict the public access CIDR list or disable public endpoint access.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether EKS cluster '{name}' Kubernetes API is fully open "
+                "to the public internet could not be determined. Review the "
+                "current configuration manually.",
+            )
         return (
             "medium",
             f"EKS cluster '{name}' public API access CIDR restriction was tightened.",
@@ -6429,6 +6627,13 @@ def _classify_eks_cluster_change(change: object) -> tuple[str, str]:
                 f"EKS cluster '{name}' Kubernetes API endpoint became publicly accessible. "
                 "Ensure the public access CIDR list restricts access to trusted sources.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether EKS cluster '{name}' Kubernetes API endpoint is "
+                "publicly accessible could not be determined. Review the "
+                "current configuration manually.",
+            )
         return "low", f"EKS cluster '{name}' Kubernetes API public endpoint was disabled."
 
     if fp == "endpoint_private_access":
@@ -6437,6 +6642,12 @@ def _classify_eks_cluster_change(change: object) -> tuple[str, str]:
                 "medium",
                 f"EKS cluster '{name}' private API endpoint access was disabled. "
                 "Nodes must use the public endpoint; consider enabling private access.",
+            )
+        if nv is None:
+            return (
+                "low",
+                f"Whether EKS cluster '{name}' private API endpoint access "
+                "is enabled could not be determined.",
             )
         return "low", f"EKS cluster '{name}' private API endpoint access was enabled."
 
@@ -6448,6 +6659,13 @@ def _classify_eks_cluster_change(change: object) -> tuple[str, str]:
                 f"Kubernetes Secrets encryption at rest was disabled on EKS cluster '{name}'. "
                 "etcd secrets will no longer be encrypted with a customer-managed KMS key.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether Kubernetes Secrets encryption at rest is enabled "
+                f"on EKS cluster '{name}' could not be determined. Review "
+                "the current configuration manually.",
+            )
         return "low", f"Kubernetes Secrets encryption at rest was enabled on EKS cluster '{name}'."
 
     if fp == "has_audit_logging":
@@ -6457,6 +6675,12 @@ def _classify_eks_cluster_change(change: object) -> tuple[str, str]:
                 sev,
                 f"EKS cluster '{name}' audit logging was disabled. "
                 "Kubernetes API audit events will no longer be captured.",
+            )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether EKS cluster '{name}' audit logging is enabled "
+                "could not be determined. Review the current configuration manually.",
             )
         return "low", f"EKS cluster '{name}' audit logging was enabled."
 
@@ -6684,6 +6908,13 @@ def _classify_ecr_repository_change(change: object) -> tuple[str, str]:
                 "This may allow cross-account or public access to container images. "
                 "Review the repository policy immediately.",
             )
+        if nv is None:
+            return (
+                "medium",
+                f"Whether ECR repository '{name}' policy is publicly "
+                "accessible could not be determined. Review the current "
+                "policy manually.",
+            )
         return (
             "medium",
             f"ECR repository '{name}' policy is no longer publicly accessible.",
@@ -6697,6 +6928,12 @@ def _classify_ecr_repository_change(change: object) -> tuple[str, str]:
                 f"ECR repository '{name}' scan-on-push was disabled. "
                 "Images pushed to this repository will not be automatically scanned for vulnerabilities.",
             )
+        if nv is None:
+            return (
+                "low",
+                f"Whether ECR repository '{name}' scan-on-push is enabled "
+                "could not be determined.",
+            )
         return "low", f"ECR repository '{name}' scan-on-push was enabled."
 
     if fp == "tag_immutable":
@@ -6706,6 +6943,12 @@ def _classify_ecr_repository_change(change: object) -> tuple[str, str]:
                 sev,
                 f"ECR repository '{name}' image tag mutability changed to MUTABLE. "
                 "Image tags can now be overwritten, which may undermine deployment reproducibility.",
+            )
+        if nv is None:
+            return (
+                "low",
+                f"Whether ECR repository '{name}' image tags are immutable "
+                "could not be determined.",
             )
         return "low", f"ECR repository '{name}' image tags are now immutable."
 
@@ -6946,6 +7189,11 @@ def _classify_eventbridge_rule_change(change: object) -> tuple[str, str]:
     if fp == "schedule_expression_present":
         if nv is False:
             return "medium", f"EventBridge rule '{name}' schedule expression was removed."
+        if nv is None:
+            return "low", (
+                f"Whether EventBridge rule '{name}' has a schedule expression "
+                "could not be determined."
+            )
         return "low", f"EventBridge rule '{name}' schedule expression was added."
 
     if fp == "dlq_target_present":
@@ -6955,6 +7203,11 @@ def _classify_eventbridge_rule_change(change: object) -> tuple[str, str]:
                 f"EventBridge rule '{name}' no longer has a dead-letter queue target. "
                 "Failed event deliveries may be silently dropped."
             )
+        if nv is None:
+            return "low", (
+                f"Whether EventBridge rule '{name}' has a dead-letter queue "
+                "target could not be determined."
+            )
         return "low", f"EventBridge rule '{name}' now has a dead-letter queue target."
 
     if fp == "retry_policy_present":
@@ -6963,6 +7216,11 @@ def _classify_eventbridge_rule_change(change: object) -> tuple[str, str]:
             return sev, (
                 f"EventBridge rule '{name}' retry policy was removed. "
                 "Failed deliveries may not be retried."
+            )
+        if nv is None:
+            return "low", (
+                f"Whether EventBridge rule '{name}' has a retry policy could "
+                "not be determined."
             )
         return "low", f"EventBridge rule '{name}' retry policy was added."
 
@@ -7014,6 +7272,11 @@ def _classify_eventbridge_target_change(change: object) -> tuple[str, str]:
                 f"EventBridge target '{name}' dead-letter queue was removed. "
                 "Failed event deliveries may be silently dropped."
             )
+        if nv is None:
+            return "low", (
+                f"Whether EventBridge target '{name}' has a dead-letter "
+                "queue could not be determined."
+            )
         return "low", f"EventBridge target '{name}' dead-letter queue was configured."
 
     if fp == "retry_policy_present":
@@ -7022,6 +7285,11 @@ def _classify_eventbridge_target_change(change: object) -> tuple[str, str]:
             return sev, (
                 f"EventBridge target '{name}' retry policy was removed. "
                 "Failed deliveries may not be retried."
+            )
+        if nv is None:
+            return "low", (
+                f"Whether EventBridge target '{name}' has a retry policy "
+                "could not be determined."
             )
         return "low", f"EventBridge target '{name}' retry policy was added."
 
@@ -7123,6 +7391,11 @@ def _classify_sqs_queue_change(change: object) -> tuple[str, str]:
                 "Review the queue policy immediately. "
                 "ConfigTrace does not read SQS messages."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether SQS queue '{name}' policy grants public/cross-account "
+                "access could not be determined. Review the current policy manually."
+            )
         return "low", f"SQS queue '{name}' policy no longer grants public/cross-account access."
 
     if fp == "sqs_managed_sse_enabled":
@@ -7132,6 +7405,11 @@ def _classify_sqs_queue_change(change: object) -> tuple[str, str]:
                 f"SQS managed SSE was disabled on queue '{name}'. "
                 "Messages may no longer be encrypted at rest."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether SQS managed SSE is enabled on queue '{name}' could "
+                "not be determined. Review the current configuration manually."
+            )
         return "low", f"SQS managed SSE was enabled on queue '{name}'."
 
     if fp == "kms_master_key_id_present":
@@ -7140,6 +7418,11 @@ def _classify_sqs_queue_change(change: object) -> tuple[str, str]:
             return sev, (
                 f"KMS encryption was removed from SQS queue '{name}'. "
                 "Messages may no longer be encrypted with a customer-managed key."
+            )
+        if nv is None:
+            return "medium", (
+                f"Whether SQS queue '{name}' has KMS encryption could not be "
+                "determined. Review the current configuration manually."
             )
         return "low", f"KMS encryption was enabled on SQS queue '{name}'."
 
@@ -7153,6 +7436,11 @@ def _classify_sqs_queue_change(change: object) -> tuple[str, str]:
             return sev, (
                 f"Dead-letter/redrive policy was removed from SQS queue '{name}'. "
                 "Failed messages will no longer be routed to a DLQ."
+            )
+        if nv is None:
+            return "medium", (
+                f"Whether SQS queue '{name}' has a dead-letter/redrive policy "
+                "could not be determined."
             )
         return "low", f"Dead-letter/redrive policy was added to SQS queue '{name}'."
 
@@ -7254,6 +7542,11 @@ def _classify_sns_topic_change(change: object) -> tuple[str, str]:
                 "Review the topic policy immediately. "
                 "ConfigTrace does not publish SNS messages."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether SNS topic '{name}' policy grants public/cross-account "
+                "access could not be determined. Review the current policy manually."
+            )
         return "low", f"SNS topic '{name}' policy no longer grants public/cross-account access."
 
     if fp == "kms_master_key_id_present":
@@ -7262,6 +7555,11 @@ def _classify_sns_topic_change(change: object) -> tuple[str, str]:
             return sev, (
                 f"KMS encryption was removed from SNS topic '{name}'. "
                 "Messages published to this topic may no longer be encrypted at rest."
+            )
+        if nv is None:
+            return "medium", (
+                f"Whether SNS topic '{name}' has KMS encryption could not be "
+                "determined. Review the current configuration manually."
             )
         return "low", f"KMS encryption was enabled on SNS topic '{name}'."
 
@@ -7389,11 +7687,21 @@ def _classify_sns_subscription_change(change: object) -> tuple[str, str]:
                 f"SNS subscription '{name}' filter policy was removed. "
                 "All messages published to the topic will now be delivered."
             )
+        if nv is None:
+            return "low", (
+                f"Whether SNS subscription '{name}' has a filter policy "
+                "could not be determined."
+            )
         return "low", f"SNS subscription '{name}' filter policy was added."
 
     if fp == "redrive_policy_present":
         if nv is False:
             return "low", f"SNS subscription '{name}' redrive policy was removed."
+        if nv is None:
+            return "low", (
+                f"Whether SNS subscription '{name}' has a redrive policy "
+                "could not be determined."
+            )
         return "low", f"SNS subscription '{name}' redrive policy was added."
 
     if fp == "delivery_policy_present":
@@ -7706,6 +8014,11 @@ def _classify_kms_key_change(change: object) -> tuple[str, str]:
                 "Verify whether this disable was intentional. "
                 "ConfigTrace does not call KMS cryptographic APIs."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether KMS key '{name}' is enabled could not be "
+                "determined. Review the current key state manually."
+            )
         return "low", f"KMS key '{name}' was re-enabled."
 
     if fp == "key_state":
@@ -7738,6 +8051,11 @@ def _classify_kms_key_change(change: object) -> tuple[str, str]:
                 "Verify and cancel the deletion if needed. "
                 "ConfigTrace does not call KMS cryptographic APIs."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether KMS key '{name}' has a pending deletion date could "
+                "not be determined. Review the current key state manually."
+            )
         return "low", f"KMS key '{name}' pending deletion was cancelled."
 
     if fp == "public_or_cross_account_policy":
@@ -7749,6 +8067,11 @@ def _classify_kms_key_change(change: object) -> tuple[str, str]:
                 "Review the key policy immediately. "
                 "ConfigTrace does not call KMS cryptographic APIs."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether KMS key '{name}' policy grants public/cross-account "
+                "access could not be determined. Review the current policy manually."
+            )
         return "low", f"KMS key '{name}' policy no longer grants public/cross-account access."
 
     if fp == "wildcard_admin_policy":
@@ -7758,6 +8081,11 @@ def _classify_kms_key_change(change: object) -> tuple[str, str]:
                 f"KMS key '{name}' policy contains a wildcard-action Allow for an external principal. "
                 "This may grant broad KMS permissions to unauthorized parties. "
                 "Review the key policy immediately."
+            )
+        if nv is None:
+            return "medium", (
+                f"Whether KMS key '{name}' policy contains a wildcard admin "
+                "grant could not be determined. Review the current policy manually."
             )
         return "low", f"KMS key '{name}' wildcard admin policy was removed."
 
@@ -7820,6 +8148,8 @@ def _classify_kms_alias_change(change: object) -> tuple[str, str]:
     if fp == "target_key_present":
         if nv is False:
             return "medium", f"KMS alias '{name}' no longer points to a key."
+        if nv is None:
+            return "low", f"Whether KMS alias '{name}' points to a key could not be determined."
         return "low", f"KMS alias '{name}' now points to a key."
 
     return "low", f"KMS alias '{name}' configuration changed (field: {fp or 'unknown'})."
@@ -7855,6 +8185,11 @@ def _classify_backup_vault_change(change: object) -> tuple[str, str]:
                 "Verify whether this change meets compliance requirements. "
                 "ConfigTrace does not restore backups or read backup contents."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether backup vault '{name}' lock is enabled could not be "
+                "determined. Review the current configuration manually."
+            )
         return "low", f"Backup vault '{name}' lock was enabled — recovery points are now immutable."
 
     if fp == "backup_vault_lock_configuration_present":
@@ -7864,6 +8199,11 @@ def _classify_backup_vault_change(change: object) -> tuple[str, str]:
                 f"Backup vault lock configuration was removed from vault '{name}'. "
                 "Recovery points may no longer be protected by immutability settings."
             )
+        if nv is None:
+            return "medium", (
+                f"Whether backup vault '{name}' has a lock configuration "
+                "could not be determined. Review the current configuration manually."
+            )
         return "low", f"Backup vault '{name}' lock configuration was added."
 
     if fp == "encryption_key_arn_present":
@@ -7872,6 +8212,11 @@ def _classify_backup_vault_change(change: object) -> tuple[str, str]:
             return sev, (
                 f"Encryption key was removed from backup vault '{name}'. "
                 "Recovery points may no longer be protected by customer-managed encryption."
+            )
+        if nv is None:
+            return "medium", (
+                f"Whether backup vault '{name}' has an encryption key could "
+                "not be determined. Review the current configuration manually."
             )
         return "low", f"Backup vault '{name}' encryption key was configured."
 
@@ -8083,11 +8428,21 @@ def _classify_backup_recovery_point_change(change: object) -> tuple[str, str]:
         if nv is False:
             sev = "high" if is_sensitive else "medium"
             return sev, f"Backup recovery point '{name}' encryption changed to unencrypted."
+        if nv is None:
+            return "medium", (
+                f"Whether backup recovery point '{name}' is encrypted could "
+                "not be determined. Review the current configuration manually."
+            )
         return "low", f"Backup recovery point '{name}' is now encrypted."
 
     if fp == "encryption_key_arn_present":
         if nv is False:
             return "medium", f"Backup recovery point '{name}' encryption key was removed."
+        if nv is None:
+            return "medium", (
+                f"Whether backup recovery point '{name}' has an encryption "
+                "key could not be determined."
+            )
         return "low", f"Backup recovery point '{name}' encryption key was added."
 
     if fp == "lifecycle_present":
@@ -8095,6 +8450,11 @@ def _classify_backup_recovery_point_change(change: object) -> tuple[str, str]:
             return "medium", (
                 f"Backup recovery point '{name}' lifecycle configuration was removed. "
                 "Expiration behavior may have changed."
+            )
+        if nv is None:
+            return "low", (
+                f"Whether backup recovery point '{name}' has a lifecycle "
+                "configuration could not be determined."
             )
         return "low", f"Backup recovery point '{name}' lifecycle configuration was added."
 
@@ -8315,6 +8675,8 @@ def _classify_organizations_scp_change(change: object) -> tuple[str, str]:
         label = "wildcard action" if fp == "wildcard_action_present" else "wildcard resource"
         if nv is False:
             return "medium", f"SCP '{name}' {label} was removed."
+        if nv is None:
+            return "low", f"Whether SCP '{name}' includes a {label} could not be determined."
         return "low", f"SCP '{name}' now includes a {label}."
 
     if fp == "allow_statement_count":
