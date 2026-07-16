@@ -611,7 +611,7 @@ RULE_RECORD_TYPES: dict[str, tuple[str, ...]] = {
 # Friendly, human surfaces per provider for display (no internal jargon).
 PROVIDER_SURFACES: dict[str, list[str]] = {
     "github": ["Webhooks", "Branch protection", "Deploy keys", "Environment protection", "Rulesets", "Automation permissions", "Repository settings", "Pages"],
-    "aws": ["Security group rules", "S3 buckets", "IAM policy attachments", "IAM access keys"],
+    "aws": ["Security group rules", "S3 buckets", "IAM policy attachments", "IAM access keys", "IAM account summary (root MFA)"],
     "cloudflare": ["Zone settings", "WAF rules", "DNS records"],
     "supabase": ["Row-level security", "Public table policies", "Auth configuration", "Edge Functions"],
     "firebase": ["Firestore rules", "Realtime Database rules", "Storage rules", "Auth configuration"],
@@ -804,6 +804,10 @@ RECORD_TYPE_DIAGNOSTICS: dict[str, dict[str, Any]] = {
     "aws_iam_access_key": {
         "message": "IAM access key metadata was not observed.",
         "hints": ["iam:ListAccessKeys", "iam:GetAccessKeyLastUsed"],
+    },
+    "aws_iam_account_summary": {
+        "message": "IAM account summary (root MFA) metadata was not observed.",
+        "hints": ["iam:GetAccountSummary"],
     },
     # Cloudflare
     "cloudflare_zone_setting": {

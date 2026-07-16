@@ -2430,7 +2430,12 @@ def _classify_route53_hosted_zone_change(change: object) -> tuple[str, str]:
     change_type: str = (_get(change, "change_type") or "").lower()
     fp: str = (_get(change, "field_path") or "").lower()
     nv = _get(change, "new_value")
-    pv = _get(change, "previous_value")
+    # Regression note: real compute_diff() Changes carry the previous value
+    # under "prev_value", never "previous_value" — the stale key name meant
+    # `pv` was always None here, silently breaking every prev->new
+    # transition check below (public/private zone flips, record-count
+    # decreases, etc.).
+    pv = _get(change, "prev_value")
     zone_name: str = pm.get("name") or pm.get("zone_name") or "unknown zone"
 
     # Deletion is always critical — zone removed means DNS stops resolving
@@ -2551,7 +2556,11 @@ def _classify_route53_record_change(change: object) -> tuple[str, str]:
     change_type: str = (_get(change, "change_type") or "").lower()
     fp: str = (_get(change, "field_path") or "").lower()
     nv = _get(change, "new_value")
-    pv = _get(change, "previous_value")
+    # Regression note: real compute_diff() Changes carry the previous value
+    # under "prev_value", never "previous_value" — the stale key name meant
+    # `pv` was always None here, silently breaking prev->new comparisons
+    # (DMARC weakening, TTL/value-hash transitions, etc.).
+    pv = _get(change, "prev_value")
     # record_name: composite display label (e.g. "CAA example.com") or raw hostname
     record_name: str = pm.get("record_name") or pm.get("name") or "unknown"
     # dns_record_name: actual raw hostname (set by _build_provider_metadata in M40.5+)
@@ -2817,7 +2826,11 @@ def _classify_cloudfront_distribution_change(change: object) -> tuple[str, str]:
     change_type: str = (_get(change, "change_type") or "").lower()
     fp: str = (_get(change, "field_path") or "").lower()
     nv = _get(change, "new_value")
-    pv = _get(change, "previous_value")
+    # Regression note: real compute_diff() Changes carry the previous value
+    # under "prev_value", never "previous_value" — the stale key name meant
+    # `pv` was always None here, silently breaking the enabled True->False
+    # detection below (and any other prev->new comparison in this function).
+    pv = _get(change, "prev_value")
     dist_name: str = pm.get("name") or pm.get("domain_name") or pm.get("distribution_id") or "unknown"
     aliases: list = pm.get("aliases") or []
     is_sensitive = (
@@ -3478,6 +3491,20 @@ def _classify_rds_db_instance_change(change: object) -> tuple[str, str]:  # noqa
     sensitive = _rds_is_sensitive(name)
 
     if ct == "added":
+        new_rec = new_val if isinstance(new_val, dict) else {}
+        if new_rec.get("publicly_accessible") is True:
+            level = "critical" if sensitive else "high"
+            return (
+                level,
+                f"A newly discovered RDS DB instance '{name}' is publicly "
+                "accessible over the internet. Verify this is intentional.",
+            )
+        if new_rec.get("storage_encrypted") is False:
+            return (
+                "high",
+                f"A newly discovered RDS DB instance '{name}' does not have "
+                "storage encryption enabled.",
+            )
         return "low", f"RDS DB instance '{name}' was added to monitoring."
     if ct == "removed":
         level = "high" if sensitive else "medium"
@@ -3700,6 +3727,20 @@ def _classify_rds_db_cluster_change(change: object) -> tuple[str, str]:  # noqa:
     sensitive = _rds_is_sensitive(name)
 
     if ct == "added":
+        new_rec = new_val if isinstance(new_val, dict) else {}
+        if new_rec.get("publicly_accessible") is True:
+            level = "critical" if sensitive else "high"
+            return (
+                level,
+                f"A newly discovered RDS DB cluster '{name}' is publicly "
+                "accessible. Verify this is intentional.",
+            )
+        if new_rec.get("storage_encrypted") is False:
+            return (
+                "high",
+                f"A newly discovered RDS DB cluster '{name}' does not have "
+                "storage encryption enabled.",
+            )
         return "low", f"RDS DB cluster '{name}' was added to monitoring."
     if ct == "removed":
         level = "high" if sensitive else "medium"
@@ -6616,6 +6657,15 @@ def _classify_ecr_repository_change(change: object) -> tuple[str, str]:
     is_sensitive = _ecs_is_sensitive(name)
 
     if ct == "added":
+        new_rec = nv if isinstance(nv, dict) else {}
+        if new_rec.get("policy_is_public") is True:
+            sev = "critical" if is_sensitive else "high"
+            return (
+                sev,
+                f"A newly discovered ECR repository '{name}' has a policy "
+                "granting access to external principals or '*'. Review the "
+                "repository policy immediately.",
+            )
         return "low", f"ECR repository '{name}' was added to monitoring."
     if ct == "removed":
         sev = "high" if is_sensitive else "medium"
@@ -6794,6 +6844,14 @@ def _classify_eventbridge_bus_change(change: object) -> tuple[str, str]:
     is_sensitive = _is_sensitive_messaging(name)
 
     if ct == "added":
+        new_rec = nv if isinstance(nv, dict) else {}
+        if new_rec.get("public_or_cross_account_policy") is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"A newly discovered EventBridge event bus '{name}' has a "
+                "policy granting access to external principals or '*'. "
+                "Review the bus resource policy immediately."
+            )
         return "low", f"EventBridge event bus '{name}' was added to monitoring."
     if ct == "removed":
         sev = "high" if is_sensitive else "medium"
@@ -7040,6 +7098,14 @@ def _classify_sqs_queue_change(change: object) -> tuple[str, str]:
     is_sensitive = _is_sensitive_messaging(name)
 
     if ct == "added":
+        new_rec = nv if isinstance(nv, dict) else {}
+        if new_rec.get("public_or_cross_account_policy") is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"A newly discovered SQS queue '{name}' has a policy granting "
+                "access to external principals or '*'. Review the queue "
+                "policy immediately. ConfigTrace does not read SQS messages."
+            )
         return "low", f"SQS queue '{name}' was added to monitoring."
     if ct == "removed":
         sev = "high" if is_sensitive else "medium"
@@ -7163,6 +7229,14 @@ def _classify_sns_topic_change(change: object) -> tuple[str, str]:
     is_sensitive = _is_sensitive_messaging(name)
 
     if ct == "added":
+        new_rec = nv if isinstance(nv, dict) else {}
+        if new_rec.get("public_or_cross_account_policy") is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"A newly discovered SNS topic '{name}' has a policy granting "
+                "access to external principals or '*'. Review the topic "
+                "policy immediately. ConfigTrace does not publish SNS messages."
+            )
         return "low", f"SNS topic '{name}' was added to monitoring."
     if ct == "removed":
         sev = "high" if is_sensitive else "medium"
@@ -7607,6 +7681,14 @@ def _classify_kms_key_change(change: object) -> tuple[str, str]:
     is_sensitive = _is_sensitive_governance(name)
 
     if ct == "added":
+        new_rec = nv if isinstance(nv, dict) else {}
+        if new_rec.get("public_or_cross_account_policy") is True or new_rec.get("wildcard_admin_policy") is True:
+            sev = "critical" if is_sensitive else "high"
+            return sev, (
+                f"A newly discovered KMS key '{name}' has a policy granting "
+                "access to external principals or '*'. Review the key policy "
+                "immediately. ConfigTrace does not call KMS cryptographic APIs."
+            )
         return "low", f"KMS key '{name}' was added to monitoring."
     if ct == "removed":
         sev = "high" if is_sensitive else "medium"
@@ -9194,11 +9276,18 @@ def _classify_config_recorder_change(change: object) -> tuple[str, str]:
             )
 
     if fp == "resource_types_count":
-        try:
-            prev_n = int(pv or 0)
-            new_n = int(nv or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
+        # Regression note: `int(v or 0)` conflated a missing/None count with
+        # a genuine 0, which could report a false "coverage narrowed" alert
+        # when the count simply wasn't available. Preserve unknown instead.
+        prev_n = pv if isinstance(pv, (int, float)) else None
+        new_n = nv if isinstance(nv, (int, float)) else None
+        if prev_n is None or new_n is None:
+            return (
+                "medium",
+                f"AWS Config recorder '{name}' resource-type coverage changed, "
+                "but the previous or new count could not be determined. "
+                "Review the recorder's resource-type scope manually.",
+            )
         if new_n < prev_n:
             return (
                 "high",
@@ -9664,10 +9753,18 @@ def _classify_acm_certificate_change(change: object) -> tuple[str, str]:
             )
 
     if fp == "days_to_expiry":
-        try:
-            new_n = int(nv or 0)
-        except (TypeError, ValueError):
-            new_n = 0
+        # Regression note: `int(nv or 0)` conflated a missing/None expiry
+        # value with a genuine 0, which falsely reported "certificate has
+        # expired" (critical/high) whenever upstream metadata omitted this
+        # field. Preserve unknown instead of coercing to zero.
+        new_n = nv if isinstance(nv, (int, float)) else None
+        if new_n is None:
+            return (
+                "medium",
+                f"ACM certificate {cid} for {domain!r} expiry could not be "
+                "determined from the current configuration. Review the "
+                "certificate's expiration date manually.",
+            )
         if new_n <= 0:
             sev = "critical" if is_prod else "high"
             return (
@@ -9696,11 +9793,14 @@ def _classify_acm_certificate_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "subject_alternative_names_count":
-        try:
-            prev_n = int(pv or 0)
-            new_n = int(nv or 0)
-        except (TypeError, ValueError):
-            prev_n = new_n = 0
+        prev_n = pv if isinstance(pv, (int, float)) else None
+        new_n = nv if isinstance(nv, (int, float)) else None
+        if prev_n is None or new_n is None:
+            return (
+                "low",
+                f"ACM certificate {cid} alternative-name count changed, but "
+                "the previous or new count could not be determined.",
+            )
         if new_n > prev_n:
             return (
                 "medium",

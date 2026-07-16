@@ -1798,6 +1798,56 @@ _AWS_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "configuration_metric_timezone_present",
         "config_fetch_warnings",
     ),
+    # ── M59.8/M59.9 — schema + classifier defined ahead of connector fetch ──
+    # These 8 record types have full risk_rules/aws.py classifiers and
+    # security_rules coverage, but AWSConnector.fetch() does not yet emit
+    # them (no boto3 call wired up). Tracked fields are added here so that
+    # IF a future connector change starts emitting these types, drift
+    # detection works immediately without a second fix pass — today, no
+    # records of these types exist in any snapshot, so these entries are
+    # inert.
+    "aws_ec2_instance": (
+        "public_ip_address",
+        "in_public_subnet",
+        "source_dest_check",
+        "imds_http_endpoint",
+        "imds_http_tokens",
+        "tags",
+    ),
+    "aws_vpc_flow_log": (
+        "flow_log_status",
+        "traffic_type",
+        "max_aggregation_interval",
+    ),
+    "aws_config_recorder": (
+        "recording",
+        "records_global_resources",
+        "resource_types_count",
+    ),
+    "aws_config_delivery_channel": (
+        "s3_bucket_name",
+        "sns_topic_arn",
+        "s3_kms_key_id",
+    ),
+    "aws_access_analyzer": (
+        "status",
+        "type",
+    ),
+    "aws_access_analyzer_finding": (
+        "status",
+    ),
+    "aws_securityhub_finding": (
+        "severity",
+        "workflow_status",
+        "record_state",
+    ),
+    "aws_acm_certificate": (
+        "status",
+        "days_to_expiry",
+        "domain_name",
+        "subject_alternative_names_count",
+        "key_algorithm",
+    ),
 }
 
 

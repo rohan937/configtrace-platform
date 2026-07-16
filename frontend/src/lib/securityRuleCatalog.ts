@@ -8801,7 +8801,7 @@ export const DEFERRED_RULES: DeferredRuleMeta[] = [
 
 export const PROVIDER_COVERAGE: ProviderCoverage[] = [
   { provider: "github", surfaces: ["Branch protection", "Webhooks", "Deploy keys", "Environment protection", "Rulesets", "Automation permissions", "Actions permissions"] },
-  { provider: "aws", surfaces: ["Security groups", "S3 public access", "IAM administrator policy", "Stale access keys"] },
+  { provider: "aws", surfaces: ["Security groups", "S3 public access", "IAM administrator policy", "Stale access keys", "Root account MFA"] },
   { provider: "cloudflare", surfaces: ["SSL/TLS", "HTTPS", "WAF", "HSTS", "Development mode", "Private-origin DNS"] },
   { provider: "supabase", surfaces: ["Row Level Security", "Public table policies", "Anonymous access", "JWT expiry", "Edge Functions"] },
   { provider: "firebase", surfaces: ["Firestore rules", "Realtime Database rules", "Storage rules", "Anonymous auth", "MFA"] },
