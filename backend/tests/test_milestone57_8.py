@@ -741,8 +741,22 @@ class TestSupabaseAuthSecurityDepth:
             auth_record, _ = conn._fetch_auth_config("tok", "ref123")
         assert auth_record["additional_redirect_urls_count"] == 0
 
-    def test_missing_m578_fields_default_to_false(self):
-        """When M57.8 fields are absent from the API response, defaults apply."""
+    def test_missing_m578_fields_remain_unknown(self):
+        """When M57.8 fields are absent from the API response, they must stay
+        unknown (None) rather than being silently coerced to a confirmed
+        False/zero state.
+
+        Regression note: this test previously asserted these fields default
+        to False/0 when absent. That expectation was intentionally changed
+        in commit 01aa457 (Supabase change-classification QA): missing means
+        unknown, and only an explicit API `false` may resolve to False. See
+        `_bool_or_none()` / `_count_or_none()` in
+        app/connectors/supabase.py and
+        backend/tests/reports/supabase_change_classification_matrix.md for
+        the rationale — a permission-denied or omitted field must not be
+        reported as a confirmed security posture (e.g. "leaked-password
+        protection is disabled") when it was never actually observed.
+        """
         conn = self._connector()
         raw = {
             "email_enabled": True,
@@ -753,11 +767,11 @@ class TestSupabaseAuthSecurityDepth:
         }
         with patch.object(conn, "_get", return_value=raw):
             auth_record, _ = conn._fetch_auth_config("tok", "ref123")
-        assert auth_record["leaked_password_protection_enabled"] is False
-        assert auth_record["captcha_enabled"] is False
-        assert auth_record["refresh_token_rotation_enabled"] is False
-        assert auth_record["require_reauthentication_for_password_update"] is False
-        assert auth_record["additional_redirect_urls_count"] == 0
+        assert auth_record["leaked_password_protection_enabled"] is None
+        assert auth_record["captcha_enabled"] is None
+        assert auth_record["refresh_token_rotation_enabled"] is None
+        assert auth_record["require_reauthentication_for_password_update"] is None
+        assert auth_record["additional_redirect_urls_count"] is None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
