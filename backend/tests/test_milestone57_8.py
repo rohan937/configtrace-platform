@@ -54,10 +54,15 @@ def _make_firebase_change(
     old_value: Any = None,
     new_value: Any = None,
 ) -> dict:
+    # Regression note: real compute_diff() Changes carry the previous value
+    # under "prev_value", never "old_value" — this fixture previously used
+    # the wrong key, which masked a matching bug in the Firebase Remote
+    # Config / App Check classifiers (both read "old_value" and silently
+    # treated the always-missing field as 0 via an unsafe int() default).
     return {
         "change_type": change_type,
         "field_path":  field_path,
-        "old_value":   old_value,
+        "prev_value":  old_value,
         "new_value":   new_value,
         "provider_metadata": {"record_type": record_type},
     }

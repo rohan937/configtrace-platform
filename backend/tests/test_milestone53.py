@@ -172,11 +172,17 @@ class TestSha256Prefix:
 
 class TestAnalyzeRules:
     def test_empty_source_returns_safe_defaults(self):
+        """Regression note (Firebase change-classification QA pass): an
+        unavailable rules source means the public/private posture is
+        UNKNOWN, not a confirmed non-public state — this previously asserted
+        False (matching a stale connector default that has since been
+        corrected to preserve None)."""
         from app.connectors.firebase import _analyze_rules
 
         result = _analyze_rules("")
-        assert result["public_read_detected"] is False
-        assert result["public_write_detected"] is False
+        assert result["public_read_detected"] is None
+        assert result["public_write_detected"] is None
+        assert result["parser_confidence"] == "low"
         assert result["rules_hash"] is None
 
     def test_public_write_if_true_detected(self):

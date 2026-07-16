@@ -101,6 +101,13 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
         return ("high", "Firebase Authentication configuration record removed — unexpected.")
 
     if fp == "anonymous_enabled":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Anonymous Authentication is enabled could not be "
+                "determined from the current configuration. Review the "
+                "Firebase Authentication sign-in providers manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "high",
@@ -116,6 +123,13 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "mfa_enabled" or fp == "mfa_state":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether multi-factor authentication is enabled could not be "
+                "determined from the current configuration. Review the "
+                "Firebase Authentication MFA settings manually.",
+            )
         if new_v in (False, "false", "DISABLED"):
             return (
                 "high",
@@ -145,11 +159,25 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "sign_in_email_enabled":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether email/password sign-in is enabled could not be "
+                "determined from the current configuration. Review the "
+                "Firebase Authentication sign-in providers manually.",
+            )
         if new_v is False or new_v == "false":
             return ("medium", "Email/password sign-in was disabled in Firebase Authentication.")
         return ("low", "Email/password sign-in was enabled in Firebase Authentication.")
 
     if fp == "sign_in_phone_enabled":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether phone number sign-in is enabled could not be "
+                "determined from the current configuration. Review the "
+                "Firebase Authentication sign-in providers manually.",
+            )
         if new_v is False or new_v == "false":
             return ("medium", "Phone number sign-in was disabled in Firebase Authentication.")
         return ("medium", "Phone number sign-in was enabled in Firebase Authentication.")
@@ -183,6 +211,13 @@ def _classify_auth_provider_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "enabled":
+        if new_v is None:
+            return (
+                "medium",
+                f"Whether Firebase Authentication provider {provider_id!r} is "
+                "enabled could not be determined. Review the provider "
+                "configuration manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "medium",
@@ -247,6 +282,22 @@ def _classify_firestore_ruleset_change(change: object) -> tuple[str, str]:
     new_v = _get(change, "new_value")
 
     if ct == "added":
+        new_record = _get(change, "new_value")
+        rec = new_record if isinstance(new_record, dict) else {}
+        if rec.get("public_write_detected") is True:
+            return (
+                "critical",
+                "Newly detected Firestore Security Rules may allow public "
+                "write access without authentication. Verify the rules are "
+                "correct immediately.",
+            )
+        if rec.get("public_read_detected") is True:
+            return (
+                "high",
+                "Newly detected Firestore Security Rules may allow public "
+                "read access without authentication. Verify that sensitive "
+                "data is appropriately protected.",
+            )
         return ("low", "Firestore Security Rules baseline captured.")
     if ct == "removed":
         # Either the connector lost access to the project's rules OR the
@@ -263,6 +314,13 @@ def _classify_firestore_ruleset_change(change: object) -> tuple[str, str]:
 
     # Highest-signal fields: public access detection
     if fp == "public_write_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firestore Security Rules allow public write access "
+                "could not be determined (rules content may be unavailable). "
+                "Review the current rules manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "critical",
@@ -277,6 +335,13 @@ def _classify_firestore_ruleset_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "public_read_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firestore Security Rules allow public read access "
+                "could not be determined (rules content may be unavailable). "
+                "Review the current rules manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "high",
@@ -290,6 +355,13 @@ def _classify_firestore_ruleset_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "authenticated_only_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firestore Security Rules require authentication for "
+                "all access could not be determined (rules content may be "
+                "unavailable). Review the current rules manually.",
+            )
         if new_v is False or new_v == "false":
             return (
                 "medium",
@@ -328,6 +400,22 @@ def _classify_database_ruleset_change(change: object) -> tuple[str, str]:
     new_v = _get(change, "new_value")
 
     if ct == "added":
+        new_record = _get(change, "new_value")
+        rec = new_record if isinstance(new_record, dict) else {}
+        if rec.get("public_write_detected") is True:
+            return (
+                "critical",
+                "Newly detected Firebase Realtime Database Security Rules may "
+                "allow public write access without authentication. Verify "
+                "the rules are correct immediately.",
+            )
+        if rec.get("public_read_detected") is True:
+            return (
+                "high",
+                "Newly detected Firebase Realtime Database Security Rules may "
+                "allow public read access without authentication. Verify "
+                "that sensitive data is appropriately protected.",
+            )
         return ("low", "Firebase Realtime Database Security Rules baseline captured.")
     if ct == "removed":
         return (
@@ -338,6 +426,13 @@ def _classify_database_ruleset_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "public_write_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firebase Realtime Database Security Rules allow "
+                "public write access could not be determined (rules content "
+                "may be unavailable). Review the current rules manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "critical",
@@ -351,6 +446,13 @@ def _classify_database_ruleset_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "public_read_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firebase Realtime Database Security Rules allow "
+                "public read access could not be determined (rules content "
+                "may be unavailable). Review the current rules manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "high",
@@ -364,6 +466,14 @@ def _classify_database_ruleset_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "authenticated_only_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firebase Realtime Database Security Rules require "
+                "authentication for all access could not be determined "
+                "(rules content may be unavailable). Review the current "
+                "rules manually.",
+            )
         if new_v is False or new_v == "false":
             return (
                 "medium",
@@ -394,11 +504,34 @@ def _classify_storage_bucket_change(change: object) -> tuple[str, str]:
     new_v = _get(change, "new_value")
 
     if ct == "added":
+        new_record = _get(change, "new_value")
+        rec = new_record if isinstance(new_record, dict) else {}
+        if rec.get("uniform_bucket_level_access") is False:
+            return (
+                "medium",
+                "A new Firebase/Google Cloud Storage bucket was added without "
+                "uniform bucket-level access. Object-level ACLs could allow "
+                "unintended public access; verify bucket and object ACLs.",
+            )
+        pap = str(rec.get("public_access_prevention", "")).lower()
+        if pap in ("inherited", "unspecified", ""):
+            return (
+                "medium",
+                "A new Firebase/Google Cloud Storage bucket was added without "
+                "public access prevention enforced. Verify this is intentional.",
+            )
         return ("low", "A new Firebase/Google Cloud Storage bucket was added.")
     if ct == "removed":
         return ("high", "A Firebase/Google Cloud Storage bucket was removed or is no longer accessible.")
 
     if fp == "uniform_bucket_level_access":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether uniform bucket-level access is enabled could not be "
+                "determined for this Cloud Storage bucket. Review the bucket "
+                "configuration manually.",
+            )
         if new_v is False or new_v == "false":
             return (
                 "high",
@@ -451,6 +584,23 @@ def _classify_storage_ruleset_change(change: object) -> tuple[str, str]:
     new_v = _get(change, "new_value")
 
     if ct == "added":
+        new_record = _get(change, "new_value")
+        rec = new_record if isinstance(new_record, dict) else {}
+        if rec.get("public_write_detected") is True:
+            return (
+                "critical",
+                "Newly detected Firebase Storage Security Rules may allow "
+                "public write access without authentication. This could "
+                "allow anyone to upload files to your storage bucket. "
+                "Verify the rules are correct immediately.",
+            )
+        if rec.get("public_read_detected") is True:
+            return (
+                "high",
+                "Newly detected Firebase Storage Security Rules may allow "
+                "public read access without authentication. Verify that "
+                "stored files are not sensitive.",
+            )
         return ("low", "Firebase Storage Security Rules baseline captured.")
     if ct == "removed":
         # Same rationale as the Firestore ruleset removal: loss of monitoring
@@ -464,6 +614,13 @@ def _classify_storage_ruleset_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "public_write_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firebase Storage Security Rules allow public write "
+                "access could not be determined (rules content may be "
+                "unavailable). Review the current rules manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "critical",
@@ -478,6 +635,13 @@ def _classify_storage_ruleset_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "public_read_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firebase Storage Security Rules allow public read "
+                "access could not be determined (rules content may be "
+                "unavailable). Review the current rules manually.",
+            )
         if new_v is True or new_v == "true":
             return (
                 "high",
@@ -487,6 +651,13 @@ def _classify_storage_ruleset_change(change: object) -> tuple[str, str]:
         return ("low", "Firebase Storage Security Rules no longer appear to allow public read. Security improved.")
 
     if fp == "authenticated_only_detected":
+        if new_v is None:
+            return (
+                "medium",
+                "Whether Firebase Storage Security Rules require "
+                "authentication could not be determined (rules content may "
+                "be unavailable). Review the current rules manually.",
+            )
         if new_v is False or new_v == "false":
             return (
                 "medium",
@@ -649,7 +820,13 @@ def _classify_remote_config_change(change: object) -> tuple[str, str]:
     """
     fp = (_get(change, "field_path") or "").lower()
     ct = (_get(change, "change_type") or "").lower()
-    old_v = _get(change, "old_value")
+    # Regression note: this previously read "old_value", a field real
+    # compute_diff() Changes never carry (only "prev_value") — every
+    # comparison below saw old_v as None, and the local _int() helper's
+    # unsafe `int(v) except -> 0` default then silently treated that as a
+    # confirmed previous count of 0, making every "count decreased" branch
+    # below unreachable in practice.
+    old_v = _get(change, "prev_value")
     new_v = _get(change, "new_value")
 
     if ct == "removed":
@@ -666,14 +843,23 @@ def _classify_remote_config_change(change: object) -> tuple[str, str]:
             "Future structural changes will generate change events.",
         )
 
-    def _int(v: object) -> int:
+    def _int_or_none(v: object) -> int | None:
+        if v is None:
+            return None
         try:
             return int(v)  # type: ignore[arg-type]
         except (TypeError, ValueError):
-            return 0
+            return None
 
     if fp == "parameter_count":
-        old_n, new_n = _int(old_v), _int(new_v)
+        old_n, new_n = _int_or_none(old_v), _int_or_none(new_v)
+        if old_n is None or new_n is None:
+            return (
+                "medium",
+                "Firebase Remote Config parameter count changed, but the "
+                "previous or new count could not be determined. Review the "
+                "template's parameters manually.",
+            )
         if new_n < old_n:
             return (
                 "medium",
@@ -687,7 +873,14 @@ def _classify_remote_config_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "condition_count":
-        old_n, new_n = _int(old_v), _int(new_v)
+        old_n, new_n = _int_or_none(old_v), _int_or_none(new_v)
+        if old_n is None or new_n is None:
+            return (
+                "medium",
+                "Firebase Remote Config condition count changed, but the "
+                "previous or new count could not be determined. Review the "
+                "template's conditions manually.",
+            )
         if new_n < old_n:
             return (
                 "medium",
@@ -766,7 +959,12 @@ def _classify_app_check_change(change: object) -> tuple[str, str]:
     """
     fp = (_get(change, "field_path") or "").lower()
     ct = (_get(change, "change_type") or "").lower()
-    old_v = _get(change, "old_value")
+    # Regression note: this previously read "old_value" (not a field real
+    # Changes carry) combined with an unsafe int()-or-0 default, which meant
+    # old_n was always 0 — a genuine enforcement REMOVAL (e.g. 5 -> 2) would
+    # evaluate new_n(2) < old_n(0) as False and fall into the "enforcement
+    # was ADDED" branch, reporting the opposite of what happened.
+    old_v = _get(change, "prev_value")
     new_v = _get(change, "new_value")
 
     if ct == "removed":
@@ -783,14 +981,23 @@ def _classify_app_check_change(change: object) -> tuple[str, str]:
             "Future enforcement changes will generate change events.",
         )
 
-    def _int(v: object) -> int:
+    def _int_or_none(v: object) -> int | None:
+        if v is None:
+            return None
         try:
             return int(v)  # type: ignore[arg-type]
         except (TypeError, ValueError):
-            return 0
+            return None
 
     if fp == "enforced_service_count":
-        old_n, new_n = _int(old_v), _int(new_v)
+        old_n, new_n = _int_or_none(old_v), _int_or_none(new_v)
+        if old_n is None or new_n is None:
+            return (
+                "medium",
+                "The number of Firebase App Check–enforced services changed, "
+                "but the previous or new count could not be determined. "
+                "Review App Check enforcement settings manually.",
+            )
         if new_n < old_n:
             return (
                 "high",
@@ -806,7 +1013,14 @@ def _classify_app_check_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "unenforced_service_count":
-        old_n, new_n = _int(old_v), _int(new_v)
+        old_n, new_n = _int_or_none(old_v), _int_or_none(new_v)
+        if old_n is None or new_n is None:
+            return (
+                "medium",
+                "The number of Firebase services without App Check enforcement "
+                "changed, but the previous or new count could not be "
+                "determined. Review App Check enforcement settings manually.",
+            )
         if new_n > old_n:
             return (
                 "high",
@@ -821,7 +1035,14 @@ def _classify_app_check_change(change: object) -> tuple[str, str]:
         )
 
     if fp == "service_count":
-        old_n, new_n = _int(old_v), _int(new_v)
+        old_n, new_n = _int_or_none(old_v), _int_or_none(new_v)
+        if old_n is None or new_n is None:
+            return (
+                "medium",
+                "The number of Firebase services monitored by App Check "
+                "changed, but the previous or new count could not be "
+                "determined. Review App Check settings manually.",
+            )
         if new_n < old_n:
             return (
                 "medium",

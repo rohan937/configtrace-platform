@@ -134,6 +134,27 @@ def _sha256_prefix(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
+def _bool_or_none(value: Any) -> bool | None:
+    """Coerce *value* to True/False, preserving unknown as None.
+
+    Used for every Management/Identity Toolkit API boolean field that is
+    not guaranteed present on every response. Never apply a default in the
+    caller's ``.get(...)`` call for these fields — a missing key must
+    resolve here to ``None``, not silently become ``False``.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("true", "1"):
+            return True
+        if low in ("false", "0"):
+            return False
+    return None
+
+
 def _classify_trigger(trigger_data: dict) -> str:
     """Return a human-readable trigger type for a Cloud Function."""
     if "httpsTrigger" in trigger_data:
@@ -193,11 +214,17 @@ def _analyze_rules(source: str) -> dict:
       authenticated_only_detected, rule_summary, parser_confidence.
     """
     if not source or not source.strip():
+        # Unavailable rules source means the public/private posture is
+        # UNKNOWN — never report it as a confirmed non-public state. Only
+        # parser_confidence="low" previously signaled this to the Security
+        # Finding evaluator (which correctly skips low-confidence records);
+        # the Change classifier had no equivalent signal and could report a
+        # transition into this state as "security improved".
         return {
             "rules_hash": None,
-            "public_read_detected": False,
-            "public_write_detected": False,
-            "authenticated_only_detected": False,
+            "public_read_detected": None,
+            "public_write_detected": None,
+            "authenticated_only_detected": None,
             "rule_summary": "No rules source available.",
             "parser_confidence": "low",
         }
@@ -298,9 +325,9 @@ def _analyze_rtdb_rules(rules_obj: Any) -> dict:
     """
     empty = {
         "rules_hash": None,
-        "public_read_detected": False,
-        "public_write_detected": False,
-        "authenticated_only_detected": False,
+        "public_read_detected": None,
+        "public_write_detected": None,
+        "authenticated_only_detected": None,
         "rule_summary": "No Realtime Database rules available.",
         "parser_confidence": "low",
     }
@@ -712,7 +739,7 @@ class FirebaseConnector(BaseConnector):
                     "provider_type": "saml",
                     # SECURITY: idpConfig/spConfig certificates and signing
                     # material are NEVER read from cfg — only enabled state.
-                    "enabled": bool(cfg.get("enabled", False)),
+                    "enabled": _bool_or_none(cfg.get("enabled")),
                     "config_fetch_warnings": [],
                 })
         except ConnectorError:
@@ -740,7 +767,7 @@ class FirebaseConnector(BaseConnector):
                     "provider_type": "oidc",
                     # SECURITY: clientId/clientSecret are NEVER read from cfg —
                     # only enabled state.
-                    "enabled": bool(cfg.get("enabled", False)),
+                    "enabled": _bool_or_none(cfg.get("enabled")),
                     "config_fetch_warnings": [],
                 })
         except ConnectorError:
@@ -751,10 +778,17 @@ class FirebaseConnector(BaseConnector):
             "record_id":                f"{project_id}/auth_config",
             "name":                     f"{project_id}/auth_config",
             "project_id":               project_id,
-            "sign_in_email_enabled":    bool(email_cfg.get("enabled", False)),
-            "sign_in_phone_enabled":    bool(phone_cfg.get("enabled", False)),
-            "anonymous_enabled":        bool(anon_cfg.get("enabled", False)),
-            "mfa_enabled":              mfa_cfg.get("state") == "ENABLED",
+            "sign_in_email_enabled":    _bool_or_none(email_cfg.get("enabled")),
+            "sign_in_phone_enabled":    _bool_or_none(phone_cfg.get("enabled")),
+            "anonymous_enabled":        _bool_or_none(anon_cfg.get("enabled")),
+            # mfa_enabled is derived from mfa_state; preserve None (unknown)
+            # rather than defaulting to False when the state itself is
+            # unknown — a missing state must not read as "MFA is disabled".
+            "mfa_enabled": (
+                mfa_cfg.get("state") == "ENABLED"
+                if isinstance(mfa_cfg.get("state"), str)
+                else None
+            ),
             "mfa_state":                mfa_cfg.get("state"),
             "authorized_domain_count":  len(authorized_domains),
             "saml_provider_count":      saml_count,
@@ -833,12 +867,13 @@ class FirebaseConnector(BaseConnector):
             if not (is_firestore or is_storage):
                 continue  # skip unrecognised releases
 
-            # Fetch and analyse ruleset source (only if not already fetched)
+            # Fetch and analyse ruleset source (only if not already fetched).
+            # Unknown/unfetched posture — never a confirmed non-public state.
             analysis: dict = {
                 "rules_hash": None,
-                "public_read_detected": False,
-                "public_write_detected": False,
-                "authenticated_only_detected": False,
+                "public_read_detected": None,
+                "public_write_detected": None,
+                "authenticated_only_detected": None,
                 "rule_summary": "Rules unavailable.",
                 "parser_confidence": "low",
             }
