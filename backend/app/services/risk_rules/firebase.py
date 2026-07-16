@@ -311,6 +311,81 @@ def _classify_firestore_ruleset_change(change: object) -> tuple[str, str]:
     return ("medium", "A Firestore Security Rules configuration changed.")
 
 
+# ── firebase_database_ruleset (M72A — Realtime Database rules) ───────────────
+
+def _classify_database_ruleset_change(change: object) -> tuple[str, str]:
+    """Rules for ``firebase_database_ruleset`` records — Realtime Database.
+
+    Live, connector-emitted (M72A) and fully evaluated by the Security
+    Finding side (firebase_database_public_read / firebase_database_public_
+    write), but previously had no dedicated Change classifier at all — every
+    Change fell through classify_firebase_change()'s generic low-severity
+    fallback. Mirrors _classify_firestore_ruleset_change /
+    _classify_storage_ruleset_change's structure for the equivalent fields.
+    """
+    fp = (_get(change, "field_path") or "").lower()
+    ct = (_get(change, "change_type") or "").lower()
+    new_v = _get(change, "new_value")
+
+    if ct == "added":
+        return ("low", "Firebase Realtime Database Security Rules baseline captured.")
+    if ct == "removed":
+        return (
+            "high",
+            "Firebase Realtime Database Security Rules record was removed. "
+            "Either the rules were deleted or ConfigTrace lost access to the "
+            "database instance. Investigate before the next sync.",
+        )
+
+    if fp == "public_write_detected":
+        if new_v is True or new_v == "true":
+            return (
+                "critical",
+                "Firebase Realtime Database Security Rules may now allow public write access "
+                "without authentication. Verify the rules are correct immediately.",
+            )
+        return (
+            "low",
+            "Firebase Realtime Database Security Rules no longer appear to allow "
+            "public write access. This is a security improvement; verify the rules are correct.",
+        )
+
+    if fp == "public_read_detected":
+        if new_v is True or new_v == "true":
+            return (
+                "high",
+                "Firebase Realtime Database Security Rules may now allow public read access "
+                "without authentication. Verify that sensitive data is appropriately protected.",
+            )
+        return (
+            "low",
+            "Firebase Realtime Database Security Rules no longer appear to allow "
+            "public read access. Security improved.",
+        )
+
+    if fp == "authenticated_only_detected":
+        if new_v is False or new_v == "false":
+            return (
+                "medium",
+                "Firebase Realtime Database Security Rules may no longer require "
+                "authentication for all access. Review the updated rules to ensure "
+                "data is appropriately protected.",
+            )
+        return ("low", "Firebase Realtime Database Security Rules now appear to require authentication.")
+
+    if fp in ("rules_hash", "instance_name_hash"):
+        return (
+            "medium",
+            "The active Firebase Realtime Database Security Rules deployment changed. "
+            "Review the updated rules to confirm access control is correct.",
+        )
+
+    if fp == "rule_summary":
+        return ("medium", "Firebase Realtime Database Security Rules analysis result changed.")
+
+    return ("medium", "A Firebase Realtime Database Security Rules configuration changed.")
+
+
 # ── firebase_storage_bucket ───────────────────────────────────────────────────
 
 def _classify_storage_bucket_change(change: object) -> tuple[str, str]:
@@ -788,6 +863,8 @@ def classify_firebase_change(change: object) -> tuple[str, str]:
         return _classify_authorized_domain_change(change)
     if record_type == "firebase_firestore_ruleset":
         return _classify_firestore_ruleset_change(change)
+    if record_type == "firebase_database_ruleset":
+        return _classify_database_ruleset_change(change)
     if record_type == "firebase_storage_bucket":
         return _classify_storage_bucket_change(change)
     if record_type == "firebase_storage_ruleset":

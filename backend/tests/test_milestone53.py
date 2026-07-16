@@ -1217,8 +1217,20 @@ class TestNoForbiddenApiReferences:
     def test_connector_module_does_not_call_data_write_apis(self):
         """The connector must not call Firebase/GCS data write or mutate APIs.
 
-        httpx.post IS present — legitimately for the OAuth2 token endpoint.
+        httpx.post IS present for two legitimate, read-only reasons:
+        1. The OAuth2 token exchange (adjacent to ``token_uri``).
+        2. Cloud Logging's ``entries:list`` API (M72B activity ingestion) —
+           Google's documented convention for this read-only query endpoint
+           uses POST because filter expressions can exceed URL length
+           limits; it lists/reads log entries, it does not write or mutate
+           anything.
         httpx.patch, httpx.put, httpx.delete must not appear (data mutating).
+
+        Regression note: this assertion previously required *exactly* one
+        httpx.post call and was already failing before this Firebase
+        detection-QA pass, for a reason unrelated to this pass's fixes (the
+        assertion was stale relative to the M72B Cloud Logging addition).
+        Corrected here rather than left broken.
         """
         import inspect
         import app.connectors.firebase as _fb_module
@@ -1230,18 +1242,25 @@ class TestNoForbiddenApiReferences:
         assert "httpx.put" not in full_source, "Connector must not use httpx.put"
         assert "httpx.delete" not in full_source, "Connector must not use httpx.delete"
 
-        # httpx.post is allowed only for the OAuth2 token exchange.
-        # Confirm it is NOT used to call any Firebase data API.
-        # The post target must be the token_uri (OAuth2 endpoint).
+        # httpx.post is allowed only for the OAuth2 token exchange and the
+        # read-only Cloud Logging entries:list call — never a data-mutating
+        # Firebase/GCS API.
         post_count = full_source.count("httpx.post")
-        assert post_count == 1, (
-            f"Expected exactly one httpx.post call (OAuth2 token only), found {post_count}"
+        assert post_count == 2, (
+            f"Expected exactly two httpx.post calls (OAuth2 token + Cloud "
+            f"Logging entries:list), found {post_count}"
         )
-        # That one call must be adjacent to the token_uri variable.
-        post_idx = full_source.index("httpx.post")
-        post_context = full_source[post_idx : post_idx + 200]
-        assert "token_uri" in post_context, (
-            "The single httpx.post call must be for the OAuth2 token endpoint (token_uri)"
+        # The first call must be adjacent to the token_uri variable.
+        first_post_idx = full_source.index("httpx.post")
+        first_post_context = full_source[first_post_idx : first_post_idx + 200]
+        assert "token_uri" in first_post_context, (
+            "The first httpx.post call must be for the OAuth2 token endpoint (token_uri)"
+        )
+        # The second call must be the Cloud Logging entries:list read API.
+        second_post_idx = full_source.index("httpx.post", first_post_idx + 1)
+        assert "entries:list" in full_source[:second_post_idx][-500:], (
+            "The second httpx.post call must be for the read-only Cloud "
+            "Logging entries:list endpoint"
         )
 
         # Firestore document API appears in the module docstring as a "NEVER made" listing.

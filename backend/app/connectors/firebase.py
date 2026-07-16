@@ -681,15 +681,40 @@ class FirebaseConnector(BaseConnector):
 
         authorized_domains: list[str] = data.get("authorizedDomains") or []
 
-        # Count SAML/OIDC providers without fetching their secrets.
+        # Count SAML/OIDC providers without fetching their secrets, and build
+        # one firebase_auth_provider record per entry (schema/diff/classifier
+        # support for this record type already existed — this was the only
+        # piece missing; no new endpoint call is added, saml_data/oidc_data
+        # were already being fetched and previously discarded after counting).
         saml_count = 0
         oidc_count = 0
+        provider_records: list[dict] = []
         try:
             saml_url = (
                 f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/inboundSamlConfigs"
             )
             saml_data = self._get(access_token, saml_url)
-            saml_count = len(saml_data.get("inboundSamlConfigs") or [])
+            saml_configs = saml_data.get("inboundSamlConfigs") or []
+            saml_count = len(saml_configs)
+            for cfg in saml_configs:
+                if not isinstance(cfg, dict):
+                    continue
+                # "name" is e.g. "projects/{project}/inboundSamlConfigs/{id}".
+                provider_id = str(cfg.get("name") or "").rsplit("/", 1)[-1]
+                if not provider_id:
+                    continue
+                provider_records.append({
+                    "record_type": FIREBASE_AUTH_PROVIDER,
+                    "record_id": f"{project_id}/{provider_id}",
+                    "name": provider_id,
+                    "project_id": project_id,
+                    "provider_id": provider_id,
+                    "provider_type": "saml",
+                    # SECURITY: idpConfig/spConfig certificates and signing
+                    # material are NEVER read from cfg — only enabled state.
+                    "enabled": bool(cfg.get("enabled", False)),
+                    "config_fetch_warnings": [],
+                })
         except ConnectorError:
             pass  # SAML not configured or permission denied
         try:
@@ -697,7 +722,27 @@ class FirebaseConnector(BaseConnector):
                 f"https://identitytoolkit.googleapis.com/admin/v2/projects/{project_id}/oauthIdpConfigs"
             )
             oidc_data = self._get(access_token, oidc_url)
-            oidc_count = len(oidc_data.get("oauthIdpConfigs") or [])
+            oidc_configs = oidc_data.get("oauthIdpConfigs") or []
+            oidc_count = len(oidc_configs)
+            for cfg in oidc_configs:
+                if not isinstance(cfg, dict):
+                    continue
+                # "name" is e.g. "projects/{project}/oauthIdpConfigs/{id}".
+                provider_id = str(cfg.get("name") or "").rsplit("/", 1)[-1]
+                if not provider_id:
+                    continue
+                provider_records.append({
+                    "record_type": FIREBASE_AUTH_PROVIDER,
+                    "record_id": f"{project_id}/{provider_id}",
+                    "name": provider_id,
+                    "project_id": project_id,
+                    "provider_id": provider_id,
+                    "provider_type": "oidc",
+                    # SECURITY: clientId/clientSecret are NEVER read from cfg —
+                    # only enabled state.
+                    "enabled": bool(cfg.get("enabled", False)),
+                    "config_fetch_warnings": [],
+                })
         except ConnectorError:
             pass  # OIDC not configured or permission denied
 
@@ -716,7 +761,7 @@ class FirebaseConnector(BaseConnector):
             "oidc_provider_count":      oidc_count,
             "config_fetch_warnings":    [],
         }
-        records: list[dict] = [auth_record]
+        records: list[dict] = [auth_record, *provider_records]
 
         # Emit one record per authorized domain.
         for domain in authorized_domains:

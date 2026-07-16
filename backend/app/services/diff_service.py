@@ -1845,6 +1845,22 @@ _FIREBASE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "parser_confidence",
         "config_fetch_warnings",
     ),
+    # M72A — Realtime Database rules. Live, connector-emitted since M72A and
+    # fully evaluated by security_rules/firebase.py's _eval_database_ruleset
+    # (firebase_database_public_read / firebase_database_public_write), but
+    # had NO entry here at all — compute_diff() never detected a public-read/
+    # public-write transition on this record type as a Change.
+    "firebase_database_ruleset": (
+        "service",
+        "instance_name_hash",
+        "rules_hash",
+        "public_read_detected",
+        "public_write_detected",
+        "authenticated_only_detected",
+        "rule_summary",
+        "parser_confidence",
+        "config_fetch_warnings",
+    ),
     "firebase_storage_bucket": (
         "location",
         "storage_class",
@@ -3130,6 +3146,26 @@ def _build_provider_metadata(
         metadata["custom_domain"] = context_record.get("custom_domain") or ""
     if record.get("record_type") == "supabase_oauth_provider":
         metadata["provider_name"] = context_record.get("provider_name") or ""
+
+    # Firebase classifiers read several identifying fields directly from
+    # provider_metadata (provider_id, domain/is_default_firebase_domain/
+    # is_localhost, domain_type, function_name) that none of the generic
+    # record_name/record_content stanza ever populated (these records don't
+    # carry a "name" field usable for this purpose). Same gap pattern found
+    # for every other provider this session.
+    if record.get("record_type") == "firebase_auth_provider":
+        metadata["provider_id"] = context_record.get("provider_id") or ""
+    if record.get("record_type") == "firebase_authorized_domain":
+        metadata["domain"] = context_record.get("domain") or ""
+        metadata["is_default_firebase_domain"] = bool(
+            context_record.get("is_default_firebase_domain")
+        )
+        metadata["is_localhost"] = bool(context_record.get("is_localhost"))
+    if record.get("record_type") == "firebase_hosting_domain":
+        metadata["domain"] = context_record.get("domain") or ""
+        metadata["domain_type"] = context_record.get("domain_type") or ""
+    if record.get("record_type") == "firebase_function_metadata":
+        metadata["function_name"] = context_record.get("function_name") or ""
 
     return metadata
 
