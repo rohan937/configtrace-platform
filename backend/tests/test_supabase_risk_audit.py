@@ -84,14 +84,28 @@ class TestRls:
         assert level == "high"
 
     def test_A4_new_table_without_rls_is_medium(self):
+        """Regression guard (Supabase classification-QA pass): for a real
+        compute_diff()-produced "added" Change, new_value is the FULL new
+        record dict (never a bare scalar) — the classifier inspects
+        new_value.get("rls_enabled") directly."""
         c = _change(
             record_type="supabase_rls_status",
             change_type="added",
-            new_value=False,
+            new_value={"rls_enabled": False, "rls_forced": False},
             extra_metadata={"table_name": "logs", "schema_name": "public"},
         )
         level, _ = _classify(c)
         assert level == "medium"
+
+    def test_A4b_new_table_with_rls_is_low(self):
+        c = _change(
+            record_type="supabase_rls_status",
+            change_type="added",
+            new_value={"rls_enabled": True, "rls_forced": False},
+            extra_metadata={"table_name": "logs", "schema_name": "public"},
+        )
+        level, _ = _classify(c)
+        assert level == "low"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

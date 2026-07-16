@@ -99,6 +99,13 @@ def _classify_project_change(change: object) -> tuple[str, str]:
                 "The Supabase project custom domain was removed. "
                 "Verify this is intentional.",
             )
+        if new_v is None:
+            return (
+                "low",
+                "The Supabase project's custom domain status changed, but the "
+                "new state could not be determined. Review the current "
+                "Supabase configuration.",
+            )
         return ("low", "A custom domain was added to the Supabase project.")
 
     if fp == "name":
@@ -130,10 +137,17 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
                 "Anonymous users can sign in without credentials; verify this is intentional "
                 "and that RLS policies restrict their data access appropriately.",
             )
+        if new_v is False or new_v == "false":
+            return (
+                "low",
+                "Anonymous authentication was disabled on this Supabase project. "
+                "Users can no longer sign in anonymously.",
+            )
         return (
-            "low",
-            "Anonymous authentication was disabled on this Supabase project. "
-            "Users can no longer sign in anonymously.",
+            "medium",
+            "Anonymous authentication's enabled state changed, but the new "
+            "state could not be determined. Review the current Supabase "
+            "Auth configuration.",
         )
 
     if fp == "mfa_totp_enabled":
@@ -143,16 +157,30 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
                 "TOTP multi-factor authentication was disabled on this Supabase project. "
                 "Verify this is intentional and that alternative security controls are in place.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "TOTP multi-factor authentication was enabled. "
+                "This strengthens the security posture of the Supabase project.",
+            )
         return (
-            "low",
-            "TOTP multi-factor authentication was enabled. "
-            "This strengthens the security posture of the Supabase project.",
+            "medium",
+            "TOTP multi-factor authentication's enabled state changed, but "
+            "the new state could not be determined. Review the current "
+            "Supabase Auth configuration.",
         )
 
     if fp == "email_enabled":
         if new_v is False:
             return ("medium", "Email/password sign-in was disabled in Supabase Auth.")
-        return ("low", "Email/password sign-in was enabled in Supabase Auth.")
+        if new_v is True:
+            return ("low", "Email/password sign-in was enabled in Supabase Auth.")
+        return (
+            "low",
+            "Email/password sign-in's enabled state changed, but the new "
+            "state could not be determined. Review the current Supabase "
+            "Auth configuration.",
+        )
 
     if fp == "phone_enabled":
         if new_v is True or new_v == "true":
@@ -161,7 +189,14 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
                 "Phone number sign-in was enabled in Supabase Auth. "
                 "Verify an SMS provider is configured appropriately.",
             )
-        return ("medium", "Phone number sign-in was disabled in Supabase Auth.")
+        if new_v is False or new_v == "false":
+            return ("medium", "Phone number sign-in was disabled in Supabase Auth.")
+        return (
+            "low",
+            "Phone number sign-in's enabled state changed, but the new state "
+            "could not be determined. Review the current Supabase Auth "
+            "configuration.",
+        )
 
     if fp == "oauth_provider_count":
         prev_v = _get(change, "prev_value")
@@ -222,10 +257,17 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
                 "in Supabase Auth. Users may be permitted to set passwords that have appeared "
                 "in known data breaches. Verify this is intentional.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "Leaked password protection was enabled in Supabase Auth. "
+                "Users will be warned or blocked when choosing compromised passwords.",
+            )
         return (
-            "low",
-            "Leaked password protection was enabled in Supabase Auth. "
-            "Users will be warned or blocked when choosing compromised passwords.",
+            "medium",
+            "Leaked password protection's enabled state changed, but the new "
+            "state could not be determined. Review the current Supabase "
+            "Auth configuration.",
         )
 
     if fp == "captcha_enabled":
@@ -235,9 +277,16 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
                 "CAPTCHA bot protection was disabled in Supabase Auth. "
                 "Sign-in and sign-up endpoints may become more susceptible to automated attacks.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "CAPTCHA bot protection was enabled in Supabase Auth.",
+            )
         return (
             "low",
-            "CAPTCHA bot protection was enabled in Supabase Auth.",
+            "CAPTCHA bot protection's enabled state changed, but the new "
+            "state could not be determined. Review the current Supabase "
+            "Auth configuration.",
         )
 
     if fp == "require_reauthentication_for_password_update":
@@ -247,9 +296,16 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
                 "Reauthentication requirement for password updates was disabled in Supabase Auth. "
                 "Users may be able to change their password without recent authentication.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "Reauthentication is now required before users can update their password.",
+            )
         return (
-            "low",
-            "Reauthentication is now required before users can update their password.",
+            "medium",
+            "The password-update reauthentication requirement changed, but "
+            "the new state could not be determined. Review the current "
+            "Supabase Auth configuration.",
         )
 
     if fp == "refresh_token_rotation_enabled":
@@ -263,10 +319,17 @@ def _classify_auth_config_change(change: object) -> tuple[str, str]:
                 "Without rotation, a stolen refresh token can be reused "
                 "indefinitely without detection. Verify this is intentional.",
             )
+        if new_v is True or new_v == "true":
+            return (
+                "low",
+                "Refresh token rotation was enabled. "
+                "Each refresh produces a new token pair, reducing the window for token reuse.",
+            )
         return (
-            "low",
-            "Refresh token rotation was enabled. "
-            "Each refresh produces a new token pair, reducing the window for token reuse.",
+            "medium",
+            "Refresh token rotation's enabled state changed, but the new "
+            "state could not be determined. Review the current Supabase "
+            "Auth configuration.",
         )
 
     if fp == "jwt_exp":
@@ -403,7 +466,14 @@ def _classify_storage_config_change(change: object) -> tuple[str, str]:
                 "The S3-compatible protocol was enabled for Supabase Storage. "
                 "Verify that access policies are correctly configured.",
             )
-        return ("low", "The S3-compatible protocol for Supabase Storage was disabled.")
+        if new_v is False:
+            return ("low", "The S3-compatible protocol for Supabase Storage was disabled.")
+        return (
+            "low",
+            "The S3-compatible protocol's enabled state changed for Supabase "
+            "Storage, but the new state could not be determined. Review the "
+            "current Supabase Storage configuration.",
+        )
 
     return ("low", "A Supabase Storage configuration field changed.")
 
@@ -430,10 +500,17 @@ def _classify_edge_function_change(change: object) -> tuple[str, str]:
                 "The function may now be callable without a valid JWT. "
                 "Verify this is intentional.",
             )
+        if new_v is True:
+            return (
+                "low",
+                f"JWT verification was enabled for Supabase Edge Function {fn_name!r}. "
+                "Callers must now provide a valid JWT.",
+            )
         return (
-            "low",
-            f"JWT verification was enabled for Supabase Edge Function {fn_name!r}. "
-            "Callers must now provide a valid JWT.",
+            "medium",
+            f"JWT verification status for Supabase Edge Function {fn_name!r} "
+            "changed, but the new state could not be determined. Review the "
+            "function's JWT verification setting.",
         )
 
     if fp == "status":
@@ -471,15 +548,28 @@ def _classify_rls_status_change(change: object) -> tuple[str, str]:
     full_name = f"{schema_name}.{table_name}" if table_name else schema_name
 
     if ct == "added":
-        # New table appeared — check if RLS is enabled.
-        if not new_v:
-            # Table added but RLS is not enabled yet.
+        # New table appeared — inspect its own rls_enabled posture rather
+        # than the truthiness of the whole new-record dict (a populated
+        # dict is always truthy, so a plain `if not new_v` never actually
+        # distinguished RLS-off from RLS-on for a real added record — this
+        # previously misclassified every newly added table as "added with
+        # RLS enabled" regardless of its real posture).
+        added_record = new_v if isinstance(new_v, dict) else {}
+        added_rls = added_record.get("rls_enabled")
+        if added_rls is False:
             return (
                 "medium",
                 f"A new table {full_name!r} was found without Row Level Security enabled. "
                 "Verify that the table does not expose data that requires RLS protection.",
             )
-        return ("low", f"A new table {full_name!r} was added with RLS enabled.")
+        if added_rls is True:
+            return ("low", f"A new table {full_name!r} was added with RLS enabled.")
+        return (
+            "medium",
+            f"A new table {full_name!r} was found, but its Row Level Security "
+            "status could not be determined. Review the table's RLS "
+            "configuration.",
+        )
 
     if ct == "removed":
         return (
@@ -497,11 +587,18 @@ def _classify_rls_status_change(change: object) -> tuple[str, str]:
                 "read or modify all rows in this table. "
                 "Verify this is intentional immediately.",
             )
-        # RLS was enabled — security strengthened
+        if new_v is True:
+            # RLS was enabled — security strengthened
+            return (
+                "low",
+                f"Row Level Security was enabled on table {full_name!r}. "
+                "This is a security improvement.",
+            )
         return (
-            "low",
-            f"Row Level Security was enabled on table {full_name!r}. "
-            "This is a security improvement.",
+            "medium",
+            f"Row Level Security status for table {full_name!r} changed, but "
+            "the new state could not be determined. Review the table's RLS "
+            "configuration.",
         )
 
     if fp == "rls_forced":
@@ -511,6 +608,13 @@ def _classify_rls_status_change(change: object) -> tuple[str, str]:
                 f"Row Level Security 'forced' flag was removed on table {full_name!r}. "
                 "Table owners may now bypass RLS. "
                 "Verify this is intentional.",
+            )
+        if new_v is None:
+            return (
+                "medium",
+                f"Row Level Security 'forced' flag for table {full_name!r} "
+                "changed, but the new state could not be determined. Review "
+                "the table's RLS configuration.",
             )
         return (
             "low",
@@ -527,9 +631,16 @@ def _classify_rls_status_change(change: object) -> tuple[str, str]:
                 f"on table {full_name!r}. This may expose data depending on grants "
                 "and application access. Verify this is intentional.",
             )
+        if new_v is False:
+            return (
+                "low",
+                f"The public/anon SELECT policy on table {full_name!r} was removed.",
+            )
         return (
-            "low",
-            f"The public/anon SELECT policy on table {full_name!r} was removed.",
+            "medium",
+            f"The public/anon SELECT policy status for table {full_name!r} "
+            "changed, but the new state could not be determined. Review the "
+            "table's policies.",
         )
 
     if fp in (
@@ -545,9 +656,16 @@ def _classify_rls_status_change(change: object) -> tuple[str, str]:
                 f"on table {full_name!r}. This may allow broad writes depending on "
                 "grants and application access. Verify this is intentional.",
             )
+        if new_v is False:
+            return (
+                "low",
+                f"A public/anon write policy on table {full_name!r} was removed.",
+            )
         return (
-            "low",
-            f"A public/anon write policy on table {full_name!r} was removed.",
+            "medium",
+            f"A public/anon write policy status for table {full_name!r} "
+            "changed, but the new state could not be determined. Review the "
+            "table's policies.",
         )
 
     if fp == "exposed_to_anon":
@@ -557,10 +675,17 @@ def _classify_rls_status_change(change: object) -> tuple[str, str]:
                 f"Table {full_name!r} now has at least one policy targeting the "
                 "public/anon role. Review the table's policies for intended access.",
             )
+        if new_v is False:
+            return (
+                "low",
+                f"Table {full_name!r} no longer has any policy targeting the "
+                "public/anon role.",
+            )
         return (
             "low",
-            f"Table {full_name!r} no longer has any policy targeting the "
-            "public/anon role.",
+            f"Table {full_name!r}'s public/anon policy exposure changed, but "
+            "the new state could not be determined. Review the table's "
+            "policies.",
         )
 
     if fp == "policy_count":
@@ -631,8 +756,17 @@ def _classify_network_restriction_change(change: object) -> tuple[str, str]:
     cidr = pm.get("cidr") or "" if isinstance(pm, dict) else ""
 
     if ct == "added":
-        # is_unrestricted True being added means restrictions were opened
-        if new_v is True or (fp == "is_unrestricted" and new_v is True):
+        # is_unrestricted=True on the newly added record means restrictions
+        # were opened (the "unrestricted" sentinel record only ever appears
+        # once every explicit CIDR entry has been removed). For "added"
+        # Changes, new_value is the FULL new record dict, not a scalar — a
+        # dict can never be `is True`, so the previous `new_v is True` /
+        # `fp == "is_unrestricted"` checks here were always False (fp is
+        # empty for whole-record add/remove events) and this critical case
+        # silently fell through to the generic "low" bucket below with
+        # backwards copy claiming access was "now limited".
+        added_record = new_v if isinstance(new_v, dict) else {}
+        if added_record.get("is_unrestricted") is True:
             return (
                 "critical",
                 "Supabase database network restrictions were removed — the direct database "
@@ -672,10 +806,20 @@ def _classify_network_restriction_change(change: object) -> tuple[str, str]:
                 "connection port may now be reachable from any IP address. "
                 "Verify this is intentional.",
             )
+        if new_v is False:
+            return (
+                "low",
+                "Supabase database network restrictions were reinstated. "
+                "Direct database access is now limited to specified CIDRs.",
+            )
+        # is_unrestricted is always a real bool from the connector today
+        # (the 403 path now returns an empty list rather than a record with
+        # this field set to None) — this branch is defensive only.
         return (
-            "low",
-            "Supabase database network restrictions were reinstated. "
-            "Direct database access is now limited to specified CIDRs.",
+            "medium",
+            "Supabase database network restriction status changed, but the "
+            "new state could not be determined. Review the current network "
+            "restriction configuration.",
         )
 
     if fp == "cidr":
@@ -759,10 +903,17 @@ def _classify_oauth_provider_change(change: object) -> tuple[str, str]:
                 f"Supabase Auth OAuth provider {provider_name!r} was enabled. "
                 "Users can now sign in using this provider.",
             )
+        if new_v is False or new_v == "false":
+            return (
+                "medium",
+                f"Supabase Auth OAuth provider {provider_name!r} was disabled. "
+                "Users who signed in through this provider may be affected.",
+            )
         return (
             "medium",
-            f"Supabase Auth OAuth provider {provider_name!r} was disabled. "
-            "Users who signed in through this provider may be affected.",
+            f"Supabase Auth OAuth provider {provider_name!r} enabled state "
+            "changed, but the new state could not be determined. Review the "
+            "current OAuth provider configuration.",
         )
 
     if fp == "client_id_hash":

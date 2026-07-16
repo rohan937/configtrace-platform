@@ -819,10 +819,23 @@ class TestSupabaseRiskRules:
         assert level == "high"
 
     def test_new_table_without_rls_is_medium(self):
-        """A newly added table with rls_enabled=False should be medium risk."""
+        """A newly added table with rls_enabled=False should be medium risk.
+
+        Regression guard (Supabase classification-QA pass): for a real
+        compute_diff()-produced "added" Change, new_value is the FULL new
+        record dict, not the scalar rls_enabled value, and field_path is
+        always None (there is no single changed field for a whole-record
+        addition). The classifier's "added" branch previously checked
+        `if not new_v` against whatever was passed here directly, so this
+        test's shape (a bare bool as new_value) happened to produce the
+        same answer by coincidence; it no longer reflects the real
+        pipeline now that the classifier inspects
+        new_value.get("rls_enabled").
+        """
         change = _make_change(
-            "supabase_rls_status", field_path="rls_enabled",
-            change_type="added", new_value=False,
+            "supabase_rls_status", field_path=None,
+            change_type="added",
+            new_value={"rls_enabled": False, "rls_forced": False},
             provider_metadata={"record_type": "supabase_rls_status", "table_name": "new_table", "schema_name": "public"},
         )
         level, reason = self.classify(change)
@@ -830,12 +843,24 @@ class TestSupabaseRiskRules:
 
     def test_new_table_with_rls_is_low(self):
         change = _make_change(
-            "supabase_rls_status", field_path="rls_enabled",
-            change_type="added", new_value=True,
+            "supabase_rls_status", field_path=None,
+            change_type="added",
+            new_value={"rls_enabled": True, "rls_forced": False},
             provider_metadata={"record_type": "supabase_rls_status", "table_name": "new_table", "schema_name": "public"},
         )
         level, reason = self.classify(change)
         assert level == "low"
+
+    def test_new_table_rls_unknown_is_medium_and_cautious(self):
+        change = _make_change(
+            "supabase_rls_status", field_path=None,
+            change_type="added",
+            new_value={},
+            provider_metadata={"record_type": "supabase_rls_status", "table_name": "new_table", "schema_name": "public"},
+        )
+        level, reason = self.classify(change)
+        assert level == "medium"
+        assert "could not be determined" in reason
 
     # ── supabase_edge_function ────────────────────────────────────────────────
 

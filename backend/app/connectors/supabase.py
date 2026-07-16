@@ -87,6 +87,42 @@ def _sha256_prefix(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
+def _bool_or_none(value: Any) -> bool | None:
+    """Coerce *value* to True/False, preserving unknown as None.
+
+    Used for every Management API boolean field that is not guaranteed to
+    be present on every response (older API versions, plan-gated features,
+    or fields on a record built from an empty ``{}`` after a 403). Never
+    apply a default in the caller's ``.get(...)`` call for these fields —
+    a missing key and a 403 (which leaves ``data = {}``) must both resolve
+    here, to ``None``, not silently become ``False``.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("true", "1"):
+            return True
+        if low in ("false", "0"):
+            return False
+    return None
+
+
+def _count_or_none(value: Any) -> int | None:
+    """Return ``len(value)`` when *value* is a real list, else ``None``.
+
+    Used for fields that are stored as a COUNT only (raw list values are
+    never persisted). A missing/None source list means the count itself is
+    unknown — not zero — since a 403 or an omitted API field is
+    indistinguishable from "confirmed empty" without this distinction.
+    """
+    if isinstance(value, list):
+        return len(value)
+    return None
+
+
 # Postgres roles that mean "everyone / unauthenticated" → a public exposure.
 _PUBLIC_POLICY_ROLES = frozenset({"public", "anon"})
 
@@ -356,7 +392,7 @@ class SupabaseConnector(BaseConnector):
             for provider_name, pdata in external_map.items():
                 if not isinstance(pdata, dict):
                     continue
-                is_enabled = bool(pdata.get("enabled"))
+                is_enabled = _bool_or_none(pdata.get("enabled"))
                 raw_client_id = pdata.get("client_id") or ""
                 oauth_records.append({
                     "record_type": SUPABASE_OAUTH_PROVIDER,
@@ -374,21 +410,19 @@ class SupabaseConnector(BaseConnector):
 
         # ── M57.8: additional security depth fields ───────────────────────────
         # All fields come from the same /config/auth endpoint already called above.
-        # Raw redirect URLs are NEVER stored — only the count is recorded.
-        additional_redirect_urls = data.get("additional_redirect_urls") or []
-        additional_redirect_urls_count = (
-            len(additional_redirect_urls)
-            if isinstance(additional_redirect_urls, list)
-            else 0
+        # Raw redirect URLs are NEVER stored — only the count is recorded. A
+        # missing/non-list source means the count is unknown, not zero.
+        additional_redirect_urls_count = _count_or_none(
+            data.get("additional_redirect_urls")
         )
 
         auth_record = {
             "record_type": SUPABASE_AUTH_CONFIG,
             "record_id": f"supabase_auth_config:{project_ref}",
-            "email_enabled": bool(data.get("email_enabled")),
-            "phone_enabled": bool(data.get("phone_enabled")),
-            "anonymous_enabled": bool(data.get("anonymous_enabled")),
-            "mfa_totp_enabled": bool(data.get("mfa_totp_enabled")),
+            "email_enabled": _bool_or_none(data.get("email_enabled")),
+            "phone_enabled": _bool_or_none(data.get("phone_enabled")),
+            "anonymous_enabled": _bool_or_none(data.get("anonymous_enabled")),
+            "mfa_totp_enabled": _bool_or_none(data.get("mfa_totp_enabled")),
             # Session durations (integers or None)
             "session_timebox_seconds": data.get("session_timebox"),
             "session_inactivity_timeout_seconds": data.get("session_inactivity_timeout"),
@@ -400,20 +434,22 @@ class SupabaseConnector(BaseConnector):
             "site_url": str(data.get("site_url") or ""),
             # Rate limits
             "max_request_users_per_day": data.get("rate_limit_anonymous_users"),
-            # M57.8: additional security fields (same API endpoint)
+            # M57.8: additional security fields (same API endpoint). These are
+            # newer/plan-gated fields more likely to be absent than the core
+            # sign-in flags above, so preserving unknown here matters even more.
             # Leaked password protection (Have I Been Pwned integration)
-            "leaked_password_protection_enabled": bool(
-                data.get("password_hibp_enabled", False)
+            "leaked_password_protection_enabled": _bool_or_none(
+                data.get("password_hibp_enabled")
             ),
             # Bot / captcha protection
-            "captcha_enabled": bool(data.get("security_captcha_enabled", False)),
+            "captcha_enabled": _bool_or_none(data.get("security_captcha_enabled")),
             # Require reauthentication on password update
-            "require_reauthentication_for_password_update": bool(
-                data.get("security_update_password_require_reauthentication", False)
+            "require_reauthentication_for_password_update": _bool_or_none(
+                data.get("security_update_password_require_reauthentication")
             ),
             # Refresh token rotation — defends against token theft
-            "refresh_token_rotation_enabled": bool(
-                data.get("refresh_token_rotation_enabled", False)
+            "refresh_token_rotation_enabled": _bool_or_none(
+                data.get("refresh_token_rotation_enabled")
             ),
             # JWT access token expiry in seconds (NOT the JWT secret)
             "jwt_exp": data.get("jwt_exp"),
@@ -512,7 +548,9 @@ class SupabaseConnector(BaseConnector):
             "record_id": f"supabase_storage_config:{project_ref}",
             "file_size_limit": data.get("fileSizeLimit") or data.get("file_size_limit"),
             "allowed_mime_types": data.get("allowedMimeTypes") or data.get("allowed_mime_types"),
-            "s3_protocol_enabled": bool(data.get("s3Protocol", data.get("s3_protocol_enabled", False))),
+            "s3_protocol_enabled": _bool_or_none(
+                data.get("s3Protocol", data.get("s3_protocol_enabled"))
+            ),
             "config_fetch_warnings": warnings,
         }
         return record
@@ -561,9 +599,12 @@ class SupabaseConnector(BaseConnector):
             fn_slug = str(fn.get("slug") or fn.get("name") or "")
             fn_name = str(fn.get("name") or fn_slug)
             # env_vars is a list of env var configs; we record only the count.
-            # Values are NEVER stored.
-            env_var_keys = fn.get("envVarKeys") or fn.get("env_var_keys") or []
-            env_var_count = len(env_var_keys) if isinstance(env_var_keys, list) else 0
+            # Values are NEVER stored. A missing/non-list source means the
+            # count is unknown, not zero.
+            env_var_keys = fn.get("envVarKeys")
+            if env_var_keys is None:
+                env_var_keys = fn.get("env_var_keys")
+            env_var_count = _count_or_none(env_var_keys)
 
             records.append({
                 "record_type": SUPABASE_EDGE_FUNCTION,
@@ -573,7 +614,7 @@ class SupabaseConnector(BaseConnector):
                 "status": str(fn.get("status") or ""),
                 "version": fn.get("version"),
                 "env_var_key_count": env_var_count,
-                "verify_jwt": bool(fn.get("verify_jwt", True)),
+                "verify_jwt": _bool_or_none(fn.get("verify_jwt")),
                 "provider_metadata": {
                     "record_type": SUPABASE_EDGE_FUNCTION,
                     "function_name": fn_name,
@@ -635,8 +676,8 @@ class SupabaseConnector(BaseConnector):
                 "record_id": f"supabase_rls_status:{project_ref}:{schema_name}.{table_name}",
                 "table_name": table_name,
                 "schema_name": schema_name,
-                "rls_enabled": bool(table.get("rls_enabled", False)),
-                "rls_forced": bool(table.get("rls_forced", False)),
+                "rls_enabled": _bool_or_none(table.get("rls_enabled")),
+                "rls_forced": _bool_or_none(table.get("rls_forced")),
                 "provider_metadata": {
                     "record_type": SUPABASE_RLS_STATUS,
                     "table_name": table_name,
@@ -812,8 +853,21 @@ class SupabaseConnector(BaseConnector):
         if not isinstance(data, dict):
             data = {}
 
-        # ``allowed_ranges`` is a list of CIDR strings.
-        allowed_ranges = data.get("allowed_ranges") or []
+        # ``allowed_ranges`` is a list of CIDR strings. Per Supabase's own
+        # semantics, a present-but-EMPTY list means unrestricted access — but
+        # the key being entirely ABSENT (malformed/unexpected response shape)
+        # is not the same thing and must not be reported as "unrestricted"
+        # (a critical-severity claim downstream); it's unknown, and we skip
+        # emitting a network-restriction record for it rather than guessing.
+        allowed_ranges = data.get("allowed_ranges")
+        if allowed_ranges is None:
+            logger.warning(
+                "supabase: network-restrictions response for %s did not "
+                "include 'allowed_ranges' — posture is unknown, not "
+                "reporting as unrestricted.",
+                project_ref,
+            )
+            return []
         if not isinstance(allowed_ranges, list):
             allowed_ranges = []
 
