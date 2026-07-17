@@ -30,6 +30,7 @@ without concrete evidence (unknown is not proof of danger either).
 
 from __future__ import annotations
 
+from app.connectors import kubernetes_schema as ks
 from app.connectors.kubernetes_schema import (
     CAPABILITY_ALL,
     CATEGORY_BIND,
@@ -56,14 +57,24 @@ from app.connectors.kubernetes_schema import (
     KUBERNETES_CRONJOB,
     KUBERNETES_DAEMONSET,
     KUBERNETES_DEPLOYMENT,
+    KUBERNETES_GATEWAY,
+    KUBERNETES_GATEWAY_LISTENER,
+    KUBERNETES_HTTP_ROUTE,
+    KUBERNETES_HTTP_ROUTE_RULE,
+    KUBERNETES_INGRESS,
+    KUBERNETES_INGRESS_RULE,
     KUBERNETES_JOB,
     KUBERNETES_NAMESPACE,
+    KUBERNETES_NAMESPACE_NETWORK_POSTURE,
+    KUBERNETES_NETWORK_POLICY,
     KUBERNETES_POD,
     KUBERNETES_RBAC_PERMISSION_SUMMARY,
     KUBERNETES_RBAC_SUBJECT_BINDING,
     KUBERNETES_ROLE,
     KUBERNETES_ROLE_BINDING,
+    KUBERNETES_SERVICE,
     KUBERNETES_SERVICE_ACCOUNT,
+    KUBERNETES_SERVICE_PORT,
     KUBERNETES_STATEFULSET,
     KUBERNETES_WORKLOAD_SERVICE_ACCOUNT,
     PROFILE_CATEGORY_UNCONFINED,
@@ -843,10 +854,481 @@ def _classify_coverage_regression(
     return "low", "A Kubernetes workload's coverage posture changed."
 
 
+# ── Network exposure and isolation classifiers (message 4) ───────────────────
+#
+# These are structural classifications only: they describe posture
+# transitions (internal → external, TLS present/absent, default-deny
+# present/absent), never a claim of compromise, exploitation, or verified
+# internet reachability. A "confirmed external" category requires actual
+# assigned LoadBalancer/status evidence, not just a requested type — see
+# kubernetes.py's evidence-hierarchy docstring.
+
+_EXTERNALLY_EXPOSED_CATEGORIES = frozenset(
+    {ks.EXPOSURE_EXTERNAL_LOAD_BALANCER, ks.EXPOSURE_EXTERNAL_IP}
+)
+
+
+def _classify_service_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        exposure = record.get("exposure_category")
+        if exposure in _EXTERNALLY_EXPOSED_CATEGORIES:
+            return "high", "A new Kubernetes Service was added already externally exposed."
+        if exposure == ks.EXPOSURE_NODE_PORT:
+            return "medium", "A new Kubernetes Service was added using NodePort."
+        return "low", "A Kubernetes Service was added to monitoring."
+
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        if record.get("exposure_category") in _EXTERNALLY_EXPOSED_CATEGORIES:
+            return "low", "An externally exposed Kubernetes Service is no longer visible to ConfigTrace."
+        return "low", "A Kubernetes Service is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "exposure_category":
+        if nv in _EXTERNALLY_EXPOSED_CATEGORIES and pv not in _EXTERNALLY_EXPOSED_CATEGORIES:
+            return "high", "A Kubernetes Service changed from internal to confirmed external exposure."
+        if pv in _EXTERNALLY_EXPOSED_CATEGORIES and nv not in _EXTERNALLY_EXPOSED_CATEGORIES:
+            return "low", "A Kubernetes Service's external exposure was removed."
+        if nv == ks.EXPOSURE_NODE_PORT and pv != ks.EXPOSURE_NODE_PORT:
+            return "medium", "A Kubernetes Service changed to NodePort exposure."
+        return "low", "A Kubernetes Service's exposure category changed."
+    if fp == "load_balancer_ingress_count":
+        if (nv or 0) > (pv or 0):
+            return "high", "A public LoadBalancer address was assigned to a Kubernetes Service."
+        return "low", "A Kubernetes Service's LoadBalancer address was unassigned."
+    if fp == "external_ip_count":
+        if (nv or 0) > (pv or 0):
+            return "high", "An externalIP was added to a Kubernetes Service."
+        return "low", "An externalIP was removed from a Kubernetes Service."
+    if fp == "internal_load_balancer_annotation_present":
+        if pv is True and nv is not True:
+            return "high", "A Kubernetes Service's LoadBalancer is no longer marked internal."
+        if nv is True and pv is not True:
+            return "low", "A Kubernetes Service's LoadBalancer was marked internal."
+        return "low", "A Kubernetes Service's internal-LoadBalancer annotation changed."
+    if fp == "external_name_category":
+        return ("medium", "A Kubernetes Service was changed to ExternalName.") if nv else (
+            "low", "A Kubernetes Service's ExternalName configuration was removed.",
+        )
+    if fp == "service_type":
+        if nv == "NodePort":
+            return "medium", "A Kubernetes Service's type changed to NodePort."
+        if nv == "ExternalName":
+            return "medium", "A Kubernetes Service's type changed to ExternalName."
+        return "low", "A Kubernetes Service's type changed."
+    if fp in ("external_traffic_policy", "internal_traffic_policy"):
+        return "medium", "A Kubernetes Service's traffic policy changed."
+    if fp in ("ip_family_categories", "selector_fingerprint"):
+        return "low", "A Kubernetes Service's configuration field changed."
+    if fp == "mixed_exposure_evidence":
+        return "medium", "A Kubernetes Service shows mixed exposure evidence (multiple exposure mechanisms configured)."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this Service.") if nv == "partial" else (
+            "low", "Kubernetes Service collection completeness changed.",
+        )
+    return "low", "A Kubernetes Service configuration field changed."
+
+
+def _classify_service_port_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("sensitive_port") and record.get("exposure_category") in (
+            ks.EXPOSURE_EXTERNAL_LOAD_BALANCER, ks.EXPOSURE_EXTERNAL_IP, ks.EXPOSURE_NODE_PORT,
+        ):
+            return "high", "A sensitive port was added to an externally reachable Kubernetes Service."
+        return "low", "A port was added to a Kubernetes Service."
+    if ct == "removed":
+        return "low", "A port was removed from a Kubernetes Service."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "node_port":
+        if nv and not pv:
+            return "medium", "A NodePort was introduced for a Kubernetes Service port."
+        if pv and not nv:
+            return "low", "A NodePort was removed from a Kubernetes Service port."
+        return "low", "A Kubernetes Service port's NodePort assignment changed."
+    if fp == "sensitive_port":
+        return ("medium", "A Kubernetes Service port was recategorized as sensitive.") if nv else (
+            "low", "A Kubernetes Service port is no longer categorized as sensitive.",
+        )
+    if fp == "exposure_category":
+        if nv in _EXTERNALLY_EXPOSED_CATEGORIES and pv not in _EXTERNALLY_EXPOSED_CATEGORIES:
+            return "high", "A Kubernetes Service port's exposure became externally reachable."
+        return "low", "A Kubernetes Service port's exposure category changed."
+    return "low", "A Kubernetes Service port configuration field changed."
+
+
+def _classify_ingress_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if (
+            record.get("public_exposure_category") == ks.EXPOSURE_EXTERNAL_LOAD_BALANCER
+            and record.get("plaintext_exposure_category") == "plaintext_http_present"
+        ):
+            return "high", "A new Ingress was added already publicly exposed over plaintext HTTP."
+        if record.get("hostless_rule_present"):
+            return "medium", "A new Ingress was added with a hostless catch-all rule."
+        return "low", "A Kubernetes Ingress was added to monitoring."
+
+    if ct == "removed":
+        return "low", "A Kubernetes Ingress is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "plaintext_exposure_category":
+        if nv == "plaintext_http_present" and pv == "tls_covered":
+            return "high", "TLS coverage was removed from a Kubernetes Ingress; it now serves plaintext HTTP."
+        if nv == "tls_covered" and pv == "plaintext_http_present":
+            return "low", "TLS coverage was restored for a Kubernetes Ingress."
+        return "low", "A Kubernetes Ingress's plaintext-exposure category changed."
+    if fp == "tls_host_count":
+        if (nv or 0) < (pv or 0) and (nv or 0) == 0:
+            return "high", "TLS coverage was fully removed from a Kubernetes Ingress."
+        if (nv or 0) < (pv or 0):
+            return "medium", "TLS coverage was partially reduced on a Kubernetes Ingress."
+        return "low", "A Kubernetes Ingress's TLS host coverage changed."
+    if fp == "wildcard_host_count":
+        if (nv or 0) > (pv or 0):
+            return "high", "A wildcard host was introduced on a Kubernetes Ingress."
+        return "low", "A wildcard host was removed from a Kubernetes Ingress."
+    if fp == "hostless_rule_present":
+        return ("high", "A hostless catch-all rule was introduced on a Kubernetes Ingress.") if nv else (
+            "low", "A hostless catch-all rule was removed from a Kubernetes Ingress.",
+        )
+    if fp == "public_exposure_category":
+        if nv == ks.EXPOSURE_EXTERNAL_LOAD_BALANCER and pv != ks.EXPOSURE_EXTERNAL_LOAD_BALANCER:
+            return "high", "A public LoadBalancer address was assigned to a Kubernetes Ingress."
+        return "low", "A Kubernetes Ingress's public-exposure category changed."
+    if fp == "load_balancer_ingress_count":
+        return ("high", "A public LoadBalancer address was assigned to a Kubernetes Ingress.") if (nv or 0) > (pv or 0) else (
+            "low", "A Kubernetes Ingress's LoadBalancer address was unassigned.",
+        )
+    if fp == "ingress_class":
+        return "medium", "A Kubernetes Ingress's class changed."
+    if fp == "default_backend_present":
+        return ("medium", "A default backend was introduced on a Kubernetes Ingress.") if nv else (
+            "low", "The default backend was removed from a Kubernetes Ingress.",
+        )
+    if fp == "backend_service_count":
+        return "medium", "A Kubernetes Ingress's backend Service configuration changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this Ingress.") if nv == "partial" else (
+            "low", "Kubernetes Ingress collection completeness changed.",
+        )
+    return "low", "A Kubernetes Ingress configuration field changed."
+
+
+def _classify_ingress_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("catch_all_route") and not record.get("tls_covered"):
+            return "high", "A catch-all, plaintext Ingress route was added."
+        return "low", "A Kubernetes Ingress route was added."
+    if ct == "removed":
+        return "low", "A Kubernetes Ingress route was removed."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "tls_covered":
+        return ("low", "TLS coverage was added to a Kubernetes Ingress route.") if nv else (
+            "high", "TLS coverage was removed from a Kubernetes Ingress route.",
+        )
+    if fp == "host_category":
+        return ("high", "A Kubernetes Ingress route's host became a wildcard.") if nv == ks.HOST_CATEGORY_WILDCARD else (
+            "low", "A Kubernetes Ingress route's host category changed.",
+        )
+    if fp == "backend_service_name":
+        return "medium", "A Kubernetes Ingress route's backend Service changed."
+    if fp == "catch_all_route":
+        return ("medium", "A Kubernetes Ingress route became a catch-all.") if nv else (
+            "low", "A Kubernetes Ingress route is no longer a catch-all.",
+        )
+    return "low", "A Kubernetes Ingress route field changed."
+
+
+def _classify_gateway_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("public_address_category") == ks.GATEWAY_ADDRESS_EXTERNAL and record.get("http_listener_count", 0) > 0:
+            return "high", "A new Gateway was added already externally addressed with an HTTP listener."
+        if record.get("allowed_routes_category") == ks.ALLOWED_NAMESPACES_ALL:
+            return "medium", "A new Gateway was added allowing routes from all namespaces."
+        return "low", "A Kubernetes Gateway was added to monitoring."
+    if ct == "removed":
+        return "low", "A Kubernetes Gateway is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "allowed_routes_category":
+        if nv == ks.ALLOWED_NAMESPACES_ALL and pv != ks.ALLOWED_NAMESPACES_ALL:
+            return "high", "A Kubernetes Gateway's allowedRoutes changed to All namespaces."
+        if pv == ks.ALLOWED_NAMESPACES_ALL and nv != ks.ALLOWED_NAMESPACES_ALL:
+            return "low", "A Kubernetes Gateway's allowedRoutes was narrowed from All namespaces."
+        return "low", "A Kubernetes Gateway's allowedRoutes category changed."
+    if fp == "cross_namespace_route_allowance":
+        return ("high", "A Kubernetes Gateway now allows cross-namespace route attachment.") if nv else (
+            "low", "A Kubernetes Gateway's cross-namespace route allowance was removed.",
+        )
+    if fp == "public_address_category":
+        if nv == ks.GATEWAY_ADDRESS_EXTERNAL and pv != ks.GATEWAY_ADDRESS_EXTERNAL:
+            return "high", "A Kubernetes Gateway was assigned an external address."
+        return "low", "A Kubernetes Gateway's address category changed."
+    if fp in ("http_listener_count", "https_listener_count", "tls_listener_count", "listener_protocol_categories"):
+        return "medium", "A Kubernetes Gateway's listener configuration changed."
+    if fp == "wildcard_hostname_count":
+        return ("high", "A wildcard hostname was introduced on a Kubernetes Gateway listener.") if (nv or 0) > (pv or 0) else (
+            "low", "A wildcard hostname was removed from a Kubernetes Gateway listener.",
+        )
+    if fp == "status_category":
+        return "low", "A Kubernetes Gateway's status category changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this Gateway.") if nv == "partial" else (
+            "low", "Kubernetes Gateway collection completeness changed.",
+        )
+    return "low", "A Kubernetes Gateway configuration field changed."
+
+
+def _classify_gateway_listener_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("tls_mode") == ks.TLS_MODE_NONE and record.get("protocol") == "HTTP":
+            return "medium", "A new plaintext HTTP listener was added to a Kubernetes Gateway."
+        return "low", "A Kubernetes Gateway listener was added."
+    if ct == "removed":
+        return "low", "A Kubernetes Gateway listener was removed."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "tls_mode":
+        if nv == ks.TLS_MODE_NONE and pv != ks.TLS_MODE_NONE:
+            return "high", "TLS was removed from a Kubernetes Gateway listener."
+        if pv == ks.TLS_MODE_NONE and nv != ks.TLS_MODE_NONE:
+            return "low", "TLS was added to a Kubernetes Gateway listener."
+        return "low", "A Kubernetes Gateway listener's TLS mode changed."
+    if fp == "allowed_namespace_policy":
+        if nv == ks.ALLOWED_NAMESPACES_ALL and pv != ks.ALLOWED_NAMESPACES_ALL:
+            return "high", "A Kubernetes Gateway listener's allowed namespaces changed to All."
+        return "low", "A Kubernetes Gateway listener's allowed-namespace policy changed."
+    if fp == "public_exposure_category":
+        if nv == ks.EXPOSURE_EXTERNAL_LOAD_BALANCER and pv != ks.EXPOSURE_EXTERNAL_LOAD_BALANCER:
+            return "high", "A Kubernetes Gateway listener became externally reachable."
+        return "low", "A Kubernetes Gateway listener's exposure category changed."
+    if fp in ("protocol", "port", "hostname_category"):
+        return "medium", "A Kubernetes Gateway listener's configuration changed."
+    return "low", "A Kubernetes Gateway listener field changed."
+
+
+def _classify_http_route_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("cross_namespace_backend_count", 0) > 0 and record.get("resolved_refs_status") != ks.ROUTE_REFS_ALL_RESOLVED:
+            return "medium", "A new HTTPRoute references a cross-namespace backend with unresolved references."
+        return "low", "A Kubernetes HTTPRoute was added to monitoring."
+    if ct == "removed":
+        return "low", "A Kubernetes HTTPRoute is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "cross_namespace_backend_count":
+        return ("high", "A Kubernetes HTTPRoute's cross-namespace backend reference was broadened.") if (nv or 0) > (pv or 0) else (
+            "low", "A Kubernetes HTTPRoute's cross-namespace backend reference was narrowed.",
+        )
+    if fp == "cross_namespace_parent_count":
+        return ("medium", "A Kubernetes HTTPRoute gained a cross-namespace parent reference.") if (nv or 0) > (pv or 0) else (
+            "low", "A Kubernetes HTTPRoute's cross-namespace parent reference was removed.",
+        )
+    if fp == "resolved_refs_status":
+        if nv == ks.ROUTE_REFS_SOME_UNRESOLVED:
+            return "medium", "A Kubernetes HTTPRoute has unresolved backend/parent references."
+        return "low", "A Kubernetes HTTPRoute's reference-resolution status changed."
+    if fp == "wildcard_hostname_count":
+        return ("high", "A wildcard hostname was introduced on a Kubernetes HTTPRoute.") if (nv or 0) > (pv or 0) else (
+            "low", "A wildcard hostname was removed from a Kubernetes HTTPRoute.",
+        )
+    if fp in ("redirect_present", "rewrite_present", "filter_categories"):
+        return "low", "A Kubernetes HTTPRoute's filter configuration changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this HTTPRoute.") if nv == "partial" else (
+            "low", "Kubernetes HTTPRoute collection completeness changed.",
+        )
+    return "low", "A Kubernetes HTTPRoute configuration field changed."
+
+
+def _classify_http_route_rule_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("cross_namespace_backend"):
+            return "medium", "A new HTTPRoute rule references a cross-namespace backend."
+        return "low", "A Kubernetes HTTPRoute rule was added."
+    if ct == "removed":
+        return "low", "A Kubernetes HTTPRoute rule was removed."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+
+    if fp == "cross_namespace_backend":
+        return ("high", "A Kubernetes HTTPRoute rule's backend reference was broadened to another namespace.") if nv else (
+            "low", "A Kubernetes HTTPRoute rule's cross-namespace backend reference was removed.",
+        )
+    if fp == "catch_all_path":
+        return ("medium", "A Kubernetes HTTPRoute rule became a catch-all path match.") if nv else (
+            "low", "A Kubernetes HTTPRoute rule is no longer a catch-all path match.",
+        )
+    return "low", "A Kubernetes HTTPRoute rule field changed."
+
+
+def _classify_network_policy_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        broad_allow = record.get("allows_all_ingress") or record.get("allows_all_egress")
+        public_cidr = record.get("public_ipv4_cidr_allowed") or record.get("public_ipv6_cidr_allowed")
+        if broad_allow and record.get("pod_selector_empty_all_pods"):
+            return "high", "A new NetworkPolicy was added that allows all traffic for all Pods in the namespace."
+        if public_cidr:
+            return "high", "A new NetworkPolicy was added that permits a public CIDR range."
+        return "low", "A Kubernetes NetworkPolicy was added to monitoring."
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        if record.get("pod_selector_empty_all_pods") and (record.get("empty_ingress_list") or record.get("empty_egress_list")):
+            return "high", "A NetworkPolicy providing default-deny coverage for all Pods was removed."
+        return "low", "A Kubernetes NetworkPolicy is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "empty_ingress_list":
+        return ("low", "A default-deny ingress posture was added to a Kubernetes NetworkPolicy.") if nv else (
+            "high", "A default-deny ingress posture was removed from a Kubernetes NetworkPolicy.",
+        )
+    if fp == "empty_egress_list":
+        return ("low", "A default-deny egress posture was added to a Kubernetes NetworkPolicy.") if nv else (
+            "high", "A default-deny egress posture was removed from a Kubernetes NetworkPolicy.",
+        )
+    if fp == "allows_all_ingress":
+        return ("critical", "A Kubernetes NetworkPolicy now allows all ingress traffic to all Pods it selects.") if nv else (
+            "low", "A Kubernetes NetworkPolicy no longer allows all ingress traffic.",
+        )
+    if fp == "allows_all_egress":
+        return ("critical", "A Kubernetes NetworkPolicy now allows all egress traffic from all Pods it selects.") if nv else (
+            "low", "A Kubernetes NetworkPolicy no longer allows all egress traffic.",
+        )
+    if fp == "public_ipv4_cidr_allowed":
+        return ("high", "A Kubernetes NetworkPolicy now permits an unrestricted public IPv4 CIDR (0.0.0.0/0).") if nv else (
+            "low", "A Kubernetes NetworkPolicy's public IPv4 CIDR allowance was removed.",
+        )
+    if fp == "public_ipv6_cidr_allowed":
+        return ("high", "A Kubernetes NetworkPolicy now permits an unrestricted public IPv6 CIDR (::/0).") if nv else (
+            "low", "A Kubernetes NetworkPolicy's public IPv6 CIDR allowance was removed.",
+        )
+    if fp == "broad_cidr_count":
+        return ("medium", "A Kubernetes NetworkPolicy's broad (non-private) CIDR count increased.") if (nv or 0) > (pv or 0) else (
+            "low", "A Kubernetes NetworkPolicy's broad CIDR count decreased.",
+        )
+    if fp in ("namespace_selector_present", "pod_selector_present"):
+        return "medium", "A Kubernetes NetworkPolicy's peer-selector configuration changed."
+    if fp in ("ingress_isolation_enabled", "egress_isolation_enabled"):
+        return ("low", "A Kubernetes NetworkPolicy's isolation posture was strengthened.") if nv else (
+            "medium", "A Kubernetes NetworkPolicy's isolation posture was weakened.",
+        )
+    if fp in ("policy_types", "port_restriction_present", "selector_fingerprint", "policy_fingerprint"):
+        return "low", "A Kubernetes NetworkPolicy's configuration changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this NetworkPolicy.") if nv == "partial" else (
+            "low", "Kubernetes NetworkPolicy collection completeness changed.",
+        )
+    return "low", "A Kubernetes NetworkPolicy configuration field changed."
+
+
+def _classify_namespace_network_posture_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        return "low", "A Kubernetes namespace network-posture rollup was observed."
+    if ct == "removed":
+        return "low", "A Kubernetes namespace network-posture rollup is no longer present."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "has_any_network_policy":
+        return ("low", "A namespace now has at least one NetworkPolicy.") if nv else (
+            "medium", "A namespace no longer has any NetworkPolicy.",
+        )
+    if fp == "all_pod_ingress_default_deny":
+        return ("low", "A namespace gained all-Pod ingress default-deny coverage.") if nv else (
+            "high", "A namespace lost all-Pod ingress default-deny coverage.",
+        )
+    if fp == "all_pod_egress_default_deny":
+        return ("low", "A namespace gained all-Pod egress default-deny coverage.") if nv else (
+            "high", "A namespace lost all-Pod egress default-deny coverage.",
+        )
+    if fp == "policy_coverage_category":
+        if nv == ks.POLICY_COVERAGE_BROAD and pv != ks.POLICY_COVERAGE_BROAD:
+            return "low", "A namespace's NetworkPolicy coverage became broad (comprehensive default-deny)."
+        if pv == ks.POLICY_COVERAGE_BROAD and nv != ks.POLICY_COVERAGE_BROAD:
+            return "high", "A namespace's NetworkPolicy coverage regressed from broad to partial or none."
+        if nv == ks.POLICY_COVERAGE_UNKNOWN:
+            return "medium", "A namespace's NetworkPolicy coverage could not be fully determined."
+        return "low", "A namespace's NetworkPolicy coverage category changed."
+    if fp == "public_ingress_allowance_present":
+        return ("high", "A namespace now has a NetworkPolicy permitting public ingress.") if nv else (
+            "low", "A namespace's public ingress allowance was removed.",
+        )
+    if fp == "public_egress_allowance_present":
+        return ("high", "A namespace now has a NetworkPolicy permitting public egress.") if nv else (
+            "low", "A namespace's public egress allowance was removed.",
+        )
+    if fp in ("policy_count", "ingress_isolation_present", "egress_isolation_present",
+              "broad_namespace_selector_allowance", "broad_pod_selector_allowance"):
+        return "low", "A namespace's NetworkPolicy posture changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this namespace's NetworkPolicies.") if nv == "partial" else (
+            "low", "Kubernetes namespace NetworkPolicy collection completeness changed.",
+        )
+    return "low", "A Kubernetes namespace network-posture field changed."
+
+
 def classify_kubernetes_change(change: object) -> tuple[str, str]:
     """Route a Kubernetes Change to its record-type classifier.
 
-    Unknown/future ``kubernetes_*`` record types (i.e. the message 4-5
+    Unknown/future ``kubernetes_*`` record types (i.e. the message 5
     planned taxonomy, before their classifiers exist) fail safely into a
     generic low-severity message rather than raising or falling through to
     an unrelated provider's classifier.
@@ -877,5 +1359,25 @@ def classify_kubernetes_change(change: object) -> tuple[str, str]:
         return _classify_rbac_subject_binding_change(change)
     if record_type == KUBERNETES_RBAC_PERMISSION_SUMMARY:
         return _classify_rbac_permission_summary_change(change)
+    if record_type == KUBERNETES_SERVICE:
+        return _classify_service_change(change)
+    if record_type == KUBERNETES_SERVICE_PORT:
+        return _classify_service_port_change(change)
+    if record_type == KUBERNETES_INGRESS:
+        return _classify_ingress_change(change)
+    if record_type == KUBERNETES_INGRESS_RULE:
+        return _classify_ingress_rule_change(change)
+    if record_type == KUBERNETES_GATEWAY:
+        return _classify_gateway_change(change)
+    if record_type == KUBERNETES_GATEWAY_LISTENER:
+        return _classify_gateway_listener_change(change)
+    if record_type == KUBERNETES_HTTP_ROUTE:
+        return _classify_http_route_change(change)
+    if record_type == KUBERNETES_HTTP_ROUTE_RULE:
+        return _classify_http_route_rule_change(change)
+    if record_type == KUBERNETES_NETWORK_POLICY:
+        return _classify_network_policy_change(change)
+    if record_type == KUBERNETES_NAMESPACE_NETWORK_POSTURE:
+        return _classify_namespace_network_posture_change(change)
 
     return "low", f"A Kubernetes configuration record changed ({record_type or 'unknown record type'})."

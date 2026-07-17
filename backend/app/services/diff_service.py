@@ -3045,6 +3045,133 @@ _KUBERNETES_RBAC_PERMISSION_SUMMARY_TRACKED_FIELDS: tuple[str, ...] = (
     "highest_privilege_category",
 )
 
+# Kubernetes network exposure and isolation — message 4 of a 9-message arc.
+_KUBERNETES_SERVICE_TRACKED_FIELDS: tuple[str, ...] = (
+    "service_type",
+    "external_ip_count",
+    "load_balancer_ingress_count",
+    "external_name_category",
+    "external_traffic_policy",
+    "internal_traffic_policy",
+    "ip_family_categories",
+    "selector_fingerprint",
+    "internal_load_balancer_annotation_present",
+    "exposure_category",
+    "mixed_exposure_evidence",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_SERVICE_PORT_TRACKED_FIELDS: tuple[str, ...] = (
+    "protocol",
+    "port",
+    "target_port_category",
+    "node_port",
+    "sensitive_port",
+    "exposure_category",
+)
+
+_KUBERNETES_INGRESS_TRACKED_FIELDS: tuple[str, ...] = (
+    "ingress_class",
+    "default_backend_present",
+    "host_count",
+    "wildcard_host_count",
+    "hostless_rule_present",
+    "tls_host_count",
+    "tls_secret_reference_count",
+    "backend_service_count",
+    "public_exposure_category",
+    "plaintext_exposure_category",
+    "load_balancer_ingress_count",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_INGRESS_RULE_TRACKED_FIELDS: tuple[str, ...] = (
+    "host_category",
+    "path_category",
+    "backend_service_name",
+    "backend_port",
+    "tls_covered",
+    "public_exposure_category",
+    "catch_all_route",
+    "route_fingerprint",
+)
+
+_KUBERNETES_GATEWAY_TRACKED_FIELDS: tuple[str, ...] = (
+    "gateway_class_name",
+    "address_count",
+    "public_address_category",
+    "listener_protocol_categories",
+    "allowed_routes_category",
+    "cross_namespace_route_allowance",
+    "status_category",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_GATEWAY_LISTENER_TRACKED_FIELDS: tuple[str, ...] = (
+    "protocol",
+    "port",
+    "hostname_category",
+    "tls_mode",
+    "allowed_namespace_policy",
+    "public_exposure_category",
+    "listener_fingerprint",
+)
+
+_KUBERNETES_HTTP_ROUTE_TRACKED_FIELDS: tuple[str, ...] = (
+    "parent_ref_count",
+    "cross_namespace_parent_count",
+    "hostname_count",
+    "wildcard_hostname_count",
+    "backend_ref_count",
+    "cross_namespace_backend_count",
+    "filter_categories",
+    "resolved_refs_status",
+    "route_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_HTTP_ROUTE_RULE_TRACKED_FIELDS: tuple[str, ...] = (
+    "match_categories",
+    "catch_all_path",
+    "backend_count",
+    "cross_namespace_backend",
+    "redirect_present",
+    "rewrite_present",
+    "mirror_present",
+    "route_fingerprint",
+)
+
+_KUBERNETES_NETWORK_POLICY_TRACKED_FIELDS: tuple[str, ...] = (
+    "selector_fingerprint",
+    "policy_types",
+    "ingress_isolation_enabled",
+    "egress_isolation_enabled",
+    "empty_ingress_list",
+    "empty_egress_list",
+    "allows_all_ingress",
+    "allows_all_egress",
+    "public_ipv4_cidr_allowed",
+    "public_ipv6_cidr_allowed",
+    "broad_cidr_count",
+    "namespace_selector_present",
+    "pod_selector_present",
+    "port_restriction_present",
+    "policy_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_NAMESPACE_NETWORK_POSTURE_TRACKED_FIELDS: tuple[str, ...] = (
+    "policy_count",
+    "ingress_isolation_present",
+    "egress_isolation_present",
+    "all_pod_ingress_default_deny",
+    "all_pod_egress_default_deny",
+    "policy_coverage_category",
+    "public_ingress_allowance_present",
+    "public_egress_allowance_present",
+    "collection_completeness_category",
+)
+
 _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "kubernetes_cluster": (
         "kubernetes_version",
@@ -3080,6 +3207,16 @@ _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "kubernetes_cluster_role_binding": _KUBERNETES_ROLE_BINDING_TRACKED_FIELDS,
     "kubernetes_rbac_subject_binding": _KUBERNETES_RBAC_SUBJECT_BINDING_TRACKED_FIELDS,
     "kubernetes_rbac_permission_summary": _KUBERNETES_RBAC_PERMISSION_SUMMARY_TRACKED_FIELDS,
+    "kubernetes_service": _KUBERNETES_SERVICE_TRACKED_FIELDS,
+    "kubernetes_service_port": _KUBERNETES_SERVICE_PORT_TRACKED_FIELDS,
+    "kubernetes_ingress": _KUBERNETES_INGRESS_TRACKED_FIELDS,
+    "kubernetes_ingress_rule": _KUBERNETES_INGRESS_RULE_TRACKED_FIELDS,
+    "kubernetes_gateway": _KUBERNETES_GATEWAY_TRACKED_FIELDS,
+    "kubernetes_gateway_listener": _KUBERNETES_GATEWAY_LISTENER_TRACKED_FIELDS,
+    "kubernetes_http_route": _KUBERNETES_HTTP_ROUTE_TRACKED_FIELDS,
+    "kubernetes_http_route_rule": _KUBERNETES_HTTP_ROUTE_RULE_TRACKED_FIELDS,
+    "kubernetes_network_policy": _KUBERNETES_NETWORK_POLICY_TRACKED_FIELDS,
+    "kubernetes_namespace_network_posture": _KUBERNETES_NAMESPACE_NETWORK_POSTURE_TRACKED_FIELDS,
 }
 
 
@@ -3517,6 +3654,46 @@ def _build_provider_metadata(
             metadata["subject_identity"] = (
                 context_record.get("subject_identity") or record.get("subject_identity") or ""
             )
+
+        # Network exposure and isolation (message 4). Kubernetes network
+        # classifiers read these directly from provider_metadata for
+        # whole-record added/removed events and display copy.
+        if _kubernetes_record_type == "kubernetes_service":
+            metadata["service_name"] = context_record.get("name") or record.get("name") or ""
+            metadata["service_type"] = context_record.get("service_type") or record.get("service_type") or ""
+        if _kubernetes_record_type == "kubernetes_service_port":
+            metadata["parent_service_record_id"] = (
+                context_record.get("parent_service_record_id") or record.get("parent_service_record_id") or ""
+            )
+            metadata["port"] = context_record.get("port") or record.get("port") or ""
+        if _kubernetes_record_type == "kubernetes_ingress":
+            metadata["ingress_name"] = context_record.get("name") or record.get("name") or ""
+            metadata["ingress_class"] = context_record.get("ingress_class") or record.get("ingress_class") or ""
+        if _kubernetes_record_type == "kubernetes_ingress_rule":
+            metadata["parent_ingress_record_id"] = (
+                context_record.get("parent_ingress_record_id") or record.get("parent_ingress_record_id") or ""
+            )
+            metadata["hostname"] = context_record.get("hostname") or record.get("hostname") or ""
+        if _kubernetes_record_type == "kubernetes_gateway":
+            metadata["gateway_name"] = context_record.get("name") or record.get("name") or ""
+            metadata["gateway_class_name"] = (
+                context_record.get("gateway_class_name") or record.get("gateway_class_name") or ""
+            )
+        if _kubernetes_record_type == "kubernetes_gateway_listener":
+            metadata["parent_gateway_record_id"] = (
+                context_record.get("parent_gateway_record_id") or record.get("parent_gateway_record_id") or ""
+            )
+            metadata["listener_name"] = context_record.get("listener_name") or record.get("listener_name") or ""
+        if _kubernetes_record_type == "kubernetes_http_route":
+            metadata["route_name"] = context_record.get("name") or record.get("name") or ""
+        if _kubernetes_record_type == "kubernetes_http_route_rule":
+            metadata["parent_route_record_id"] = (
+                context_record.get("parent_route_record_id") or record.get("parent_route_record_id") or ""
+            )
+        if _kubernetes_record_type == "kubernetes_network_policy":
+            metadata["policy_name"] = context_record.get("name") or record.get("name") or ""
+        if _kubernetes_record_type == "kubernetes_namespace_network_posture":
+            metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
 
     return metadata
 

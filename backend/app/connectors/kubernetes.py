@@ -260,6 +260,26 @@ from app.connectors.kubernetes_schema import (
     categorize_non_resource_url,
     categorize_resource,
     highest_severity,
+    KUBERNETES_GATEWAY,
+    KUBERNETES_GATEWAY_LISTENER,
+    KUBERNETES_HTTP_ROUTE,
+    KUBERNETES_HTTP_ROUTE_RULE,
+    KUBERNETES_INGRESS,
+    KUBERNETES_INGRESS_RULE,
+    KUBERNETES_NAMESPACE_NETWORK_POSTURE,
+    KUBERNETES_NETWORK_POLICY,
+    KUBERNETES_SERVICE,
+    KUBERNETES_SERVICE_PORT,
+    SAFE_INTERNAL_LOAD_BALANCER_ANNOTATION_KEYS,
+    SENSITIVE_SERVICE_PORTS,
+    categorize_cidr,
+    categorize_host,
+    categorize_ingress_path,
+    categorize_ip_address,
+    is_catch_all_path,
+    is_public_cidr_category,
+    rule_permits_everything,
+    stable_fingerprint,
 )
 
 logger = logging.getLogger(__name__)
@@ -2368,6 +2388,1131 @@ def _collect_rbac_bindings(
     return binding_records, subject_records, status
 
 
+# ── Network exposure and isolation normalization (message 4) ─────────────────
+#
+# Public-exposure claims are conservative throughout this section: a
+# LoadBalancer-*typed* Service with no assigned `.status.loadBalancer.ingress`
+# is "pending", never "confirmed external"; a NodePort Service is "node-level"
+# exposure capability, never a claim of internet reachability (that requires
+# node-level firewall/cloud-security-group evidence this connector does not
+# have). See ``categorize_cidr``/``EXPOSURE_*`` in kubernetes_schema.py for
+# the full evidence hierarchy.
+
+def _internal_load_balancer_annotation_present(annotations: dict) -> bool:
+    """Only the fixed, well-known internal-load-balancer annotation keys
+    for AWS/GCP/Azure are ever inspected — never arbitrary annotations."""
+    for key in SAFE_INTERNAL_LOAD_BALANCER_ANNOTATION_KEYS:
+        value = (annotations or {}).get(key)
+        if value is None:
+            continue
+        if key == "cloud.google.com/load-balancer-type":
+            if str(value).strip().lower() == "internal":
+                return True
+        elif str(value).strip().lower() == "true":
+            return True
+    return False
+
+
+def _categorize_service_exposure(
+    *, service_type: str, external_ip_count: int, lb_ingress_count: int,
+    internal_lb_annotation: bool, cluster_ip_present: bool,
+) -> tuple[str, bool]:
+    """Returns ``(exposure_category, mixed_exposure_evidence)``."""
+    mixed = False
+    if service_type == "ExternalName":
+        return ks.EXPOSURE_EXTERNAL_NAME, mixed
+    if service_type == "LoadBalancer":
+        if external_ip_count > 0:
+            mixed = True
+        if internal_lb_annotation:
+            return ks.EXPOSURE_INTERNAL_LOAD_BALANCER, mixed
+        if lb_ingress_count > 0:
+            return ks.EXPOSURE_EXTERNAL_LOAD_BALANCER, mixed
+        return ks.EXPOSURE_PENDING_LOAD_BALANCER, mixed
+    if external_ip_count > 0:
+        return ks.EXPOSURE_EXTERNAL_IP, mixed
+    if service_type == "NodePort":
+        return ks.EXPOSURE_NODE_PORT, mixed
+    if not cluster_ip_present:
+        return ks.EXPOSURE_HEADLESS_INTERNAL, mixed
+    return ks.EXPOSURE_CLUSTER_INTERNAL, mixed
+
+
+def _selector_fingerprint_keys_only(selector: Optional[dict]) -> str:
+    if not selector:
+        return stable_fingerprint("empty")
+    return stable_fingerprint(*sorted(selector.keys()))
+
+
+def _categorize_target_port(target_port: Any) -> str:
+    if target_port is None:
+        return "unset"
+    if isinstance(target_port, str):
+        return "named"
+    return "numeric"
+
+
+def _normalize_service_port(
+    port_obj: Any, *, cluster_id: str, cluster_name: str, namespace: str,
+    parent_record_id: str, exposure_category: str,
+) -> dict:
+    name = getattr(port_obj, "name", None)
+    protocol = getattr(port_obj, "protocol", None) or "TCP"
+    port = getattr(port_obj, "port", None)
+    target_port = getattr(port_obj, "target_port", None)
+    node_port = getattr(port_obj, "node_port", None)
+    app_protocol = getattr(port_obj, "app_protocol", None)
+    sensitive = port in SENSITIVE_SERVICE_PORTS if port is not None else False
+
+    record_id = f"{parent_record_id}/port/{name or port}"
+    return {
+        "record_type": KUBERNETES_SERVICE_PORT,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "parent_service_record_id": parent_record_id,
+        "port_name": name,
+        "protocol": protocol,
+        "port": port,
+        "target_port_category": _categorize_target_port(target_port),
+        "node_port": node_port,
+        "app_protocol_category": app_protocol,
+        "sensitive_port": sensitive,
+        "exposure_category": exposure_category,
+    }
+
+
+def _normalize_service(obj: Any, *, cluster_id: str, cluster_name: str) -> tuple[dict, list[dict]]:
+    metadata = obj.metadata
+    namespace = metadata.namespace
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    annotations = getattr(metadata, "annotations", None) or {}
+    spec = getattr(obj, "spec", None)
+    status = getattr(obj, "status", None)
+
+    service_type = getattr(spec, "type", None) or "ClusterIP"
+    cluster_ip = getattr(spec, "cluster_ip", None)
+    cluster_ip_present = bool(cluster_ip) and cluster_ip != "None"
+    headless = cluster_ip == "None"
+    external_ips = getattr(spec, "external_i_ps", None) or []
+    external_name = getattr(spec, "external_name", None)
+
+    lb_status = getattr(status, "load_balancer", None) if status else None
+    lb_ingress = (getattr(lb_status, "ingress", None) or []) if lb_status else []
+
+    internal_annotation = _internal_load_balancer_annotation_present(annotations)
+    exposure_category, mixed = _categorize_service_exposure(
+        service_type=service_type,
+        external_ip_count=len(external_ips),
+        lb_ingress_count=len(lb_ingress),
+        internal_lb_annotation=internal_annotation,
+        cluster_ip_present=cluster_ip_present,
+    )
+
+    external_name_category = categorize_host(external_name) if service_type == "ExternalName" else None
+
+    selector = getattr(spec, "selector", None) or {}
+    ports = getattr(spec, "ports", None) or []
+    ip_families = getattr(spec, "ip_families", None) or []
+
+    record_id = f"{cluster_id}/service/{namespace}/{uid or name}"
+
+    record = {
+        "record_type": KUBERNETES_SERVICE,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "service_type": service_type,
+        "cluster_ip_present": cluster_ip_present,
+        "headless": headless,
+        "external_ip_count": len(external_ips),
+        "load_balancer_ingress_count": len(lb_ingress),
+        "external_name_category": external_name_category,
+        "publish_not_ready_addresses": bool(getattr(spec, "publish_not_ready_addresses", False)),
+        "external_traffic_policy": getattr(spec, "external_traffic_policy", None),
+        "internal_traffic_policy": getattr(spec, "internal_traffic_policy", None),
+        "session_affinity": getattr(spec, "session_affinity", None),
+        "ip_family_categories": sorted(set(ip_families)),
+        "ip_family_policy": getattr(spec, "ip_family_policy", None),
+        "selector_key_count": len(selector),
+        "selector_fingerprint": _selector_fingerprint_keys_only(selector),
+        "internal_load_balancer_annotation_present": internal_annotation,
+        "port_count": len(ports),
+        "exposure_category": exposure_category,
+        "mixed_exposure_evidence": mixed,
+        "collection_completeness_category": "complete",
+    }
+
+    port_records = [
+        _normalize_service_port(
+            p, cluster_id=cluster_id, cluster_name=cluster_name, namespace=namespace,
+            parent_record_id=record_id, exposure_category=exposure_category,
+        )
+        for p in ports
+    ]
+    return record, port_records
+
+
+def _collect_services(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    service_records: list[dict] = []
+    port_records: list[dict] = []
+    for item in raw_items:
+        try:
+            ns = item.metadata.namespace
+        except Exception:  # noqa: BLE001
+            continue
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            record, ports = _normalize_service(item, cluster_id=cluster_id, cluster_name=cluster_name)
+        except Exception:  # noqa: BLE001
+            continue
+        service_records.append(record)
+        port_records.extend(ports)
+
+    status = _family_completeness_status(diag)
+    for r in service_records:
+        r["collection_completeness_category"] = status
+    service_records.sort(key=lambda r: (r["namespace"], r["name"]))
+    port_records.sort(key=lambda r: r["record_id"])
+    return service_records, port_records, status
+
+
+# ── Ingress normalization ─────────────────────────────────────────────────────
+
+def _normalize_ingress(obj: Any, *, cluster_id: str, cluster_name: str) -> tuple[dict, list[dict]]:
+    metadata = obj.metadata
+    namespace = metadata.namespace
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    spec = getattr(obj, "spec", None)
+    status = getattr(obj, "status", None)
+
+    ingress_class = getattr(spec, "ingress_class_name", None)
+    default_backend = getattr(spec, "default_backend", None)
+    rules = getattr(spec, "rules", None) or []
+    tls_list = getattr(spec, "tls", None) or []
+
+    lb_status = getattr(status, "load_balancer", None) if status else None
+    lb_ingress = (getattr(lb_status, "ingress", None) or []) if lb_status else []
+
+    tls_hosts: set[str] = set()
+    tls_secret_ref_count = 0
+    for tls_entry in tls_list:
+        tls_hosts.update(getattr(tls_entry, "hosts", None) or [])
+        if getattr(tls_entry, "secret_name", None):
+            tls_secret_ref_count += 1
+
+    record_id = f"{cluster_id}/ingress/{namespace}/{uid or name}"
+    public_exposure_category = ks.EXPOSURE_EXTERNAL_LOAD_BALANCER if len(lb_ingress) > 0 else ks.EXPOSURE_UNKNOWN
+
+    rule_records: list[dict] = []
+    host_count = 0
+    wildcard_host_count = 0
+    hostless_rule_present = False
+    http_path_count = 0
+    backend_services: set[str] = set()
+    path_type_categories: set[str] = set()
+    any_tls_covered = False
+    any_plaintext = False
+
+    for rule in rules:
+        host = getattr(rule, "host", None)
+        host_cat = categorize_host(host)
+        if host_cat == ks.HOST_CATEGORY_WILDCARD:
+            wildcard_host_count += 1
+        if host_cat == ks.HOST_CATEGORY_HOSTLESS:
+            hostless_rule_present = True
+        else:
+            host_count += 1
+
+        tls_covered = bool(host) and host in tls_hosts
+        if tls_covered:
+            any_tls_covered = True
+        else:
+            any_plaintext = True
+
+        http = getattr(rule, "http", None)
+        paths = (getattr(http, "paths", None) or []) if http else []
+        if not paths:
+            paths = [None]
+
+        for path_obj in paths:
+            http_path_count += 1
+            path = getattr(path_obj, "path", None) if path_obj else None
+            path_type = getattr(path_obj, "path_type", None) if path_obj else None
+            path_type_categories.add(path_type or "unknown")
+            backend = getattr(path_obj, "backend", None) if path_obj else None
+            service_backend = getattr(backend, "service", None) if backend else None
+            backend_name = getattr(service_backend, "name", None) if service_backend else None
+            backend_port_obj = getattr(service_backend, "port", None) if service_backend else None
+            backend_port = getattr(backend_port_obj, "number", None) if backend_port_obj else None
+            if backend_name:
+                backend_services.add(backend_name)
+
+            catch_all = is_catch_all_path(path, path_type) and host_cat == ks.HOST_CATEGORY_HOSTLESS
+
+            rule_record_id = f"{record_id}/rule/{host or 'no-host'}/{path or 'no-path'}"
+            rule_records.append({
+                "record_type": KUBERNETES_INGRESS_RULE,
+                "record_id": rule_record_id,
+                "cluster_id": cluster_id,
+                "cluster_name": cluster_name,
+                "namespace": namespace,
+                "parent_ingress_record_id": record_id,
+                "host_category": host_cat,
+                "hostname": host,
+                "path_category": categorize_ingress_path(path, path_type),
+                "path_type": path_type,
+                "backend_service_name": backend_name,
+                "backend_port": backend_port,
+                "tls_covered": tls_covered,
+                "public_exposure_category": public_exposure_category,
+                "catch_all_route": catch_all,
+                "default_backend": False,
+                "route_fingerprint": stable_fingerprint(host_cat, path, path_type, backend_name, backend_port),
+            })
+
+    default_backend_present = default_backend is not None
+    if default_backend_present:
+        db_service = getattr(default_backend, "service", None)
+        db_name = getattr(db_service, "name", None) if db_service else None
+        db_port_obj = getattr(db_service, "port", None) if db_service else None
+        db_port = getattr(db_port_obj, "number", None) if db_port_obj else None
+        if db_name:
+            backend_services.add(db_name)
+        rule_records.append({
+            "record_type": KUBERNETES_INGRESS_RULE,
+            "record_id": f"{record_id}/rule/default-backend",
+            "cluster_id": cluster_id,
+            "cluster_name": cluster_name,
+            "namespace": namespace,
+            "parent_ingress_record_id": record_id,
+            "host_category": ks.HOST_CATEGORY_HOSTLESS,
+            "hostname": None,
+            "path_category": ks.PATH_CATEGORY_ROOT_PREFIX,
+            "path_type": None,
+            "backend_service_name": db_name,
+            "backend_port": db_port,
+            "tls_covered": False,
+            "public_exposure_category": public_exposure_category,
+            "catch_all_route": True,
+            "default_backend": True,
+            "route_fingerprint": stable_fingerprint("default-backend", db_name, db_port),
+        })
+        any_plaintext = True
+
+    if not rules and not default_backend_present:
+        plaintext_category = "no_rules"
+    elif any_tls_covered and not any_plaintext:
+        plaintext_category = "tls_covered"
+    else:
+        plaintext_category = "plaintext_http_present"
+
+    record = {
+        "record_type": KUBERNETES_INGRESS,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "ingress_class": ingress_class,
+        "default_backend_present": default_backend_present,
+        "rule_count": len(rules),
+        "host_count": host_count,
+        "wildcard_host_count": wildcard_host_count,
+        "hostless_rule_present": hostless_rule_present,
+        "tls_block_count": len(tls_list),
+        "tls_host_count": len(tls_hosts),
+        "tls_secret_reference_count": tls_secret_ref_count,
+        "http_path_count": http_path_count,
+        "backend_service_count": len(backend_services),
+        "cross_namespace_backend_count": 0,  # Ingress backends are always same-namespace by spec
+        "path_type_categories": sorted(path_type_categories),
+        "plaintext_exposure_category": plaintext_category,
+        "public_exposure_category": public_exposure_category,
+        "load_balancer_ingress_count": len(lb_ingress),
+        "collection_completeness_category": "complete",
+    }
+    return record, rule_records
+
+
+def _collect_ingresses(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    ingress_records: list[dict] = []
+    rule_records: list[dict] = []
+    for item in raw_items:
+        try:
+            ns = item.metadata.namespace
+        except Exception:  # noqa: BLE001
+            continue
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            record, rules = _normalize_ingress(item, cluster_id=cluster_id, cluster_name=cluster_name)
+        except Exception:  # noqa: BLE001
+            continue
+        ingress_records.append(record)
+        rule_records.extend(rules)
+
+    status = _family_completeness_status(diag)
+    for r in ingress_records:
+        r["collection_completeness_category"] = status
+    ingress_records.sort(key=lambda r: (r["namespace"], r["name"]))
+    rule_records.sort(key=lambda r: r["record_id"])
+    return ingress_records, rule_records, status
+
+
+# ── Gateway API (dict-based, via CustomObjectsApi) ────────────────────────────
+
+def _paginate_custom_objects(
+    list_fn: Callable[..., Any],
+    *,
+    page_size: int = _DEFAULT_PAGE_SIZE,
+    max_pages: int = _MAX_PAGES,
+    **kwargs: Any,
+) -> tuple[list[dict], PageDiagnostics]:
+    """Adapted ``paginate_list`` for ``CustomObjectsApi``, whose responses
+    are raw dicts (``{"items": [...], "metadata": {"continue": ...}}``)
+    rather than typed objects with ``.items``/``.metadata._continue``
+    attributes. Same safety properties as ``paginate_list``: single 410
+    restart, repeated-token detection, page cap, partial-on-any-failure."""
+    items: list[dict] = []
+    diag = PageDiagnostics()
+    seen_tokens: set[str] = set()
+    continue_token: Optional[str] = None
+    already_restarted = False
+
+    while True:
+        if diag.pages_fetched >= max_pages:
+            diag.complete = False
+            diag.truncated_by_page_cap = True
+            break
+
+        call_kwargs = dict(kwargs)
+        call_kwargs["limit"] = page_size
+        if continue_token:
+            call_kwargs["_continue"] = continue_token
+
+        outcome = call_k8s(list_fn, **call_kwargs)
+
+        if not outcome.ok:
+            if outcome.category == CATEGORY_CONTINUATION_EXPIRED and not already_restarted:
+                already_restarted = True
+                diag.continuation_restarted = True
+                continue_token = None
+                items = []
+                continue
+            diag.complete = False
+            diag.permission_denied = outcome.category == CATEGORY_PERMISSION_DENIED
+            diag.error_category = outcome.category
+            diag.error_detail = outcome.detail
+            break
+
+        diag.pages_fetched += 1
+        page = outcome.result
+        if not isinstance(page, dict):
+            diag.complete = False
+            diag.malformed_metadata = True
+            break
+        page_items = page.get("items")
+        if page_items is None:
+            diag.complete = False
+            diag.malformed_metadata = True
+            break
+        items.extend(page_items)
+
+        next_token = (page.get("metadata") or {}).get("continue")
+        if not next_token:
+            break
+        if next_token in seen_tokens:
+            diag.complete = False
+            diag.error_category = "repeated_continuation_token"
+            break
+        seen_tokens.add(next_token)
+        continue_token = next_token
+
+    return items, diag
+
+
+def _collect_gateway_api_resources(
+    custom_api: Any, *, group: str, version: str, plural: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], str]:
+    """Fail-soft collection of one Gateway API resource type. A 404 (CRDs
+    not installed) is reported as "unsupported", never as an error or an
+    empty-but-successful collection."""
+    raw_items, diag = _paginate_custom_objects(
+        custom_api.list_cluster_custom_object, group=group, version=version, plural=plural,
+    )
+    status = _family_completeness_status(diag)
+    filtered: list[dict] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        ns = (item.get("metadata") or {}).get("namespace")
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        filtered.append(item)
+    return filtered, status
+
+
+def _gateway_address_category(addresses: list[dict]) -> tuple[int, str]:
+    if not addresses:
+        return 0, ks.GATEWAY_ADDRESS_UNASSIGNED
+    categories: set[str] = set()
+    for addr in addresses:
+        addr_type = addr.get("type") or "IPAddress"
+        value = addr.get("value")
+        if addr_type == "IPAddress":
+            cat = categorize_ip_address(value)
+            if cat == ks.CIDR_CATEGORY_BROAD_PUBLIC_RANGE:
+                categories.add(ks.GATEWAY_ADDRESS_EXTERNAL)
+            elif cat in (ks.CIDR_CATEGORY_PRIVATE, ks.CIDR_CATEGORY_LOOPBACK, ks.CIDR_CATEGORY_LINK_LOCAL):
+                categories.add(ks.GATEWAY_ADDRESS_INTERNAL)
+            else:
+                categories.add(ks.GATEWAY_ADDRESS_UNKNOWN)
+        elif addr_type == "Hostname":
+            categories.add(ks.GATEWAY_ADDRESS_DNS_HOSTNAME)
+        else:
+            categories.add(ks.GATEWAY_ADDRESS_UNKNOWN)
+
+    if ks.GATEWAY_ADDRESS_EXTERNAL in categories:
+        return len(addresses), ks.GATEWAY_ADDRESS_EXTERNAL
+    if categories == {ks.GATEWAY_ADDRESS_INTERNAL}:
+        return len(addresses), ks.GATEWAY_ADDRESS_INTERNAL
+    if ks.GATEWAY_ADDRESS_DNS_HOSTNAME in categories:
+        return len(addresses), ks.GATEWAY_ADDRESS_DNS_HOSTNAME
+    return len(addresses), ks.GATEWAY_ADDRESS_UNKNOWN
+
+
+def _listener_protocol_flags(listeners: list[dict]) -> dict:
+    protocols: set[str] = set()
+    http_count = https_count = tls_count = wildcard_hostname_count = 0
+    for listener in listeners:
+        proto = listener.get("protocol") or ""
+        protocols.add(proto)
+        if proto == "HTTP":
+            http_count += 1
+        if proto == "HTTPS":
+            https_count += 1
+        if proto in ("HTTPS", "TLS"):
+            tls_count += 1
+        hostname = listener.get("hostname")
+        if hostname and categorize_host(hostname) == ks.HOST_CATEGORY_WILDCARD:
+            wildcard_hostname_count += 1
+    return {
+        "protocols": sorted(protocols), "http_count": http_count, "https_count": https_count,
+        "tls_count": tls_count, "wildcard_hostname_count": wildcard_hostname_count,
+    }
+
+
+def _allowed_routes_category(allowed_routes: Optional[dict]) -> tuple[str, bool]:
+    """Gateway API defaults ``allowedRoutes.namespaces.from`` to ``"Same"``
+    when the whole field is omitted."""
+    if not allowed_routes:
+        return ks.ALLOWED_NAMESPACES_SAME, False
+    namespaces = allowed_routes.get("namespaces") or {}
+    from_val = namespaces.get("from") or "Same"
+    if from_val == "All":
+        return ks.ALLOWED_NAMESPACES_ALL, True
+    if from_val == "Selector":
+        return ks.ALLOWED_NAMESPACES_SELECTOR, True
+    if from_val == "Same":
+        return ks.ALLOWED_NAMESPACES_SAME, False
+    return ks.ALLOWED_NAMESPACES_UNKNOWN, False
+
+
+def _tls_mode_and_cert_count(tls: Optional[dict]) -> tuple[str, int]:
+    if not tls:
+        return ks.TLS_MODE_NONE, 0
+    mode = tls.get("mode") or ks.TLS_MODE_TERMINATE
+    cert_refs = tls.get("certificateRefs") or []
+    return mode, len(cert_refs)
+
+
+def _gateway_status_category(status: Optional[dict]) -> str:
+    if not status:
+        return ks.GATEWAY_API_STATUS_UNKNOWN
+    for cond in status.get("conditions") or []:
+        if cond.get("type") in ("Accepted", "Ready"):
+            if cond.get("status") == "True":
+                return ks.GATEWAY_API_STATUS_READY
+            if cond.get("status") == "False":
+                return ks.GATEWAY_API_STATUS_NOT_READY
+    return ks.GATEWAY_API_STATUS_UNKNOWN
+
+
+def _attached_route_count(status: Optional[dict]) -> Optional[int]:
+    if not status or status.get("listeners") is None:
+        return None
+    return sum(ls.get("attachedRoutes") or 0 for ls in status["listeners"])
+
+
+def _normalize_gateway(obj: dict, *, cluster_id: str, cluster_name: str) -> tuple[dict, list[dict]]:
+    metadata = obj.get("metadata") or {}
+    namespace = metadata.get("namespace")
+    name = metadata.get("name")
+    uid = metadata.get("uid")
+    spec = obj.get("spec") or {}
+    status = obj.get("status") or {}
+
+    gateway_class = spec.get("gatewayClassName")
+    listeners = spec.get("listeners") or []
+    addresses = spec.get("addresses") or status.get("addresses") or []
+
+    address_count, address_category = _gateway_address_category(addresses)
+    proto_info = _listener_protocol_flags(listeners)
+    attached_routes = _attached_route_count(status)
+    status_category = _gateway_status_category(status)
+
+    record_id = f"{cluster_id}/gateway/{namespace}/{uid or name}"
+
+    listener_records: list[dict] = []
+    any_cross_namespace_allowance = False
+    tls_cert_ref_total = 0
+    for listener in listeners:
+        listener_name = listener.get("name") or ""
+        protocol = listener.get("protocol") or ""
+        port = listener.get("port")
+        hostname = listener.get("hostname")
+        hostname_cat = categorize_host(hostname)
+        tls_mode, cert_count = _tls_mode_and_cert_count(listener.get("tls"))
+        tls_cert_ref_total += cert_count
+        allowed_cat, cross_ns = _allowed_routes_category(listener.get("allowedRoutes"))
+        if cross_ns:
+            any_cross_namespace_allowance = True
+
+        public_exposure = ks.EXPOSURE_UNKNOWN
+        if address_category == ks.GATEWAY_ADDRESS_EXTERNAL and protocol in ("HTTP", "HTTPS", "TLS"):
+            public_exposure = ks.EXPOSURE_EXTERNAL_LOAD_BALANCER
+        elif address_category == ks.GATEWAY_ADDRESS_INTERNAL:
+            public_exposure = ks.EXPOSURE_INTERNAL_LOAD_BALANCER
+
+        listener_record_id = f"{record_id}/listener/{listener_name}"
+        listener_records.append({
+            "record_type": KUBERNETES_GATEWAY_LISTENER,
+            "record_id": listener_record_id,
+            "cluster_id": cluster_id,
+            "cluster_name": cluster_name,
+            "namespace": namespace,
+            "parent_gateway_record_id": record_id,
+            "listener_name": listener_name,
+            "protocol": protocol,
+            "port": port,
+            "hostname_category": hostname_cat,
+            "tls_mode": tls_mode,
+            "certificate_reference_count": cert_count,
+            "allowed_namespace_policy": allowed_cat,
+            "public_exposure_category": public_exposure,
+            "listener_fingerprint": stable_fingerprint(protocol, port, hostname_cat, tls_mode, allowed_cat),
+        })
+
+    record = {
+        "record_type": KUBERNETES_GATEWAY,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "gateway_class_name": gateway_class,
+        "listener_count": len(listeners),
+        "attached_route_count": attached_routes,
+        "address_count": address_count,
+        "public_address_category": address_category,
+        "listener_protocol_categories": proto_info["protocols"],
+        "http_listener_count": proto_info["http_count"],
+        "https_listener_count": proto_info["https_count"],
+        "tls_listener_count": proto_info["tls_count"],
+        "wildcard_hostname_count": proto_info["wildcard_hostname_count"],
+        "allowed_routes_category": ks.ALLOWED_NAMESPACES_ALL if any_cross_namespace_allowance else ks.ALLOWED_NAMESPACES_SAME,
+        "cross_namespace_route_allowance": any_cross_namespace_allowance,
+        "tls_certificate_reference_count": tls_cert_ref_total,
+        "status_category": status_category,
+        "collection_completeness_category": "complete",
+    }
+    return record, listener_records
+
+
+def _collect_gateways(
+    custom_api: Any, *, cluster_id: str, cluster_name: str, namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], list[dict], str]:
+    raw_items, status = _collect_gateway_api_resources(
+        custom_api, group="gateway.networking.k8s.io", version="v1", plural="gateways",
+        namespace_allowlist=namespace_allowlist,
+    )
+    gateway_records: list[dict] = []
+    listener_records: list[dict] = []
+    for item in raw_items:
+        try:
+            record, listeners = _normalize_gateway(item, cluster_id=cluster_id, cluster_name=cluster_name)
+        except Exception:  # noqa: BLE001
+            continue
+        gateway_records.append(record)
+        listener_records.extend(listeners)
+
+    for r in gateway_records:
+        r["collection_completeness_category"] = status
+    gateway_records.sort(key=lambda r: (r["namespace"] or "", r["name"] or ""))
+    listener_records.sort(key=lambda r: r["record_id"])
+    return gateway_records, listener_records, status
+
+
+# ── HTTPRoute (dict-based, via CustomObjectsApi) ──────────────────────────────
+
+def _match_categories_for_rule(matches: list[dict]) -> tuple[set[str], bool, bool, bool]:
+    path_cats: set[str] = set()
+    method_present = header_present = query_present = False
+    for m in matches or []:
+        path = m.get("path") or {}
+        path_type = path.get("type")
+        path_value = path.get("value")
+        path_cats.add(categorize_ingress_path(path_value, path_type) if path_type else "unspecified")
+        if m.get("method"):
+            method_present = True
+        if m.get("headers"):
+            header_present = True
+        if m.get("queryParams"):
+            query_present = True
+    return path_cats, method_present, header_present, query_present
+
+
+def _filter_categories_for_rule(filters: list[dict]) -> set[str]:
+    return {f.get("type") for f in (filters or []) if f.get("type")}
+
+
+def _http_route_resolved_refs_status(status: dict) -> str:
+    parents = status.get("parents") or []
+    if not parents:
+        return ks.ROUTE_REFS_UNKNOWN
+    results: list[Optional[bool]] = []
+    for p in parents:
+        resolved = None
+        for c in p.get("conditions") or []:
+            if c.get("type") == "ResolvedRefs":
+                resolved = c.get("status") == "True"
+        results.append(resolved)
+    if all(r is True for r in results):
+        return ks.ROUTE_REFS_ALL_RESOLVED
+    if any(r is False for r in results):
+        return ks.ROUTE_REFS_SOME_UNRESOLVED
+    return ks.ROUTE_REFS_UNKNOWN
+
+
+def _normalize_http_route(obj: dict, *, cluster_id: str, cluster_name: str) -> tuple[dict, list[dict]]:
+    metadata = obj.get("metadata") or {}
+    namespace = metadata.get("namespace")
+    name = metadata.get("name")
+    uid = metadata.get("uid")
+    spec = obj.get("spec") or {}
+    status = obj.get("status") or {}
+
+    parent_refs = spec.get("parentRefs") or []
+    cross_ns_parents = sum(1 for p in parent_refs if p.get("namespace") and p.get("namespace") != namespace)
+
+    hostnames = spec.get("hostnames") or []
+    wildcard_hostnames = sum(1 for h in hostnames if categorize_host(h) == ks.HOST_CATEGORY_WILDCARD)
+
+    rules = spec.get("rules") or []
+    record_id = f"{cluster_id}/http_route/{namespace}/{uid or name}"
+
+    rule_records: list[dict] = []
+    total_backend_refs = 0
+    total_cross_ns_backend = 0
+    all_path_cats: set[str] = set()
+    any_method = any_header = any_query = False
+    all_filter_cats: set[str] = set()
+    any_redirect = any_rewrite = any_timeout = False
+
+    for idx, rule in enumerate(rules):
+        matches = rule.get("matches") or []
+        path_cats, method_p, header_p, query_p = _match_categories_for_rule(matches)
+        all_path_cats |= path_cats
+        any_method = any_method or method_p
+        any_header = any_header or header_p
+        any_query = any_query or query_p
+
+        backend_refs = rule.get("backendRefs") or []
+        cross_ns_backend_count = sum(1 for b in backend_refs if b.get("namespace") and b.get("namespace") != namespace)
+        total_backend_refs += len(backend_refs)
+        total_cross_ns_backend += cross_ns_backend_count
+
+        filters = rule.get("filters") or []
+        filter_cats = _filter_categories_for_rule(filters)
+        all_filter_cats |= filter_cats
+        redirect_present = "RequestRedirect" in filter_cats
+        rewrite_present = "URLRewrite" in filter_cats
+        mirror_present = "RequestMirror" in filter_cats
+        any_redirect = any_redirect or redirect_present
+        any_rewrite = any_rewrite or rewrite_present
+
+        catch_all = not matches or any(
+            is_catch_all_path((m.get("path") or {}).get("value"), (m.get("path") or {}).get("type"))
+            for m in matches
+        )
+        timeouts_present = bool(rule.get("timeouts"))
+        any_timeout = any_timeout or timeouts_present
+
+        backend_namespaces = {b.get("namespace") for b in backend_refs if b.get("namespace")}
+
+        rule_records.append({
+            "record_type": KUBERNETES_HTTP_ROUTE_RULE,
+            "record_id": f"{record_id}/rule/{idx}",
+            "cluster_id": cluster_id,
+            "cluster_name": cluster_name,
+            "namespace": namespace,
+            "parent_route_record_id": record_id,
+            "match_categories": sorted(path_cats) or ["none"],
+            "catch_all_path": catch_all,
+            "backend_count": len(backend_refs),
+            "backend_namespace_count": len(backend_namespaces),
+            "cross_namespace_backend": cross_ns_backend_count > 0,
+            "redirect_present": redirect_present,
+            "rewrite_present": rewrite_present,
+            "mirror_present": mirror_present,
+            "route_fingerprint": stable_fingerprint(idx, sorted(path_cats), len(backend_refs), sorted(filter_cats)),
+        })
+
+    record = {
+        "record_type": KUBERNETES_HTTP_ROUTE,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "parent_ref_count": len(parent_refs),
+        "cross_namespace_parent_count": cross_ns_parents,
+        "hostname_count": len(hostnames),
+        "wildcard_hostname_count": wildcard_hostnames,
+        "rule_count": len(rules),
+        "backend_ref_count": total_backend_refs,
+        "cross_namespace_backend_count": total_cross_ns_backend,
+        "path_match_categories": sorted(all_path_cats),
+        "method_match_present": any_method,
+        "header_match_present": any_header,
+        "query_match_present": any_query,
+        "filter_categories": sorted(all_filter_cats),
+        "redirect_present": any_redirect,
+        "rewrite_present": any_rewrite,
+        "timeout_configured_present": any_timeout,
+        "resolved_refs_status": _http_route_resolved_refs_status(status),
+        "route_fingerprint": stable_fingerprint(len(parent_refs), len(hostnames), len(rules), sorted(all_filter_cats)),
+        "collection_completeness_category": "complete",
+    }
+    return record, rule_records
+
+
+def _collect_http_routes(
+    custom_api: Any, *, cluster_id: str, cluster_name: str, namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], list[dict], str]:
+    raw_items, status = _collect_gateway_api_resources(
+        custom_api, group="gateway.networking.k8s.io", version="v1", plural="httproutes",
+        namespace_allowlist=namespace_allowlist,
+    )
+    route_records: list[dict] = []
+    rule_records: list[dict] = []
+    for item in raw_items:
+        try:
+            record, rules = _normalize_http_route(item, cluster_id=cluster_id, cluster_name=cluster_name)
+        except Exception:  # noqa: BLE001
+            continue
+        route_records.append(record)
+        rule_records.extend(rules)
+
+    for r in route_records:
+        r["collection_completeness_category"] = status
+    route_records.sort(key=lambda r: (r["namespace"] or "", r["name"] or ""))
+    rule_records.sort(key=lambda r: r["record_id"])
+    return route_records, rule_records, status
+
+
+# ── NetworkPolicy normalization ────────────────────────────────────────────────
+
+def _peer_flags(peers: Optional[list]) -> dict:
+    namespace_selector_present = pod_selector_present = ip_block_present = False
+    except_cidr_count = 0
+    public_ipv4 = public_ipv6 = False
+    broad_cidr_count = 0
+
+    for peer in peers or []:
+        if getattr(peer, "namespace_selector", None) is not None:
+            namespace_selector_present = True
+        if getattr(peer, "pod_selector", None) is not None:
+            pod_selector_present = True
+        ip_block = getattr(peer, "ip_block", None)
+        if ip_block is not None:
+            ip_block_present = True
+            cidr = getattr(ip_block, "cidr", None)
+            except_list = getattr(ip_block, "_except", None) or []
+            except_cidr_count += len(except_list)
+            category = categorize_cidr(cidr)
+            if category == ks.CIDR_CATEGORY_PUBLIC_IPV4_UNRESTRICTED:
+                public_ipv4 = True
+            if category == ks.CIDR_CATEGORY_PUBLIC_IPV6_UNRESTRICTED:
+                public_ipv6 = True
+            if is_public_cidr_category(category):
+                broad_cidr_count += 1
+
+    return {
+        "namespace_selector_present": namespace_selector_present,
+        "pod_selector_present": pod_selector_present,
+        "ip_block_present": ip_block_present,
+        "except_cidr_count": except_cidr_count,
+        "public_ipv4": public_ipv4,
+        "public_ipv6": public_ipv6,
+        "broad_cidr_count": broad_cidr_count,
+    }
+
+
+def _merge_peer_flags(flag_dicts: list[dict]) -> dict:
+    result = {
+        "namespace_selector_present": False, "pod_selector_present": False, "ip_block_present": False,
+        "except_cidr_count": 0, "public_ipv4": False, "public_ipv6": False, "broad_cidr_count": 0,
+    }
+    for f in flag_dicts:
+        result["namespace_selector_present"] = result["namespace_selector_present"] or f["namespace_selector_present"]
+        result["pod_selector_present"] = result["pod_selector_present"] or f["pod_selector_present"]
+        result["ip_block_present"] = result["ip_block_present"] or f["ip_block_present"]
+        result["except_cidr_count"] += f["except_cidr_count"]
+        result["public_ipv4"] = result["public_ipv4"] or f["public_ipv4"]
+        result["public_ipv6"] = result["public_ipv6"] or f["public_ipv6"]
+        result["broad_cidr_count"] += f["broad_cidr_count"]
+    return result
+
+
+def _port_flags(rules: list) -> tuple[bool, set[str]]:
+    port_restriction_present = False
+    protocols: set[str] = set()
+    for rule in rules or []:
+        ports = getattr(rule, "ports", None) or []
+        if ports:
+            port_restriction_present = True
+        for p in ports:
+            proto = getattr(p, "protocol", None)
+            if proto:
+                protocols.add(proto)
+    return port_restriction_present, protocols
+
+
+def _pod_selector_empty(selector: Any) -> bool:
+    if selector is None:
+        return False
+    match_labels = getattr(selector, "match_labels", None) or {}
+    match_expressions = getattr(selector, "match_expressions", None) or []
+    return not match_labels and not match_expressions
+
+
+def _selector_label_key_count(selector: Any) -> int:
+    if selector is None:
+        return 0
+    match_labels = getattr(selector, "match_labels", None) or {}
+    match_expressions = getattr(selector, "match_expressions", None) or []
+    return len(match_labels) + len(match_expressions)
+
+
+def _normalize_network_policy(obj: Any, *, cluster_id: str, cluster_name: str) -> dict:
+    """Normalize a NetworkPolicy, preserving the omitted-vs-empty-list
+    distinction (``*_rules_declared``) even though Kubernetes itself treats
+    both as behaviorally identical (default-deny when the type is
+    selected) — see module docstring."""
+    metadata = obj.metadata
+    namespace = metadata.namespace
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    spec = getattr(obj, "spec", None)
+
+    pod_selector = getattr(spec, "pod_selector", None)
+    policy_types = getattr(spec, "policy_types", None) or []
+
+    ingress_declared = getattr(spec, "ingress", None) is not None
+    egress_declared = getattr(spec, "egress", None) is not None
+    ingress_rules = getattr(spec, "ingress", None) or []
+    egress_rules = getattr(spec, "egress", None) or []
+
+    ingress_isolation = "Ingress" in policy_types
+    egress_isolation = "Egress" in policy_types
+
+    empty_ingress_list = ingress_isolation and len(ingress_rules) == 0
+    empty_egress_list = egress_isolation and len(egress_rules) == 0
+
+    allows_all_ingress = ingress_isolation and any(
+        rule_permits_everything(getattr(r, "_from", None), getattr(r, "ports", None))
+        for r in ingress_rules
+    )
+    allows_all_egress = egress_isolation and any(
+        rule_permits_everything(getattr(r, "to", None), getattr(r, "ports", None))
+        for r in egress_rules
+    )
+
+    merged = _merge_peer_flags(
+        [_peer_flags(getattr(r, "_from", None)) for r in ingress_rules]
+        + [_peer_flags(getattr(r, "to", None)) for r in egress_rules]
+    )
+
+    ingress_port_restricted, ingress_protocols = _port_flags(ingress_rules)
+    egress_port_restricted, egress_protocols = _port_flags(egress_rules)
+    port_restriction_present = ingress_port_restricted or egress_port_restricted
+    protocol_categories = sorted(ingress_protocols | egress_protocols)
+
+    pod_selector_empty = _pod_selector_empty(pod_selector)
+    selected_label_key_count = _selector_label_key_count(pod_selector)
+    selector_fingerprint = stable_fingerprint(pod_selector_empty, selected_label_key_count)
+
+    policy_fingerprint = stable_fingerprint(
+        selector_fingerprint, sorted(policy_types), len(ingress_rules), len(egress_rules),
+        empty_ingress_list, empty_egress_list, allows_all_ingress, allows_all_egress,
+        merged["public_ipv4"], merged["public_ipv6"], merged["broad_cidr_count"],
+        port_restriction_present, protocol_categories,
+    )
+
+    record_id = f"{cluster_id}/network_policy/{namespace}/{uid or name}"
+
+    return {
+        "record_type": KUBERNETES_NETWORK_POLICY,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "pod_selector_empty_all_pods": pod_selector_empty,
+        "selected_label_key_count": selected_label_key_count,
+        "policy_types": sorted(policy_types),
+        "ingress_rule_count": len(ingress_rules),
+        "egress_rule_count": len(egress_rules),
+        "ingress_isolation_enabled": ingress_isolation,
+        "egress_isolation_enabled": egress_isolation,
+        "ingress_rules_declared": ingress_declared,
+        "egress_rules_declared": egress_declared,
+        "empty_ingress_list": empty_ingress_list,
+        "empty_egress_list": empty_egress_list,
+        "allows_all_ingress": allows_all_ingress,
+        "allows_all_egress": allows_all_egress,
+        "public_ipv4_cidr_allowed": merged["public_ipv4"],
+        "public_ipv6_cidr_allowed": merged["public_ipv6"],
+        "broad_cidr_count": merged["broad_cidr_count"],
+        "namespace_selector_present": merged["namespace_selector_present"],
+        "pod_selector_present": merged["pod_selector_present"],
+        "ip_block_present": merged["ip_block_present"],
+        "except_cidr_count": merged["except_cidr_count"],
+        "port_restriction_present": port_restriction_present,
+        "protocol_categories": protocol_categories,
+        "selector_fingerprint": selector_fingerprint,
+        "policy_fingerprint": policy_fingerprint,
+        "collection_completeness_category": "complete",
+    }
+
+
+def _collect_network_policies(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    records: list[dict] = []
+    for item in raw_items:
+        try:
+            ns = item.metadata.namespace
+        except Exception:  # noqa: BLE001
+            continue
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            records.append(_normalize_network_policy(item, cluster_id=cluster_id, cluster_name=cluster_name))
+        except Exception:  # noqa: BLE001
+            continue
+
+    status = _family_completeness_status(diag)
+    for r in records:
+        r["collection_completeness_category"] = status
+    records.sort(key=lambda r: (r["namespace"], r["name"]))
+    return records, status
+
+
+def _build_namespace_network_postures(
+    network_policy_records: list[dict], all_namespaces: list[str], *,
+    cluster_id: str, cluster_name: str, collection_status: str,
+) -> list[dict]:
+    """One rollup per namespace. Coverage is honestly reported as
+    "partial" whenever a namespace has NetworkPolicies but they don't
+    provide comprehensive all-Pod default-deny — exact Pod-level coverage
+    is intentionally not claimed since arbitrary workload labels are never
+    persisted (see kubernetes.py module docstring)."""
+    by_ns: dict[str, list[dict]] = {}
+    for r in network_policy_records:
+        by_ns.setdefault(r["namespace"], []).append(r)
+
+    records: list[dict] = []
+    for ns in sorted(set(all_namespaces) | set(by_ns.keys())):
+        policies = by_ns.get(ns, [])
+        policy_count = len(policies)
+        has_any = policy_count > 0
+        ingress_isolation_present = any(p["ingress_isolation_enabled"] for p in policies)
+        egress_isolation_present = any(p["egress_isolation_enabled"] for p in policies)
+        all_pod_ingress_deny = any(
+            p["pod_selector_empty_all_pods"] and p["ingress_isolation_enabled"] and p["empty_ingress_list"]
+            for p in policies
+        )
+        all_pod_egress_deny = any(
+            p["pod_selector_empty_all_pods"] and p["egress_isolation_enabled"] and p["empty_egress_list"]
+            for p in policies
+        )
+        public_ingress_allowance = any(
+            p["ingress_isolation_enabled"] and (p["allows_all_ingress"] or p["public_ipv4_cidr_allowed"] or p["public_ipv6_cidr_allowed"])
+            for p in policies
+        )
+        public_egress_allowance = any(
+            p["egress_isolation_enabled"] and (p["allows_all_egress"] or p["public_ipv4_cidr_allowed"] or p["public_ipv6_cidr_allowed"])
+            for p in policies
+        )
+        broad_ns_selector = any(p["namespace_selector_present"] for p in policies)
+        broad_pod_selector = any(p["pod_selector_present"] for p in policies)
+
+        if collection_status == "partial":
+            coverage = ks.POLICY_COVERAGE_UNKNOWN
+        elif not has_any:
+            coverage = ks.POLICY_COVERAGE_NONE
+        elif all_pod_ingress_deny and all_pod_egress_deny:
+            coverage = ks.POLICY_COVERAGE_BROAD
+        else:
+            coverage = ks.POLICY_COVERAGE_PARTIAL
+
+        records.append({
+            "record_type": KUBERNETES_NAMESPACE_NETWORK_POSTURE,
+            "record_id": f"{cluster_id}/namespace_network_posture/{ns}",
+            "cluster_id": cluster_id,
+            "cluster_name": cluster_name,
+            "namespace": ns,
+            "policy_count": policy_count,
+            "has_any_network_policy": has_any,
+            "ingress_isolation_present": ingress_isolation_present,
+            "egress_isolation_present": egress_isolation_present,
+            "all_pod_ingress_default_deny": all_pod_ingress_deny,
+            "all_pod_egress_default_deny": all_pod_egress_deny,
+            "policy_coverage_category": coverage,
+            "public_ingress_allowance_present": public_ingress_allowance,
+            "public_egress_allowance_present": public_egress_allowance,
+            "broad_namespace_selector_allowance": broad_ns_selector,
+            "broad_pod_selector_allowance": broad_pod_selector,
+            "collection_completeness_category": "complete" if collection_status != "partial" else "partial",
+        })
+    return records
+
+
 # ── Connector ──────────────────────────────────────────────────────────────────
 
 class KubernetesConnector(BaseConnector):
@@ -2756,6 +3901,59 @@ class KubernetesConnector(BaseConnector):
                 + all_subject_binding_records + rbac_permission_summary_records
             )
 
+            # ── Network exposure and isolation (message 4) ───────────────────
+            # Each family is collected independently; Gateway API's absence
+            # (no CRDs installed) is "unsupported", never an error, and
+            # never suppresses Service/Ingress/NetworkPolicy collection.
+            networking_v1 = k8s_client.NetworkingV1Api(api_client)
+            custom_objects_api = k8s_client.CustomObjectsApi(api_client)
+
+            service_records, service_port_records, service_status = _collect_services(
+                core_v1.list_service_for_all_namespaces,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+            ingress_records, ingress_rule_records, ingress_status = _collect_ingresses(
+                networking_v1.list_ingress_for_all_namespaces,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+            gateway_records, gateway_listener_records, gateway_status = _collect_gateways(
+                custom_objects_api, cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+            http_route_records, http_route_rule_records, http_route_status = _collect_http_routes(
+                custom_objects_api, cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+            network_policy_records, network_policy_status = _collect_network_policies(
+                networking_v1.list_network_policy_for_all_namespaces,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+
+            # Gateway API "unsupported" (CRDs absent) never marks the
+            # overall cluster collection partial — only a real error does.
+            if "partial" in (service_status, ingress_status, network_policy_status):
+                partial_permission = True
+            if gateway_status == "partial" or http_route_status == "partial":
+                partial_permission = True
+
+            namespace_names_for_posture = [ns["name"] for ns in namespace_records]
+            namespace_network_posture_records = _build_namespace_network_postures(
+                network_policy_records, namespace_names_for_posture,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                collection_status=network_policy_status,
+            )
+
+            all_network_records = (
+                service_records + service_port_records
+                + ingress_records + ingress_rule_records
+                + gateway_records + gateway_listener_records
+                + http_route_records + http_route_rule_records
+                + network_policy_records + namespace_network_posture_records
+            )
+
             collection_completeness = "complete" if not partial_permission else "partial"
 
             cluster_record = {
@@ -2785,7 +3983,7 @@ class KubernetesConnector(BaseConnector):
             return (
                 [cluster_record] + selected_namespace_records + capability_records
                 + all_workload_records + all_container_records + service_account_records
-                + all_rbac_records
+                + all_rbac_records + all_network_records
             )
         finally:
             api_client.rest_client.pool_manager.clear()

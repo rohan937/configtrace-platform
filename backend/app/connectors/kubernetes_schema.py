@@ -1,4 +1,4 @@
-"""Kubernetes connector schema — RBAC and identity (message 3 of a 9-message arc).
+"""Kubernetes connector schema — network exposure and isolation (message 4 of a 9-message arc).
 
 This module defines the full planned record-type taxonomy for the
 Kubernetes provider. Message 1 emitted the first three types (cluster,
@@ -69,10 +69,33 @@ subject identity (User/Group/ServiceAccount) aggregating privilege across
 have access to in total", independent of how many individual bindings grant
 it.
 
-Planned for later messages (message 4 — networking)
-------------------------------------------------------
-``kubernetes_service``, ``kubernetes_ingress``, ``kubernetes_gateway``,
-``kubernetes_http_route``, ``kubernetes_network_policy``.
+Emitted in message 4 (network exposure and isolation)
+----------------------------------------------------------
+``kubernetes_service``, ``kubernetes_service_port`` — one record per
+Service plus one per declared port, with an evidence-hierarchy exposure
+category (never claiming confirmed public reachability without assigned
+LoadBalancer/externalIP evidence).
+``kubernetes_ingress``, ``kubernetes_ingress_rule`` — one record per
+Ingress plus one per host/path rule grouping, with TLS coverage, wildcard/
+hostless detection, and public-exposure evidence from `.status` only.
+``kubernetes_gateway``, ``kubernetes_gateway_listener`` — one record per
+Gateway API `Gateway` plus one per listener. Collected via
+`CustomObjectsApi` (no typed client exists for Gateway API); absent
+entirely on clusters without the CRDs installed, which is fail-soft
+"unsupported", not an error.
+``kubernetes_http_route``, ``kubernetes_http_route_rule`` — one record per
+Gateway API `HTTPRoute` plus one per rule, with cross-namespace
+parent/backend detection. `ReferenceGrant` collection is NOT implemented
+this message (GAP, revisit message 8 if needed) — the API server's own
+`resolvedRefs` status condition is used as the authoritative signal for
+whether a cross-namespace reference is actually authorized, since
+Kubernetes itself evaluates ReferenceGrants when populating that
+condition.
+``kubernetes_network_policy`` — one record per NetworkPolicy, with the
+full omitted/empty/allow-all semantic distinction (see `kubernetes.py`
+module docstring) and IPv4/IPv6 CIDR categorization.
+``kubernetes_namespace_network_posture`` — one rollup record per
+namespace, aggregating NetworkPolicy coverage across that namespace.
 
 Planned for later messages (message 5 — configuration/admission)
 --------------------------------------------------------------------
@@ -92,6 +115,8 @@ never values) in message 5.
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 from typing import Optional
 
 from typing_extensions import TypedDict
@@ -172,15 +197,32 @@ KUBERNETES_RBAC_RECORD_TYPES: frozenset[str] = (
     )
 )
 
+# ── Record type constants — emitted in message 4 (network exposure/isolation) ─
+
+KUBERNETES_SERVICE = "kubernetes_service"
+KUBERNETES_SERVICE_PORT = "kubernetes_service_port"
+KUBERNETES_INGRESS = "kubernetes_ingress"
+KUBERNETES_INGRESS_RULE = "kubernetes_ingress_rule"
+KUBERNETES_GATEWAY = "kubernetes_gateway"
+KUBERNETES_GATEWAY_LISTENER = "kubernetes_gateway_listener"
+KUBERNETES_HTTP_ROUTE = "kubernetes_http_route"
+KUBERNETES_HTTP_ROUTE_RULE = "kubernetes_http_route_rule"
+KUBERNETES_NETWORK_POLICY = "kubernetes_network_policy"
+KUBERNETES_NAMESPACE_NETWORK_POSTURE = "kubernetes_namespace_network_posture"
+
+KUBERNETES_NETWORK_RECORD_TYPES: frozenset[str] = frozenset(
+    {
+        KUBERNETES_SERVICE, KUBERNETES_SERVICE_PORT,
+        KUBERNETES_INGRESS, KUBERNETES_INGRESS_RULE,
+        KUBERNETES_GATEWAY, KUBERNETES_GATEWAY_LISTENER,
+        KUBERNETES_HTTP_ROUTE, KUBERNETES_HTTP_ROUTE_RULE,
+        KUBERNETES_NETWORK_POLICY, KUBERNETES_NAMESPACE_NETWORK_POSTURE,
+    }
+)
+
 # ── Record type constants — reserved for later messages (not yet emitted) ───
 # These names are fixed now so that later messages never need to rename a
 # record type after Changes/Findings have already been built against it.
-
-KUBERNETES_SERVICE = "kubernetes_service"
-KUBERNETES_INGRESS = "kubernetes_ingress"
-KUBERNETES_GATEWAY = "kubernetes_gateway"
-KUBERNETES_HTTP_ROUTE = "kubernetes_http_route"
-KUBERNETES_NETWORK_POLICY = "kubernetes_network_policy"
 
 KUBERNETES_SECRET_METADATA = "kubernetes_secret_metadata"
 KUBERNETES_CONFIG_MAP_METADATA = "kubernetes_config_map_metadata"
@@ -193,8 +235,6 @@ KUBERNETES_API_SERVER_SECURITY_POSTURE = "kubernetes_api_server_security_posture
 
 KUBERNETES_PLANNED_RECORD_TYPES: frozenset[str] = frozenset(
     {
-        KUBERNETES_SERVICE, KUBERNETES_INGRESS, KUBERNETES_GATEWAY,
-        KUBERNETES_HTTP_ROUTE, KUBERNETES_NETWORK_POLICY,
         KUBERNETES_SECRET_METADATA, KUBERNETES_CONFIG_MAP_METADATA,
         KUBERNETES_VALIDATING_WEBHOOK, KUBERNETES_MUTATING_WEBHOOK,
         KUBERNETES_RESOURCE_QUOTA, KUBERNETES_LIMIT_RANGE,
@@ -209,6 +249,7 @@ KUBERNETES_RECORD_TYPES: frozenset[str] = (
     KUBERNETES_FOUNDATION_RECORD_TYPES
     | KUBERNETES_WORKLOAD_RECORD_TYPES
     | KUBERNETES_RBAC_RECORD_TYPES
+    | KUBERNETES_NETWORK_RECORD_TYPES
     | KUBERNETES_PLANNED_RECORD_TYPES
 )
 
@@ -1281,4 +1322,452 @@ class KubernetesRbacPermissionSummaryRecord(TypedDict):
     impersonation_bound: bool
     high_risk_permission_categories: list[str]
     highest_privilege_category: str
+    collection_completeness_category: str
+
+
+# ── Network vocabulary — message 4 ────────────────────────────────────────────
+#
+# Public-exposure evidence hierarchy (shared across Service/Ingress/Gateway):
+# 1. explicit internal/external configuration (e.g. internal-LB annotation)
+# 2. assigned external/load-balancer addresses (status, not spec/request)
+# 3. service/resource type or route/listener configuration
+# 4. unknown
+# A resource is never classified as "confirmed public" on spec/request alone
+# (e.g. LoadBalancer *type* requested but no `.status.loadBalancer.ingress`
+# assigned yet) — that is "requested"/"pending", a distinct, weaker category.
+
+EXPOSURE_CLUSTER_INTERNAL = "cluster_internal"
+EXPOSURE_HEADLESS_INTERNAL = "headless_internal"
+EXPOSURE_NODE_PORT = "node_port"
+EXPOSURE_EXTERNAL_LOAD_BALANCER = "external_load_balancer"
+EXPOSURE_EXTERNAL_IP = "external_ip"
+EXPOSURE_EXTERNAL_NAME = "external_name"
+EXPOSURE_INTERNAL_LOAD_BALANCER = "internal_load_balancer"
+EXPOSURE_PENDING_LOAD_BALANCER = "pending_load_balancer"
+EXPOSURE_WILDCARD_HOST = "wildcard_host"
+EXPOSURE_CATCH_ALL_ROUTE = "catch_all_route"
+EXPOSURE_UNKNOWN = "unknown"
+
+# Only these well-known, provider-neutral-but-explicitly-named annotation
+# keys are ever read from a Service — never arbitrary annotations. Each
+# means "this LoadBalancer is explicitly internal", a security-relevant
+# fact that overrides the default "LoadBalancer type -> externally
+# reachable" assumption.
+SAFE_INTERNAL_LOAD_BALANCER_ANNOTATION_KEYS: frozenset[str] = frozenset(
+    {
+        "service.beta.kubernetes.io/aws-load-balancer-internal",
+        "cloud.google.com/load-balancer-type",  # value "Internal" checked separately
+        "service.beta.kubernetes.io/azure-load-balancer-internal",
+    }
+)
+
+# Well-known sensitive/administrative ports — same convention as
+# SENSITIVE_HOST_PORTS (message 2) plus common database/infra ports, since
+# Services commonly front databases directly.
+SENSITIVE_SERVICE_PORTS: frozenset[int] = frozenset(
+    SENSITIVE_HOST_PORTS | {3306, 5432, 6379, 27017, 9200, 9300, 2181, 9092, 11211}
+)
+
+HOST_CATEGORY_EXACT = "exact"
+HOST_CATEGORY_WILDCARD = "wildcard"
+HOST_CATEGORY_HOSTLESS = "hostless"
+
+
+def categorize_host(host: Optional[str]) -> str:
+    if not host:
+        return HOST_CATEGORY_HOSTLESS
+    if host.startswith("*."):
+        return HOST_CATEGORY_WILDCARD
+    return HOST_CATEGORY_EXACT
+
+
+# CIDR categories. The raw CIDR string IS stored (it is non-secret network
+# configuration metadata, same policy as hostnames) but always alongside its
+# category — never relied upon alone for severity.
+CIDR_CATEGORY_PUBLIC_IPV4_UNRESTRICTED = "public_ipv4_unrestricted"
+CIDR_CATEGORY_PUBLIC_IPV6_UNRESTRICTED = "public_ipv6_unrestricted"
+CIDR_CATEGORY_PRIVATE = "private"
+CIDR_CATEGORY_LOOPBACK = "loopback"
+CIDR_CATEGORY_LINK_LOCAL = "link_local"
+CIDR_CATEGORY_SINGLE_IP = "single_ip"
+CIDR_CATEGORY_BROAD_PUBLIC_RANGE = "broad_public_range"
+CIDR_CATEGORY_UNKNOWN_MALFORMED = "unknown_malformed"
+
+_UNRESTRICTED_CIDR_CATEGORIES: frozenset[str] = frozenset(
+    {CIDR_CATEGORY_PUBLIC_IPV4_UNRESTRICTED, CIDR_CATEGORY_PUBLIC_IPV6_UNRESTRICTED}
+)
+PUBLIC_CIDR_CATEGORIES: frozenset[str] = _UNRESTRICTED_CIDR_CATEGORIES | frozenset(
+    {CIDR_CATEGORY_BROAD_PUBLIC_RANGE}
+)
+
+
+def categorize_cidr(cidr: Optional[str]) -> str:
+    """Categorize an IPv4/IPv6 CIDR string using ``ipaddress`` — never
+    assumes every non-private network is internet-routable in every
+    environment; the wording used downstream is "public-address range" /
+    "broad non-private CIDR", not a reachability claim."""
+    if not cidr:
+        return CIDR_CATEGORY_UNKNOWN_MALFORMED
+    try:
+        net = ipaddress.ip_network(cidr.strip(), strict=False)
+    except ValueError:
+        return CIDR_CATEGORY_UNKNOWN_MALFORMED
+    if net.version == 4 and str(net) == "0.0.0.0/0":
+        return CIDR_CATEGORY_PUBLIC_IPV4_UNRESTRICTED
+    if net.version == 6 and str(net) == "::/0":
+        return CIDR_CATEGORY_PUBLIC_IPV6_UNRESTRICTED
+    if net.is_loopback:
+        return CIDR_CATEGORY_LOOPBACK
+    if net.is_link_local:
+        return CIDR_CATEGORY_LINK_LOCAL
+    if net.is_private:
+        return CIDR_CATEGORY_PRIVATE
+    if (net.version == 4 and net.prefixlen == 32) or (net.version == 6 and net.prefixlen == 128):
+        return CIDR_CATEGORY_SINGLE_IP
+    return CIDR_CATEGORY_BROAD_PUBLIC_RANGE
+
+
+def is_public_cidr_category(category: str) -> bool:
+    return category in PUBLIC_CIDR_CATEGORIES
+
+
+def categorize_ip_address(value: Optional[str]) -> str:
+    """Categorize a bare IP (e.g. a Gateway status address) — same
+    vocabulary as ``categorize_cidr`` by treating it as a /32 or /128."""
+    if not value:
+        return CIDR_CATEGORY_UNKNOWN_MALFORMED
+    try:
+        ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return CIDR_CATEGORY_UNKNOWN_MALFORMED
+    if ip.is_loopback:
+        return CIDR_CATEGORY_LOOPBACK
+    if ip.is_link_local:
+        return CIDR_CATEGORY_LINK_LOCAL
+    if ip.is_private:
+        return CIDR_CATEGORY_PRIVATE
+    return CIDR_CATEGORY_BROAD_PUBLIC_RANGE
+
+
+# Ingress/Gateway path-match categories.
+PATH_CATEGORY_ROOT_PREFIX = "root_prefix"
+PATH_CATEGORY_SPECIFIC = "specific"
+PATH_CATEGORY_IMPLEMENTATION_SPECIFIC_CATCH_ALL = "implementation_specific_catch_all"
+
+
+_CATCH_ALL_PATH_TYPES: frozenset[str] = frozenset(
+    # Ingress (networking.k8s.io/v1): "Prefix", "ImplementationSpecific".
+    # Gateway API (gateway.networking.k8s.io): "PathPrefix" — a distinct
+    # vocabulary from Ingress's, both handled here since callers pass
+    # either API's path type through the same helper.
+    {"Prefix", "ImplementationSpecific", "PathPrefix", None}
+)
+
+
+def is_catch_all_path(path: Optional[str], path_type: Optional[str]) -> bool:
+    """A Prefix/PathPrefix (or ImplementationSpecific) path of "/" or empty
+    matches every request — a catch-all route, regardless of other rules.
+    Handles both the Ingress and Gateway API path-type vocabularies."""
+    normalized_path = path or "/"
+    return normalized_path in ("", "/") and path_type in _CATCH_ALL_PATH_TYPES
+
+
+def categorize_ingress_path(path: Optional[str], path_type: Optional[str]) -> str:
+    if is_catch_all_path(path, path_type) and path_type == "ImplementationSpecific":
+        return PATH_CATEGORY_IMPLEMENTATION_SPECIFIC_CATCH_ALL
+    if is_catch_all_path(path, path_type):
+        return PATH_CATEGORY_ROOT_PREFIX
+    return PATH_CATEGORY_SPECIFIC
+
+
+# Gateway API allowedRoutes / TLS / status categories.
+ALLOWED_NAMESPACES_SAME = "Same"
+ALLOWED_NAMESPACES_ALL = "All"
+ALLOWED_NAMESPACES_SELECTOR = "Selector"
+ALLOWED_NAMESPACES_UNKNOWN = "Unknown"
+
+TLS_MODE_TERMINATE = "Terminate"
+TLS_MODE_PASSTHROUGH = "Passthrough"
+TLS_MODE_NONE = "none"
+
+GATEWAY_API_STATUS_READY = "ready"
+GATEWAY_API_STATUS_NOT_READY = "not_ready"
+GATEWAY_API_STATUS_UNKNOWN = "unknown"
+
+ROUTE_REFS_ALL_RESOLVED = "all_resolved"
+ROUTE_REFS_SOME_UNRESOLVED = "some_unresolved"
+ROUTE_REFS_UNKNOWN = "unknown"
+
+GATEWAY_ADDRESS_EXTERNAL = "external"
+GATEWAY_ADDRESS_INTERNAL = "internal"
+GATEWAY_ADDRESS_UNKNOWN = "unknown"
+GATEWAY_ADDRESS_UNASSIGNED = "unassigned"
+GATEWAY_ADDRESS_DNS_HOSTNAME = "dns_hostname_unknown"
+
+
+# NetworkPolicy semantics. "declared" fields distinguish an omitted field
+# (attribute is None) from an explicit empty list ([]) — even though both
+# currently produce the SAME effective behavior per the Kubernetes API
+# (the apiserver treats them identically) — because a schema that erases
+# this distinction could never support a future, more precise semantic if
+# Kubernetes ever changes this, and it keeps message-4's own test suite
+# honest about what was actually observed on the wire.
+POLICY_COVERAGE_NONE = "none"
+POLICY_COVERAGE_PARTIAL = "partial"
+POLICY_COVERAGE_BROAD = "broad"
+POLICY_COVERAGE_UNKNOWN = "unknown"
+
+
+def rule_permits_everything(peers: Optional[list], ports: Optional[list]) -> bool:
+    """True if an ingress/egress rule has no ``from``/``to`` peers AND no
+    ``ports`` restriction — such a rule matches all sources/destinations on
+    all ports, i.e. "allow all", regardless of any other rule present."""
+    return not peers and not ports
+
+
+def stable_fingerprint(*parts: object) -> str:
+    """Deterministic, order-independent-where-noted hash used for every
+    ``*_fingerprint`` field in this module. Callers pre-sort any
+    unordered components before passing them in."""
+    source = "|".join(str(p) for p in parts)
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()[:16]
+
+
+# ── TypedDict schemas — message 4 (network exposure and isolation) ──────────
+
+
+class KubernetesServiceRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    service_type: str
+    cluster_ip_present: bool
+    headless: bool
+    external_ip_count: int
+    load_balancer_ingress_count: int
+    external_name_category: Optional[str]
+    publish_not_ready_addresses: bool
+    external_traffic_policy: Optional[str]
+    internal_traffic_policy: Optional[str]
+    session_affinity: Optional[str]
+    ip_family_categories: list[str]
+    ip_family_policy: Optional[str]
+    selector_key_count: int
+    selector_fingerprint: str
+    internal_load_balancer_annotation_present: bool
+    port_count: int
+    exposure_category: str
+    mixed_exposure_evidence: bool
+    collection_completeness_category: str
+
+
+class KubernetesServicePortRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    parent_service_record_id: str
+    port_name: Optional[str]
+    protocol: str
+    port: int
+    target_port_category: str
+    node_port: Optional[int]
+    app_protocol_category: Optional[str]
+    sensitive_port: bool
+    exposure_category: str
+
+
+class KubernetesIngressRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    ingress_class: Optional[str]
+    default_backend_present: bool
+    rule_count: int
+    host_count: int
+    wildcard_host_count: int
+    hostless_rule_present: bool
+    tls_block_count: int
+    tls_host_count: int
+    tls_secret_reference_count: int
+    http_path_count: int
+    backend_service_count: int
+    cross_namespace_backend_count: int
+    path_type_categories: list[str]
+    plaintext_exposure_category: str
+    public_exposure_category: str
+    load_balancer_ingress_count: int
+    collection_completeness_category: str
+
+
+class KubernetesIngressRuleRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    parent_ingress_record_id: str
+    host_category: str
+    hostname: Optional[str]
+    path_category: str
+    path_type: Optional[str]
+    backend_service_name: Optional[str]
+    backend_port: Optional[int]
+    tls_covered: bool
+    public_exposure_category: str
+    catch_all_route: bool
+    default_backend: bool
+    route_fingerprint: str
+
+
+class KubernetesGatewayRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    gateway_class_name: Optional[str]
+    listener_count: int
+    attached_route_count: Optional[int]
+    address_count: int
+    public_address_category: str
+    listener_protocol_categories: list[str]
+    http_listener_count: int
+    https_listener_count: int
+    tls_listener_count: int
+    wildcard_hostname_count: int
+    allowed_routes_category: str
+    cross_namespace_route_allowance: bool
+    tls_certificate_reference_count: int
+    status_category: str
+    collection_completeness_category: str
+
+
+class KubernetesGatewayListenerRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    parent_gateway_record_id: str
+    listener_name: str
+    protocol: str
+    port: int
+    hostname_category: str
+    tls_mode: str
+    certificate_reference_count: int
+    allowed_namespace_policy: str
+    public_exposure_category: str
+    listener_fingerprint: str
+
+
+class KubernetesHttpRouteRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    parent_ref_count: int
+    cross_namespace_parent_count: int
+    hostname_count: int
+    wildcard_hostname_count: int
+    rule_count: int
+    backend_ref_count: int
+    cross_namespace_backend_count: int
+    path_match_categories: list[str]
+    method_match_present: bool
+    header_match_present: bool
+    query_match_present: bool
+    filter_categories: list[str]
+    redirect_present: bool
+    rewrite_present: bool
+    timeout_configured_present: bool
+    resolved_refs_status: str
+    route_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesHttpRouteRuleRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    parent_route_record_id: str
+    match_categories: list[str]
+    catch_all_path: bool
+    backend_count: int
+    backend_namespace_count: int
+    cross_namespace_backend: bool
+    redirect_present: bool
+    rewrite_present: bool
+    mirror_present: bool
+    route_fingerprint: str
+
+
+class KubernetesNetworkPolicyRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    pod_selector_empty_all_pods: bool
+    selected_label_key_count: int
+    policy_types: list[str]
+    ingress_rule_count: int
+    egress_rule_count: int
+    ingress_isolation_enabled: bool
+    egress_isolation_enabled: bool
+    ingress_rules_declared: bool
+    egress_rules_declared: bool
+    empty_ingress_list: bool
+    empty_egress_list: bool
+    allows_all_ingress: bool
+    allows_all_egress: bool
+    public_ipv4_cidr_allowed: bool
+    public_ipv6_cidr_allowed: bool
+    broad_cidr_count: int
+    namespace_selector_present: bool
+    pod_selector_present: bool
+    ip_block_present: bool
+    except_cidr_count: int
+    port_restriction_present: bool
+    protocol_categories: list[str]
+    selector_fingerprint: str
+    policy_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesNamespaceNetworkPostureRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    policy_count: int
+    has_any_network_policy: bool
+    ingress_isolation_present: bool
+    egress_isolation_present: bool
+    all_pod_ingress_default_deny: bool
+    all_pod_egress_default_deny: bool
+    policy_coverage_category: str
+    public_ingress_allowance_present: bool
+    public_egress_allowance_present: bool
+    broad_namespace_selector_allowance: bool
+    broad_pod_selector_allowance: bool
     collection_completeness_category: str
