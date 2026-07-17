@@ -2856,13 +2856,112 @@ _AZURE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
-# Kubernetes — foundation stage (message 1 of a 9-message arc). Only the
-# fields already emitted by KubernetesConnector.fetch() are tracked here.
-# ``kubernetes_api_capability`` is deliberately left untracked (empty tuple)
-# — per the message-1 scope, API-capability drift should not yet generate
-# noisy user-facing Changes; this is revisited once later messages give
-# capability transitions real meaning (e.g. a resource family disappearing
-# ahead of removing collection for it).
+# Kubernetes — foundation (message 1) + workloads (message 2) of a
+# 9-message arc. ``kubernetes_api_capability`` is deliberately left
+# untracked (empty tuple) — per the message-1 scope, API-capability drift
+# should not yet generate noisy user-facing Changes; this is revisited once
+# later messages give capability transitions real meaning (e.g. a resource
+# family disappearing ahead of removing collection for it).
+#
+# Message-2 workload/container/Pod field selection follows one rule:
+# durable declarative security/configuration posture is tracked; volatile
+# runtime/status fields are NOT — resourceVersion, managed fields,
+# generation, creation timestamps, Pod IP, node name, ordinary phase
+# transitions, observed replica counts, restart counts, status conditions,
+# and deployment-progress timestamps are excluded. For ``kubernetes_pod``
+# specifically, every runtime-only field (phase_category, scheduled, ready,
+# host_ip_present, pod_ip_count, restart_count_aggregate,
+# container_waiting_reason_category, container_terminated_reason_category)
+# is intentionally absent from the tracked tuple below so an ordinary
+# restart or phase transition never generates a Change.
+_KUBERNETES_WORKLOAD_CONTROLLER_TRACKED_FIELDS: tuple[str, ...] = (
+    "service_account_name",
+    "automount_service_account_token",
+    "host_network",
+    "host_pid",
+    "host_ipc",
+    "privileged_container_count",
+    "root_container_count",
+    "allow_privilege_escalation_count",
+    "hostpath_volume_count",
+    "dangerous_hostpath_categories",
+    "added_capability_categories",
+    "seccomp_posture_summary",
+    "apparmor_posture_summary",
+    "read_only_root_filesystem_coverage",
+    "resource_limit_coverage",
+    "liveness_probe_coverage",
+    "readiness_probe_coverage",
+    "startup_probe_coverage",
+    "image_posture_summary",
+    "security_posture_summary",
+    "runtime_class_name",
+    "update_strategy_category",
+    "desired_replica_count",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_POD_TRACKED_FIELDS: tuple[str, ...] = (
+    "service_account_name",
+    "automount_service_account_token",
+    "host_network",
+    "host_pid",
+    "host_ipc",
+    "share_process_namespace",
+    "privileged_container_count",
+    "root_container_count",
+    "allow_privilege_escalation_count",
+    "hostpath_volume_count",
+    "dangerous_hostpath_categories",
+    "added_capability_categories",
+    "seccomp_posture_summary",
+    "apparmor_posture_summary",
+    "read_only_root_filesystem_coverage",
+    "resource_limit_coverage",
+    "security_posture_summary",
+    "runtime_class_name",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_CONTAINER_SECURITY_CONTEXT_TRACKED_FIELDS: tuple[str, ...] = (
+    "image",
+    "image_registry_category",
+    "image_tag_category",
+    "image_pull_policy",
+    "privileged",
+    "allow_privilege_escalation",
+    "run_as_non_root",
+    "run_as_uid",
+    "read_only_root_filesystem",
+    "seccomp_profile_category",
+    "apparmor_profile_category",
+    "capabilities_added",
+    "capabilities_dropped",
+    "dangerous_added_capability_categories",
+    "any_resource_request_present",
+    "any_resource_limit_present",
+    "cpu_request_present",
+    "memory_request_present",
+    "cpu_limit_present",
+    "memory_limit_present",
+    "liveness_probe_present",
+    "readiness_probe_present",
+    "startup_probe_present",
+    "host_port_count",
+    "dangerous_host_ports",
+    "hostpath_mount_count",
+    "writable_hostpath_mount_count",
+    "service_account_token_explicitly_mounted",
+    "bidirectional_mount_propagation_present",
+)
+
+_KUBERNETES_WORKLOAD_SERVICE_ACCOUNT_TRACKED_FIELDS: tuple[str, ...] = (
+    "referencing_workload_count",
+    "automount_explicit_true_count",
+    "automount_explicit_false_count",
+    "automount_inherited_count",
+)
+
 _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "kubernetes_cluster": (
         "kubernetes_version",
@@ -2883,6 +2982,14 @@ _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
         "psa_warn_version",
     ),
     "kubernetes_api_capability": (),
+    "kubernetes_deployment": _KUBERNETES_WORKLOAD_CONTROLLER_TRACKED_FIELDS,
+    "kubernetes_statefulset": _KUBERNETES_WORKLOAD_CONTROLLER_TRACKED_FIELDS,
+    "kubernetes_daemonset": _KUBERNETES_WORKLOAD_CONTROLLER_TRACKED_FIELDS,
+    "kubernetes_job": _KUBERNETES_WORKLOAD_CONTROLLER_TRACKED_FIELDS,
+    "kubernetes_cronjob": _KUBERNETES_WORKLOAD_CONTROLLER_TRACKED_FIELDS,
+    "kubernetes_pod": _KUBERNETES_POD_TRACKED_FIELDS,
+    "kubernetes_container_security_context": _KUBERNETES_CONTAINER_SECURITY_CONTEXT_TRACKED_FIELDS,
+    "kubernetes_workload_service_account": _KUBERNETES_WORKLOAD_SERVICE_ACCOUNT_TRACKED_FIELDS,
 }
 
 
@@ -3251,6 +3358,44 @@ def _build_provider_metadata(
         metadata["domain_type"] = context_record.get("domain_type") or ""
     if record.get("record_type") == "firebase_function_metadata":
         metadata["function_name"] = context_record.get("function_name") or ""
+
+    # Kubernetes workload/container records carry cluster/namespace/owner
+    # context that the risk classifier (risk_rules/kubernetes.py) needs to
+    # scope severity and build display copy — none of it is populated by
+    # the generic record_name/record_content stanza above (these records
+    # use "name"/"namespace"/"cluster_id", not "name"/"content").
+    _kubernetes_record_type = record.get("record_type") or ""
+    if isinstance(_kubernetes_record_type, str) and _kubernetes_record_type.startswith("kubernetes_"):
+        metadata["cluster_id"] = context_record.get("cluster_id") or record.get("cluster_id") or ""
+        metadata["cluster_name"] = context_record.get("cluster_name") or record.get("cluster_name") or ""
+        metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
+        if _kubernetes_record_type in (
+            "kubernetes_deployment", "kubernetes_statefulset", "kubernetes_daemonset",
+            "kubernetes_job", "kubernetes_cronjob", "kubernetes_pod",
+        ):
+            metadata["kind"] = context_record.get("kind") or record.get("kind") or ""
+            metadata["workload_name"] = context_record.get("name") or record.get("name") or ""
+            metadata["uid"] = context_record.get("uid") or record.get("uid") or ""
+            metadata["service_account_name"] = (
+                context_record.get("service_account_name") or record.get("service_account_name") or ""
+            )
+        if _kubernetes_record_type == "kubernetes_container_security_context":
+            metadata["container_name"] = (
+                context_record.get("container_name") or record.get("container_name") or ""
+            )
+            metadata["container_category"] = (
+                context_record.get("container_category") or record.get("container_category") or ""
+            )
+            metadata["parent_workload_type"] = (
+                context_record.get("parent_workload_type") or record.get("parent_workload_type") or ""
+            )
+            metadata["parent_workload_uid"] = (
+                context_record.get("parent_workload_uid") or record.get("parent_workload_uid") or ""
+            )
+        if _kubernetes_record_type == "kubernetes_workload_service_account":
+            metadata["service_account_name"] = (
+                context_record.get("service_account_name") or record.get("service_account_name") or ""
+            )
 
     return metadata
 
