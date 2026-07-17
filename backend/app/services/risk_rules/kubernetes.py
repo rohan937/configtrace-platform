@@ -1,4 +1,4 @@
-"""Kubernetes risk classification rules — foundation + workloads (messages 1-2 of 9).
+"""Kubernetes risk classification rules — foundation + workloads + RBAC (messages 1-3 of 9).
 
 This module exists to give every ``kubernetes_*`` record type a dedicated,
 correct classifier so that ``risk_service.classify_change()`` never falls
@@ -6,25 +6,43 @@ through to the unrelated Cloudflare DNS default classifier (the generic
 fallback at the bottom of that dispatch chain is for un-prefixed record
 types and would produce a nonsensical result for a Kubernetes Change).
 
-This is intentionally NOT the full, final risk classifier. Per the
-message-2 scope, no complete Kubernetes Security Finding taxonomy or
-exhaustive severity calibration is built yet — that is message 6 (Security
-Finding taxonomy) and message 7 (Change classification's full pass). What
-IS implemented here is structural classifier support for every new
-workload/container record type and the "obvious high-value transitions"
-called out for message 2: privileged/root/host-namespace posture, dangerous
-capabilities, seccomp/AppArmor, hostPath (including runtime-socket
-mounts), image mutability, missing resource controls, host ports, and
-service-account-token automount. Severity assignments follow the message-2
-brief's safe conventions and deliberately do NOT claim compromise,
-breakout, exploitation, internet exposure, or secret theft — they describe
-structural posture only.
+This is intentionally NOT the full, final risk classifier. No complete
+Kubernetes Security Finding taxonomy or exhaustive severity calibration is
+built yet — that is message 6 (Security Finding taxonomy) and message 7
+(Change classification's full pass). What IS implemented here is
+structural classifier support for every record type through message 3 and
+the "obvious high-value transitions" called out for each message:
+privileged/root/host-namespace posture, dangerous capabilities, seccomp/
+AppArmor, hostPath (including runtime-socket mounts), image mutability,
+missing resource controls, host ports, service-account-token automount
+(message 2), and RBAC — new cluster-admin subjects, wildcard/bind/escalate/
+impersonate permissions, Secret/Pod-exec access grants, anonymous/
+unauthenticated meaningful access, and roleRef/privilege-resolution
+transitions (message 3). Severity assignments deliberately do NOT claim
+compromise, breakout, exploitation, internet exposure, or credential
+theft — they describe structural posture only.
+
+Unresolved/unknown privilege (unresolved roleRef, access-denied
+collection, malformed rules) is classified as ``"medium"`` — never
+``"low"`` (unknown is not safe) and never ``"high"``/``"critical"``
+without concrete evidence (unknown is not proof of danger either).
 """
 
 from __future__ import annotations
 
 from app.connectors.kubernetes_schema import (
     CAPABILITY_ALL,
+    CATEGORY_BIND,
+    CATEGORY_CLUSTER_ROLE_BINDING_WRITE,
+    CATEGORY_CRD_WRITE,
+    CATEGORY_CSR_APPROVAL,
+    CATEGORY_ESCALATE,
+    CATEGORY_FULL_WILDCARD,
+    CATEGORY_IMPERSONATE,
+    CATEGORY_NODE_PROXY,
+    CATEGORY_ADMISSION_WEBHOOK_WRITE,
+    CATEGORY_SECRET_READ_BROAD_SCOPE,
+    CATEGORY_TOKEN_CREATION,
     DANGEROUS_CAPABILITIES,
     HOSTPATH_CATEGORY_CONTAINERD_SOCKET,
     HOSTPATH_CATEGORY_DOCKER_SOCKET,
@@ -32,6 +50,8 @@ from app.connectors.kubernetes_schema import (
     IMAGE_TAG_LATEST_IMPLICIT,
     KUBERNETES_API_CAPABILITY,
     KUBERNETES_CLUSTER,
+    KUBERNETES_CLUSTER_ROLE,
+    KUBERNETES_CLUSTER_ROLE_BINDING,
     KUBERNETES_CONTAINER_SECURITY_CONTEXT,
     KUBERNETES_CRONJOB,
     KUBERNETES_DAEMONSET,
@@ -39,11 +59,22 @@ from app.connectors.kubernetes_schema import (
     KUBERNETES_JOB,
     KUBERNETES_NAMESPACE,
     KUBERNETES_POD,
+    KUBERNETES_RBAC_PERMISSION_SUMMARY,
+    KUBERNETES_RBAC_SUBJECT_BINDING,
+    KUBERNETES_ROLE,
+    KUBERNETES_ROLE_BINDING,
+    KUBERNETES_SERVICE_ACCOUNT,
     KUBERNETES_STATEFULSET,
     KUBERNETES_WORKLOAD_SERVICE_ACCOUNT,
     PROFILE_CATEGORY_UNCONFINED,
+    ROLE_RESOLUTION_RESOLVED,
     SECURITY_POSTURE_ELEVATED,
     SECURITY_POSTURE_PRIVILEGED_OR_HOST_ACCESS,
+    SEVERITY_CRITICAL,
+    SEVERITY_HIGH,
+    SEVERITY_LOW,
+    SEVERITY_MEDIUM,
+    SEVERITY_UNKNOWN,
 )
 
 _WORKLOAD_CONTROLLER_RECORD_TYPES = frozenset(
@@ -52,10 +83,28 @@ _WORKLOAD_CONTROLLER_RECORD_TYPES = frozenset(
         KUBERNETES_JOB, KUBERNETES_CRONJOB,
     }
 )
+_ROLE_RECORD_TYPES = frozenset({KUBERNETES_ROLE, KUBERNETES_CLUSTER_ROLE})
+_BINDING_RECORD_TYPES = frozenset({KUBERNETES_ROLE_BINDING, KUBERNETES_CLUSTER_ROLE_BINDING})
 _DANGEROUS_HOSTPATH_SOCKET_CATEGORIES = frozenset(
     {HOSTPATH_CATEGORY_DOCKER_SOCKET, HOSTPATH_CATEGORY_CONTAINERD_SOCKET}
 )
 _MUTABLE_IMAGE_TAG_CATEGORIES = frozenset({IMAGE_TAG_LATEST_EXPLICIT, IMAGE_TAG_LATEST_IMPLICIT})
+
+_CRITICAL_PERMISSION_CATEGORIES = frozenset({
+    CATEGORY_FULL_WILDCARD, CATEGORY_BIND, CATEGORY_ESCALATE, CATEGORY_IMPERSONATE,
+    CATEGORY_TOKEN_CREATION, CATEGORY_CSR_APPROVAL, CATEGORY_CLUSTER_ROLE_BINDING_WRITE,
+    CATEGORY_ADMISSION_WEBHOOK_WRITE, CATEGORY_CRD_WRITE, CATEGORY_NODE_PROXY,
+    CATEGORY_SECRET_READ_BROAD_SCOPE,
+})
+
+_SEVERITY_RANK: dict[str, int] = {
+    SEVERITY_UNKNOWN: -1, SEVERITY_LOW: 0, SEVERITY_MEDIUM: 1,
+    SEVERITY_HIGH: 2, SEVERITY_CRITICAL: 3,
+}
+
+
+def _severity_rank(value: object) -> int:
+    return _SEVERITY_RANK.get(value, -1) if isinstance(value, str) else -1
 
 
 def _get(obj: object, field: str) -> object:
@@ -359,7 +408,385 @@ def _classify_workload_service_account_change(change: object) -> tuple[str, str]
         return "low", "A Kubernetes service account is now referenced by a monitored workload."
     if ct == "removed":
         return "low", "A Kubernetes service account is no longer referenced by any monitored workload."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "effective_automount_state":
+        if nv == "kubernetes_default_true" and pv not in ("kubernetes_default_true", None):
+            return "medium", "A workload ServiceAccount's effective automount posture became enabled (Kubernetes default)."
+        if isinstance(nv, str) and nv.startswith("unknown_"):
+            return "medium", "A workload ServiceAccount's effective automount posture could not be resolved."
+        return "low", "A workload ServiceAccount's effective automount posture changed."
+    if fp == "service_account_privilege_summary":
+        if _severity_rank(nv) > _severity_rank(pv) and nv in (SEVERITY_HIGH, SEVERITY_CRITICAL):
+            return "high", f"A workload ServiceAccount's bound privilege increased to {nv!r}."
+        if _severity_rank(nv) < _severity_rank(pv):
+            return "low", "A workload ServiceAccount's bound privilege decreased."
+        return "low", "A workload ServiceAccount's bound privilege summary changed."
+    if fp == "service_account_found":
+        return ("low", "The workload's ServiceAccount is now resolvable.") if nv else (
+            "medium", "The workload's ServiceAccount is no longer resolvable (missing or access denied).",
+        )
+    if fp in ("bound_role_binding_count", "bound_cluster_role_binding_count"):
+        return "low", "A workload ServiceAccount's bound-binding count changed."
+    if fp == "risky_permission_categories":
+        added = set(nv or []) - set(pv or [])
+        if added:
+            return "high", f"A workload ServiceAccount gained risky permission categories: {sorted(added)}."
+        return "low", "A workload ServiceAccount's risky permission categories decreased."
+    if fp == "collection_completeness_category":
+        return ("medium", "Kubernetes workload ServiceAccount identity resolution is incomplete.") if nv == "partial" else (
+            "low", "Kubernetes workload ServiceAccount identity resolution completeness changed.",
+        )
     return "low", "A Kubernetes workload service-account rollup field changed."
+
+
+def _classify_service_account_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("cluster_admin_bound"):
+            return "critical", "A new Kubernetes ServiceAccount was added already bound to cluster-admin."
+        highest = record.get("highest_privilege_category")
+        if highest == SEVERITY_CRITICAL:
+            return "critical", "A new Kubernetes ServiceAccount was added already holding critical-severity privilege."
+        if highest == SEVERITY_HIGH:
+            return "high", "A new Kubernetes ServiceAccount was added already holding high-severity privilege."
+        return "low", "A Kubernetes ServiceAccount was added to monitoring."
+
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        if record.get("cluster_admin_bound"):
+            return (
+                "medium",
+                "A Kubernetes ServiceAccount bound to cluster-admin is no longer visible. "
+                "Verify this was an intentional removal.",
+            )
+        return "low", "A Kubernetes ServiceAccount is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "cluster_admin_bound":
+        return ("critical", "A Kubernetes ServiceAccount gained cluster-admin privilege.") if nv else (
+            "low", "A Kubernetes ServiceAccount's cluster-admin privilege was removed.",
+        )
+    if fp == "wildcard_permission_bound":
+        return ("high", "A Kubernetes ServiceAccount gained a wildcard permission binding.") if nv else (
+            "low", "A Kubernetes ServiceAccount's wildcard permission binding was removed.",
+        )
+    if fp == "secret_read_permission_bound":
+        return ("high", "A Kubernetes ServiceAccount gained Secret-read permission.") if nv else (
+            "low", "A Kubernetes ServiceAccount's Secret-read permission was removed.",
+        )
+    if fp == "pod_exec_permission_bound":
+        return ("high", "A Kubernetes ServiceAccount gained Pod-exec permission.") if nv else (
+            "low", "A Kubernetes ServiceAccount's Pod-exec permission was removed.",
+        )
+    if fp == "workload_creation_permission_bound":
+        return ("high", "A Kubernetes ServiceAccount gained broad workload-creation permission.") if nv else (
+            "low", "A Kubernetes ServiceAccount's workload-creation permission was removed.",
+        )
+    if fp == "rbac_modification_permission_bound":
+        return ("high", "A Kubernetes ServiceAccount gained RBAC-modification permission.") if nv else (
+            "low", "A Kubernetes ServiceAccount's RBAC-modification permission was removed.",
+        )
+    if fp == "impersonation_permission_bound":
+        return ("critical", "A Kubernetes ServiceAccount gained impersonation permission.") if nv else (
+            "low", "A Kubernetes ServiceAccount's impersonation permission was removed.",
+        )
+    if fp == "highest_privilege_category":
+        if _severity_rank(nv) > _severity_rank(pv) and nv in (SEVERITY_HIGH, SEVERITY_CRITICAL):
+            return ("critical" if nv == SEVERITY_CRITICAL else "high"), f"A Kubernetes ServiceAccount's privilege increased to {nv!r}."
+        if _severity_rank(nv) < _severity_rank(pv):
+            return "low", "A Kubernetes ServiceAccount's privilege decreased."
+        return "low", "A Kubernetes ServiceAccount's privilege summary changed."
+    if fp == "automount_service_account_token":
+        return ("medium", "A Kubernetes ServiceAccount's automount default was explicitly enabled.") if nv is True else (
+            "low", "A Kubernetes ServiceAccount's automount default was explicitly disabled.",
+        )
+    if fp in ("secret_reference_count", "image_pull_secret_count", "bound_role_binding_count", "bound_cluster_role_binding_count"):
+        return "low", "A Kubernetes ServiceAccount's reference/binding count changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this ServiceAccount's bindings.") if nv == "partial" else (
+            "low", "Kubernetes ServiceAccount collection completeness changed.",
+        )
+    return "low", "A Kubernetes ServiceAccount configuration field changed."
+
+
+def _classify_role_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    kind_label = "Role/ClusterRole"
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        kind_label = record.get("kind") or kind_label
+        highest = record.get("highest_severity_category")
+        if highest == SEVERITY_CRITICAL:
+            return "critical", f"A new {kind_label} was added already granting critical-severity permissions."
+        if highest == SEVERITY_HIGH:
+            return "high", f"A new {kind_label} was added already granting high-severity permissions."
+        return "low", f"A Kubernetes {kind_label} was added to monitoring."
+
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        kind_label = record.get("kind") or kind_label
+        highest = record.get("highest_severity_category")
+        if highest in (SEVERITY_CRITICAL, SEVERITY_HIGH):
+            return "medium", f"A dangerous {kind_label} was removed. Verify this was an intentional cleanup."
+        return "low", f"A Kubernetes {kind_label} is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "high_risk_permission_categories":
+        added = set(nv or []) - set(pv or [])
+        removed = set(pv or []) - set(nv or [])
+        critical_new = added & _CRITICAL_PERMISSION_CATEGORIES
+        if critical_new:
+            return "critical", f"A {kind_label} gained a critical permission category: {sorted(critical_new)}."
+        if added:
+            return "high", f"A {kind_label} gained dangerous permission categories: {sorted(added)}."
+        if removed:
+            return "low", f"A {kind_label}'s dangerous permission categories decreased: {sorted(removed)}."
+        return "low", f"A {kind_label}'s permission categories changed."
+    if fp in ("wildcard_api_group", "wildcard_resource", "wildcard_verb"):
+        return ("high", f"A wildcard permission was introduced on a {kind_label}.") if nv else (
+            "low", f"A wildcard permission was removed from a {kind_label}.",
+        )
+    if fp == "wildcard_non_resource_url":
+        return ("medium", f"A wildcard non-resource-URL permission was introduced on a {kind_label}.") if nv else (
+            "low", f"A wildcard non-resource-URL permission was removed from a {kind_label}.",
+        )
+    if fp == "highest_severity_category":
+        if _severity_rank(nv) > _severity_rank(pv):
+            if nv == SEVERITY_CRITICAL:
+                return "critical", f"A {kind_label}'s highest granted severity increased to critical."
+            if nv == SEVERITY_HIGH:
+                return "high", f"A {kind_label}'s highest granted severity increased to high."
+        if _severity_rank(nv) < _severity_rank(pv):
+            return "low", f"A {kind_label}'s highest granted severity decreased."
+        return "low", f"A {kind_label}'s highest granted severity category changed."
+    if fp == "aggregation_rule_present":
+        return "low", f"A {kind_label}'s aggregation-rule presence changed."
+    if fp in ("rule_count", "permission_fingerprint", "aggregation_selector_count"):
+        return "low", f"A {kind_label}'s permission rules changed."
+    if fp == "collection_completeness_category":
+        return ("medium", f"A {kind_label}'s aggregated permissions could not be fully resolved.") if nv == "partial" else (
+            "low", f"A {kind_label}'s collection completeness changed.",
+        )
+    return "low", f"A Kubernetes {kind_label} configuration field changed."
+
+
+def _binding_added_removed_severity(record: dict, *, removed: bool) -> tuple[str, str]:
+    kind_label = record.get("kind") or "RoleBinding/ClusterRoleBinding"
+    if record.get("cluster_admin_binding"):
+        if removed:
+            return "medium", f"A {kind_label} granting cluster-admin was removed. Verify this was intentional."
+        return "critical", f"A new {kind_label} grants cluster-admin."
+    priv = record.get("resolved_privilege_category")
+    if removed:
+        if priv in (SEVERITY_CRITICAL, SEVERITY_HIGH):
+            return "medium", f"A dangerous {kind_label} was removed. Verify this was intentional."
+        return "low", f"A Kubernetes {kind_label} is no longer visible to ConfigTrace."
+    if priv == SEVERITY_CRITICAL:
+        return "critical", f"A new {kind_label} was created already granting critical-severity permissions."
+    if priv == SEVERITY_HIGH:
+        return "high", f"A new {kind_label} was created already granting high-severity permissions."
+    if priv == SEVERITY_UNKNOWN:
+        return "medium", f"A new {kind_label} references a role that could not be resolved. Review manually."
+    return "low", f"A Kubernetes {kind_label} was added to monitoring."
+
+
+def _classify_role_binding_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        return _binding_added_removed_severity(_whole_record(change, added=True), removed=False)
+    if ct == "removed":
+        return _binding_added_removed_severity(_whole_record(change, added=False), removed=True)
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "cluster_admin_binding":
+        return ("critical", "A Kubernetes binding now grants cluster-admin.") if nv else (
+            "low", "A Kubernetes binding's cluster-admin grant was removed.",
+        )
+    if fp == "wildcard_permission_binding":
+        return ("high", "A Kubernetes binding now resolves to a wildcard-permission role.") if nv else (
+            "low", "A Kubernetes binding no longer resolves to a wildcard-permission role.",
+        )
+    if fp == "resolved_privilege_category":
+        if _severity_rank(nv) > _severity_rank(pv):
+            if nv == SEVERITY_CRITICAL:
+                return "critical", "A Kubernetes binding's resolved privilege increased to critical."
+            if nv == SEVERITY_HIGH:
+                return "high", "A Kubernetes binding's resolved privilege increased to high (was lower privilege)."
+            if nv == SEVERITY_UNKNOWN:
+                return "medium", "A Kubernetes binding's role reference became unresolved."
+        if _severity_rank(nv) < _severity_rank(pv):
+            return "low", "A Kubernetes binding's resolved privilege decreased."
+        return "low", "A Kubernetes binding's resolved privilege category changed."
+    if fp == "role_resolution_status":
+        if nv != ROLE_RESOLUTION_RESOLVED:
+            return "medium", f"A Kubernetes binding's roleRef is {nv!r} — privilege cannot be confirmed. Review manually."
+        return "low", "A Kubernetes binding's roleRef became resolvable."
+    if fp == "role_ref_name":
+        return "medium", f"A Kubernetes binding's roleRef changed from {pv!r} to {nv!r}. Re-evaluate effective privilege."
+    if fp in ("subject_count", "user_subject_count", "group_subject_count", "service_account_subject_count"):
+        return "low", "A Kubernetes binding's subject count changed."
+    if fp == "binding_fingerprint":
+        return "low", "A Kubernetes binding's subjects or roleRef changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this binding.") if nv == "partial" else (
+            "low", "Kubernetes binding collection completeness changed.",
+        )
+    return "low", "A Kubernetes RoleBinding/ClusterRoleBinding configuration field changed."
+
+
+def _subject_binding_added_removed_severity(record: dict, *, removed: bool) -> tuple[str, str]:
+    subject_kind = record.get("subject_kind") or "subject"
+    priv = record.get("resolved_privilege_category")
+    meaningful_access = priv in (SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_UNKNOWN)
+
+    if not removed:
+        if record.get("anonymous_subject") and meaningful_access:
+            return "critical", "An anonymous subject was granted meaningful permissions via a Kubernetes RBAC binding."
+        if record.get("unauthenticated_group") and meaningful_access:
+            return "critical", "The system:unauthenticated group was granted meaningful permissions via a Kubernetes RBAC binding."
+        if record.get("cluster_admin_binding"):
+            return "critical", f"A {subject_kind} subject was added to a cluster-admin binding."
+        if priv == SEVERITY_CRITICAL:
+            return "critical", f"A {subject_kind} subject was added to a critical-privilege Kubernetes RBAC binding."
+        if priv == SEVERITY_HIGH:
+            return "high", f"A {subject_kind} subject was added to a high-privilege Kubernetes RBAC binding."
+        if priv == SEVERITY_UNKNOWN:
+            return "medium", f"A {subject_kind} subject was added to a binding whose role could not be resolved."
+        return "low", "A subject was added to a Kubernetes RBAC binding."
+
+    if record.get("cluster_admin_binding"):
+        return "medium", f"A {subject_kind} subject was removed from a cluster-admin binding. Verify this was intentional."
+    return "low", "A subject was removed from a Kubernetes RBAC binding."
+
+
+def _classify_rbac_subject_binding_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        return _subject_binding_added_removed_severity(_whole_record(change, added=True), removed=False)
+    if ct == "removed":
+        return _subject_binding_added_removed_severity(_whole_record(change, added=False), removed=True)
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "role_ref_name":
+        return "medium", f"A Kubernetes subject binding's roleRef changed from {pv!r} to {nv!r}."
+    if fp == "cluster_admin_binding":
+        return ("critical", "A Kubernetes subject binding now grants cluster-admin.") if nv else (
+            "low", "A Kubernetes subject binding's cluster-admin grant was removed.",
+        )
+    if fp == "wildcard_permission_binding":
+        return ("high", "A Kubernetes subject binding now resolves to a wildcard-permission role.") if nv else (
+            "low", "A Kubernetes subject binding no longer resolves to a wildcard-permission role.",
+        )
+    if fp == "resolved_privilege_category":
+        if _severity_rank(nv) > _severity_rank(pv):
+            if nv == SEVERITY_CRITICAL:
+                return "critical", "A Kubernetes subject binding's resolved privilege increased to critical."
+            if nv == SEVERITY_HIGH:
+                return "high", "A Kubernetes subject binding's resolved privilege increased to high."
+            if nv == SEVERITY_UNKNOWN:
+                return "medium", "A Kubernetes subject binding's role reference became unresolved."
+        if _severity_rank(nv) < _severity_rank(pv):
+            return "low", "A Kubernetes subject binding's resolved privilege decreased."
+        return "low", "A Kubernetes subject binding's resolved privilege category changed."
+    if fp == "role_resolution_status":
+        if nv != ROLE_RESOLUTION_RESOLVED:
+            return "medium", f"A Kubernetes subject binding's roleRef is {nv!r} — privilege cannot be confirmed."
+        return "low", "A Kubernetes subject binding's roleRef became resolvable."
+    if fp == "high_risk_permission_categories":
+        added = set(nv or []) - set(pv or [])
+        critical_new = added & _CRITICAL_PERMISSION_CATEGORIES
+        if critical_new:
+            return "critical", f"A Kubernetes subject binding gained a critical permission category: {sorted(critical_new)}."
+        if added:
+            return "high", f"A Kubernetes subject binding gained dangerous permission categories: {sorted(added)}."
+        return "low", "A Kubernetes subject binding's permission categories changed."
+    return "low", "A Kubernetes RBAC subject-binding field changed."
+
+
+def _classify_rbac_permission_summary_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        if record.get("cluster_admin_bound"):
+            return "critical", "A new Kubernetes identity was observed with cluster-admin access."
+        highest = record.get("highest_privilege_category")
+        if highest == SEVERITY_CRITICAL:
+            return "critical", "A new Kubernetes identity was observed with critical aggregate privilege."
+        if highest == SEVERITY_HIGH:
+            return "high", "A new Kubernetes identity was observed with high aggregate privilege."
+        return "low", "A new Kubernetes identity permission rollup was observed."
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        if record.get("cluster_admin_bound"):
+            return "medium", "A Kubernetes identity's cluster-admin access rollup is no longer present. Verify this was intentional."
+        return "low", "A Kubernetes identity permission rollup is no longer present."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "cluster_admin_bound":
+        return ("critical", "A Kubernetes identity gained cluster-admin access across its bindings.") if nv else (
+            "low", "A Kubernetes identity's cluster-admin access was removed.",
+        )
+    if fp == "highest_privilege_category":
+        if _severity_rank(nv) > _severity_rank(pv):
+            if nv == SEVERITY_CRITICAL:
+                return "critical", "A Kubernetes identity's aggregate privilege increased to critical."
+            if nv == SEVERITY_HIGH:
+                return "high", "A Kubernetes identity's aggregate privilege increased to high."
+        if _severity_rank(nv) < _severity_rank(pv):
+            return "low", "A Kubernetes identity's aggregate privilege decreased."
+        return "low", "A Kubernetes identity's aggregate privilege summary changed."
+    if fp in ("secret_read_bound", "secret_write_bound"):
+        return ("high", "A Kubernetes identity gained Secret access across its bindings.") if nv else (
+            "low", "A Kubernetes identity's Secret access was removed across its bindings.",
+        )
+    if fp == "pod_exec_bound":
+        return ("high", "A Kubernetes identity gained Pod-exec access across its bindings.") if nv else (
+            "low", "A Kubernetes identity's Pod-exec access was removed across its bindings.",
+        )
+    if fp == "workload_create_bound":
+        return ("high", "A Kubernetes identity gained broad workload-creation access across its bindings.") if nv else (
+            "low", "A Kubernetes identity's workload-creation access was removed across its bindings.",
+        )
+    if fp == "rbac_modification_bound":
+        return ("high", "A Kubernetes identity gained RBAC-modification access across its bindings.") if nv else (
+            "low", "A Kubernetes identity's RBAC-modification access was removed across its bindings.",
+        )
+    if fp == "impersonation_bound":
+        return ("critical", "A Kubernetes identity gained impersonation access across its bindings.") if nv else (
+            "low", "A Kubernetes identity's impersonation access was removed across its bindings.",
+        )
+    if fp == "wildcard_permission_bound":
+        return ("high", "A Kubernetes identity gained a wildcard-permission binding.") if nv else (
+            "low", "A Kubernetes identity's wildcard-permission binding was removed.",
+        )
+    if fp in ("role_binding_count", "cluster_role_binding_count"):
+        return "low", "A Kubernetes identity's binding count changed."
+    return "low", "A Kubernetes identity permission rollup field changed."
 
 
 def _classify_hostpath_category_transition(nv: object, pv: object) -> tuple[str, str]:
@@ -419,7 +846,7 @@ def _classify_coverage_regression(
 def classify_kubernetes_change(change: object) -> tuple[str, str]:
     """Route a Kubernetes Change to its record-type classifier.
 
-    Unknown/future ``kubernetes_*`` record types (i.e. the message 3-5
+    Unknown/future ``kubernetes_*`` record types (i.e. the message 4-5
     planned taxonomy, before their classifiers exist) fail safely into a
     generic low-severity message rather than raising or falling through to
     an unrelated provider's classifier.
@@ -440,5 +867,15 @@ def classify_kubernetes_change(change: object) -> tuple[str, str]:
         return _classify_container_security_context_change(change)
     if record_type == KUBERNETES_WORKLOAD_SERVICE_ACCOUNT:
         return _classify_workload_service_account_change(change)
+    if record_type == KUBERNETES_SERVICE_ACCOUNT:
+        return _classify_service_account_change(change)
+    if record_type in _ROLE_RECORD_TYPES:
+        return _classify_role_change(change)
+    if record_type in _BINDING_RECORD_TYPES:
+        return _classify_role_binding_change(change)
+    if record_type == KUBERNETES_RBAC_SUBJECT_BINDING:
+        return _classify_rbac_subject_binding_change(change)
+    if record_type == KUBERNETES_RBAC_PERMISSION_SUMMARY:
+        return _classify_rbac_permission_summary_change(change)
 
     return "low", f"A Kubernetes configuration record changed ({record_type or 'unknown record type'})."

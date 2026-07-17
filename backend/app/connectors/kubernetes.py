@@ -131,6 +131,7 @@ from app.connectors.exceptions import (
     NetworkError,
     RateLimitError,
 )
+from app.connectors import kubernetes_schema as ks
 from app.connectors.kubernetes_schema import (
     APPARMOR_ANNOTATION_PREFIX,
     CAPABILITY_ALL,
@@ -173,6 +174,92 @@ from app.connectors.kubernetes_schema import (
     categorize_image_tag,
     categorize_legacy_apparmor_annotation,
     seccomp_or_apparmor_profile_category,
+    API_GROUP_WILDCARD,
+    AUTOMOUNT_SOURCE_KUBERNETES_DEFAULT,
+    AUTOMOUNT_SOURCE_SERVICE_ACCOUNT_EXPLICIT,
+    AUTOMOUNT_SOURCE_UNKNOWN,
+    AUTOMOUNT_SOURCE_WORKLOAD_EXPLICIT,
+    AUTOMOUNT_STATE_EXPLICIT_WORKLOAD_FALSE,
+    AUTOMOUNT_STATE_EXPLICIT_WORKLOAD_TRUE,
+    AUTOMOUNT_STATE_INHERITED_SERVICE_ACCOUNT_FALSE,
+    AUTOMOUNT_STATE_INHERITED_SERVICE_ACCOUNT_TRUE,
+    AUTOMOUNT_STATE_KUBERNETES_DEFAULT_TRUE,
+    AUTOMOUNT_STATE_UNKNOWN_PERMISSION_DENIED,
+    AUTOMOUNT_STATE_UNKNOWN_SERVICE_ACCOUNT_MISSING,
+    BUILTIN_ROLE_CLUSTER_ADMIN,
+    CATEGORY_CLUSTER_ROLE_BINDING_WRITE,
+    CATEGORY_IMPERSONATE,
+    CATEGORY_POD_EXEC,
+    CATEGORY_POD_WRITE,
+    CATEGORY_ROLE_OR_CLUSTER_ROLE_WRITE,
+    CATEGORY_SECRET_READ,
+    CATEGORY_SECRET_READ_BROAD_SCOPE,
+    CATEGORY_SECRET_WRITE,
+    CATEGORY_WORKLOAD_WRITE,
+    GROUP_SYSTEM_AUTHENTICATED,
+    GROUP_SYSTEM_MASTERS,
+    GROUP_SYSTEM_NODES,
+    GROUP_SYSTEM_SERVICEACCOUNTS_PREFIX,
+    GROUP_SYSTEM_UNAUTHENTICATED,
+    KUBERNETES_CLUSTER_ROLE,
+    KUBERNETES_RBAC_PERMISSION_SUMMARY,
+    KUBERNETES_RBAC_SUBJECT_BINDING,
+    KUBERNETES_ROLE,
+    KUBERNETES_ROLE_BINDING,
+    KUBERNETES_CLUSTER_ROLE_BINDING,
+    KUBERNETES_SERVICE_ACCOUNT,
+    READ_VERBS,
+    RESOURCE_CATEGORY_CLUSTER_ROLE_BINDINGS,
+    RESOURCE_CATEGORY_CLUSTER_ROLES,
+    RESOURCE_CATEGORY_CONFIGMAPS,
+    RESOURCE_CATEGORY_CRDS,
+    RESOURCE_CATEGORY_CSR_APPROVAL,
+    RESOURCE_CATEGORY_INGRESSES,
+    RESOURCE_CATEGORY_MUTATING_WEBHOOKS,
+    RESOURCE_CATEGORY_NAMESPACES,
+    RESOURCE_CATEGORY_NETWORK_POLICIES,
+    RESOURCE_CATEGORY_NODES,
+    RESOURCE_CATEGORY_NODES_PROXY,
+    RESOURCE_CATEGORY_PERSISTENT_VOLUMES,
+    RESOURCE_CATEGORY_PODS,
+    RESOURCE_CATEGORY_PODS_ATTACH,
+    RESOURCE_CATEGORY_PODS_EXEC,
+    RESOURCE_CATEGORY_PODS_LOG,
+    RESOURCE_CATEGORY_PODS_PORTFORWARD,
+    RESOURCE_CATEGORY_ROLE_BINDINGS,
+    RESOURCE_CATEGORY_ROLES,
+    RESOURCE_CATEGORY_SECRETS,
+    RESOURCE_CATEGORY_SERVICE_ACCOUNTS_TOKEN,
+    RESOURCE_CATEGORY_SERVICES,
+    RESOURCE_CATEGORY_SUBJECT_ACCESS_REVIEWS,
+    RESOURCE_CATEGORY_VALIDATING_WEBHOOKS,
+    RESOURCE_CATEGORY_WILDCARD,
+    RESOURCE_CATEGORY_WORKLOADS,
+    ROLE_RESOLUTION_ACCESS_DENIED,
+    ROLE_RESOLUTION_MALFORMED,
+    ROLE_RESOLUTION_MISSING,
+    ROLE_RESOLUTION_RESOLVED,
+    SAFE_ROLE_LABEL_KEYS,
+    SEVERITY_CRITICAL,
+    SEVERITY_LOW,
+    SEVERITY_UNKNOWN,
+    SUBJECT_KIND_GROUP,
+    SUBJECT_KIND_SERVICE_ACCOUNT,
+    SUBJECT_KIND_USER,
+    USER_SYSTEM_ANONYMOUS,
+    VERB_APPROVE,
+    VERB_BIND,
+    VERB_ESCALATE,
+    VERB_IMPERSONATE,
+    VERB_WILDCARD,
+    WRITE_VERBS,
+    canonical_service_account_identity,
+    categorize_api_group,
+    categorize_builtin_role,
+    categorize_group,
+    categorize_non_resource_url,
+    categorize_resource,
+    highest_severity,
 )
 
 logger = logging.getLogger(__name__)
@@ -1378,6 +1465,909 @@ def _aggregate_workload_service_accounts(
     return records
 
 
+# ── RBAC and identity normalization (message 3) ───────────────────────────────
+#
+# Rule-expansion policy: a single RBAC rule is scanned once, its apiGroups/
+# resources/verbs/nonResourceURLs are each categorized into the bounded
+# vocabulary in kubernetes_schema.py, and the categorized SETS (never a
+# per-combination Cartesian product) accumulate into one summary dict per
+# Role/ClusterRole. This keeps a Role with e.g. 5 resources x 4 verbs to a
+# handful of category flags, not 20 synthetic records.
+
+def _expand_rbac_rule(rule: Any) -> Optional[dict]:
+    """Return a plain-dict expansion of one RBAC rule, or None if the rule
+    object is too malformed to read at all (skipped — never aborts the
+    whole Role)."""
+    try:
+        api_groups = getattr(rule, "api_groups", None) or []
+        resources = getattr(rule, "resources", None) or []
+        verbs = getattr(rule, "verbs", None) or []
+        resource_names = getattr(rule, "resource_names", None) or []
+        non_resource_urls = getattr(rule, "non_resource_urls", None) or []
+        return {
+            "api_groups": [str(g) for g in api_groups if g is not None],
+            "resources": [str(r) for r in resources if r is not None],
+            "verbs": [str(v) for v in verbs if v is not None],
+            "resource_names_present": bool(resource_names),
+            "non_resource_urls": [str(u) for u in non_resource_urls if u is not None],
+        }
+    except Exception:  # noqa: BLE001 — malformed rule object, skip it
+        return None
+
+
+_RBAC_BOOLEAN_FLAG_NAMES: tuple[str, ...] = (
+    "secret_read", "secret_write", "configmap_read", "configmap_write",
+    "pod_read", "pod_write", "pod_exec", "pod_attach", "pod_port_forward", "pod_logs",
+    "workload_write", "service_write", "network_mutation",
+    "rbac_read", "rbac_write", "cluster_role_binding_write",
+    "bind_permission", "escalate_permission", "impersonate_permission", "csr_approve_permission",
+    "node_proxy_access", "nodes_read", "nodes_write", "persistent_volume_access",
+    "admission_webhook_modification", "crd_modification", "namespace_modification",
+    "service_account_token_creation", "subject_access_review_creation",
+)
+
+
+def _summarize_rbac_rules(rules: list) -> dict:
+    """Categorize a list of raw RBAC rule objects into one deterministic
+    summary dict: categorized API-group/resource/verb/non-resource-URL
+    sets, the full dangerous-permission boolean taxonomy, a sorted
+    high-risk category tag list, a highest-severity category, and a stable
+    permission fingerprint. Never infers access beyond what a rule states;
+    never persists the raw rule documents."""
+    api_group_categories: set[str] = set()
+    resource_categories: set[str] = set()
+    verb_categories: set[str] = set()
+    non_resource_categories: set[str] = set()
+    resource_name_restriction_present = False
+    non_resource_url_count = 0
+    wildcard_api_group = wildcard_resource = wildcard_verb = wildcard_non_resource_url = False
+    rule_count = 0
+    flags: dict[str, bool] = {name: False for name in _RBAC_BOOLEAN_FLAG_NAMES}
+
+    for raw_rule in rules or []:
+        expanded = _expand_rbac_rule(raw_rule)
+        if expanded is None:
+            continue
+        rule_count += 1
+        groups, resources, verbs = expanded["api_groups"], expanded["resources"], expanded["verbs"]
+        non_resource_urls = expanded["non_resource_urls"]
+        if expanded["resource_names_present"]:
+            resource_name_restriction_present = True
+        non_resource_url_count += len(non_resource_urls)
+
+        group_cats = {categorize_api_group(g) for g in groups} if groups else set()
+        api_group_categories |= group_cats
+        if API_GROUP_WILDCARD in group_cats:
+            wildcard_api_group = True
+
+        resource_cats = {categorize_resource(r) for r in resources} if resources else set()
+        resource_categories |= resource_cats
+        if RESOURCE_CATEGORY_WILDCARD in resource_cats:
+            wildcard_resource = True
+
+        verb_set = {v.lower() for v in verbs}
+        verb_categories |= verb_set
+        if VERB_WILDCARD in verb_set:
+            wildcard_verb = True
+
+        nr_cats = {categorize_non_resource_url(u) for u in non_resource_urls} if non_resource_urls else set()
+        non_resource_categories |= nr_cats
+        if ks.NON_RESOURCE_CATEGORY_WILDCARD in nr_cats:
+            wildcard_non_resource_url = True
+
+        is_wildcard_verb = VERB_WILDCARD in verb_set
+        read_like = bool(verb_set & READ_VERBS) or is_wildcard_verb
+        write_like = bool(verb_set & WRITE_VERBS) or is_wildcard_verb
+        any_verb = bool(verb_set)
+        has_wc = RESOURCE_CATEGORY_WILDCARD in resource_cats
+
+        if RESOURCE_CATEGORY_SECRETS in resource_cats or has_wc:
+            flags["secret_read"] = flags["secret_read"] or read_like
+            flags["secret_write"] = flags["secret_write"] or write_like
+        if RESOURCE_CATEGORY_CONFIGMAPS in resource_cats or has_wc:
+            flags["configmap_read"] = flags["configmap_read"] or read_like
+            flags["configmap_write"] = flags["configmap_write"] or write_like
+        if RESOURCE_CATEGORY_PODS in resource_cats or has_wc:
+            flags["pod_read"] = flags["pod_read"] or read_like
+            flags["pod_write"] = flags["pod_write"] or write_like
+        if (RESOURCE_CATEGORY_PODS_EXEC in resource_cats or has_wc) and any_verb:
+            flags["pod_exec"] = True
+        if (RESOURCE_CATEGORY_PODS_ATTACH in resource_cats or has_wc) and any_verb:
+            flags["pod_attach"] = True
+        if (RESOURCE_CATEGORY_PODS_PORTFORWARD in resource_cats or has_wc) and any_verb:
+            flags["pod_port_forward"] = True
+        if (RESOURCE_CATEGORY_PODS_LOG in resource_cats or has_wc) and read_like:
+            flags["pod_logs"] = True
+        if (RESOURCE_CATEGORY_WORKLOADS in resource_cats or has_wc) and write_like:
+            flags["workload_write"] = True
+        if (RESOURCE_CATEGORY_SERVICES in resource_cats or has_wc) and write_like:
+            flags["service_write"] = True
+        if (resource_cats & {RESOURCE_CATEGORY_INGRESSES, RESOURCE_CATEGORY_NETWORK_POLICIES} or has_wc) and write_like:
+            flags["network_mutation"] = True
+        rbac_resources_present = bool(resource_cats & {
+            RESOURCE_CATEGORY_ROLES, RESOURCE_CATEGORY_ROLE_BINDINGS,
+            RESOURCE_CATEGORY_CLUSTER_ROLES, RESOURCE_CATEGORY_CLUSTER_ROLE_BINDINGS,
+        }) or has_wc
+        if rbac_resources_present:
+            flags["rbac_read"] = flags["rbac_read"] or read_like
+            flags["rbac_write"] = flags["rbac_write"] or write_like
+        if (RESOURCE_CATEGORY_CLUSTER_ROLE_BINDINGS in resource_cats or has_wc) and write_like:
+            flags["cluster_role_binding_write"] = True
+        if VERB_BIND in verb_set:
+            flags["bind_permission"] = True
+        if VERB_ESCALATE in verb_set:
+            flags["escalate_permission"] = True
+        if VERB_IMPERSONATE in verb_set:
+            flags["impersonate_permission"] = True
+        if (RESOURCE_CATEGORY_CSR_APPROVAL in resource_cats or has_wc) and any_verb:
+            flags["csr_approve_permission"] = True
+        if VERB_APPROVE in verb_set:
+            flags["csr_approve_permission"] = True
+        if (RESOURCE_CATEGORY_NODES_PROXY in resource_cats or has_wc) and any_verb:
+            flags["node_proxy_access"] = True
+        if RESOURCE_CATEGORY_NODES in resource_cats or has_wc:
+            flags["nodes_read"] = flags["nodes_read"] or read_like
+            flags["nodes_write"] = flags["nodes_write"] or write_like
+        if (RESOURCE_CATEGORY_PERSISTENT_VOLUMES in resource_cats or has_wc) and any_verb:
+            flags["persistent_volume_access"] = True
+        if (resource_cats & {RESOURCE_CATEGORY_VALIDATING_WEBHOOKS, RESOURCE_CATEGORY_MUTATING_WEBHOOKS} or has_wc) and write_like:
+            flags["admission_webhook_modification"] = True
+        if (RESOURCE_CATEGORY_CRDS in resource_cats or has_wc) and write_like:
+            flags["crd_modification"] = True
+        if (RESOURCE_CATEGORY_NAMESPACES in resource_cats or has_wc) and write_like:
+            flags["namespace_modification"] = True
+        if (RESOURCE_CATEGORY_SERVICE_ACCOUNTS_TOKEN in resource_cats or has_wc) and ("create" in verb_set or is_wildcard_verb):
+            flags["service_account_token_creation"] = True
+        if (RESOURCE_CATEGORY_SUBJECT_ACCESS_REVIEWS in resource_cats or has_wc) and ("create" in verb_set or is_wildcard_verb):
+            flags["subject_access_review_creation"] = True
+
+    full_wildcard = wildcard_api_group and wildcard_resource and wildcard_verb
+
+    high_risk: set[str] = set()
+    if full_wildcard:
+        high_risk.add(ks.CATEGORY_FULL_WILDCARD)
+    if flags["bind_permission"]:
+        high_risk.add(ks.CATEGORY_BIND)
+    if flags["escalate_permission"]:
+        high_risk.add(ks.CATEGORY_ESCALATE)
+    if flags["impersonate_permission"]:
+        high_risk.add(CATEGORY_IMPERSONATE)
+    if flags["service_account_token_creation"]:
+        high_risk.add(ks.CATEGORY_TOKEN_CREATION)
+    if flags["csr_approve_permission"]:
+        high_risk.add(ks.CATEGORY_CSR_APPROVAL)
+    if flags["cluster_role_binding_write"]:
+        high_risk.add(CATEGORY_CLUSTER_ROLE_BINDING_WRITE)
+    if flags["admission_webhook_modification"]:
+        high_risk.add(ks.CATEGORY_ADMISSION_WEBHOOK_WRITE)
+    if flags["crd_modification"]:
+        high_risk.add(ks.CATEGORY_CRD_WRITE)
+    if flags["node_proxy_access"]:
+        high_risk.add(ks.CATEGORY_NODE_PROXY)
+    if flags["secret_read"] and (wildcard_resource or wildcard_api_group) and not full_wildcard:
+        high_risk.add(CATEGORY_SECRET_READ_BROAD_SCOPE)
+    elif flags["secret_read"]:
+        high_risk.add(CATEGORY_SECRET_READ)
+    if flags["secret_write"]:
+        high_risk.add(CATEGORY_SECRET_WRITE)
+    if flags["pod_exec"]:
+        high_risk.add(CATEGORY_POD_EXEC)
+    if flags["pod_attach"]:
+        high_risk.add(ks.CATEGORY_POD_ATTACH)
+    if flags["pod_port_forward"]:
+        high_risk.add(ks.CATEGORY_POD_PORT_FORWARD)
+    if flags["pod_write"]:
+        high_risk.add(CATEGORY_POD_WRITE)
+    if flags["workload_write"]:
+        high_risk.add(CATEGORY_WORKLOAD_WRITE)
+    if flags["rbac_write"] and not flags["cluster_role_binding_write"]:
+        high_risk.add(CATEGORY_ROLE_OR_CLUSTER_ROLE_WRITE)
+    if flags["namespace_modification"]:
+        high_risk.add(ks.CATEGORY_NAMESPACE_WRITE)
+    if flags["network_mutation"]:
+        high_risk.add(ks.CATEGORY_NETWORK_MUTATION)
+    if flags["persistent_volume_access"]:
+        high_risk.add(ks.CATEGORY_PV_ACCESS)
+    if flags["nodes_write"]:
+        high_risk.add(ks.CATEGORY_NODES_WRITE)
+    if wildcard_verb and not full_wildcard:
+        high_risk.add(ks.CATEGORY_WILDCARD_VERB)
+    if wildcard_resource and not full_wildcard:
+        high_risk.add(ks.CATEGORY_WILDCARD_RESOURCE)
+    if flags["configmap_write"]:
+        high_risk.add(ks.CATEGORY_CONFIGMAP_WRITE)
+    if flags["configmap_read"] and (wildcard_resource or wildcard_api_group):
+        high_risk.add(ks.CATEGORY_CONFIGMAP_READ_BROAD)
+    if flags["pod_logs"]:
+        high_risk.add(ks.CATEGORY_POD_LOGS)
+    if flags["service_write"]:
+        high_risk.add(ks.CATEGORY_SERVICE_WRITE)
+    if flags["nodes_read"]:
+        high_risk.add(ks.CATEGORY_NODES_READ)
+    if wildcard_non_resource_url:
+        high_risk.add(ks.CATEGORY_NON_RESOURCE_BROAD)
+
+    highest = highest_severity(high_risk)
+
+    fingerprint_source = "|".join(sorted(
+        [f"g:{c}" for c in api_group_categories]
+        + [f"r:{c}" for c in resource_categories]
+        + [f"v:{c}" for c in verb_categories]
+        + [f"u:{c}" for c in non_resource_categories]
+        + [f"h:{c}" for c in high_risk]
+        + [f"rn:{resource_name_restriction_present}"]
+    ))
+    fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()[:16]
+
+    return {
+        "rule_count": rule_count,
+        "api_group_categories": sorted(api_group_categories),
+        "resource_categories": sorted(resource_categories),
+        "verb_categories": sorted(verb_categories),
+        "resource_name_restriction_present": resource_name_restriction_present,
+        "non_resource_url_categories": sorted(non_resource_categories),
+        "non_resource_url_count": non_resource_url_count,
+        "wildcard_api_group": wildcard_api_group,
+        "wildcard_resource": wildcard_resource,
+        "wildcard_verb": wildcard_verb,
+        "wildcard_non_resource_url": wildcard_non_resource_url,
+        **flags,
+        "token_request_access": flags["service_account_token_creation"],
+        "high_risk_permission_categories": sorted(high_risk),
+        "highest_severity_category": highest,
+        "permission_fingerprint": fingerprint,
+    }
+
+
+def _extract_allowlisted_role_labels(labels: Optional[dict]) -> dict:
+    return {k: v for k, v in (labels or {}).items() if k in SAFE_ROLE_LABEL_KEYS}
+
+
+def _resolve_aggregated_rules(
+    name: str,
+    role_labels: dict[str, dict],
+    role_rules: dict[str, list],
+    role_selectors: dict[str, list],
+    visited: frozenset,
+    depth: int = 0,
+    max_depth: int = 5,
+) -> tuple[list, bool]:
+    """Recursively resolve a ClusterRole's aggregated rule set via label
+    selectors. Cycle-safe (visited set) and depth-capped; a cycle or
+    depth-cap hit marks the result incomplete (never silently truncated
+    without a signal) rather than raising or looping forever."""
+    if name in visited or depth > max_depth:
+        return [], False
+    visited = visited | {name}
+    direct_rules = list(role_rules.get(name, []))
+    selectors = role_selectors.get(name) or []
+    if not selectors:
+        return direct_rules, True
+
+    aggregated = list(direct_rules)
+    complete = True
+    for match_labels in selectors:
+        if not match_labels:
+            continue
+        for other_name, other_labels in role_labels.items():
+            if other_name == name:
+                continue
+            if all(other_labels.get(k) == v for k, v in match_labels.items()):
+                sub_rules, sub_complete = _resolve_aggregated_rules(
+                    other_name, role_labels, role_rules, role_selectors,
+                    visited, depth + 1, max_depth,
+                )
+                aggregated.extend(sub_rules)
+                complete = complete and sub_complete
+    return aggregated, complete
+
+
+def _normalize_role_object(
+    obj: Any,
+    *,
+    kind: str,
+    cluster_id: str,
+    cluster_name: str,
+    resolved_rules: Optional[list] = None,
+    aggregation_complete: bool = True,
+) -> dict:
+    metadata = obj.metadata
+    namespace = getattr(metadata, "namespace", None) if kind == "Role" else None
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    labels = getattr(metadata, "labels", None) or {}
+
+    aggregation_rule = getattr(obj, "aggregation_rule", None)
+    aggregation_present = aggregation_rule is not None
+    selectors = getattr(aggregation_rule, "cluster_role_selectors", None) or [] if aggregation_rule else []
+    selector_count = len(selectors)
+
+    own_rules = getattr(obj, "rules", None) or []
+    rules_to_summarize = resolved_rules if resolved_rules is not None else own_rules
+    summary = _summarize_rbac_rules(rules_to_summarize)
+
+    built_in = categorize_builtin_role(name)
+    allowlisted_labels = _extract_allowlisted_role_labels(labels)
+    system_managed = name.startswith("system:") or bool(allowlisted_labels)
+
+    record_id = f"{cluster_id}/{kind.lower()}/{namespace or 'cluster'}/{uid or name}"
+
+    return {
+        "record_type": KUBERNETES_ROLE if kind == "Role" else KUBERNETES_CLUSTER_ROLE,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "kind": kind,
+        "built_in_role_category": built_in,
+        "system_managed": system_managed,
+        "aggregation_rule_present": aggregation_present,
+        "aggregation_selector_count": selector_count,
+        "collection_completeness_category": "complete" if aggregation_complete else "partial",
+        **summary,
+    }
+
+
+def _categorize_subject(subject: Any) -> dict:
+    """Normalize one RBAC Subject into safe identity fields. No tokens or
+    Secrets are ever read — only kind/name/namespace, which are
+    non-secret identifiers."""
+    kind = getattr(subject, "kind", None) or ""
+    name = getattr(subject, "name", None) or ""
+    namespace = getattr(subject, "namespace", None)
+
+    anonymous = unauthenticated_group = authenticated_group = False
+    system_group = broad_group = False
+    subject_identity = name
+
+    if kind == SUBJECT_KIND_SERVICE_ACCOUNT:
+        namespace = namespace or ""
+        subject_identity = canonical_service_account_identity(namespace, name)
+    elif kind == SUBJECT_KIND_GROUP:
+        group_category = categorize_group(name)
+        if group_category == GROUP_SYSTEM_UNAUTHENTICATED:
+            unauthenticated_group = system_group = broad_group = True
+        elif group_category == GROUP_SYSTEM_AUTHENTICATED:
+            authenticated_group = system_group = broad_group = True
+        elif group_category in (GROUP_SYSTEM_MASTERS, GROUP_SYSTEM_NODES):
+            system_group = True
+        elif group_category == GROUP_SYSTEM_SERVICEACCOUNTS_PREFIX:
+            system_group = True
+            broad_group = name == GROUP_SYSTEM_SERVICEACCOUNTS_PREFIX
+    elif kind == SUBJECT_KIND_USER:
+        if name == USER_SYSTEM_ANONYMOUS:
+            anonymous = True
+
+    return {
+        "subject_kind": kind,
+        "subject_name": name,
+        "subject_namespace": namespace,
+        "subject_identity": subject_identity,
+        "anonymous_subject": anonymous,
+        "unauthenticated_group": unauthenticated_group,
+        "authenticated_group": authenticated_group,
+        "system_group": system_group,
+        "broad_group": broad_group,
+    }
+
+
+def _resolve_role_ref(
+    role_ref: Any, *, namespace: Optional[str], role_index: dict
+) -> tuple[Optional[dict], str, str, str, str]:
+    """Returns ``(role_record_or_None, resolution_status, ref_kind, ref_name,
+    ref_api_group)``. An unresolved/malformed roleRef is NEVER converted
+    into a safe/low-privilege result — callers must use
+    ``SEVERITY_UNKNOWN`` for it."""
+    try:
+        ref_kind = getattr(role_ref, "kind", None) or ""
+        ref_name = getattr(role_ref, "name", None) or ""
+        ref_api_group = getattr(role_ref, "api_group", None) or ""
+    except Exception:  # noqa: BLE001
+        return None, ROLE_RESOLUTION_MALFORMED, "", "", ""
+
+    if not ref_kind or not ref_name:
+        return None, ROLE_RESOLUTION_MALFORMED, ref_kind, ref_name, ref_api_group
+    if ref_kind == "Role":
+        key = ("Role", namespace, ref_name)
+    elif ref_kind == "ClusterRole":
+        key = ("ClusterRole", None, ref_name)
+    else:
+        return None, ROLE_RESOLUTION_MALFORMED, ref_kind, ref_name, ref_api_group
+
+    role = role_index.get(key)
+    if role is None:
+        return None, ROLE_RESOLUTION_MISSING, ref_kind, ref_name, ref_api_group
+    return role, ROLE_RESOLUTION_RESOLVED, ref_kind, ref_name, ref_api_group
+
+
+def _normalize_rbac_binding(
+    obj: Any,
+    *,
+    kind: str,
+    cluster_id: str,
+    cluster_name: str,
+    role_index: dict,
+    role_collection_denied: bool,
+) -> tuple[dict, list[dict]]:
+    """Normalize one RoleBinding/ClusterRoleBinding into a coarse binding
+    record plus one fine-grained ``kubernetes_rbac_subject_binding`` record
+    per subject (so "subject X added to binding Y" is one precise Change).
+    """
+    metadata = obj.metadata
+    namespace = getattr(metadata, "namespace", None) if kind == "RoleBinding" else None
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    role_ref = getattr(obj, "role_ref", None)
+
+    if role_ref is not None:
+        role_record, resolution_status, ref_kind, ref_name, ref_api_group = _resolve_role_ref(
+            role_ref, namespace=namespace, role_index=role_index,
+        )
+        if role_record is None and resolution_status == ROLE_RESOLUTION_MISSING and role_collection_denied:
+            resolution_status = ROLE_RESOLUTION_ACCESS_DENIED
+    else:
+        role_record, resolution_status, ref_kind, ref_name, ref_api_group = None, ROLE_RESOLUTION_MALFORMED, "", "", ""
+
+    if role_record is not None:
+        resolved_privilege = role_record["highest_severity_category"]
+        cluster_admin_binding = role_record["built_in_role_category"] == BUILTIN_ROLE_CLUSTER_ADMIN
+        wildcard_binding = (
+            role_record["wildcard_api_group"] and role_record["wildcard_resource"] and role_record["wildcard_verb"]
+        )
+        high_risk_categories = role_record["high_risk_permission_categories"]
+    else:
+        resolved_privilege = SEVERITY_UNKNOWN
+        # Even unresolved, a roleRef literally named "cluster-admin" is a
+        # meaningful signal worth surfacing — never silently downgraded.
+        cluster_admin_binding = ref_name == BUILTIN_ROLE_CLUSTER_ADMIN
+        wildcard_binding = False
+        high_risk_categories = []
+
+    raw_subjects = getattr(obj, "subjects", None) or []
+    subject_infos: list[dict] = []
+    for s in raw_subjects:
+        try:
+            subject_infos.append(_categorize_subject(s))
+        except Exception:  # noqa: BLE001 — malformed subject, skip it
+            continue
+
+    record_id = f"{cluster_id}/{kind.lower()}/{namespace or 'cluster'}/{uid or name}"
+
+    subject_kind_counts = {"User": 0, "Group": 0, "ServiceAccount": 0}
+    for si in subject_infos:
+        if si["subject_kind"] in subject_kind_counts:
+            subject_kind_counts[si["subject_kind"]] += 1
+
+    fingerprint_source = (
+        "|".join(sorted(f"{si['subject_kind']}:{si['subject_identity']}" for si in subject_infos))
+        + f"||{ref_kind}:{ref_name}"
+    )
+    binding_fingerprint = hashlib.sha256(fingerprint_source.encode("utf-8")).hexdigest()[:16]
+
+    binding_record = {
+        "record_type": KUBERNETES_ROLE_BINDING if kind == "RoleBinding" else KUBERNETES_CLUSTER_ROLE_BINDING,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "kind": kind,
+        "role_ref_kind": ref_kind,
+        "role_ref_name": ref_name,
+        "role_ref_api_group": ref_api_group,
+        "subject_count": len(subject_infos),
+        "user_subject_count": subject_kind_counts["User"],
+        "group_subject_count": subject_kind_counts["Group"],
+        "service_account_subject_count": subject_kind_counts["ServiceAccount"],
+        "role_resolved": role_record is not None,
+        "role_resolution_status": resolution_status,
+        "resolved_privilege_category": resolved_privilege,
+        "cluster_admin_binding": cluster_admin_binding,
+        "wildcard_permission_binding": wildcard_binding,
+        "high_risk_permission_categories": high_risk_categories,
+        "binding_fingerprint": binding_fingerprint,
+        "collection_completeness_category": "complete",
+    }
+
+    subject_binding_records: list[dict] = []
+    for si in subject_infos:
+        cross_ns = (
+            si["subject_kind"] == SUBJECT_KIND_SERVICE_ACCOUNT
+            and namespace is not None
+            and si["subject_namespace"] != namespace
+        )
+        sb_record_id = f"{record_id}/subject/{si['subject_kind']}/{si['subject_identity']}"
+        subject_binding_records.append({
+            "record_type": KUBERNETES_RBAC_SUBJECT_BINDING,
+            "record_id": sb_record_id,
+            "cluster_id": cluster_id,
+            "cluster_name": cluster_name,
+            "binding_kind": kind,
+            "binding_namespace": namespace,
+            "binding_name": name,
+            "binding_uid": uid,
+            "role_ref_kind": ref_kind,
+            "role_ref_name": ref_name,
+            "role_ref_api_group": ref_api_group,
+            "subject_kind": si["subject_kind"],
+            "subject_name": si["subject_name"],
+            "subject_namespace": si["subject_namespace"],
+            "subject_identity": si["subject_identity"],
+            "anonymous_subject": si["anonymous_subject"],
+            "unauthenticated_group": si["unauthenticated_group"],
+            "authenticated_group": si["authenticated_group"],
+            "system_group": si["system_group"],
+            "broad_group": si["broad_group"],
+            "cross_namespace_service_account": cross_ns,
+            "role_resolved": role_record is not None,
+            "role_resolution_status": resolution_status,
+            "resolved_privilege_category": resolved_privilege,
+            "cluster_admin_binding": cluster_admin_binding,
+            "wildcard_permission_binding": wildcard_binding,
+            "high_risk_permission_categories": high_risk_categories,
+        })
+
+    return binding_record, subject_binding_records
+
+
+def _normalize_service_account(obj: Any, *, cluster_id: str, cluster_name: str) -> dict:
+    """Basic ServiceAccount fields only — binding-derived privilege fields
+    are filled in by ``_enrich_service_accounts`` after bindings/roles are
+    resolved. Never reads ``.secrets[].name`` values beyond a count."""
+    metadata = obj.metadata
+    namespace = metadata.namespace
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    automount = getattr(obj, "automount_service_account_token", None)
+    image_pull_secrets = getattr(obj, "image_pull_secrets", None) or []
+    secrets = getattr(obj, "secrets", None) or []
+
+    record_id = f"{cluster_id}/service_account/{namespace}/{uid or name}"
+
+    return {
+        "record_type": KUBERNETES_SERVICE_ACCOUNT,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "automount_service_account_token": automount,
+        "image_pull_secret_count": len(image_pull_secrets),
+        "secret_reference_count": len(secrets),
+        "workload_reference_count": 0,
+        "bound_role_binding_count": 0,
+        "bound_cluster_role_binding_count": 0,
+        "highest_privilege_category": SEVERITY_LOW,
+        "cluster_admin_bound": False,
+        "wildcard_permission_bound": False,
+        "secret_read_permission_bound": False,
+        "pod_exec_permission_bound": False,
+        "workload_creation_permission_bound": False,
+        "rbac_modification_permission_bound": False,
+        "impersonation_permission_bound": False,
+        "collection_completeness_category": "complete",
+    }
+
+
+def _enrich_service_accounts(
+    sa_records: list[dict],
+    subject_binding_records: list[dict],
+    workload_records: list[dict],
+) -> None:
+    """Mutates ``sa_records`` in place with binding-derived privilege
+    fields and workload-reference counts, resolved locally from
+    already-collected records (no additional API calls)."""
+    workload_sa_counts: dict[tuple[Optional[str], str], int] = {}
+    for w in workload_records:
+        key = (w.get("namespace"), w.get("service_account_name"))
+        workload_sa_counts[key] = workload_sa_counts.get(key, 0) + 1
+
+    by_identity: dict[str, list[dict]] = {}
+    for sb in subject_binding_records:
+        if sb["subject_kind"] != SUBJECT_KIND_SERVICE_ACCOUNT:
+            continue
+        by_identity.setdefault(sb["subject_identity"], []).append(sb)
+
+    for sa in sa_records:
+        identity = canonical_service_account_identity(sa["namespace"], sa["name"])
+        bindings = by_identity.get(identity, [])
+        role_binding_count = sum(1 for b in bindings if b["binding_kind"] == "RoleBinding")
+        cluster_role_binding_count = sum(1 for b in bindings if b["binding_kind"] == "ClusterRoleBinding")
+        categories: set[str] = set()
+        for b in bindings:
+            categories.update(b["high_risk_permission_categories"])
+        cluster_admin = any(b["cluster_admin_binding"] for b in bindings)
+        wildcard = any(b["wildcard_permission_binding"] for b in bindings)
+
+        sa["bound_role_binding_count"] = role_binding_count
+        sa["bound_cluster_role_binding_count"] = cluster_role_binding_count
+        sa["highest_privilege_category"] = SEVERITY_CRITICAL if cluster_admin else highest_severity(categories)
+        sa["cluster_admin_bound"] = cluster_admin
+        sa["wildcard_permission_bound"] = wildcard
+        sa["secret_read_permission_bound"] = bool(categories & {CATEGORY_SECRET_READ, CATEGORY_SECRET_READ_BROAD_SCOPE})
+        sa["pod_exec_permission_bound"] = CATEGORY_POD_EXEC in categories
+        sa["workload_creation_permission_bound"] = bool(categories & {CATEGORY_WORKLOAD_WRITE, CATEGORY_POD_WRITE})
+        sa["rbac_modification_permission_bound"] = bool(
+            categories & {CATEGORY_ROLE_OR_CLUSTER_ROLE_WRITE, CATEGORY_CLUSTER_ROLE_BINDING_WRITE}
+        )
+        sa["impersonation_permission_bound"] = CATEGORY_IMPERSONATE in categories
+        sa["workload_reference_count"] = workload_sa_counts.get((sa["namespace"], sa["name"]), 0)
+
+
+def resolve_effective_automount(
+    *, workload_explicit: Optional[bool], sa_automount_explicit: Optional[bool], sa_status: str,
+) -> tuple[str, str]:
+    """Resolve effective ``automountServiceAccountToken`` posture.
+
+    Resolution order: workload/Pod template explicit value, then
+    ServiceAccount explicit value, then the Kubernetes default (``true``).
+    ``sa_status`` must be one of ``"found"``, ``"missing"``,
+    ``"access_denied"`` — a missing/denied ServiceAccount is NEVER silently
+    treated as "default true"; it produces an explicit unknown state.
+    Returns ``(effective_automount_state, automount_source_category)``.
+    """
+    if workload_explicit is True:
+        return AUTOMOUNT_STATE_EXPLICIT_WORKLOAD_TRUE, AUTOMOUNT_SOURCE_WORKLOAD_EXPLICIT
+    if workload_explicit is False:
+        return AUTOMOUNT_STATE_EXPLICIT_WORKLOAD_FALSE, AUTOMOUNT_SOURCE_WORKLOAD_EXPLICIT
+    if sa_status == "missing":
+        return AUTOMOUNT_STATE_UNKNOWN_SERVICE_ACCOUNT_MISSING, AUTOMOUNT_SOURCE_UNKNOWN
+    if sa_status != "found":
+        return AUTOMOUNT_STATE_UNKNOWN_PERMISSION_DENIED, AUTOMOUNT_SOURCE_UNKNOWN
+    if sa_automount_explicit is True:
+        return AUTOMOUNT_STATE_INHERITED_SERVICE_ACCOUNT_TRUE, AUTOMOUNT_SOURCE_SERVICE_ACCOUNT_EXPLICIT
+    if sa_automount_explicit is False:
+        return AUTOMOUNT_STATE_INHERITED_SERVICE_ACCOUNT_FALSE, AUTOMOUNT_SOURCE_SERVICE_ACCOUNT_EXPLICIT
+    return AUTOMOUNT_STATE_KUBERNETES_DEFAULT_TRUE, AUTOMOUNT_SOURCE_KUBERNETES_DEFAULT
+
+
+def _enrich_workload_service_accounts(
+    rollup_records: list[dict], sa_records: list[dict], sa_collection_status: str,
+) -> None:
+    """Mutates message-2's ``kubernetes_workload_service_account`` rollup
+    records in place with resolved automount posture and bound-privilege
+    context now that ServiceAccounts/bindings/roles have been collected."""
+    sa_by_key = {(sa["namespace"], sa["name"]): sa for sa in sa_records}
+
+    for rollup in rollup_records:
+        key = (rollup["namespace"], rollup["service_account_name"])
+        sa = sa_by_key.get(key)
+        found = sa is not None
+        if found:
+            sa_status = "found"
+        elif sa_collection_status == "partial":
+            sa_status = "access_denied"
+        else:
+            sa_status = "missing"
+
+        sa_automount_explicit = sa["automount_service_account_token"] if sa else None
+        effective_state, source_category = resolve_effective_automount(
+            workload_explicit=None, sa_automount_explicit=sa_automount_explicit, sa_status=sa_status,
+        )
+
+        risky: set[str] = set()
+        if sa:
+            if sa["secret_read_permission_bound"]:
+                risky.add(CATEGORY_SECRET_READ)
+            if sa["pod_exec_permission_bound"]:
+                risky.add(CATEGORY_POD_EXEC)
+            if sa["workload_creation_permission_bound"]:
+                risky.add(CATEGORY_WORKLOAD_WRITE)
+            if sa["rbac_modification_permission_bound"]:
+                risky.add(CATEGORY_ROLE_OR_CLUSTER_ROLE_WRITE)
+            if sa["impersonation_permission_bound"]:
+                risky.add(CATEGORY_IMPERSONATE)
+
+        rollup["service_account_found"] = found
+        rollup["effective_automount_state"] = effective_state
+        rollup["automount_source_category"] = source_category
+        rollup["service_account_privilege_summary"] = sa["highest_privilege_category"] if sa else SEVERITY_UNKNOWN
+        rollup["bound_role_binding_count"] = sa["bound_role_binding_count"] if sa else 0
+        rollup["bound_cluster_role_binding_count"] = sa["bound_cluster_role_binding_count"] if sa else 0
+        rollup["risky_permission_categories"] = sorted(risky)
+        rollup["collection_completeness_category"] = "complete" if (found or sa_collection_status != "partial") else "partial"
+
+
+def _build_rbac_permission_summaries(
+    subject_binding_records: list[dict], *, cluster_id: str, cluster_name: str,
+) -> list[dict]:
+    """One rollup record per unique subject identity (User/Group/
+    ServiceAccount), aggregating privilege across every binding that
+    subject appears in — see kubernetes_schema.py module docstring for why
+    this is distinct from the per-binding-subject drift record."""
+    buckets: dict[tuple[str, str], dict] = {}
+    for sb in subject_binding_records:
+        key = (sb["subject_kind"], sb["subject_identity"])
+        bucket = buckets.setdefault(key, {
+            "namespace": sb.get("subject_namespace"),
+            "role_binding_count": 0, "cluster_role_binding_count": 0,
+            "cluster_admin": False, "wildcard": False, "categories": set(),
+        })
+        if sb["binding_kind"] == "RoleBinding":
+            bucket["role_binding_count"] += 1
+        else:
+            bucket["cluster_role_binding_count"] += 1
+        bucket["cluster_admin"] = bucket["cluster_admin"] or sb["cluster_admin_binding"]
+        bucket["wildcard"] = bucket["wildcard"] or sb["wildcard_permission_binding"]
+        bucket["categories"].update(sb["high_risk_permission_categories"])
+
+    records: list[dict] = []
+    for (subject_kind, subject_identity), bucket in sorted(buckets.items()):
+        categories = bucket["categories"]
+        highest = SEVERITY_CRITICAL if bucket["cluster_admin"] else highest_severity(categories)
+        records.append({
+            "record_type": KUBERNETES_RBAC_PERMISSION_SUMMARY,
+            "record_id": f"{cluster_id}/rbac_permission_summary/{subject_kind}/{subject_identity}",
+            "cluster_id": cluster_id,
+            "cluster_name": cluster_name,
+            "subject_kind": subject_kind,
+            "subject_identity": subject_identity,
+            "namespace": bucket["namespace"],
+            "role_binding_count": bucket["role_binding_count"],
+            "cluster_role_binding_count": bucket["cluster_role_binding_count"],
+            "cluster_admin_bound": bucket["cluster_admin"],
+            "wildcard_permission_bound": bucket["wildcard"],
+            "secret_read_bound": bool(categories & {CATEGORY_SECRET_READ, CATEGORY_SECRET_READ_BROAD_SCOPE}),
+            "secret_write_bound": CATEGORY_SECRET_WRITE in categories,
+            "pod_exec_bound": CATEGORY_POD_EXEC in categories,
+            "workload_create_bound": bool(categories & {CATEGORY_WORKLOAD_WRITE, CATEGORY_POD_WRITE}),
+            "rbac_modification_bound": bool(
+                categories & {CATEGORY_ROLE_OR_CLUSTER_ROLE_WRITE, CATEGORY_CLUSTER_ROLE_BINDING_WRITE}
+            ),
+            "impersonation_bound": CATEGORY_IMPERSONATE in categories,
+            "high_risk_permission_categories": sorted(categories),
+            "highest_privilege_category": highest,
+            "collection_completeness_category": "complete",
+        })
+    return records
+
+
+def _collect_service_accounts(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    records: list[dict] = []
+    for item in raw_items:
+        try:
+            ns = item.metadata.namespace
+        except Exception:  # noqa: BLE001
+            continue
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            records.append(_normalize_service_account(item, cluster_id=cluster_id, cluster_name=cluster_name))
+        except Exception:  # noqa: BLE001
+            continue
+
+    status = _family_completeness_status(diag)
+    for r in records:
+        r["collection_completeness_category"] = status
+    records.sort(key=lambda r: (r["namespace"], r["name"]))
+    return records, status
+
+
+def _collect_cluster_roles(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+) -> tuple[list[dict], str, dict]:
+    """Returns ``(records, status, role_index)``. Resolves aggregation via
+    label selectors across the full collected set (see
+    ``_resolve_aggregated_rules``)."""
+    raw_items, diag = paginate_list(list_fn)
+    status = _family_completeness_status(diag)
+
+    role_labels: dict[str, dict] = {}
+    role_rules: dict[str, list] = {}
+    role_selectors: dict[str, list] = {}
+    valid_items = []
+    for item in raw_items:
+        try:
+            name = item.metadata.name
+        except Exception:  # noqa: BLE001
+            continue
+        valid_items.append(item)
+        role_labels[name] = getattr(item.metadata, "labels", None) or {}
+        role_rules[name] = getattr(item, "rules", None) or []
+        agg = getattr(item, "aggregation_rule", None)
+        selectors = getattr(agg, "cluster_role_selectors", None) or [] if agg else []
+        role_selectors[name] = [(getattr(sel, "match_labels", None) or {}) for sel in selectors]
+
+    records: list[dict] = []
+    index: dict = {}
+    for item in valid_items:
+        try:
+            name = item.metadata.name
+            resolved_rules, complete = _resolve_aggregated_rules(
+                name, role_labels, role_rules, role_selectors, frozenset(),
+            )
+            record = _normalize_role_object(
+                item, kind="ClusterRole", cluster_id=cluster_id, cluster_name=cluster_name,
+                resolved_rules=resolved_rules, aggregation_complete=complete,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        # A per-role aggregation-incomplete result must not be silently
+        # overwritten by the family-level status — apply the WORSE of the two.
+        if record["collection_completeness_category"] == "complete" and status != "complete":
+            record["collection_completeness_category"] = status
+        records.append(record)
+        index[("ClusterRole", None, record["name"])] = record
+
+    records.sort(key=lambda r: r["name"])
+    return records, status, index
+
+
+def _collect_roles(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], str, dict]:
+    raw_items, diag = paginate_list(list_fn)
+    status = _family_completeness_status(diag)
+
+    records: list[dict] = []
+    index: dict = {}
+    for item in raw_items:
+        try:
+            ns = item.metadata.namespace
+        except Exception:  # noqa: BLE001
+            continue
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            record = _normalize_role_object(item, kind="Role", cluster_id=cluster_id, cluster_name=cluster_name)
+        except Exception:  # noqa: BLE001
+            continue
+        record["collection_completeness_category"] = status
+        records.append(record)
+        index[("Role", record["namespace"], record["name"])] = record
+
+    records.sort(key=lambda r: (r["namespace"], r["name"]))
+    return records, status, index
+
+
+def _collect_rbac_bindings(
+    list_fn: Callable[..., Any],
+    *,
+    kind: str,
+    cluster_id: str,
+    cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+    role_index: dict,
+    role_collection_denied: bool,
+) -> tuple[list[dict], list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    binding_records: list[dict] = []
+    subject_records: list[dict] = []
+
+    for item in raw_items:
+        try:
+            ns = getattr(item.metadata, "namespace", None) if kind == "RoleBinding" else None
+        except Exception:  # noqa: BLE001
+            continue
+        if kind == "RoleBinding" and namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            binding_record, subjects = _normalize_rbac_binding(
+                item, kind=kind, cluster_id=cluster_id, cluster_name=cluster_name,
+                role_index=role_index, role_collection_denied=role_collection_denied,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        binding_records.append(binding_record)
+        subject_records.extend(subjects)
+
+    status = _family_completeness_status(diag)
+    for r in binding_records:
+        r["collection_completeness_category"] = status
+    binding_records.sort(key=lambda r: (r.get("namespace") or "", r["name"]))
+    subject_records.sort(key=lambda r: r["record_id"])
+    return binding_records, subject_records, status
+
+
 # ── Connector ──────────────────────────────────────────────────────────────────
 
 class KubernetesConnector(BaseConnector):
@@ -1702,6 +2692,70 @@ class KubernetesConnector(BaseConnector):
                 all_workload_records, cluster_id=cluster_id, cluster_name=display_cluster_name
             )
 
+            # ── RBAC and identity (message 3) ────────────────────────────────
+            # ClusterRoles are collected first (needed to resolve both
+            # RoleBindings-to-ClusterRoles and ClusterRoleBindings). Each
+            # family remains independently fail-soft: a 403 on one never
+            # affects another, and an unresolved roleRef is never silently
+            # treated as safe/low privilege.
+            rbac_v1 = k8s_client.RbacAuthorizationV1Api(api_client)
+
+            cluster_role_records, cluster_role_status, cluster_role_index = _collect_cluster_roles(
+                rbac_v1.list_cluster_role, cluster_id=cluster_id, cluster_name=display_cluster_name,
+            )
+            role_records, role_status, role_index = _collect_roles(
+                rbac_v1.list_role_for_all_namespaces,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+            combined_role_index = {**cluster_role_index, **role_index}
+            roles_collection_denied = cluster_role_status == "partial" or role_status == "partial"
+
+            service_account_full_records, sa_collection_status = _collect_service_accounts(
+                core_v1.list_service_account_for_all_namespaces,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+
+            role_binding_records, role_binding_subject_records, role_binding_status = _collect_rbac_bindings(
+                rbac_v1.list_role_binding_for_all_namespaces,
+                kind="RoleBinding", cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist, role_index=combined_role_index,
+                role_collection_denied=roles_collection_denied,
+            )
+            cluster_role_binding_records, cluster_role_binding_subject_records, cluster_role_binding_status = (
+                _collect_rbac_bindings(
+                    rbac_v1.list_cluster_role_binding,
+                    kind="ClusterRoleBinding", cluster_id=cluster_id, cluster_name=display_cluster_name,
+                    namespace_allowlist=allowlist, role_index=combined_role_index,
+                    role_collection_denied=roles_collection_denied,
+                )
+            )
+
+            if "partial" in (
+                cluster_role_status, role_status, sa_collection_status,
+                role_binding_status, cluster_role_binding_status,
+            ):
+                partial_permission = True
+
+            all_subject_binding_records = role_binding_subject_records + cluster_role_binding_subject_records
+
+            _enrich_service_accounts(
+                service_account_full_records, all_subject_binding_records, all_workload_records,
+            )
+            _enrich_workload_service_accounts(
+                service_account_records, service_account_full_records, sa_collection_status,
+            )
+            rbac_permission_summary_records = _build_rbac_permission_summaries(
+                all_subject_binding_records, cluster_id=cluster_id, cluster_name=display_cluster_name,
+            )
+
+            all_rbac_records = (
+                service_account_full_records + role_records + cluster_role_records
+                + role_binding_records + cluster_role_binding_records
+                + all_subject_binding_records + rbac_permission_summary_records
+            )
+
             collection_completeness = "complete" if not partial_permission else "partial"
 
             cluster_record = {
@@ -1731,6 +2785,7 @@ class KubernetesConnector(BaseConnector):
             return (
                 [cluster_record] + selected_namespace_records + capability_records
                 + all_workload_records + all_container_records + service_account_records
+                + all_rbac_records
             )
         finally:
             api_client.rest_client.pool_manager.clear()

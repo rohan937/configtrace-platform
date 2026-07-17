@@ -2960,6 +2960,89 @@ _KUBERNETES_WORKLOAD_SERVICE_ACCOUNT_TRACKED_FIELDS: tuple[str, ...] = (
     "automount_explicit_true_count",
     "automount_explicit_false_count",
     "automount_inherited_count",
+    # Enriched in message 3 (RBAC) — resolved automount posture and
+    # bound-privilege context.
+    "service_account_found",
+    "effective_automount_state",
+    "automount_source_category",
+    "service_account_privilege_summary",
+    "bound_role_binding_count",
+    "bound_cluster_role_binding_count",
+    "risky_permission_categories",
+    "collection_completeness_category",
+)
+
+# Kubernetes RBAC and identity — message 3 of a 9-message arc.
+_KUBERNETES_SERVICE_ACCOUNT_TRACKED_FIELDS: tuple[str, ...] = (
+    "automount_service_account_token",
+    "secret_reference_count",
+    "image_pull_secret_count",
+    "highest_privilege_category",
+    "bound_role_binding_count",
+    "bound_cluster_role_binding_count",
+    "cluster_admin_bound",
+    "wildcard_permission_bound",
+    "secret_read_permission_bound",
+    "pod_exec_permission_bound",
+    "workload_creation_permission_bound",
+    "rbac_modification_permission_bound",
+    "impersonation_permission_bound",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_ROLE_TRACKED_FIELDS: tuple[str, ...] = (
+    "permission_fingerprint",
+    "rule_count",
+    "wildcard_api_group",
+    "wildcard_resource",
+    "wildcard_verb",
+    "wildcard_non_resource_url",
+    "high_risk_permission_categories",
+    "aggregation_rule_present",
+    "highest_severity_category",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_ROLE_BINDING_TRACKED_FIELDS: tuple[str, ...] = (
+    "role_ref_kind",
+    "role_ref_name",
+    "role_ref_api_group",
+    "subject_count",
+    "user_subject_count",
+    "group_subject_count",
+    "service_account_subject_count",
+    "role_resolved",
+    "role_resolution_status",
+    "resolved_privilege_category",
+    "cluster_admin_binding",
+    "wildcard_permission_binding",
+    "binding_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_RBAC_SUBJECT_BINDING_TRACKED_FIELDS: tuple[str, ...] = (
+    "role_ref_kind",
+    "role_ref_name",
+    "role_resolved",
+    "role_resolution_status",
+    "resolved_privilege_category",
+    "cluster_admin_binding",
+    "wildcard_permission_binding",
+    "high_risk_permission_categories",
+)
+
+_KUBERNETES_RBAC_PERMISSION_SUMMARY_TRACKED_FIELDS: tuple[str, ...] = (
+    "role_binding_count",
+    "cluster_role_binding_count",
+    "cluster_admin_bound",
+    "wildcard_permission_bound",
+    "secret_read_bound",
+    "secret_write_bound",
+    "pod_exec_bound",
+    "workload_create_bound",
+    "rbac_modification_bound",
+    "impersonation_bound",
+    "highest_privilege_category",
 )
 
 _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
@@ -2990,6 +3073,13 @@ _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "kubernetes_pod": _KUBERNETES_POD_TRACKED_FIELDS,
     "kubernetes_container_security_context": _KUBERNETES_CONTAINER_SECURITY_CONTEXT_TRACKED_FIELDS,
     "kubernetes_workload_service_account": _KUBERNETES_WORKLOAD_SERVICE_ACCOUNT_TRACKED_FIELDS,
+    "kubernetes_service_account": _KUBERNETES_SERVICE_ACCOUNT_TRACKED_FIELDS,
+    "kubernetes_role": _KUBERNETES_ROLE_TRACKED_FIELDS,
+    "kubernetes_cluster_role": _KUBERNETES_ROLE_TRACKED_FIELDS,
+    "kubernetes_role_binding": _KUBERNETES_ROLE_BINDING_TRACKED_FIELDS,
+    "kubernetes_cluster_role_binding": _KUBERNETES_ROLE_BINDING_TRACKED_FIELDS,
+    "kubernetes_rbac_subject_binding": _KUBERNETES_RBAC_SUBJECT_BINDING_TRACKED_FIELDS,
+    "kubernetes_rbac_permission_summary": _KUBERNETES_RBAC_PERMISSION_SUMMARY_TRACKED_FIELDS,
 }
 
 
@@ -3395,6 +3485,37 @@ def _build_provider_metadata(
         if _kubernetes_record_type == "kubernetes_workload_service_account":
             metadata["service_account_name"] = (
                 context_record.get("service_account_name") or record.get("service_account_name") or ""
+            )
+
+        # RBAC and identity (message 3). Kubernetes risk classifiers read
+        # these directly from provider_metadata for whole-record added/
+        # removed events and for display copy — none are populated by the
+        # generic record_name/record_content stanza (these records don't
+        # carry a "name"/"content" shape either).
+        if _kubernetes_record_type == "kubernetes_service_account":
+            metadata["service_account_name"] = context_record.get("name") or record.get("name") or ""
+        if _kubernetes_record_type in ("kubernetes_role", "kubernetes_cluster_role"):
+            metadata["kind"] = context_record.get("kind") or record.get("kind") or ""
+            metadata["role_name"] = context_record.get("name") or record.get("name") or ""
+            metadata["built_in_role_category"] = (
+                context_record.get("built_in_role_category") or record.get("built_in_role_category") or ""
+            )
+        if _kubernetes_record_type in ("kubernetes_role_binding", "kubernetes_cluster_role_binding"):
+            metadata["kind"] = context_record.get("kind") or record.get("kind") or ""
+            metadata["binding_name"] = context_record.get("name") or record.get("name") or ""
+            metadata["role_ref_name"] = context_record.get("role_ref_name") or record.get("role_ref_name") or ""
+        if _kubernetes_record_type == "kubernetes_rbac_subject_binding":
+            metadata["binding_kind"] = context_record.get("binding_kind") or record.get("binding_kind") or ""
+            metadata["binding_name"] = context_record.get("binding_name") or record.get("binding_name") or ""
+            metadata["role_ref_name"] = context_record.get("role_ref_name") or record.get("role_ref_name") or ""
+            metadata["subject_kind"] = context_record.get("subject_kind") or record.get("subject_kind") or ""
+            metadata["subject_identity"] = (
+                context_record.get("subject_identity") or record.get("subject_identity") or ""
+            )
+        if _kubernetes_record_type == "kubernetes_rbac_permission_summary":
+            metadata["subject_kind"] = context_record.get("subject_kind") or record.get("subject_kind") or ""
+            metadata["subject_identity"] = (
+                context_record.get("subject_identity") or record.get("subject_identity") or ""
             )
 
     return metadata

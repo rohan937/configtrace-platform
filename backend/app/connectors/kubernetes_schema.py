@@ -1,11 +1,15 @@
-"""Kubernetes connector schema — workload security (message 2 of a 9-message arc).
+"""Kubernetes connector schema — RBAC and identity (message 3 of a 9-message arc).
 
 This module defines the full planned record-type taxonomy for the
 Kubernetes provider. Message 1 emitted the first three types (cluster,
-namespace, API capability). Message 2 adds the workload-controller family,
+namespace, API capability). Message 2 added the workload-controller family,
 the standalone-Pod family, per-container security-context records, and a
-minimal workload-service-account rollup. The remaining types are reserved
-names for later messages so downstream code (diff tracking, risk
+minimal workload-service-account rollup. Message 3 (this message) adds
+ServiceAccounts, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, a
+per-subject RBAC permission rollup, and a per-binding-subject drift record,
+and enriches the message-2 workload-service-account rollup with resolved
+automount posture and bound-privilege context. The remaining types are
+reserved names for later messages so downstream code (diff tracking, risk
 classification, Security Findings) can be built incrementally against a
 stable taxonomy without renaming record types mid-arc.
 
@@ -37,10 +41,33 @@ workload this sync, with automount-posture counts. A full ServiceAccount
 resource (and its own default automount value) is collected starting
 message 3.
 
-Planned for later messages (message 3 — RBAC)
------------------------------------------------
-``kubernetes_role``, ``kubernetes_cluster_role``, ``kubernetes_role_binding``,
-``kubernetes_cluster_role_binding``, ``kubernetes_service_account``.
+Emitted in message 3 (RBAC and identity)
+-------------------------------------------
+``kubernetes_service_account`` — one record per ServiceAccount, with safe
+counts (image-pull secrets, Secret references), resolved automount default,
+and a bound-privilege rollup (cluster-admin/wildcard/secret-read/pod-exec/
+workload-create/RBAC-modify/impersonation flags) computed after binding
+resolution.
+``kubernetes_role``, ``kubernetes_cluster_role`` — one record per Role/
+ClusterRole, with normalized rule categorization (never raw rule documents):
+API-group/resource/verb categories, the full dangerous-permission boolean
+taxonomy (secrets, Pod exec/attach/port-forward/logs, workload/RBAC/webhook/
+CRD/namespace mutation, bind/escalate/impersonate/token-creation/
+CSR-approval), a stable permission fingerprint, and a highest-severity
+category.
+``kubernetes_role_binding``, ``kubernetes_cluster_role_binding`` — one
+record per binding, with subject-category counts, resolved roleRef privilege
+(or an explicit unresolved/denied status — never silently downgraded to
+"safe"), and a binding fingerprint.
+``kubernetes_rbac_subject_binding`` — one record per (binding, subject)
+pair, so a single subject being added to or removed from a binding produces
+one precise Change (see ``kubernetes.py`` module docstring for why this is
+a separate record from the coarser binding record).
+``kubernetes_rbac_permission_summary`` — one rollup record per unique
+subject identity (User/Group/ServiceAccount) aggregating privilege across
+*every* binding that subject appears in — answers "what does this identity
+have access to in total", independent of how many individual bindings grant
+it.
 
 Planned for later messages (message 4 — networking)
 ------------------------------------------------------
@@ -117,15 +144,37 @@ KUBERNETES_WORKLOAD_RECORD_TYPES: frozenset[str] = (
     )
 )
 
-# ── Record type constants — reserved for later messages (not yet emitted) ───
-# These names are fixed now so that later messages never need to rename a
-# record type after Changes/Findings have already been built against it.
+# ── Record type constants — emitted in message 3 (RBAC and identity) ────────
 
 KUBERNETES_ROLE = "kubernetes_role"
 KUBERNETES_CLUSTER_ROLE = "kubernetes_cluster_role"
 KUBERNETES_ROLE_BINDING = "kubernetes_role_binding"
 KUBERNETES_CLUSTER_ROLE_BINDING = "kubernetes_cluster_role_binding"
 KUBERNETES_SERVICE_ACCOUNT = "kubernetes_service_account"
+KUBERNETES_RBAC_SUBJECT_BINDING = "kubernetes_rbac_subject_binding"
+KUBERNETES_RBAC_PERMISSION_SUMMARY = "kubernetes_rbac_permission_summary"
+
+KUBERNETES_RBAC_ROLE_RECORD_TYPES: frozenset[str] = frozenset(
+    {KUBERNETES_ROLE, KUBERNETES_CLUSTER_ROLE}
+)
+KUBERNETES_RBAC_BINDING_RECORD_TYPES: frozenset[str] = frozenset(
+    {KUBERNETES_ROLE_BINDING, KUBERNETES_CLUSTER_ROLE_BINDING}
+)
+KUBERNETES_RBAC_RECORD_TYPES: frozenset[str] = (
+    KUBERNETES_RBAC_ROLE_RECORD_TYPES
+    | KUBERNETES_RBAC_BINDING_RECORD_TYPES
+    | frozenset(
+        {
+            KUBERNETES_SERVICE_ACCOUNT,
+            KUBERNETES_RBAC_SUBJECT_BINDING,
+            KUBERNETES_RBAC_PERMISSION_SUMMARY,
+        }
+    )
+)
+
+# ── Record type constants — reserved for later messages (not yet emitted) ───
+# These names are fixed now so that later messages never need to rename a
+# record type after Changes/Findings have already been built against it.
 
 KUBERNETES_SERVICE = "kubernetes_service"
 KUBERNETES_INGRESS = "kubernetes_ingress"
@@ -144,8 +193,6 @@ KUBERNETES_API_SERVER_SECURITY_POSTURE = "kubernetes_api_server_security_posture
 
 KUBERNETES_PLANNED_RECORD_TYPES: frozenset[str] = frozenset(
     {
-        KUBERNETES_ROLE, KUBERNETES_CLUSTER_ROLE, KUBERNETES_ROLE_BINDING,
-        KUBERNETES_CLUSTER_ROLE_BINDING, KUBERNETES_SERVICE_ACCOUNT,
         KUBERNETES_SERVICE, KUBERNETES_INGRESS, KUBERNETES_GATEWAY,
         KUBERNETES_HTTP_ROUTE, KUBERNETES_NETWORK_POLICY,
         KUBERNETES_SECRET_METADATA, KUBERNETES_CONFIG_MAP_METADATA,
@@ -161,6 +208,7 @@ KUBERNETES_PLANNED_RECORD_TYPES: frozenset[str] = frozenset(
 KUBERNETES_RECORD_TYPES: frozenset[str] = (
     KUBERNETES_FOUNDATION_RECORD_TYPES
     | KUBERNETES_WORKLOAD_RECORD_TYPES
+    | KUBERNETES_RBAC_RECORD_TYPES
     | KUBERNETES_PLANNED_RECORD_TYPES
 )
 
@@ -701,3 +749,536 @@ class KubernetesWorkloadServiceAccountRecord(TypedDict):
     automount_explicit_true_count: int
     automount_explicit_false_count: int
     automount_inherited_count: int
+    # Enriched in message 3 (RBAC) — see kubernetes.py's automount
+    # resolution logic and module docstring.
+    service_account_found: bool
+    effective_automount_state: str
+    automount_source_category: str
+    service_account_privilege_summary: str
+    bound_role_binding_count: int
+    bound_cluster_role_binding_count: int
+    risky_permission_categories: list[str]
+    collection_completeness_category: str
+
+
+# ── RBAC vocabulary — message 3 ───────────────────────────────────────────────
+
+# ServiceAccount / binding automount resolution states. "unknown_*" states
+# must never be treated as a confirmed true/false by any downstream code.
+AUTOMOUNT_STATE_EXPLICIT_WORKLOAD_TRUE = "explicit_workload_true"
+AUTOMOUNT_STATE_EXPLICIT_WORKLOAD_FALSE = "explicit_workload_false"
+AUTOMOUNT_STATE_INHERITED_SERVICE_ACCOUNT_TRUE = "inherited_service_account_true"
+AUTOMOUNT_STATE_INHERITED_SERVICE_ACCOUNT_FALSE = "inherited_service_account_false"
+AUTOMOUNT_STATE_KUBERNETES_DEFAULT_TRUE = "kubernetes_default_true"
+AUTOMOUNT_STATE_UNKNOWN_SERVICE_ACCOUNT_MISSING = "unknown_service_account_missing"
+AUTOMOUNT_STATE_UNKNOWN_PERMISSION_DENIED = "unknown_permission_denied"
+
+AUTOMOUNT_SOURCE_WORKLOAD_EXPLICIT = "workload_explicit"
+AUTOMOUNT_SOURCE_SERVICE_ACCOUNT_EXPLICIT = "service_account_explicit"
+AUTOMOUNT_SOURCE_KUBERNETES_DEFAULT = "kubernetes_default"
+AUTOMOUNT_SOURCE_UNKNOWN = "unknown"
+
+# Role-resolution status — an unresolved/denied roleRef must never be
+# silently treated as low/no privilege.
+ROLE_RESOLUTION_RESOLVED = "resolved"
+ROLE_RESOLUTION_MISSING = "missing"
+ROLE_RESOLUTION_ACCESS_DENIED = "access_denied"
+ROLE_RESOLUTION_MALFORMED = "malformed"
+
+# Privilege severity categories shared by Roles/ClusterRoles, bindings,
+# subject-bindings, and the permission-summary rollup. "unknown" is
+# distinct from "low" — it means privilege could not be determined
+# (unresolved roleRef, access-denied collection, malformed rule), never a
+# confirmed safe state.
+SEVERITY_CRITICAL = "critical"
+SEVERITY_HIGH = "high"
+SEVERITY_MEDIUM = "medium"
+SEVERITY_LOW = "low"
+SEVERITY_UNKNOWN = "unknown"
+
+# Built-in role categories. Recognizing these is NOT a judgement that they
+# are safe or unsafe — only the fact of a subject being BOUND to one is
+# potentially dangerous (see kubernetes.py module docstring).
+BUILTIN_ROLE_CLUSTER_ADMIN = "cluster-admin"
+BUILTIN_ROLE_ADMIN = "admin"
+BUILTIN_ROLE_EDIT = "edit"
+BUILTIN_ROLE_VIEW = "view"
+BUILTIN_ROLE_SYSTEM = "system"
+BUILTIN_ROLE_AGGREGATE_TO_ADMIN = "aggregate-to-admin"
+BUILTIN_ROLE_AGGREGATE_TO_EDIT = "aggregate-to-edit"
+BUILTIN_ROLE_AGGREGATE_TO_VIEW = "aggregate-to-view"
+BUILTIN_ROLE_NONE = "none"
+
+# Only these explicit, well-known bootstrapping label keys are ever read
+# from a Role/ClusterRole — never arbitrary labels.
+SAFE_ROLE_LABEL_KEYS: frozenset[str] = frozenset(
+    {"kubernetes.io/bootstrapping", "rbac.authorization.k8s.io/aggregate-to-admin",
+     "rbac.authorization.k8s.io/aggregate-to-edit", "rbac.authorization.k8s.io/aggregate-to-view"}
+)
+
+# API-group categories (never store the raw group string beyond this
+# bounded, well-known vocabulary; unrecognized groups — almost always CRD
+# groups — are "custom", not persisted verbatim beyond that bucket... note:
+# actual K8s API group names are not secret, but categorizing keeps the
+# stored vocabulary bounded and consistent with resource/verb handling).
+API_GROUP_CORE = "core"
+API_GROUP_WILDCARD = "wildcard"
+API_GROUP_CUSTOM = "custom"
+_KNOWN_API_GROUPS: frozenset[str] = frozenset(
+    {
+        "apps", "batch", "networking.k8s.io", "rbac.authorization.k8s.io",
+        "policy", "admissionregistration.k8s.io", "storage.k8s.io",
+        "certificates.k8s.io", "authorization.k8s.io", "authentication.k8s.io",
+        "apiextensions.k8s.io", "coordination.k8s.io", "scheduling.k8s.io",
+        "discovery.k8s.io", "events.k8s.io", "autoscaling",
+    }
+)
+
+# Resource categories — the bounded vocabulary a raw RBAC resource string
+# (e.g. "pods", "pods/exec", "secrets") is mapped into.
+RESOURCE_CATEGORY_SECRETS = "secrets"
+RESOURCE_CATEGORY_CONFIGMAPS = "configmaps"
+RESOURCE_CATEGORY_PODS = "pods"
+RESOURCE_CATEGORY_PODS_EXEC = "pods/exec"
+RESOURCE_CATEGORY_PODS_ATTACH = "pods/attach"
+RESOURCE_CATEGORY_PODS_PORTFORWARD = "pods/portforward"
+RESOURCE_CATEGORY_PODS_LOG = "pods/log"
+RESOURCE_CATEGORY_WORKLOADS = "workloads"
+RESOURCE_CATEGORY_SERVICES = "services"
+RESOURCE_CATEGORY_INGRESSES = "ingresses"
+RESOURCE_CATEGORY_NETWORK_POLICIES = "networkpolicies"
+RESOURCE_CATEGORY_ROLES = "roles"
+RESOURCE_CATEGORY_ROLE_BINDINGS = "rolebindings"
+RESOURCE_CATEGORY_CLUSTER_ROLES = "clusterroles"
+RESOURCE_CATEGORY_CLUSTER_ROLE_BINDINGS = "clusterrolebindings"
+RESOURCE_CATEGORY_SERVICE_ACCOUNTS = "serviceaccounts"
+RESOURCE_CATEGORY_SERVICE_ACCOUNTS_TOKEN = "serviceaccounts/token"
+RESOURCE_CATEGORY_NODES = "nodes"
+RESOURCE_CATEGORY_NODES_PROXY = "nodes/proxy"
+RESOURCE_CATEGORY_PERSISTENT_VOLUMES = "persistentvolumes"
+RESOURCE_CATEGORY_NAMESPACES = "namespaces"
+RESOURCE_CATEGORY_VALIDATING_WEBHOOKS = "validatingwebhookconfigurations"
+RESOURCE_CATEGORY_MUTATING_WEBHOOKS = "mutatingwebhookconfigurations"
+RESOURCE_CATEGORY_CRDS = "customresourcedefinitions"
+RESOURCE_CATEGORY_CSR_APPROVAL = "certificatesigningrequests/approval"
+RESOURCE_CATEGORY_SUBJECT_ACCESS_REVIEWS = "subjectaccessreviews"
+RESOURCE_CATEGORY_EVENTS = "events"
+RESOURCE_CATEGORY_ENDPOINT_SLICES = "endpointslices"
+RESOURCE_CATEGORY_WILDCARD = "wildcard"
+RESOURCE_CATEGORY_OTHER = "other"
+
+# Raw resource string -> category. Resources not listed here (almost always
+# CRDs) fall back to RESOURCE_CATEGORY_OTHER.
+_RESOURCE_CATEGORY_MAP: dict[str, str] = {
+    "secrets": RESOURCE_CATEGORY_SECRETS,
+    "configmaps": RESOURCE_CATEGORY_CONFIGMAPS,
+    "pods": RESOURCE_CATEGORY_PODS,
+    "pods/exec": RESOURCE_CATEGORY_PODS_EXEC,
+    "pods/attach": RESOURCE_CATEGORY_PODS_ATTACH,
+    "pods/portforward": RESOURCE_CATEGORY_PODS_PORTFORWARD,
+    "pods/log": RESOURCE_CATEGORY_PODS_LOG,
+    "deployments": RESOURCE_CATEGORY_WORKLOADS,
+    "statefulsets": RESOURCE_CATEGORY_WORKLOADS,
+    "daemonsets": RESOURCE_CATEGORY_WORKLOADS,
+    "replicasets": RESOURCE_CATEGORY_WORKLOADS,
+    "jobs": RESOURCE_CATEGORY_WORKLOADS,
+    "cronjobs": RESOURCE_CATEGORY_WORKLOADS,
+    "services": RESOURCE_CATEGORY_SERVICES,
+    "ingresses": RESOURCE_CATEGORY_INGRESSES,
+    "networkpolicies": RESOURCE_CATEGORY_NETWORK_POLICIES,
+    "roles": RESOURCE_CATEGORY_ROLES,
+    "rolebindings": RESOURCE_CATEGORY_ROLE_BINDINGS,
+    "clusterroles": RESOURCE_CATEGORY_CLUSTER_ROLES,
+    "clusterrolebindings": RESOURCE_CATEGORY_CLUSTER_ROLE_BINDINGS,
+    "serviceaccounts": RESOURCE_CATEGORY_SERVICE_ACCOUNTS,
+    "serviceaccounts/token": RESOURCE_CATEGORY_SERVICE_ACCOUNTS_TOKEN,
+    "nodes": RESOURCE_CATEGORY_NODES,
+    "nodes/proxy": RESOURCE_CATEGORY_NODES_PROXY,
+    "persistentvolumes": RESOURCE_CATEGORY_PERSISTENT_VOLUMES,
+    "persistentvolumeclaims": RESOURCE_CATEGORY_PERSISTENT_VOLUMES,
+    "namespaces": RESOURCE_CATEGORY_NAMESPACES,
+    "validatingwebhookconfigurations": RESOURCE_CATEGORY_VALIDATING_WEBHOOKS,
+    "mutatingwebhookconfigurations": RESOURCE_CATEGORY_MUTATING_WEBHOOKS,
+    "customresourcedefinitions": RESOURCE_CATEGORY_CRDS,
+    "certificatesigningrequests/approval": RESOURCE_CATEGORY_CSR_APPROVAL,
+    "subjectaccessreviews": RESOURCE_CATEGORY_SUBJECT_ACCESS_REVIEWS,
+    "selfsubjectaccessreviews": RESOURCE_CATEGORY_SUBJECT_ACCESS_REVIEWS,
+    "events": RESOURCE_CATEGORY_EVENTS,
+    "endpointslices": RESOURCE_CATEGORY_ENDPOINT_SLICES,
+}
+
+# Verb categories — verbs are already a small, fixed Kubernetes vocabulary,
+# so they are normalized (lowercased) but not further bucketed except for
+# preserving "*".
+READ_VERBS: frozenset[str] = frozenset({"get", "list", "watch"})
+WRITE_VERBS: frozenset[str] = frozenset({"create", "update", "patch", "delete", "deletecollection"})
+VERB_WILDCARD = "*"
+VERB_BIND = "bind"
+VERB_ESCALATE = "escalate"
+VERB_IMPERSONATE = "impersonate"
+VERB_APPROVE = "approve"
+
+# Non-resource URL categories.
+NON_RESOURCE_CATEGORY_HEALTH_VERSION = "health_version"
+NON_RESOURCE_CATEGORY_METRICS = "metrics"
+NON_RESOURCE_CATEGORY_LOGS = "logs"
+NON_RESOURCE_CATEGORY_DEBUG = "debug"
+NON_RESOURCE_CATEGORY_API_ROOT = "api_root"
+NON_RESOURCE_CATEGORY_WILDCARD = "wildcard"
+NON_RESOURCE_CATEGORY_OTHER = "other"
+
+_HEALTH_VERSION_PATHS: frozenset[str] = frozenset({"/healthz", "/livez", "/readyz", "/version"})
+
+# Dangerous-permission category tags. Used both for the stored
+# ``high_risk_permission_categories`` list and to derive
+# ``highest_severity_category`` via _CATEGORY_SEVERITY below.
+CATEGORY_FULL_WILDCARD = "full_wildcard"
+CATEGORY_BIND = "bind"
+CATEGORY_ESCALATE = "escalate"
+CATEGORY_IMPERSONATE = "impersonate"
+CATEGORY_TOKEN_CREATION = "token_creation"
+CATEGORY_CSR_APPROVAL = "csr_approval"
+CATEGORY_CLUSTER_ROLE_BINDING_WRITE = "cluster_role_binding_write"
+CATEGORY_ADMISSION_WEBHOOK_WRITE = "admission_webhook_write"
+CATEGORY_CRD_WRITE = "crd_write"
+CATEGORY_NODE_PROXY = "node_proxy"
+CATEGORY_SECRET_READ_BROAD_SCOPE = "secret_read_broad_scope"
+CATEGORY_SECRET_READ = "secret_read"
+CATEGORY_SECRET_WRITE = "secret_write"
+CATEGORY_POD_EXEC = "pod_exec"
+CATEGORY_POD_ATTACH = "pod_attach"
+CATEGORY_POD_PORT_FORWARD = "pod_port_forward"
+CATEGORY_POD_WRITE = "pod_write"
+CATEGORY_WORKLOAD_WRITE = "workload_write"
+CATEGORY_ROLE_OR_CLUSTER_ROLE_WRITE = "role_or_cluster_role_write"
+CATEGORY_NAMESPACE_WRITE = "namespace_write"
+CATEGORY_NETWORK_MUTATION = "network_mutation"
+CATEGORY_PV_ACCESS = "persistent_volume_access"
+CATEGORY_NODES_WRITE = "nodes_write"
+CATEGORY_WILDCARD_VERB = "wildcard_verb"
+CATEGORY_WILDCARD_RESOURCE = "wildcard_resource"
+CATEGORY_CONFIGMAP_WRITE = "configmap_write"
+CATEGORY_CONFIGMAP_READ_BROAD = "configmap_read_broad"
+CATEGORY_POD_LOGS = "pod_logs"
+CATEGORY_SERVICE_WRITE = "service_write"
+CATEGORY_NODES_READ = "nodes_read"
+CATEGORY_NON_RESOURCE_BROAD = "non_resource_broad"
+
+_CATEGORY_SEVERITY: dict[str, str] = {
+    CATEGORY_FULL_WILDCARD: SEVERITY_CRITICAL,
+    CATEGORY_BIND: SEVERITY_CRITICAL,
+    CATEGORY_ESCALATE: SEVERITY_CRITICAL,
+    CATEGORY_IMPERSONATE: SEVERITY_CRITICAL,
+    CATEGORY_TOKEN_CREATION: SEVERITY_CRITICAL,
+    CATEGORY_CSR_APPROVAL: SEVERITY_CRITICAL,
+    CATEGORY_CLUSTER_ROLE_BINDING_WRITE: SEVERITY_CRITICAL,
+    CATEGORY_ADMISSION_WEBHOOK_WRITE: SEVERITY_CRITICAL,
+    CATEGORY_CRD_WRITE: SEVERITY_CRITICAL,
+    CATEGORY_NODE_PROXY: SEVERITY_CRITICAL,
+    CATEGORY_SECRET_READ_BROAD_SCOPE: SEVERITY_CRITICAL,
+    CATEGORY_SECRET_READ: SEVERITY_HIGH,
+    CATEGORY_SECRET_WRITE: SEVERITY_HIGH,
+    CATEGORY_POD_EXEC: SEVERITY_HIGH,
+    CATEGORY_POD_ATTACH: SEVERITY_HIGH,
+    CATEGORY_POD_PORT_FORWARD: SEVERITY_HIGH,
+    CATEGORY_POD_WRITE: SEVERITY_HIGH,
+    CATEGORY_WORKLOAD_WRITE: SEVERITY_HIGH,
+    CATEGORY_ROLE_OR_CLUSTER_ROLE_WRITE: SEVERITY_HIGH,
+    CATEGORY_NAMESPACE_WRITE: SEVERITY_HIGH,
+    CATEGORY_NETWORK_MUTATION: SEVERITY_HIGH,
+    CATEGORY_PV_ACCESS: SEVERITY_HIGH,
+    CATEGORY_NODES_WRITE: SEVERITY_HIGH,
+    CATEGORY_WILDCARD_VERB: SEVERITY_HIGH,
+    CATEGORY_WILDCARD_RESOURCE: SEVERITY_HIGH,
+    CATEGORY_CONFIGMAP_WRITE: SEVERITY_MEDIUM,
+    CATEGORY_CONFIGMAP_READ_BROAD: SEVERITY_MEDIUM,
+    CATEGORY_POD_LOGS: SEVERITY_MEDIUM,
+    CATEGORY_SERVICE_WRITE: SEVERITY_MEDIUM,
+    CATEGORY_NODES_READ: SEVERITY_MEDIUM,
+    CATEGORY_NON_RESOURCE_BROAD: SEVERITY_MEDIUM,
+}
+
+# Subject-kind and group vocabulary.
+SUBJECT_KIND_USER = "User"
+SUBJECT_KIND_GROUP = "Group"
+SUBJECT_KIND_SERVICE_ACCOUNT = "ServiceAccount"
+
+GROUP_SYSTEM_MASTERS = "system:masters"
+GROUP_SYSTEM_AUTHENTICATED = "system:authenticated"
+GROUP_SYSTEM_UNAUTHENTICATED = "system:unauthenticated"
+GROUP_SYSTEM_SERVICEACCOUNTS_PREFIX = "system:serviceaccounts"
+GROUP_SYSTEM_NODES = "system:nodes"
+USER_SYSTEM_ANONYMOUS = "system:anonymous"
+
+
+def categorize_api_group(group: Optional[str]) -> str:
+    if group is None:
+        return API_GROUP_CORE
+    group = group.strip()
+    if group == "*":
+        return API_GROUP_WILDCARD
+    if group == "":
+        return API_GROUP_CORE
+    if group in _KNOWN_API_GROUPS:
+        return group
+    return API_GROUP_CUSTOM
+
+
+def categorize_resource(resource: Optional[str]) -> str:
+    if not resource:
+        return RESOURCE_CATEGORY_OTHER
+    resource = resource.strip().lower()
+    if resource == "*":
+        return RESOURCE_CATEGORY_WILDCARD
+    return _RESOURCE_CATEGORY_MAP.get(resource, RESOURCE_CATEGORY_OTHER)
+
+
+def categorize_non_resource_url(url: Optional[str]) -> str:
+    if not url:
+        return NON_RESOURCE_CATEGORY_OTHER
+    url = url.strip()
+    if url == "*":
+        return NON_RESOURCE_CATEGORY_WILDCARD
+    trimmed = url.rstrip("/") or "/"
+    if trimmed in _HEALTH_VERSION_PATHS:
+        return NON_RESOURCE_CATEGORY_HEALTH_VERSION
+    if trimmed.startswith("/metrics"):
+        return NON_RESOURCE_CATEGORY_METRICS
+    if trimmed.startswith("/logs"):
+        return NON_RESOURCE_CATEGORY_LOGS
+    if trimmed.startswith("/debug"):
+        return NON_RESOURCE_CATEGORY_DEBUG
+    if trimmed == "/":
+        return NON_RESOURCE_CATEGORY_API_ROOT
+    return NON_RESOURCE_CATEGORY_OTHER
+
+
+def categorize_builtin_role(name: Optional[str]) -> str:
+    """Categorize a Role/ClusterRole name into a well-known built-in bucket.
+
+    Recognizing a built-in role is NOT a judgement that it is safe or
+    unsafe — a binding record's own fields (cluster_admin_binding, etc.)
+    carry the actual risk signal. See module + connector docstrings.
+    """
+    if not name:
+        return BUILTIN_ROLE_NONE
+    if name == "cluster-admin":
+        return BUILTIN_ROLE_CLUSTER_ADMIN
+    if name == "admin":
+        return BUILTIN_ROLE_ADMIN
+    if name == "edit":
+        return BUILTIN_ROLE_EDIT
+    if name == "view":
+        return BUILTIN_ROLE_VIEW
+    if name == "system:aggregate-to-admin":
+        return BUILTIN_ROLE_AGGREGATE_TO_ADMIN
+    if name == "system:aggregate-to-edit":
+        return BUILTIN_ROLE_AGGREGATE_TO_EDIT
+    if name == "system:aggregate-to-view":
+        return BUILTIN_ROLE_AGGREGATE_TO_VIEW
+    if name.startswith("system:"):
+        return BUILTIN_ROLE_SYSTEM
+    return BUILTIN_ROLE_NONE
+
+
+def canonical_service_account_identity(namespace: str, name: str) -> str:
+    return f"system:serviceaccount:{namespace}:{name}"
+
+
+def categorize_group(name: Optional[str]) -> str:
+    if not name:
+        return "custom"
+    if name == GROUP_SYSTEM_MASTERS:
+        return GROUP_SYSTEM_MASTERS
+    if name == GROUP_SYSTEM_AUTHENTICATED:
+        return GROUP_SYSTEM_AUTHENTICATED
+    if name == GROUP_SYSTEM_UNAUTHENTICATED:
+        return GROUP_SYSTEM_UNAUTHENTICATED
+    if name == GROUP_SYSTEM_NODES:
+        return GROUP_SYSTEM_NODES
+    if name.startswith(GROUP_SYSTEM_SERVICEACCOUNTS_PREFIX):
+        return GROUP_SYSTEM_SERVICEACCOUNTS_PREFIX
+    return "custom"
+
+
+def highest_severity(categories: "set[str] | list[str]") -> str:
+    """Return the highest severity among the given category tags, or
+    SEVERITY_LOW if the set is empty. Never returns SEVERITY_UNKNOWN —
+    callers pass SEVERITY_UNKNOWN explicitly when resolution itself failed."""
+    severities = {_CATEGORY_SEVERITY.get(c) for c in categories}
+    severities.discard(None)
+    for level in (SEVERITY_CRITICAL, SEVERITY_HIGH, SEVERITY_MEDIUM, SEVERITY_LOW):
+        if level in severities:
+            return level
+    return SEVERITY_LOW
+
+
+# ── TypedDict schemas — message 3 (RBAC and identity) ────────────────────────
+
+
+class KubernetesServiceAccountRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    automount_service_account_token: Optional[bool]
+    image_pull_secret_count: int
+    secret_reference_count: int
+    workload_reference_count: int
+    bound_role_binding_count: int
+    bound_cluster_role_binding_count: int
+    highest_privilege_category: str
+    cluster_admin_bound: bool
+    wildcard_permission_bound: bool
+    secret_read_permission_bound: bool
+    pod_exec_permission_bound: bool
+    workload_creation_permission_bound: bool
+    rbac_modification_permission_bound: bool
+    impersonation_permission_bound: bool
+    collection_completeness_category: str
+
+
+class KubernetesRoleRecord(TypedDict):
+    """Shared shape for kubernetes_role / kubernetes_cluster_role."""
+
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: Optional[str]
+    name: str
+    uid: Optional[str]
+    kind: str
+    built_in_role_category: str
+    system_managed: bool
+    aggregation_rule_present: bool
+    aggregation_selector_count: int
+    rule_count: int
+    api_group_categories: list[str]
+    resource_categories: list[str]
+    verb_categories: list[str]
+    resource_name_restriction_present: bool
+    non_resource_url_categories: list[str]
+    non_resource_url_count: int
+    wildcard_api_group: bool
+    wildcard_resource: bool
+    wildcard_verb: bool
+    wildcard_non_resource_url: bool
+    secret_read: bool
+    secret_write: bool
+    configmap_read: bool
+    configmap_write: bool
+    pod_read: bool
+    pod_write: bool
+    pod_exec: bool
+    pod_attach: bool
+    pod_port_forward: bool
+    pod_logs: bool
+    workload_write: bool
+    service_write: bool
+    network_mutation: bool
+    rbac_read: bool
+    rbac_write: bool
+    cluster_role_binding_write: bool
+    bind_permission: bool
+    escalate_permission: bool
+    impersonate_permission: bool
+    csr_approve_permission: bool
+    node_proxy_access: bool
+    nodes_read: bool
+    nodes_write: bool
+    persistent_volume_access: bool
+    admission_webhook_modification: bool
+    crd_modification: bool
+    namespace_modification: bool
+    service_account_token_creation: bool
+    token_request_access: bool
+    subject_access_review_creation: bool
+    high_risk_permission_categories: list[str]
+    highest_severity_category: str
+    permission_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesRoleBindingRecord(TypedDict):
+    """Shared shape for kubernetes_role_binding / kubernetes_cluster_role_binding."""
+
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: Optional[str]
+    name: str
+    uid: Optional[str]
+    kind: str
+    role_ref_kind: str
+    role_ref_name: str
+    role_ref_api_group: str
+    subject_count: int
+    user_subject_count: int
+    group_subject_count: int
+    service_account_subject_count: int
+    role_resolved: bool
+    role_resolution_status: str
+    resolved_privilege_category: str
+    cluster_admin_binding: bool
+    wildcard_permission_binding: bool
+    high_risk_permission_categories: list[str]
+    binding_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesRbacSubjectBindingRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    binding_kind: str
+    binding_namespace: Optional[str]
+    binding_name: str
+    binding_uid: Optional[str]
+    role_ref_kind: str
+    role_ref_name: str
+    role_ref_api_group: str
+    subject_kind: str
+    subject_name: str
+    subject_namespace: Optional[str]
+    subject_identity: str
+    anonymous_subject: bool
+    unauthenticated_group: bool
+    authenticated_group: bool
+    system_group: bool
+    broad_group: bool
+    cross_namespace_service_account: bool
+    role_resolved: bool
+    role_resolution_status: str
+    resolved_privilege_category: str
+    cluster_admin_binding: bool
+    wildcard_permission_binding: bool
+    high_risk_permission_categories: list[str]
+
+
+class KubernetesRbacPermissionSummaryRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    subject_kind: str
+    subject_identity: str
+    namespace: Optional[str]
+    role_binding_count: int
+    cluster_role_binding_count: int
+    cluster_admin_bound: bool
+    wildcard_permission_bound: bool
+    secret_read_bound: bool
+    secret_write_bound: bool
+    pod_exec_bound: bool
+    workload_create_bound: bool
+    rbac_modification_bound: bool
+    impersonation_bound: bool
+    high_risk_permission_categories: list[str]
+    highest_privilege_category: str
+    collection_completeness_category: str
