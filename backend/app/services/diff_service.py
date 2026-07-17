@@ -3172,6 +3172,129 @@ _KUBERNETES_NAMESPACE_NETWORK_POSTURE_TRACKED_FIELDS: tuple[str, ...] = (
     "collection_completeness_category",
 )
 
+# Kubernetes admission control and configuration governance — message 5.
+_KUBERNETES_WEBHOOK_CONFIGURATION_TRACKED_FIELDS: tuple[str, ...] = (
+    "webhook_count",
+    "fail_open_webhook_count",
+    "fail_closed_webhook_count",
+    "no_side_effects_webhook_count",
+    "unknown_side_effects_webhook_count",
+    "namespace_selector_present_count",
+    "object_selector_present_count",
+    "external_url_client_count",
+    "in_cluster_service_client_count",
+    "ca_bundle_present_count",
+    "timeout_seconds_min",
+    "timeout_seconds_max",
+    "match_policy_categories",
+    "reinvocation_policy_categories",
+    "security_posture_summary",
+    "configuration_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_WEBHOOK_TRACKED_FIELDS: tuple[str, ...] = (
+    "client_type",
+    "service_namespace",
+    "service_name",
+    "service_port",
+    "external_url_host_category",
+    "plaintext_http_client",
+    "failure_policy",
+    "match_policy",
+    "side_effects",
+    "timeout_seconds",
+    "namespace_selector_category",
+    "object_selector_category",
+    "rules_count",
+    "operation_categories",
+    "api_group_categories",
+    "resource_categories",
+    "scope_category",
+    "admission_review_versions",
+    "ca_bundle_present",
+    "reinvocation_policy",
+    "wildcard_operation",
+    "wildcard_api_group",
+    "wildcard_api_version",
+    "wildcard_resource",
+    "webhook_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_POD_SECURITY_ADMISSION_TRACKED_FIELDS: tuple[str, ...] = (
+    "enforce_level",
+    "enforce_version_category",
+    "audit_level",
+    "audit_version_category",
+    "warn_level",
+    "warn_version_category",
+    "effective_posture_category",
+    "enforcement_enabled",
+    "audit_enabled",
+    "warning_enabled",
+    "enforcement_weaker_than_audit",
+    "enforcement_weaker_than_warning",
+    "posture_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_RESOURCE_QUOTA_TRACKED_FIELDS: tuple[str, ...] = (
+    "hard_cpu_limit_present",
+    "hard_cpu_limit_millicores",
+    "hard_memory_limit_present",
+    "hard_memory_limit_bytes",
+    "request_cpu_limit_present",
+    "request_memory_limit_present",
+    "pod_count_limit_present",
+    "pod_count_limit",
+    "service_count_limit_present",
+    "load_balancer_count_limit_present",
+    "pvc_count_limit_present",
+    "storage_request_limit_present",
+    "ephemeral_storage_limit_present",
+    "secret_count_limit_present",
+    "configmap_count_limit_present",
+    "scope_categories",
+    "scope_selector_present",
+    "resource_control_coverage_category",
+    "quota_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_LIMIT_RANGE_TRACKED_FIELDS: tuple[str, ...] = (
+    "container_default_present",
+    "container_default_request_present",
+    "pod_max_present",
+    "pod_min_present",
+    "container_max_present",
+    "container_min_present",
+    "pvc_min_present",
+    "pvc_max_present",
+    "request_to_limit_ratio_present",
+    "cpu_policy_coverage_category",
+    "memory_policy_coverage_category",
+    "ephemeral_storage_policy_coverage_category",
+    "defaulting_coverage_category",
+    "limit_fingerprint",
+    "collection_completeness_category",
+)
+
+_KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE_TRACKED_FIELDS: tuple[str, ...] = (
+    "psa_enforcement_category",
+    "validating_webhook_coverage_category",
+    "mutating_webhook_coverage_category",
+    "resource_quota_count",
+    "limit_range_count",
+    "quota_coverage_category",
+    "default_resource_control_category",
+    "network_policy_coverage_category",
+    "privileged_workload_present",
+    "high_privilege_service_account_present",
+    "governance_completeness_category",
+    "governance_risk_summary",
+)
+
 _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "kubernetes_cluster": (
         "kubernetes_version",
@@ -3217,6 +3340,14 @@ _KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
     "kubernetes_http_route_rule": _KUBERNETES_HTTP_ROUTE_RULE_TRACKED_FIELDS,
     "kubernetes_network_policy": _KUBERNETES_NETWORK_POLICY_TRACKED_FIELDS,
     "kubernetes_namespace_network_posture": _KUBERNETES_NAMESPACE_NETWORK_POSTURE_TRACKED_FIELDS,
+    "kubernetes_validating_webhook_configuration": _KUBERNETES_WEBHOOK_CONFIGURATION_TRACKED_FIELDS,
+    "kubernetes_mutating_webhook_configuration": _KUBERNETES_WEBHOOK_CONFIGURATION_TRACKED_FIELDS,
+    "kubernetes_validating_webhook": _KUBERNETES_WEBHOOK_TRACKED_FIELDS,
+    "kubernetes_mutating_webhook": _KUBERNETES_WEBHOOK_TRACKED_FIELDS,
+    "kubernetes_pod_security_admission": _KUBERNETES_POD_SECURITY_ADMISSION_TRACKED_FIELDS,
+    "kubernetes_resource_quota": _KUBERNETES_RESOURCE_QUOTA_TRACKED_FIELDS,
+    "kubernetes_limit_range": _KUBERNETES_LIMIT_RANGE_TRACKED_FIELDS,
+    "kubernetes_namespace_governance_posture": _KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE_TRACKED_FIELDS,
 }
 
 
@@ -3693,6 +3824,26 @@ def _build_provider_metadata(
         if _kubernetes_record_type == "kubernetes_network_policy":
             metadata["policy_name"] = context_record.get("name") or record.get("name") or ""
         if _kubernetes_record_type == "kubernetes_namespace_network_posture":
+            metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
+
+        # Admission control and configuration governance (message 5).
+        if _kubernetes_record_type in ("kubernetes_validating_webhook_configuration", "kubernetes_mutating_webhook_configuration"):
+            metadata["configuration_name"] = context_record.get("name") or record.get("name") or ""
+            metadata["kind"] = context_record.get("kind") or record.get("kind") or ""
+        if _kubernetes_record_type in ("kubernetes_validating_webhook", "kubernetes_mutating_webhook"):
+            metadata["webhook_name"] = context_record.get("webhook_name") or record.get("webhook_name") or ""
+            metadata["parent_configuration_record_id"] = (
+                context_record.get("parent_configuration_record_id") or record.get("parent_configuration_record_id") or ""
+            )
+        if _kubernetes_record_type == "kubernetes_pod_security_admission":
+            metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
+        if _kubernetes_record_type == "kubernetes_resource_quota":
+            metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
+            metadata["quota_name"] = context_record.get("name") or record.get("name") or ""
+        if _kubernetes_record_type == "kubernetes_limit_range":
+            metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
+            metadata["limit_range_name"] = context_record.get("name") or record.get("name") or ""
+        if _kubernetes_record_type == "kubernetes_namespace_governance_posture":
             metadata["namespace"] = context_record.get("namespace") or record.get("namespace") or ""
 
     return metadata

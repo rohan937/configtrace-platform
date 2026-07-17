@@ -1,4 +1,4 @@
-"""Kubernetes connector schema — network exposure and isolation (message 4 of a 9-message arc).
+"""Kubernetes connector schema — admission control and configuration governance (message 5 of a 9-message arc).
 
 This module defines the full planned record-type taxonomy for the
 Kubernetes provider. Message 1 emitted the first three types (cluster,
@@ -97,26 +97,61 @@ module docstring) and IPv4/IPv6 CIDR categorization.
 ``kubernetes_namespace_network_posture`` — one rollup record per
 namespace, aggregating NetworkPolicy coverage across that namespace.
 
-Planned for later messages (message 5 — configuration/admission)
---------------------------------------------------------------------
-``kubernetes_secret_metadata``, ``kubernetes_config_map_metadata``,
-``kubernetes_validating_webhook``, ``kubernetes_mutating_webhook``,
-``kubernetes_resource_quota``, ``kubernetes_limit_range``,
-``kubernetes_pod_security_admission``,
-``kubernetes_api_server_security_posture`` (only if safely observable).
+Emitted in message 5 (admission control and configuration governance)
+---------------------------------------------------------------------------
+``kubernetes_validating_webhook_configuration``, ``kubernetes_validating_webhook``
+— one record per `ValidatingWebhookConfiguration` plus one per contained
+webhook, with failure-policy/match-policy/side-effects/selector/rule
+categorization (never raw rule dicts, never CA bundle bytes).
+``kubernetes_mutating_webhook_configuration``, ``kubernetes_mutating_webhook``
+— same shape, plus `reinvocationPolicy`.
+``kubernetes_pod_security_admission`` — one record per namespace,
+promoting the six PSA labels already read in message 1 into a dedicated
+posture record (enforce/audit/warn level + version, effective posture,
+weakening detection).
+``kubernetes_resource_quota`` — one record per ResourceQuota, with
+normalized configured hard-limit quantities (never usage/status values).
+``kubernetes_limit_range`` — one record per LimitRange, with
+default/default-request/min/max coverage categories.
+``kubernetes_namespace_governance_posture`` — one rollup record per
+namespace, cross-referencing PSA + webhook coverage + quota/limit
+coverage + message-4's NetworkPolicy posture + message-2's privileged-
+workload signal + message-3's high-privilege-identity signal. A compact
+cross-control summary, not a Finding engine (message 6 owns Findings).
+
+Deliberately NOT implemented (documented safety decisions, not gaps in
+disguise — see kubernetes.py module docstring for the full review)
+-----------------------------------------------------------------------------
+``kubernetes_config_map_metadata`` — ConfigMap API access remains
+disabled. The Kubernetes API returns full values alongside metadata for
+ConfigMaps (no field-level RBAC exists to request metadata only), and
+ConfigTrace's default permission contract does not request ConfigMap read
+access. Revisit only if a future message adopts an explicit, customer-
+opt-in, fetch-and-immediately-discard architecture with redaction tests —
+not attempted here.
+``kubernetes_secret_metadata`` — Secret API access remains permanently
+disabled, under an even stricter version of the same limitation (see
+message-1's contract). This is not a placeholder for a future message;
+it is a deliberate, permanent architectural boundary for this connector.
+
+Planned for later messages (beyond message 5)
+---------------------------------------------------
+``kubernetes_api_server_security_posture`` (only if safely observable —
+still under review).
 
 SENSITIVE-DATA POLICY (mandatory, see kubernetes.py module docstring for the
 full contract): this connector NEVER fetches Secret values, ConfigMap
 values, service-account token contents, kubeconfig contents, Pod logs, exec
-output, or raw annotation/label maps. Message 1 does not fetch Secrets or
-ConfigMaps at all — not even metadata. That begins (metadata only, still
-never values) in message 5.
+output, admission request/response payloads, webhook CA bundle bytes, or
+raw annotation/label maps. Message 5 does NOT begin ConfigMap/Secret
+metadata collection — see the "deliberately NOT implemented" section above.
 """
 
 from __future__ import annotations
 
 import hashlib
 import ipaddress
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 from typing_extensions import TypedDict
@@ -220,36 +255,62 @@ KUBERNETES_NETWORK_RECORD_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# ── Record type constants — emitted in message 5 (admission/governance) ─────
+
+KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION = "kubernetes_validating_webhook_configuration"
+KUBERNETES_VALIDATING_WEBHOOK = "kubernetes_validating_webhook"
+KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION = "kubernetes_mutating_webhook_configuration"
+KUBERNETES_MUTATING_WEBHOOK = "kubernetes_mutating_webhook"
+KUBERNETES_POD_SECURITY_ADMISSION = "kubernetes_pod_security_admission"
+KUBERNETES_RESOURCE_QUOTA = "kubernetes_resource_quota"
+KUBERNETES_LIMIT_RANGE = "kubernetes_limit_range"
+KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE = "kubernetes_namespace_governance_posture"
+
+KUBERNETES_ADMISSION_CONFIGURATION_RECORD_TYPES: frozenset[str] = frozenset(
+    {KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION, KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION}
+)
+KUBERNETES_ADMISSION_WEBHOOK_RECORD_TYPES: frozenset[str] = frozenset(
+    {KUBERNETES_VALIDATING_WEBHOOK, KUBERNETES_MUTATING_WEBHOOK}
+)
+KUBERNETES_ADMISSION_RECORD_TYPES: frozenset[str] = (
+    KUBERNETES_ADMISSION_CONFIGURATION_RECORD_TYPES
+    | KUBERNETES_ADMISSION_WEBHOOK_RECORD_TYPES
+    | frozenset(
+        {
+            KUBERNETES_POD_SECURITY_ADMISSION, KUBERNETES_RESOURCE_QUOTA,
+            KUBERNETES_LIMIT_RANGE, KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE,
+        }
+    )
+)
+
+# ── Record type constants — deliberately unsupported (never emitted) ────────
+# See kubernetes.py / this module's docstring for the full safety review.
+# These are NOT "not yet implemented" placeholders — they document a
+# permanent architectural decision not to collect this data.
+KUBERNETES_CONFIG_MAP_METADATA = "kubernetes_config_map_metadata"
+KUBERNETES_SECRET_METADATA = "kubernetes_secret_metadata"
+
 # ── Record type constants — reserved for later messages (not yet emitted) ───
 # These names are fixed now so that later messages never need to rename a
 # record type after Changes/Findings have already been built against it.
 
-KUBERNETES_SECRET_METADATA = "kubernetes_secret_metadata"
-KUBERNETES_CONFIG_MAP_METADATA = "kubernetes_config_map_metadata"
-KUBERNETES_VALIDATING_WEBHOOK = "kubernetes_validating_webhook"
-KUBERNETES_MUTATING_WEBHOOK = "kubernetes_mutating_webhook"
-KUBERNETES_RESOURCE_QUOTA = "kubernetes_resource_quota"
-KUBERNETES_LIMIT_RANGE = "kubernetes_limit_range"
-KUBERNETES_POD_SECURITY_ADMISSION = "kubernetes_pod_security_admission"
 KUBERNETES_API_SERVER_SECURITY_POSTURE = "kubernetes_api_server_security_posture"
 
 KUBERNETES_PLANNED_RECORD_TYPES: frozenset[str] = frozenset(
-    {
-        KUBERNETES_SECRET_METADATA, KUBERNETES_CONFIG_MAP_METADATA,
-        KUBERNETES_VALIDATING_WEBHOOK, KUBERNETES_MUTATING_WEBHOOK,
-        KUBERNETES_RESOURCE_QUOTA, KUBERNETES_LIMIT_RANGE,
-        KUBERNETES_POD_SECURITY_ADMISSION, KUBERNETES_API_SERVER_SECURITY_POSTURE,
-    }
+    {KUBERNETES_API_SERVER_SECURITY_POSTURE}
 )
 
 # All record types across the full planned taxonomy, whether or not they are
 # emitted yet. Used only for documentation/introspection — never assume every
-# member of this set is reachable from fetch() today.
+# member of this set is reachable from fetch() today. Deliberately excludes
+# KUBERNETES_CONFIG_MAP_METADATA/KUBERNETES_SECRET_METADATA — those are
+# permanently unsupported, not merely unemitted (see module docstring).
 KUBERNETES_RECORD_TYPES: frozenset[str] = (
     KUBERNETES_FOUNDATION_RECORD_TYPES
     | KUBERNETES_WORKLOAD_RECORD_TYPES
     | KUBERNETES_RBAC_RECORD_TYPES
     | KUBERNETES_NETWORK_RECORD_TYPES
+    | KUBERNETES_ADMISSION_RECORD_TYPES
     | KUBERNETES_PLANNED_RECORD_TYPES
 )
 
@@ -1771,3 +1832,431 @@ class KubernetesNamespaceNetworkPostureRecord(TypedDict):
     broad_namespace_selector_allowance: bool
     broad_pod_selector_allowance: bool
     collection_completeness_category: str
+
+
+# ── Admission control / configuration governance vocabulary — message 5 ─────
+
+FAILURE_POLICY_FAIL = "Fail"
+FAILURE_POLICY_IGNORE = "Ignore"
+FAILURE_POLICY_UNKNOWN = "unknown"
+
+MATCH_POLICY_EXACT = "Exact"
+MATCH_POLICY_EQUIVALENT = "Equivalent"
+MATCH_POLICY_UNKNOWN = "unknown"
+
+SIDE_EFFECTS_NONE = "None"
+SIDE_EFFECTS_NONE_ON_DRY_RUN = "NoneOnDryRun"
+SIDE_EFFECTS_SOME = "Some"
+SIDE_EFFECTS_UNKNOWN = "Unknown"
+
+REINVOCATION_NEVER = "Never"
+REINVOCATION_IF_NEEDED = "IfNeeded"
+REINVOCATION_UNKNOWN = "unknown"
+
+CLIENT_TYPE_SERVICE = "service"
+CLIENT_TYPE_URL = "url"
+CLIENT_TYPE_UNKNOWN = "unknown"
+
+SCOPE_CLUSTER = "Cluster"
+SCOPE_NAMESPACED = "Namespaced"
+SCOPE_ALL = "all_scopes"
+SCOPE_UNKNOWN = "unknown"
+
+SELECTOR_ABSENT = "absent"
+SELECTOR_EMPTY_ALL = "empty_all"
+SELECTOR_NARROW = "narrow"
+SELECTOR_MALFORMED = "malformed"
+
+WEBHOOK_SECURITY_POSTURE_FAIL_CLOSED_NARROW = "fail_closed_narrow"
+WEBHOOK_SECURITY_POSTURE_FAIL_CLOSED_BROAD = "fail_closed_broad"
+WEBHOOK_SECURITY_POSTURE_FAIL_OPEN = "fail_open"
+WEBHOOK_SECURITY_POSTURE_MIXED = "mixed"
+WEBHOOK_SECURITY_POSTURE_UNKNOWN = "unknown"
+
+# Only these well-known, fixed selector label keys are ever inspected on a
+# webhook namespaceSelector/objectSelector matchLabels map — never
+# arbitrary business labels. Values are never read, only whether the KEY
+# is one of these.
+SAFE_WEBHOOK_SELECTOR_LABEL_KEYS: frozenset[str] = frozenset(
+    {
+        "kubernetes.io/metadata.name",
+        PSA_LABEL_ENFORCE, PSA_LABEL_ENFORCE_VERSION,
+        PSA_LABEL_AUDIT, PSA_LABEL_AUDIT_VERSION,
+        PSA_LABEL_WARN, PSA_LABEL_WARN_VERSION,
+    }
+)
+
+
+def categorize_failure_policy(value: Optional[str]) -> str:
+    return value if value in (FAILURE_POLICY_FAIL, FAILURE_POLICY_IGNORE) else FAILURE_POLICY_UNKNOWN
+
+
+def categorize_match_policy(value: Optional[str]) -> str:
+    return value if value in (MATCH_POLICY_EXACT, MATCH_POLICY_EQUIVALENT) else MATCH_POLICY_UNKNOWN
+
+
+def categorize_side_effects(value: Optional[str]) -> str:
+    return value if value in (SIDE_EFFECTS_NONE, SIDE_EFFECTS_NONE_ON_DRY_RUN, SIDE_EFFECTS_SOME, SIDE_EFFECTS_UNKNOWN) else SIDE_EFFECTS_UNKNOWN
+
+
+def categorize_reinvocation_policy(value: Optional[str]) -> str:
+    return value if value in (REINVOCATION_NEVER, REINVOCATION_IF_NEEDED) else REINVOCATION_UNKNOWN
+
+
+def categorize_admission_scope(value: Optional[str]) -> str:
+    if value == "*":
+        return SCOPE_ALL
+    if value in (SCOPE_CLUSTER, SCOPE_NAMESPACED):
+        return value
+    return SCOPE_UNKNOWN
+
+
+def categorize_selector_presence(
+    match_labels: Optional[dict], match_expressions: Optional[list], *, present: bool,
+) -> dict:
+    """Categorize a namespaceSelector/objectSelector without ever storing
+    arbitrary label values. Returns a dict of category/counts/fingerprint/
+    allowlisted-key-category — never the label values themselves."""
+    if not present:
+        return {
+            "category": SELECTOR_ABSENT, "match_labels_count": 0, "match_expressions_count": 0,
+            "fingerprint": stable_fingerprint("absent"), "allowlisted_key_category": False,
+        }
+    ml = match_labels or {}
+    me = match_expressions or []
+    if not ml and not me:
+        category = SELECTOR_EMPTY_ALL
+    else:
+        category = SELECTOR_NARROW
+    allowlisted = bool(ml) and all(k in SAFE_WEBHOOK_SELECTOR_LABEL_KEYS for k in ml)
+    fingerprint = stable_fingerprint(category, sorted(ml.keys()), len(me))
+    return {
+        "category": category, "match_labels_count": len(ml), "match_expressions_count": len(me),
+        "fingerprint": fingerprint, "allowlisted_key_category": allowlisted,
+    }
+
+
+# PSA posture vocabulary. Reuses the six exact label keys already defined
+# above (PSA_LABEL_*) — no new label keys are ever read.
+PSA_ENFORCE_CATEGORY_PRIVILEGED = "privileged"
+PSA_ENFORCE_CATEGORY_BASELINE = "baseline"
+PSA_ENFORCE_CATEGORY_RESTRICTED = "restricted"
+PSA_ENFORCE_CATEGORY_UNSET = "unset"
+PSA_ENFORCE_CATEGORY_INVALID = "invalid"
+
+PSA_LEVEL_RANK: dict[str, int] = {
+    PSA_ENFORCE_CATEGORY_PRIVILEGED: 0,
+    PSA_ENFORCE_CATEGORY_BASELINE: 1,
+    PSA_ENFORCE_CATEGORY_RESTRICTED: 2,
+}
+
+PSA_VERSION_LATEST = "latest"
+PSA_VERSION_PINNED_CURRENT = "pinned_current"
+PSA_VERSION_PINNED_OLD = "pinned_old"
+PSA_VERSION_UNSET = "unset"
+PSA_VERSION_INVALID = "invalid"
+
+NAMESPACE_CATEGORY_SYSTEM = "system"
+NAMESPACE_CATEGORY_DEFAULT = "default"
+NAMESPACE_CATEGORY_USER = "user"
+
+_SYSTEM_NAMESPACES: frozenset[str] = frozenset({"kube-system", "kube-public", "kube-node-lease"})
+
+
+def categorize_psa_level(value: Optional[str]) -> str:
+    if value is None:
+        return PSA_ENFORCE_CATEGORY_UNSET
+    if value in PSA_LEVEL_RANK:
+        return value
+    return PSA_ENFORCE_CATEGORY_INVALID
+
+
+def _parse_minor_version(value: Optional[str]) -> Optional[tuple[int, int]]:
+    if not value:
+        return None
+    stripped = value.strip().lstrip("v")
+    parts = stripped.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def categorize_psa_version(value: Optional[str], cluster_major_minor: Optional[str] = None) -> str:
+    """Categorize a PSA `*-version` label. "pinned_old" requires the
+    cluster's own major.minor version for comparison (>= 3 minor versions
+    behind); without that context a pinned version is just "pinned_current"
+    — never guessed as old without evidence."""
+    if not value:
+        return PSA_VERSION_UNSET
+    if value == "latest":
+        return PSA_VERSION_LATEST
+    parsed = _parse_minor_version(value)
+    if parsed is None:
+        return PSA_VERSION_INVALID
+    cluster_parsed = _parse_minor_version(cluster_major_minor) if cluster_major_minor else None
+    if cluster_parsed is not None and cluster_parsed[0] == parsed[0] and (cluster_parsed[1] - parsed[1]) >= 3:
+        return PSA_VERSION_PINNED_OLD
+    return PSA_VERSION_PINNED_CURRENT
+
+
+def categorize_namespace_context(name: Optional[str]) -> str:
+    if name in _SYSTEM_NAMESPACES:
+        return NAMESPACE_CATEGORY_SYSTEM
+    if name == "default":
+        return NAMESPACE_CATEGORY_DEFAULT
+    return NAMESPACE_CATEGORY_USER
+
+
+# ResourceQuota / LimitRange coverage categories reuse the same
+# none/partial/broad/unknown vocabulary as NetworkPolicy namespace
+# coverage (POLICY_COVERAGE_*) — same meaning, different control family.
+LIMIT_RANGE_TYPE_POD = "Pod"
+LIMIT_RANGE_TYPE_CONTAINER = "Container"
+LIMIT_RANGE_TYPE_PVC = "PersistentVolumeClaim"
+
+# Kubernetes hard-limit keys this connector normalizes into named fields
+# (never an arbitrary passthrough dict).
+_QUOTA_CPU_KEYS = ("cpu", "limits.cpu")
+_QUOTA_CPU_REQUEST_KEYS = ("requests.cpu",)
+_QUOTA_MEMORY_KEYS = ("memory", "limits.memory")
+_QUOTA_MEMORY_REQUEST_KEYS = ("requests.memory",)
+
+
+def _quantity_present(hard: dict, keys: tuple[str, ...]) -> bool:
+    return any(k in hard for k in keys)
+
+
+# ── Kubernetes resource-quantity parsing ──────────────────────────────────────
+# Deterministic, float-free. CPU normalizes to millicores; memory/storage/
+# ephemeral-storage normalize to bytes. Malformed input -> None ("unknown"),
+# never coerced to zero. Exact zero ("0") is preserved as 0, distinct from
+# None (missing/malformed).
+
+_MEMORY_BINARY_SUFFIXES: dict[str, int] = {
+    "Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50, "Ei": 2**60,
+}
+_MEMORY_DECIMAL_SUFFIXES: dict[str, int] = {
+    "k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15, "E": 10**18,
+}
+
+
+def parse_cpu_quantity_millicores(value: Optional[str]) -> Optional[int]:
+    """Parse a Kubernetes CPU quantity (e.g. "500m", "2", "1.5") into an
+    integer millicore count. Returns None for malformed input — never 0."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("m"):
+            return int(Decimal(s[:-1]))
+        return int(Decimal(s) * 1000)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def parse_memory_quantity_bytes(value: Optional[str]) -> Optional[int]:
+    """Parse a Kubernetes memory/storage quantity (e.g. "128Mi", "1Gi",
+    "500M", "1000000") into an integer byte count. Returns None for
+    malformed input — never 0."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    for suffix, multiplier in _MEMORY_BINARY_SUFFIXES.items():
+        if s.endswith(suffix):
+            try:
+                return int(Decimal(s[: -len(suffix)]) * multiplier)
+            except (InvalidOperation, ValueError):
+                return None
+    for suffix, multiplier in _MEMORY_DECIMAL_SUFFIXES.items():
+        if s.endswith(suffix):
+            try:
+                return int(Decimal(s[: -len(suffix)]) * multiplier)
+            except (InvalidOperation, ValueError):
+                return None
+    try:
+        return int(Decimal(s))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+# ── TypedDict schemas — message 5 (admission control / governance) ──────────
+
+
+class KubernetesWebhookConfigurationRecord(TypedDict):
+    """Shared shape for kubernetes_validating_webhook_configuration /
+    kubernetes_mutating_webhook_configuration."""
+
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    name: str
+    uid: Optional[str]
+    kind: str
+    webhook_count: int
+    admission_review_version_categories: list[str]
+    fail_open_webhook_count: int
+    fail_closed_webhook_count: int
+    no_side_effects_webhook_count: int
+    unknown_side_effects_webhook_count: int
+    namespace_selector_present_count: int
+    object_selector_present_count: int
+    external_url_client_count: int
+    in_cluster_service_client_count: int
+    ca_bundle_present_count: int
+    timeout_seconds_min: Optional[int]
+    timeout_seconds_max: Optional[int]
+    match_policy_categories: list[str]
+    reinvocation_policy_categories: list[str]
+    security_posture_summary: str
+    configuration_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesWebhookRecord(TypedDict):
+    """Shared shape for kubernetes_validating_webhook / kubernetes_mutating_webhook."""
+
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    parent_configuration_record_id: str
+    webhook_name: str
+    webhook_type: str
+    client_type: str
+    service_namespace: Optional[str]
+    service_name: Optional[str]
+    service_path_category: Optional[str]
+    service_port: Optional[int]
+    external_url_host_category: Optional[str]
+    plaintext_http_client: bool
+    failure_policy: str
+    match_policy: str
+    side_effects: str
+    timeout_seconds: Optional[int]
+    namespace_selector_category: str
+    object_selector_category: str
+    rules_count: int
+    operation_categories: list[str]
+    api_group_categories: list[str]
+    api_version_categories: list[str]
+    resource_categories: list[str]
+    scope_category: str
+    admission_review_versions: list[str]
+    ca_bundle_present: bool
+    reinvocation_policy: Optional[str]
+    wildcard_operation: bool
+    wildcard_api_group: bool
+    wildcard_api_version: bool
+    wildcard_resource: bool
+    webhook_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesPodSecurityAdmissionRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    enforce_level: str
+    enforce_version_category: str
+    audit_level: str
+    audit_version_category: str
+    warn_level: str
+    warn_version_category: str
+    effective_posture_category: str
+    enforcement_enabled: bool
+    audit_enabled: bool
+    warning_enabled: bool
+    enforcement_weaker_than_audit: bool
+    enforcement_weaker_than_warning: bool
+    namespace_context_category: str
+    posture_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesResourceQuotaRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    hard_limit_key_count: int
+    hard_cpu_limit_present: bool
+    hard_cpu_limit_millicores: Optional[int]
+    hard_memory_limit_present: bool
+    hard_memory_limit_bytes: Optional[int]
+    request_cpu_limit_present: bool
+    request_cpu_limit_millicores: Optional[int]
+    request_memory_limit_present: bool
+    request_memory_limit_bytes: Optional[int]
+    pod_count_limit_present: bool
+    pod_count_limit: Optional[int]
+    service_count_limit_present: bool
+    load_balancer_count_limit_present: bool
+    pvc_count_limit_present: bool
+    storage_request_limit_present: bool
+    ephemeral_storage_limit_present: bool
+    secret_count_limit_present: bool
+    configmap_count_limit_present: bool
+    scope_categories: list[str]
+    scope_selector_present: bool
+    resource_control_coverage_category: str
+    quota_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesLimitRangeRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    name: str
+    uid: Optional[str]
+    item_count: int
+    container_default_present: bool
+    container_default_request_present: bool
+    pod_max_present: bool
+    pod_min_present: bool
+    container_max_present: bool
+    container_min_present: bool
+    pvc_min_present: bool
+    pvc_max_present: bool
+    request_to_limit_ratio_present: bool
+    cpu_policy_coverage_category: str
+    memory_policy_coverage_category: str
+    ephemeral_storage_policy_coverage_category: str
+    defaulting_coverage_category: str
+    limit_fingerprint: str
+    collection_completeness_category: str
+
+
+class KubernetesNamespaceGovernancePostureRecord(TypedDict):
+    record_type: str
+    record_id: str
+    cluster_id: str
+    cluster_name: str
+    namespace: str
+    psa_enforcement_category: str
+    validating_webhook_coverage_category: str
+    mutating_webhook_coverage_category: str
+    resource_quota_count: int
+    limit_range_count: int
+    quota_coverage_category: str
+    default_resource_control_category: str
+    network_policy_coverage_category: str
+    privileged_workload_present: bool
+    high_privilege_service_account_present: bool
+    governance_completeness_category: str
+    governance_risk_summary: str

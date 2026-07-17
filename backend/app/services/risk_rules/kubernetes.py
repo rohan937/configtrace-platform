@@ -72,10 +72,18 @@ from app.connectors.kubernetes_schema import (
     KUBERNETES_RBAC_SUBJECT_BINDING,
     KUBERNETES_ROLE,
     KUBERNETES_ROLE_BINDING,
+    KUBERNETES_LIMIT_RANGE,
+    KUBERNETES_MUTATING_WEBHOOK,
+    KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION,
+    KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE,
+    KUBERNETES_POD_SECURITY_ADMISSION,
+    KUBERNETES_RESOURCE_QUOTA,
     KUBERNETES_SERVICE,
     KUBERNETES_SERVICE_ACCOUNT,
     KUBERNETES_SERVICE_PORT,
     KUBERNETES_STATEFULSET,
+    KUBERNETES_VALIDATING_WEBHOOK,
+    KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION,
     KUBERNETES_WORKLOAD_SERVICE_ACCOUNT,
     PROFILE_CATEGORY_UNCONFINED,
     ROLE_RESOLUTION_RESOLVED,
@@ -96,6 +104,10 @@ _WORKLOAD_CONTROLLER_RECORD_TYPES = frozenset(
 )
 _ROLE_RECORD_TYPES = frozenset({KUBERNETES_ROLE, KUBERNETES_CLUSTER_ROLE})
 _BINDING_RECORD_TYPES = frozenset({KUBERNETES_ROLE_BINDING, KUBERNETES_CLUSTER_ROLE_BINDING})
+_WEBHOOK_CONFIGURATION_RECORD_TYPES = frozenset(
+    {KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION, KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION}
+)
+_WEBHOOK_RECORD_TYPES = frozenset({KUBERNETES_VALIDATING_WEBHOOK, KUBERNETES_MUTATING_WEBHOOK})
 _DANGEROUS_HOSTPATH_SOCKET_CATEGORIES = frozenset(
     {HOSTPATH_CATEGORY_DOCKER_SOCKET, HOSTPATH_CATEGORY_CONTAINERD_SOCKET}
 )
@@ -1325,10 +1337,355 @@ def _classify_namespace_network_posture_change(change: object) -> tuple[str, str
     return "low", "A Kubernetes namespace network-posture field changed."
 
 
+# ── Admission control and configuration governance classifiers (message 5) ──
+#
+# `failurePolicy=Ignore` is not automatically a vulnerability (it is
+# fail-open, an availability trade-off); `failurePolicy=Fail` is fail-closed
+# but can itself create availability risk. Broad webhook scope may be
+# intentional (e.g. a policy engine). Missing CA bundle does not
+# necessarily mean no TLS (URL clients may rely on system trust). None of
+# these classifiers claim admission bypass, exploitation, or compromise —
+# only structural posture transitions.
+
+_PSA_RANK_UNKNOWN = -1
+
+
+def _psa_rank(value: object) -> int:
+    """Rank for directional (weaker/stronger) comparison only. "unset" is
+    treated as rank 0 (same as "privileged") here — an *unlabeled*
+    namespace behaves exactly like an explicit privileged one for
+    enforcement purposes, so introducing baseline/restricted from unset is
+    correctly a strengthening. This is separate from — and does not
+    override — the explicit "enforcement removed" classification below for
+    the reverse transition (labeled -> unset), which is always high
+    regardless of rank math."""
+    if isinstance(value, str) and value in ks.PSA_LEVEL_RANK:
+        return ks.PSA_LEVEL_RANK[value]
+    if value == ks.PSA_ENFORCE_CATEGORY_UNSET:
+        return 0
+    return _PSA_RANK_UNKNOWN
+
+
+def _classify_webhook_configuration_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+    kind_label = "webhook configuration"
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        kind_label = record.get("kind") or kind_label
+        posture = record.get("security_posture_summary")
+        if posture == ks.WEBHOOK_SECURITY_POSTURE_FAIL_OPEN:
+            return "medium", f"A new {kind_label} was added entirely fail-open."
+        return "low", f"A Kubernetes {kind_label} was added to monitoring."
+
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        kind_label = record.get("kind") or kind_label
+        if record.get("fail_closed_webhook_count", 0) > 0:
+            return "high", f"A {kind_label} providing fail-closed admission validation was removed."
+        return "low", f"A Kubernetes {kind_label} is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "security_posture_summary":
+        if nv == ks.WEBHOOK_SECURITY_POSTURE_FAIL_OPEN and pv != ks.WEBHOOK_SECURITY_POSTURE_FAIL_OPEN:
+            return "high", f"A {kind_label} changed from fail-closed to fail-open."
+        if pv == ks.WEBHOOK_SECURITY_POSTURE_FAIL_OPEN and nv != ks.WEBHOOK_SECURITY_POSTURE_FAIL_OPEN:
+            return "low", f"A {kind_label} changed from fail-open to fail-closed."
+        return "low", f"A {kind_label}'s security posture summary changed."
+    if fp == "fail_open_webhook_count":
+        return ("medium", f"A {kind_label} gained a fail-open webhook.") if (nv or 0) > (pv or 0) else (
+            "low", f"A {kind_label}'s fail-open webhook count decreased.",
+        )
+    if fp == "fail_closed_webhook_count":
+        return ("low", f"A {kind_label} gained a fail-closed webhook.") if (nv or 0) > (pv or 0) else (
+            "medium", f"A {kind_label}'s fail-closed webhook count decreased.",
+        )
+    if fp == "webhook_count":
+        return ("low", f"A {kind_label} gained a webhook.") if (nv or 0) > (pv or 0) else (
+            "medium", f"A webhook was removed from a {kind_label}.",
+        )
+    if fp == "ca_bundle_present_count":
+        return ("low", f"A {kind_label}'s CA-bundle coverage increased.") if (nv or 0) > (pv or 0) else (
+            "medium", f"A {kind_label}'s CA-bundle coverage decreased.",
+        )
+    if fp in ("timeout_seconds_min", "timeout_seconds_max"):
+        return "medium", f"A {kind_label}'s webhook timeout configuration changed."
+    if fp in ("namespace_selector_present_count", "object_selector_present_count"):
+        return "medium", f"A {kind_label}'s selector coverage changed."
+    if fp in ("external_url_client_count", "in_cluster_service_client_count"):
+        return "medium", f"A {kind_label}'s client configuration changed."
+    if fp in ("match_policy_categories", "reinvocation_policy_categories",
+              "admission_review_version_categories", "configuration_fingerprint"):
+        return "low", f"A {kind_label}'s configuration changed."
+    if fp == "collection_completeness_category":
+        return ("medium", f"ConfigTrace's Kubernetes credentials have only partial visibility into this {kind_label}.") if nv == "partial" else (
+            "low", f"Kubernetes {kind_label} collection completeness changed.",
+        )
+    return "low", f"A Kubernetes {kind_label} field changed."
+
+
+def _classify_webhook_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        full_wildcard = record.get("wildcard_operation") and record.get("wildcard_api_group") and record.get("wildcard_resource")
+        if full_wildcard:
+            return "high", "A new admission webhook was added with wildcard operation/API-group/resource scope."
+        if record.get("client_type") == ks.CLIENT_TYPE_URL and record.get("plaintext_http_client"):
+            return "high", "A new admission webhook was added using an external plaintext HTTP URL."
+        if record.get("failure_policy") == ks.FAILURE_POLICY_IGNORE:
+            return "medium", "A new admission webhook was added with failurePolicy=Ignore (fail-open)."
+        return "low", "An admission webhook was added to monitoring."
+
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        webhook_type = record.get("webhook_type") or "admission"
+        if webhook_type == "validating" and record.get("failure_policy") == ks.FAILURE_POLICY_FAIL:
+            return "high", "A fail-closed validating webhook was removed."
+        if webhook_type == "mutating":
+            return "medium", "A mutating webhook was removed."
+        return "low", "An admission webhook is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "failure_policy":
+        if nv == ks.FAILURE_POLICY_IGNORE and pv == ks.FAILURE_POLICY_FAIL:
+            return "high", "An admission webhook's failurePolicy changed from Fail to Ignore."
+        if nv == ks.FAILURE_POLICY_FAIL and pv == ks.FAILURE_POLICY_IGNORE:
+            return "low", "An admission webhook's failurePolicy was restored to Fail (fail-closed)."
+        return "low", "An admission webhook's failurePolicy changed."
+    if fp in ("wildcard_operation", "wildcard_api_group", "wildcard_resource"):
+        return ("high", "An admission webhook's rule scope was broadened to a wildcard.") if nv else (
+            "low", "An admission webhook's wildcard rule scope was narrowed.",
+        )
+    if fp == "wildcard_api_version":
+        return ("medium", "An admission webhook's rule API-version scope was broadened to a wildcard.") if nv else (
+            "low", "An admission webhook's wildcard API-version scope was narrowed.",
+        )
+    if fp in ("namespace_selector_category", "object_selector_category"):
+        broadened = nv in (ks.SELECTOR_ABSENT, ks.SELECTOR_EMPTY_ALL) and pv == ks.SELECTOR_NARROW
+        narrowed = pv in (ks.SELECTOR_ABSENT, ks.SELECTOR_EMPTY_ALL) and nv == ks.SELECTOR_NARROW
+        if broadened:
+            return "medium", "An admission webhook's selector was broadened to match all resources."
+        if narrowed:
+            return "low", "An admission webhook's selector was narrowed."
+        return "low", "An admission webhook's selector configuration changed."
+    if fp == "ca_bundle_present":
+        return ("low", "An admission webhook's CA bundle was configured.") if nv else (
+            "medium", "An admission webhook's CA-bundle protection was removed.",
+        )
+    if fp in ("service_namespace", "service_name", "service_port"):
+        return "medium", "An admission webhook's client Service destination changed."
+    if fp == "external_url_host_category":
+        return "medium", "An admission webhook's external URL changed."
+    if fp == "plaintext_http_client":
+        return ("high", "An admission webhook's external URL changed to plaintext HTTP.") if nv else (
+            "low", "An admission webhook's external URL is no longer plaintext HTTP.",
+        )
+    if fp == "reinvocation_policy":
+        return "medium", "A mutating webhook's reinvocation policy changed."
+    if fp == "side_effects":
+        if nv == ks.SIDE_EFFECTS_UNKNOWN and pv != ks.SIDE_EFFECTS_UNKNOWN:
+            return "medium", "An admission webhook's sideEffects became Unknown."
+        return "low", "An admission webhook's sideEffects category changed."
+    if fp == "timeout_seconds":
+        return ("medium", "An admission webhook's timeout was reduced.") if (nv or 0) < (pv or 0) else (
+            "low", "An admission webhook's timeout was increased.",
+        )
+    if fp == "match_policy":
+        return "low", "An admission webhook's matchPolicy changed."
+    if fp in ("operation_categories", "api_group_categories", "resource_categories", "scope_category",
+              "rules_count", "admission_review_versions", "webhook_fingerprint"):
+        return "low", "An admission webhook's rule configuration changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this webhook.") if nv == "partial" else (
+            "low", "Kubernetes admission webhook collection completeness changed.",
+        )
+    return "low", "An admission webhook field changed."
+
+
+def _classify_pod_security_admission_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        record = _whole_record(change, added=True)
+        enforce = record.get("enforce_level")
+        if enforce == ks.PSA_ENFORCE_CATEGORY_INVALID:
+            return "high", "A namespace was observed with an invalid Pod Security Admission enforce label."
+        if enforce == ks.PSA_ENFORCE_CATEGORY_UNSET:
+            return "low", "A namespace was observed with no Pod Security Admission enforce label."
+        return "low", "A namespace's Pod Security Admission posture was observed."
+    if ct == "removed":
+        return "low", "A namespace's Pod Security Admission posture is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "enforce_level":
+        if nv == ks.PSA_ENFORCE_CATEGORY_INVALID:
+            return "high", "A namespace's Pod Security Admission enforce label became invalid."
+        new_rank, old_rank = _psa_rank(nv), _psa_rank(pv)
+        if nv == ks.PSA_ENFORCE_CATEGORY_UNSET and pv != ks.PSA_ENFORCE_CATEGORY_UNSET:
+            return "high", "A namespace's Pod Security Admission enforcement was removed."
+        if new_rank != _PSA_RANK_UNKNOWN and old_rank != _PSA_RANK_UNKNOWN:
+            if new_rank < old_rank:
+                return "high", f"A namespace's Pod Security Admission enforcement was weakened (from {pv!r} to {nv!r})."
+            if new_rank > old_rank:
+                return "low", f"A namespace's Pod Security Admission enforcement was strengthened (from {pv!r} to {nv!r})."
+        return "medium", "A namespace's Pod Security Admission enforce level changed."
+    if fp == "enforce_version_category":
+        if nv == ks.PSA_VERSION_PINNED_OLD and pv != ks.PSA_VERSION_PINNED_OLD:
+            return "medium", "A namespace's Pod Security Admission enforce version was pinned to an old release."
+        return "low", "A namespace's Pod Security Admission enforce version category changed."
+    if fp in ("audit_level", "warn_level"):
+        if nv == ks.PSA_ENFORCE_CATEGORY_UNSET and pv != ks.PSA_ENFORCE_CATEGORY_UNSET:
+            return "medium", "A namespace's Pod Security Admission audit/warn label was removed."
+        return "low", "A namespace's Pod Security Admission audit/warn level changed."
+    if fp in ("enforcement_weaker_than_audit", "enforcement_weaker_than_warning"):
+        return ("medium", "A namespace's Pod Security Admission enforcement is now weaker than its audit/warn level.") if nv else (
+            "low", "A namespace's Pod Security Admission enforcement is no longer weaker than its audit/warn level.",
+        )
+    if fp in ("audit_version_category", "warn_version_category", "effective_posture_category",
+              "enforcement_enabled", "audit_enabled", "warning_enabled", "posture_fingerprint"):
+        return "low", "A namespace's Pod Security Admission configuration changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this namespace's PSA labels.") if nv == "partial" else (
+            "low", "Kubernetes Pod Security Admission collection completeness changed.",
+        )
+    return "low", "A namespace's Pod Security Admission field changed."
+
+
+def _classify_resource_quota_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        return "low", "A Kubernetes ResourceQuota was added to monitoring."
+    if ct == "removed":
+        return "medium", "A Kubernetes ResourceQuota is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp in (
+        "hard_cpu_limit_present", "hard_memory_limit_present", "pod_count_limit_present",
+        "load_balancer_count_limit_present", "secret_count_limit_present", "configmap_count_limit_present",
+    ):
+        return ("medium", "A Kubernetes ResourceQuota control was removed.") if pv is True and nv is not True else (
+            "low", "A Kubernetes ResourceQuota control was added.",
+        )
+    if fp == "resource_control_coverage_category":
+        if pv == "broad" and nv != "broad":
+            return "medium", "A Kubernetes ResourceQuota's control coverage decreased from broad."
+        if nv == "broad" and pv != "broad":
+            return "low", "A Kubernetes ResourceQuota's control coverage increased to broad."
+        return "low", "A Kubernetes ResourceQuota's control coverage category changed."
+    if fp in ("hard_cpu_limit_millicores", "hard_memory_limit_bytes", "request_cpu_limit_millicores",
+              "request_memory_limit_bytes", "pod_count_limit"):
+        return "low", "A Kubernetes ResourceQuota's configured value changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this ResourceQuota.") if nv == "partial" else (
+            "low", "Kubernetes ResourceQuota collection completeness changed.",
+        )
+    return "low", "A Kubernetes ResourceQuota field changed."
+
+
+def _classify_limit_range_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        return "low", "A Kubernetes LimitRange was added to monitoring."
+    if ct == "removed":
+        record = _whole_record(change, added=False)
+        if record.get("container_default_present"):
+            return "high", "A LimitRange providing container default resource limits was removed."
+        return "medium", "A Kubernetes LimitRange is no longer visible to ConfigTrace."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp in ("container_default_present", "container_default_request_present"):
+        return ("high", "A LimitRange's default resource limits were removed.") if pv is True and nv is not True else (
+            "low", "A LimitRange's default resource limits were added.",
+        )
+    if fp in ("pod_max_present", "pod_min_present", "container_max_present", "container_min_present",
+              "pvc_min_present", "pvc_max_present"):
+        return ("medium", "A LimitRange's min/max resource constraint was removed.") if pv is True and nv is not True else (
+            "low", "A LimitRange's min/max resource constraint was added.",
+        )
+    if fp == "defaulting_coverage_category":
+        if pv == "broad" and nv != "broad":
+            return "medium", "A LimitRange's defaulting coverage decreased from broad."
+        return "low", "A LimitRange's defaulting coverage category changed."
+    if fp in ("cpu_policy_coverage_category", "memory_policy_coverage_category", "ephemeral_storage_policy_coverage_category"):
+        return "low", "A LimitRange's resource policy coverage category changed."
+    if fp == "request_to_limit_ratio_present":
+        return "low", "A LimitRange's request-to-limit ratio constraint changed."
+    if fp == "collection_completeness_category":
+        return ("medium", "ConfigTrace's Kubernetes credentials have only partial visibility into this LimitRange.") if nv == "partial" else (
+            "low", "Kubernetes LimitRange collection completeness changed.",
+        )
+    return "low", "A Kubernetes LimitRange field changed."
+
+
+def _classify_namespace_governance_posture_change(change: object) -> tuple[str, str]:
+    ct = (_get(change, "change_type") or "").lower()
+
+    if ct == "added":
+        return "low", "A Kubernetes namespace governance-posture rollup was observed."
+    if ct == "removed":
+        return "low", "A Kubernetes namespace governance-posture rollup is no longer present."
+
+    fp = (_get(change, "field_path") or "").lower()
+    nv = _get(change, "new_value")
+    pv = _get(change, "prev_value")
+
+    if fp == "psa_enforcement_category":
+        new_rank, old_rank = _psa_rank(nv), _psa_rank(pv)
+        if new_rank != _PSA_RANK_UNKNOWN and old_rank != _PSA_RANK_UNKNOWN and new_rank < old_rank:
+            return "high", "A namespace's governance rollup shows Pod Security Admission enforcement weakened."
+        return "low", "A namespace's governance rollup PSA enforcement category changed."
+    if fp in ("validating_webhook_coverage_category", "mutating_webhook_coverage_category"):
+        if pv == "full" and nv != "full":
+            return "medium", "A namespace's admission webhook coverage decreased from full."
+        return "low", "A namespace's admission webhook coverage category changed."
+    if fp == "quota_coverage_category":
+        if pv == "broad" and nv == "none":
+            return "medium", "A namespace's resource-governance coverage regressed to none."
+        return "low", "A namespace's quota coverage category changed."
+    if fp == "default_resource_control_category":
+        return ("medium", "A namespace lost its default resource-control coverage.") if pv == "present" and nv != "present" else (
+            "low", "A namespace's default resource-control category changed.",
+        )
+    if fp == "network_policy_coverage_category":
+        return "low", "A namespace's governance rollup NetworkPolicy coverage category changed."
+    if fp in ("privileged_workload_present", "high_privilege_service_account_present"):
+        return ("medium", "A namespace's governance rollup now shows a higher-risk identity/workload signal present.") if nv else (
+            "low", "A namespace's governance rollup risk signal was removed.",
+        )
+    if fp == "governance_risk_summary":
+        if nv != "standard" and pv == "standard":
+            return "high", f"A namespace's governance rollup now shows a structural risk combination: {nv}."
+        if nv == "standard" and pv != "standard":
+            return "low", "A namespace's governance rollup risk combination was resolved."
+        return "low", "A namespace's governance risk summary changed."
+    if fp in ("resource_quota_count", "limit_range_count", "governance_completeness_category"):
+        return "low", "A namespace's governance rollup field changed."
+    return "low", "A Kubernetes namespace governance-posture field changed."
+
+
 def classify_kubernetes_change(change: object) -> tuple[str, str]:
     """Route a Kubernetes Change to its record-type classifier.
 
-    Unknown/future ``kubernetes_*`` record types (i.e. the message 5
+    Unknown/future ``kubernetes_*`` record types (i.e. any later-message
     planned taxonomy, before their classifiers exist) fail safely into a
     generic low-severity message rather than raising or falling through to
     an unrelated provider's classifier.
@@ -1379,5 +1736,17 @@ def classify_kubernetes_change(change: object) -> tuple[str, str]:
         return _classify_network_policy_change(change)
     if record_type == KUBERNETES_NAMESPACE_NETWORK_POSTURE:
         return _classify_namespace_network_posture_change(change)
+    if record_type in _WEBHOOK_CONFIGURATION_RECORD_TYPES:
+        return _classify_webhook_configuration_change(change)
+    if record_type in _WEBHOOK_RECORD_TYPES:
+        return _classify_webhook_change(change)
+    if record_type == KUBERNETES_POD_SECURITY_ADMISSION:
+        return _classify_pod_security_admission_change(change)
+    if record_type == KUBERNETES_RESOURCE_QUOTA:
+        return _classify_resource_quota_change(change)
+    if record_type == KUBERNETES_LIMIT_RANGE:
+        return _classify_limit_range_change(change)
+    if record_type == KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE:
+        return _classify_namespace_governance_posture_change(change)
 
     return "low", f"A Kubernetes configuration record changed ({record_type or 'unknown record type'})."

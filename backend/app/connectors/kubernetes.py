@@ -280,6 +280,22 @@ from app.connectors.kubernetes_schema import (
     is_public_cidr_category,
     rule_permits_everything,
     stable_fingerprint,
+    KUBERNETES_LIMIT_RANGE,
+    KUBERNETES_MUTATING_WEBHOOK,
+    KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION,
+    KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE,
+    KUBERNETES_POD_SECURITY_ADMISSION,
+    KUBERNETES_RESOURCE_QUOTA,
+    KUBERNETES_VALIDATING_WEBHOOK,
+    KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION,
+    categorize_admission_scope,
+    categorize_failure_policy,
+    categorize_match_policy,
+    categorize_reinvocation_policy,
+    categorize_selector_presence,
+    categorize_side_effects,
+    parse_cpu_quantity_millicores,
+    parse_memory_quantity_bytes,
 )
 
 logger = logging.getLogger(__name__)
@@ -3513,6 +3529,763 @@ def _build_namespace_network_postures(
     return records
 
 
+# ── Admission control and configuration governance (message 5) ──────────────
+#
+# ConfigMap and Secret metadata collection are DELIBERATELY NOT IMPLEMENTED
+# in this connector — this is a permanent architectural boundary, not a gap
+# to be closed later. The Kubernetes API returns full values alongside
+# metadata for both resource types (no field-level RBAC exists to request
+# "metadata but not values"), so any read access at all would require
+# requesting — and receiving — the ability to read Secret/ConfigMap
+# contents. ConfigTrace's default permission contract does not request read
+# access to either resource type, and this connector makes zero calls to
+# any Secret- or ConfigMap-reading CoreV1Api method (singular or list form,
+# any namespace). See kubernetes_schema.py's module docstring for the full
+# safety review.
+
+def _categorize_webhook_client(client_config: Any) -> dict:
+    """Categorize a webhook's clientConfig without ever persisting CA
+    bundle bytes or the literal external URL — only a safe host category
+    (reusing the same exact/wildcard/hostless vocabulary as Ingress
+    hostnames) and a plaintext-HTTP flag."""
+    service = getattr(client_config, "service", None) if client_config else None
+    url = getattr(client_config, "url", None) if client_config else None
+    ca_bundle = getattr(client_config, "ca_bundle", None) if client_config else None
+
+    client_type = ks.CLIENT_TYPE_UNKNOWN
+    service_namespace = service_name = service_path_category = service_port = None
+    external_url_host_category = None
+    plaintext_http = False
+
+    if service is not None:
+        client_type = ks.CLIENT_TYPE_SERVICE
+        service_namespace = getattr(service, "namespace", None)
+        service_name = getattr(service, "name", None)
+        path = getattr(service, "path", None)
+        service_path_category = "root" if not path or path == "/" else "specific"
+        service_port = getattr(service, "port", None)
+    elif url:
+        client_type = ks.CLIENT_TYPE_URL
+        parsed = urlparse(url)
+        external_url_host_category = categorize_host(parsed.hostname)
+        plaintext_http = parsed.scheme == "http"
+
+    return {
+        "client_type": client_type,
+        "service_namespace": service_namespace,
+        "service_name": service_name,
+        "service_path_category": service_path_category,
+        "service_port": service_port,
+        "external_url_host_category": external_url_host_category,
+        "ca_bundle_present": bool(ca_bundle),
+        "plaintext_http": plaintext_http,
+    }
+
+
+def _summarize_scope_categories(categories: set) -> str:
+    if not categories:
+        return ks.SCOPE_UNKNOWN
+    if ks.SCOPE_ALL in categories:
+        return ks.SCOPE_ALL
+    if len(categories) == 1:
+        return next(iter(categories))
+    return "mixed"
+
+
+def _categorize_webhook_rules(rules: list) -> dict:
+    """Categorize webhook rules into bounded sets — never Cartesian-
+    expanded, never raw rule dicts persisted."""
+    operation_categories: set[str] = set()
+    api_group_categories: set[str] = set()
+    api_version_categories: set[str] = set()
+    resource_categories: set[str] = set()
+    scope_categories: set[str] = set()
+    wildcard_operation = wildcard_api_group = wildcard_api_version = wildcard_resource = False
+
+    for rule in rules or []:
+        try:
+            operations = getattr(rule, "operations", None) or []
+            api_groups = getattr(rule, "api_groups", None) or []
+            api_versions = getattr(rule, "api_versions", None) or []
+            resources = getattr(rule, "resources", None) or []
+            scope = getattr(rule, "scope", None)
+        except Exception:  # noqa: BLE001 — malformed rule, skip it
+            continue
+
+        for op in operations:
+            operation_categories.add(op)
+            if op == "*":
+                wildcard_operation = True
+        for g in api_groups:
+            cat = categorize_api_group(g)
+            api_group_categories.add(cat)
+            if cat == ks.API_GROUP_WILDCARD:
+                wildcard_api_group = True
+        for v in api_versions:
+            api_version_categories.add(v)
+            if v == "*":
+                wildcard_api_version = True
+        for r in resources:
+            cat = categorize_resource(r)
+            resource_categories.add(cat)
+            if cat == ks.RESOURCE_CATEGORY_WILDCARD:
+                wildcard_resource = True
+        scope_categories.add(categorize_admission_scope(scope))
+
+    return {
+        "operation_categories": sorted(operation_categories),
+        "api_group_categories": sorted(api_group_categories),
+        "api_version_categories": sorted(api_version_categories),
+        "resource_categories": sorted(resource_categories),
+        "scope_category": _summarize_scope_categories(scope_categories),
+        "wildcard_operation": wildcard_operation,
+        "wildcard_api_group": wildcard_api_group,
+        "wildcard_api_version": wildcard_api_version,
+        "wildcard_resource": wildcard_resource,
+    }
+
+
+def _normalize_admission_webhook(
+    webhook: Any, *, webhook_type: str, cluster_id: str, cluster_name: str, parent_record_id: str,
+) -> dict:
+    name = getattr(webhook, "name", "") or ""
+    client_info = _categorize_webhook_client(getattr(webhook, "client_config", None))
+
+    failure_policy = categorize_failure_policy(getattr(webhook, "failure_policy", None))
+    match_policy = categorize_match_policy(getattr(webhook, "match_policy", None))
+    side_effects = categorize_side_effects(getattr(webhook, "side_effects", None))
+    timeout = getattr(webhook, "timeout_seconds", None)
+
+    ns_selector = getattr(webhook, "namespace_selector", None)
+    ns_selector_info = categorize_selector_presence(
+        getattr(ns_selector, "match_labels", None) if ns_selector else None,
+        getattr(ns_selector, "match_expressions", None) if ns_selector else None,
+        present=ns_selector is not None,
+    )
+    obj_selector = getattr(webhook, "object_selector", None)
+    obj_selector_info = categorize_selector_presence(
+        getattr(obj_selector, "match_labels", None) if obj_selector else None,
+        getattr(obj_selector, "match_expressions", None) if obj_selector else None,
+        present=obj_selector is not None,
+    )
+
+    rules = getattr(webhook, "rules", None) or []
+    rule_info = _categorize_webhook_rules(rules)
+
+    admission_review_versions = sorted(getattr(webhook, "admission_review_versions", None) or [])
+    reinvocation_policy = None
+    if webhook_type == "mutating":
+        reinvocation_policy = categorize_reinvocation_policy(getattr(webhook, "reinvocation_policy", None))
+
+    record_id = f"{parent_record_id}/webhook/{name}"
+    fingerprint = stable_fingerprint(
+        client_info["client_type"], failure_policy, match_policy, side_effects, timeout,
+        ns_selector_info["fingerprint"], obj_selector_info["fingerprint"],
+        rule_info["operation_categories"], rule_info["api_group_categories"],
+        rule_info["resource_categories"], rule_info["scope_category"],
+        admission_review_versions, reinvocation_policy,
+    )
+
+    return {
+        "record_type": KUBERNETES_VALIDATING_WEBHOOK if webhook_type == "validating" else KUBERNETES_MUTATING_WEBHOOK,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "parent_configuration_record_id": parent_record_id,
+        "webhook_name": name,
+        "webhook_type": webhook_type,
+        "client_type": client_info["client_type"],
+        "service_namespace": client_info["service_namespace"],
+        "service_name": client_info["service_name"],
+        "service_path_category": client_info["service_path_category"],
+        "service_port": client_info["service_port"],
+        "external_url_host_category": client_info["external_url_host_category"],
+        "plaintext_http_client": client_info["plaintext_http"],
+        "failure_policy": failure_policy,
+        "match_policy": match_policy,
+        "side_effects": side_effects,
+        "timeout_seconds": timeout,
+        "namespace_selector_category": ns_selector_info["category"],
+        "object_selector_category": obj_selector_info["category"],
+        "rules_count": len(rules),
+        "operation_categories": rule_info["operation_categories"],
+        "api_group_categories": rule_info["api_group_categories"],
+        "api_version_categories": rule_info["api_version_categories"],
+        "resource_categories": rule_info["resource_categories"],
+        "scope_category": rule_info["scope_category"],
+        "admission_review_versions": admission_review_versions,
+        "ca_bundle_present": client_info["ca_bundle_present"],
+        "reinvocation_policy": reinvocation_policy,
+        "wildcard_operation": rule_info["wildcard_operation"],
+        "wildcard_api_group": rule_info["wildcard_api_group"],
+        "wildcard_api_version": rule_info["wildcard_api_version"],
+        "wildcard_resource": rule_info["wildcard_resource"],
+        "webhook_fingerprint": fingerprint,
+        "collection_completeness_category": "complete",
+    }
+
+
+def _normalize_webhook_configuration(
+    obj: Any, *, kind: str, cluster_id: str, cluster_name: str,
+) -> tuple[dict, list[dict]]:
+    metadata = obj.metadata
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    webhooks_raw = getattr(obj, "webhooks", None) or []
+
+    kind_label = "validating_webhook_configuration" if kind == "validating" else "mutating_webhook_configuration"
+    record_id = f"{cluster_id}/{kind_label}/{uid or name}"
+
+    webhook_records: list[dict] = []
+    for webhook in webhooks_raw:
+        try:
+            webhook_records.append(_normalize_admission_webhook(
+                webhook, webhook_type=kind, cluster_id=cluster_id, cluster_name=cluster_name,
+                parent_record_id=record_id,
+            ))
+        except Exception:  # noqa: BLE001 — malformed webhook, skip it
+            logger.info("Skipping malformed %s webhook", kind)
+
+    fail_open = sum(1 for w in webhook_records if w["failure_policy"] == ks.FAILURE_POLICY_IGNORE)
+    fail_closed = sum(1 for w in webhook_records if w["failure_policy"] == ks.FAILURE_POLICY_FAIL)
+    no_side_effects = sum(
+        1 for w in webhook_records if w["side_effects"] in (ks.SIDE_EFFECTS_NONE, ks.SIDE_EFFECTS_NONE_ON_DRY_RUN)
+    )
+    unknown_side_effects = sum(1 for w in webhook_records if w["side_effects"] == ks.SIDE_EFFECTS_UNKNOWN)
+    ns_selector_present = sum(1 for w in webhook_records if w["namespace_selector_category"] != ks.SELECTOR_ABSENT)
+    obj_selector_present = sum(1 for w in webhook_records if w["object_selector_category"] != ks.SELECTOR_ABSENT)
+    external_url_count = sum(1 for w in webhook_records if w["client_type"] == ks.CLIENT_TYPE_URL)
+    service_client_count = sum(1 for w in webhook_records if w["client_type"] == ks.CLIENT_TYPE_SERVICE)
+    ca_bundle_count = sum(1 for w in webhook_records if w["ca_bundle_present"])
+    timeouts = [w["timeout_seconds"] for w in webhook_records if w["timeout_seconds"] is not None]
+
+    admission_versions: set[str] = set()
+    for w in webhook_records:
+        admission_versions.update(w["admission_review_versions"])
+    match_policies = {w["match_policy"] for w in webhook_records}
+    reinvocation_policies = {w["reinvocation_policy"] for w in webhook_records if w["reinvocation_policy"]}
+
+    if not webhook_records:
+        posture = ks.WEBHOOK_SECURITY_POSTURE_UNKNOWN
+    elif fail_open == len(webhook_records):
+        posture = ks.WEBHOOK_SECURITY_POSTURE_FAIL_OPEN
+    elif fail_closed == len(webhook_records):
+        broad = any(
+            w["wildcard_operation"] or w["wildcard_api_group"] or w["wildcard_resource"]
+            for w in webhook_records
+        )
+        posture = ks.WEBHOOK_SECURITY_POSTURE_FAIL_CLOSED_BROAD if broad else ks.WEBHOOK_SECURITY_POSTURE_FAIL_CLOSED_NARROW
+    else:
+        posture = ks.WEBHOOK_SECURITY_POSTURE_MIXED
+
+    fingerprint = stable_fingerprint(
+        len(webhook_records), fail_open, fail_closed, sorted(admission_versions),
+        sorted(match_policies), sorted(reinvocation_policies), ca_bundle_count,
+    )
+
+    record = {
+        "record_type": (
+            KUBERNETES_VALIDATING_WEBHOOK_CONFIGURATION if kind == "validating"
+            else KUBERNETES_MUTATING_WEBHOOK_CONFIGURATION
+        ),
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "name": name,
+        "uid": uid,
+        "kind": "ValidatingWebhookConfiguration" if kind == "validating" else "MutatingWebhookConfiguration",
+        "webhook_count": len(webhook_records),
+        "admission_review_version_categories": sorted(admission_versions),
+        "fail_open_webhook_count": fail_open,
+        "fail_closed_webhook_count": fail_closed,
+        "no_side_effects_webhook_count": no_side_effects,
+        "unknown_side_effects_webhook_count": unknown_side_effects,
+        "namespace_selector_present_count": ns_selector_present,
+        "object_selector_present_count": obj_selector_present,
+        "external_url_client_count": external_url_count,
+        "in_cluster_service_client_count": service_client_count,
+        "ca_bundle_present_count": ca_bundle_count,
+        "timeout_seconds_min": min(timeouts) if timeouts else None,
+        "timeout_seconds_max": max(timeouts) if timeouts else None,
+        "match_policy_categories": sorted(match_policies),
+        "reinvocation_policy_categories": sorted(reinvocation_policies),
+        "security_posture_summary": posture,
+        "configuration_fingerprint": fingerprint,
+        "collection_completeness_category": "complete",
+    }
+    return record, webhook_records
+
+
+def _collect_webhook_configurations(
+    list_fn: Callable[..., Any], *, kind: str, cluster_id: str, cluster_name: str,
+) -> tuple[list[dict], list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    config_records: list[dict] = []
+    webhook_records: list[dict] = []
+    for item in raw_items:
+        try:
+            record, webhooks = _normalize_webhook_configuration(
+                item, kind=kind, cluster_id=cluster_id, cluster_name=cluster_name,
+            )
+        except Exception:  # noqa: BLE001 — malformed configuration, skip it
+            logger.info("Skipping malformed %s configuration", kind)
+            continue
+        config_records.append(record)
+        webhook_records.extend(webhooks)
+
+    status = _family_completeness_status(diag)
+    for r in config_records:
+        r["collection_completeness_category"] = status
+    for r in webhook_records:
+        r["collection_completeness_category"] = status
+    config_records.sort(key=lambda r: r["name"])
+    webhook_records.sort(key=lambda r: r["record_id"])
+    return config_records, webhook_records, status
+
+
+def _webhook_coverage_category(webhook_records: list[dict]) -> str:
+    """Cluster-wide coverage category (applied to every namespace's
+    governance rollup, since resolving exact per-namespace applicability
+    for a narrow-selector webhook would require evaluating arbitrary
+    namespace labels, which this connector never persists). "full" only
+    when at least one webhook has no selector restriction (applies to
+    every namespace); otherwise "partial" — never silently assumed full."""
+    if not webhook_records:
+        return "none"
+    if any(w["namespace_selector_category"] in (ks.SELECTOR_ABSENT, ks.SELECTOR_EMPTY_ALL) for w in webhook_records):
+        return "full"
+    return "partial"
+
+
+# ── Pod Security Admission posture ────────────────────────────────────────────
+
+def _normalize_pod_security_admission(
+    namespace_record: dict, *, cluster_id: str, cluster_name: str, cluster_major_minor: Optional[str],
+) -> dict:
+    ns_name = namespace_record["name"]
+    enforce = ks.categorize_psa_level(namespace_record.get("psa_enforce"))
+    audit = ks.categorize_psa_level(namespace_record.get("psa_audit"))
+    warn = ks.categorize_psa_level(namespace_record.get("psa_warn"))
+    enforce_version_cat = ks.categorize_psa_version(namespace_record.get("psa_enforce_version"), cluster_major_minor)
+    audit_version_cat = ks.categorize_psa_version(namespace_record.get("psa_audit_version"), cluster_major_minor)
+    warn_version_cat = ks.categorize_psa_version(namespace_record.get("psa_warn_version"), cluster_major_minor)
+
+    enforcement_enabled = enforce != ks.PSA_ENFORCE_CATEGORY_UNSET
+    audit_enabled = audit != ks.PSA_ENFORCE_CATEGORY_UNSET
+    warning_enabled = warn != ks.PSA_ENFORCE_CATEGORY_UNSET
+
+    enforce_rank = ks.PSA_LEVEL_RANK.get(enforce, 0)
+    weaker_than_audit = audit_enabled and enforce_rank < ks.PSA_LEVEL_RANK.get(audit, 0)
+    weaker_than_warn = warning_enabled and enforce_rank < ks.PSA_LEVEL_RANK.get(warn, 0)
+
+    record_id = f"{cluster_id}/pod_security_admission/{ns_name}"
+    fingerprint = stable_fingerprint(enforce, enforce_version_cat, audit, audit_version_cat, warn, warn_version_cat)
+
+    return {
+        "record_type": KUBERNETES_POD_SECURITY_ADMISSION,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": ns_name,
+        "enforce_level": enforce,
+        "enforce_version_category": enforce_version_cat,
+        "audit_level": audit,
+        "audit_version_category": audit_version_cat,
+        "warn_level": warn,
+        "warn_version_category": warn_version_cat,
+        "effective_posture_category": enforce,
+        "enforcement_enabled": enforcement_enabled,
+        "audit_enabled": audit_enabled,
+        "warning_enabled": warning_enabled,
+        "enforcement_weaker_than_audit": weaker_than_audit,
+        "enforcement_weaker_than_warning": weaker_than_warn,
+        "namespace_context_category": ks.categorize_namespace_context(ns_name),
+        "posture_fingerprint": fingerprint,
+        "collection_completeness_category": "complete",
+    }
+
+
+def _build_pod_security_admission_records(
+    namespace_records: list[dict], *, cluster_id: str, cluster_name: str, cluster_major_minor: Optional[str],
+) -> list[dict]:
+    records = [
+        _normalize_pod_security_admission(
+            ns, cluster_id=cluster_id, cluster_name=cluster_name, cluster_major_minor=cluster_major_minor,
+        )
+        for ns in namespace_records
+    ]
+    records.sort(key=lambda r: r["namespace"])
+    return records
+
+
+# ── ResourceQuota ──────────────────────────────────────────────────────────────
+
+_QUOTA_SERVICES_KEY = "services"
+_QUOTA_LOAD_BALANCER_KEY = "services.loadbalancers"
+_QUOTA_PVC_KEY = "persistentvolumeclaims"
+_QUOTA_STORAGE_REQUEST_KEY = "requests.storage"
+_QUOTA_EPHEMERAL_STORAGE_KEYS = ("ephemeral-storage", "limits.ephemeral-storage", "requests.ephemeral-storage")
+_QUOTA_SECRET_KEYS = ("count/secrets", "secrets")
+_QUOTA_CONFIGMAP_KEYS = ("count/configmaps", "configmaps")
+
+
+def _normalize_resource_quota(obj: Any, *, cluster_id: str, cluster_name: str) -> dict:
+    metadata = obj.metadata
+    namespace = metadata.namespace
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    spec = getattr(obj, "spec", None)
+    hard = getattr(spec, "hard", None) or {}
+    scopes = getattr(spec, "scopes", None) or []
+    scope_selector = getattr(spec, "scope_selector", None)
+
+    def _first_present(keys: tuple[str, ...]) -> Optional[str]:
+        for k in keys:
+            if k in hard:
+                return hard[k]
+        return None
+
+    cpu_raw = _first_present(ks._QUOTA_CPU_KEYS)
+    request_cpu_raw = _first_present(ks._QUOTA_CPU_REQUEST_KEYS)
+    memory_raw = _first_present(ks._QUOTA_MEMORY_KEYS)
+    request_memory_raw = _first_present(ks._QUOTA_MEMORY_REQUEST_KEYS)
+
+    pod_count = None
+    if "pods" in hard:
+        try:
+            pod_count = int(str(hard["pods"]))
+        except (ValueError, TypeError):
+            pod_count = None
+
+    hard_cpu_present = ks._quantity_present(hard, ks._QUOTA_CPU_KEYS)
+    hard_memory_present = ks._quantity_present(hard, ks._QUOTA_MEMORY_KEYS)
+    request_cpu_present = ks._quantity_present(hard, ks._QUOTA_CPU_REQUEST_KEYS)
+    request_memory_present = ks._quantity_present(hard, ks._QUOTA_MEMORY_REQUEST_KEYS)
+    pod_count_present = "pods" in hard
+    service_count_present = _QUOTA_SERVICES_KEY in hard
+    lb_count_present = _QUOTA_LOAD_BALANCER_KEY in hard
+    pvc_count_present = _QUOTA_PVC_KEY in hard
+    storage_request_present = _QUOTA_STORAGE_REQUEST_KEY in hard
+    ephemeral_present = ks._quantity_present(hard, _QUOTA_EPHEMERAL_STORAGE_KEYS)
+    secret_count_present = ks._quantity_present(hard, _QUOTA_SECRET_KEYS)
+    configmap_count_present = ks._quantity_present(hard, _QUOTA_CONFIGMAP_KEYS)
+
+    coverage_flags = [
+        hard_cpu_present, hard_memory_present, request_cpu_present, request_memory_present,
+        pod_count_present, service_count_present, lb_count_present, pvc_count_present,
+        storage_request_present, ephemeral_present, secret_count_present, configmap_count_present,
+    ]
+    covered = sum(coverage_flags)
+    if covered == 0:
+        coverage = ks.POLICY_COVERAGE_NONE
+    elif covered >= 4:
+        coverage = ks.POLICY_COVERAGE_BROAD
+    else:
+        coverage = ks.POLICY_COVERAGE_PARTIAL
+
+    record_id = f"{cluster_id}/resource_quota/{namespace}/{uid or name}"
+    fingerprint = stable_fingerprint(
+        hard_cpu_present, hard_memory_present, request_cpu_present, request_memory_present,
+        pod_count, service_count_present, lb_count_present, pvc_count_present,
+        storage_request_present, ephemeral_present, secret_count_present, configmap_count_present,
+        sorted(scopes), scope_selector is not None,
+    )
+
+    return {
+        "record_type": KUBERNETES_RESOURCE_QUOTA,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "hard_limit_key_count": len(hard),
+        "hard_cpu_limit_present": hard_cpu_present,
+        "hard_cpu_limit_millicores": parse_cpu_quantity_millicores(cpu_raw) if hard_cpu_present else None,
+        "hard_memory_limit_present": hard_memory_present,
+        "hard_memory_limit_bytes": parse_memory_quantity_bytes(memory_raw) if hard_memory_present else None,
+        "request_cpu_limit_present": request_cpu_present,
+        "request_cpu_limit_millicores": parse_cpu_quantity_millicores(request_cpu_raw) if request_cpu_present else None,
+        "request_memory_limit_present": request_memory_present,
+        "request_memory_limit_bytes": parse_memory_quantity_bytes(request_memory_raw) if request_memory_present else None,
+        "pod_count_limit_present": pod_count_present,
+        "pod_count_limit": pod_count,
+        "service_count_limit_present": service_count_present,
+        "load_balancer_count_limit_present": lb_count_present,
+        "pvc_count_limit_present": pvc_count_present,
+        "storage_request_limit_present": storage_request_present,
+        "ephemeral_storage_limit_present": ephemeral_present,
+        "secret_count_limit_present": secret_count_present,
+        "configmap_count_limit_present": configmap_count_present,
+        "scope_categories": sorted(scopes),
+        "scope_selector_present": scope_selector is not None,
+        "resource_control_coverage_category": coverage,
+        "quota_fingerprint": fingerprint,
+        "collection_completeness_category": "complete",
+    }
+
+
+def _collect_resource_quotas(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    records: list[dict] = []
+    for item in raw_items:
+        try:
+            ns = item.metadata.namespace
+        except Exception:  # noqa: BLE001
+            continue
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            records.append(_normalize_resource_quota(item, cluster_id=cluster_id, cluster_name=cluster_name))
+        except Exception:  # noqa: BLE001
+            continue
+
+    status = _family_completeness_status(diag)
+    for r in records:
+        r["collection_completeness_category"] = status
+    records.sort(key=lambda r: (r["namespace"], r["name"]))
+    return records, status
+
+
+# ── LimitRange ─────────────────────────────────────────────────────────────────
+
+def _normalize_limit_range(obj: Any, *, cluster_id: str, cluster_name: str) -> dict:
+    metadata = obj.metadata
+    namespace = metadata.namespace
+    name = metadata.name
+    uid = getattr(metadata, "uid", None)
+    spec = getattr(obj, "spec", None)
+    items = getattr(spec, "limits", None) or []
+
+    container_default_present = container_default_request_present = False
+    pod_max_present = pod_min_present = False
+    container_max_present = container_min_present = False
+    pvc_min_present = pvc_max_present = False
+    ratio_present = False
+    cpu_seen: set[str] = set()
+    memory_seen: set[str] = set()
+    ephemeral_seen: set[str] = set()
+
+    for item in items:
+        try:
+            item_type = getattr(item, "type", None)
+            default = getattr(item, "default", None) or {}
+            default_request = getattr(item, "default_request", None) or {}
+            max_ = getattr(item, "max", None) or {}
+            min_ = getattr(item, "min", None) or {}
+            ratio = getattr(item, "max_limit_request_ratio", None) or {}
+        except Exception:  # noqa: BLE001 — malformed item, skip it
+            continue
+
+        if item_type == ks.LIMIT_RANGE_TYPE_CONTAINER:
+            container_default_present = container_default_present or bool(default)
+            container_default_request_present = container_default_request_present or bool(default_request)
+            container_max_present = container_max_present or bool(max_)
+            container_min_present = container_min_present or bool(min_)
+        elif item_type == ks.LIMIT_RANGE_TYPE_POD:
+            pod_max_present = pod_max_present or bool(max_)
+            pod_min_present = pod_min_present or bool(min_)
+        elif item_type == ks.LIMIT_RANGE_TYPE_PVC:
+            pvc_min_present = pvc_min_present or bool(min_)
+            pvc_max_present = pvc_max_present or bool(max_)
+
+        ratio_present = ratio_present or bool(ratio)
+
+        for bucket, field_dict in (
+            ("default", default), ("default_request", default_request), ("max", max_), ("min", min_),
+        ):
+            if "cpu" in field_dict:
+                cpu_seen.add(bucket)
+            if "memory" in field_dict:
+                memory_seen.add(bucket)
+            if "ephemeral-storage" in field_dict:
+                ephemeral_seen.add(bucket)
+
+    def _coverage(seen: set) -> str:
+        if not seen:
+            return ks.POLICY_COVERAGE_NONE
+        if len(seen) >= 3:
+            return ks.POLICY_COVERAGE_BROAD
+        return ks.POLICY_COVERAGE_PARTIAL
+
+    cpu_coverage = _coverage(cpu_seen)
+    memory_coverage = _coverage(memory_seen)
+    ephemeral_coverage = _coverage(ephemeral_seen)
+
+    defaulting_true_count = sum([
+        container_default_present, container_default_request_present,
+        pod_max_present, pod_min_present, container_max_present, container_min_present,
+    ])
+    if defaulting_true_count == 0:
+        defaulting_coverage = ks.POLICY_COVERAGE_NONE
+    elif defaulting_true_count >= 4:
+        defaulting_coverage = ks.POLICY_COVERAGE_BROAD
+    else:
+        defaulting_coverage = ks.POLICY_COVERAGE_PARTIAL
+
+    record_id = f"{cluster_id}/limit_range/{namespace}/{uid or name}"
+    fingerprint = stable_fingerprint(
+        container_default_present, container_default_request_present, pod_max_present, pod_min_present,
+        container_max_present, container_min_present, pvc_min_present, pvc_max_present, ratio_present,
+        cpu_coverage, memory_coverage, ephemeral_coverage,
+    )
+
+    return {
+        "record_type": KUBERNETES_LIMIT_RANGE,
+        "record_id": record_id,
+        "cluster_id": cluster_id,
+        "cluster_name": cluster_name,
+        "namespace": namespace,
+        "name": name,
+        "uid": uid,
+        "item_count": len(items),
+        "container_default_present": container_default_present,
+        "container_default_request_present": container_default_request_present,
+        "pod_max_present": pod_max_present,
+        "pod_min_present": pod_min_present,
+        "container_max_present": container_max_present,
+        "container_min_present": container_min_present,
+        "pvc_min_present": pvc_min_present,
+        "pvc_max_present": pvc_max_present,
+        "request_to_limit_ratio_present": ratio_present,
+        "cpu_policy_coverage_category": cpu_coverage,
+        "memory_policy_coverage_category": memory_coverage,
+        "ephemeral_storage_policy_coverage_category": ephemeral_coverage,
+        "defaulting_coverage_category": defaulting_coverage,
+        "limit_fingerprint": fingerprint,
+        "collection_completeness_category": "complete",
+    }
+
+
+def _collect_limit_ranges(
+    list_fn: Callable[..., Any], *, cluster_id: str, cluster_name: str,
+    namespace_allowlist: Optional[list[str]],
+) -> tuple[list[dict], str]:
+    raw_items, diag = paginate_list(list_fn)
+    records: list[dict] = []
+    for item in raw_items:
+        try:
+            ns = item.metadata.namespace
+        except Exception:  # noqa: BLE001
+            continue
+        if namespace_allowlist is not None and ns not in namespace_allowlist:
+            continue
+        try:
+            records.append(_normalize_limit_range(item, cluster_id=cluster_id, cluster_name=cluster_name))
+        except Exception:  # noqa: BLE001
+            continue
+
+    status = _family_completeness_status(diag)
+    for r in records:
+        r["collection_completeness_category"] = status
+    records.sort(key=lambda r: (r["namespace"], r["name"]))
+    return records, status
+
+
+# ── Namespace governance rollup ───────────────────────────────────────────────
+
+def _build_namespace_governance_postures(
+    *,
+    namespace_records: list[dict],
+    psa_records: list[dict],
+    validating_webhook_records: list[dict],
+    mutating_webhook_records: list[dict],
+    quota_records: list[dict],
+    limit_range_records: list[dict],
+    network_posture_records: list[dict],
+    workload_records: list[dict],
+    service_account_records: list[dict],
+    cluster_id: str,
+    cluster_name: str,
+    admission_collection_status: str,
+    quota_collection_status: str,
+    limit_range_collection_status: str,
+) -> list[dict]:
+    """Compact cross-control rollup — NOT a Finding engine (message 6 owns
+    that). Represents webhook coverage as full/partial/unknown rather than
+    resolving exact per-namespace label-selector applicability, since
+    arbitrary namespace labels are never persisted."""
+    psa_by_ns = {p["namespace"]: p for p in psa_records}
+    quota_count_by_ns: dict[str, int] = {}
+    for q in quota_records:
+        quota_count_by_ns[q["namespace"]] = quota_count_by_ns.get(q["namespace"], 0) + 1
+    limit_count_by_ns: dict[str, int] = {}
+    for lr in limit_range_records:
+        limit_count_by_ns[lr["namespace"]] = limit_count_by_ns.get(lr["namespace"], 0) + 1
+    netpost_by_ns = {n["namespace"]: n for n in network_posture_records}
+    privileged_ns = {
+        w["namespace"] for w in workload_records
+        if w.get("security_posture_summary") == SECURITY_POSTURE_PRIVILEGED_OR_HOST_ACCESS
+    }
+    high_priv_sa_ns = {
+        sa["namespace"] for sa in service_account_records
+        if sa.get("cluster_admin_bound") or sa.get("highest_privilege_category") in ("high", "critical")
+    }
+
+    validating_coverage = _webhook_coverage_category(validating_webhook_records)
+    mutating_coverage = _webhook_coverage_category(mutating_webhook_records)
+
+    records: list[dict] = []
+    for ns in namespace_records:
+        ns_name = ns["name"]
+        psa = psa_by_ns.get(ns_name)
+        psa_category = psa["enforce_level"] if psa else "unknown"
+        quota_count = quota_count_by_ns.get(ns_name, 0)
+        limit_count = limit_count_by_ns.get(ns_name, 0)
+        netpost = netpost_by_ns.get(ns_name)
+        net_coverage = netpost["policy_coverage_category"] if netpost else "unknown"
+        privileged_present = ns_name in privileged_ns
+        high_priv_present = ns_name in high_priv_sa_ns
+
+        if quota_collection_status == "partial" or limit_range_collection_status == "partial":
+            quota_coverage = "unknown"
+        elif quota_count == 0 and limit_count == 0:
+            quota_coverage = "none"
+        elif quota_count > 0 and limit_count > 0:
+            quota_coverage = "broad"
+        else:
+            quota_coverage = "partial"
+
+        default_resource_control = "present" if limit_count > 0 else "absent"
+        governance_completeness = (
+            "partial" if "partial" in (admission_collection_status, quota_collection_status, limit_range_collection_status)
+            else "complete"
+        )
+
+        risk_bits: list[str] = []
+        if privileged_present and psa_category in (
+            ks.PSA_ENFORCE_CATEGORY_PRIVILEGED, ks.PSA_ENFORCE_CATEGORY_UNSET, ks.PSA_ENFORCE_CATEGORY_INVALID,
+        ):
+            risk_bits.append("privileged_workload_weak_psa")
+        if high_priv_present and net_coverage in ("none", "partial") and quota_coverage == "none":
+            risk_bits.append("high_privilege_identity_weak_governance")
+        governance_risk_summary = ",".join(sorted(risk_bits)) if risk_bits else "standard"
+
+        records.append({
+            "record_type": KUBERNETES_NAMESPACE_GOVERNANCE_POSTURE,
+            "record_id": f"{cluster_id}/namespace_governance_posture/{ns_name}",
+            "cluster_id": cluster_id,
+            "cluster_name": cluster_name,
+            "namespace": ns_name,
+            "psa_enforcement_category": psa_category,
+            "validating_webhook_coverage_category": validating_coverage,
+            "mutating_webhook_coverage_category": mutating_coverage,
+            "resource_quota_count": quota_count,
+            "limit_range_count": limit_count,
+            "quota_coverage_category": quota_coverage,
+            "default_resource_control_category": default_resource_control,
+            "network_policy_coverage_category": net_coverage,
+            "privileged_workload_present": privileged_present,
+            "high_privilege_service_account_present": high_priv_present,
+            "governance_completeness_category": governance_completeness,
+            "governance_risk_summary": governance_risk_summary,
+        })
+    return records
+
+
 # ── Connector ──────────────────────────────────────────────────────────────────
 
 class KubernetesConnector(BaseConnector):
@@ -3954,6 +4727,61 @@ class KubernetesConnector(BaseConnector):
                 + network_policy_records + namespace_network_posture_records
             )
 
+            # ── Admission control and configuration governance (message 5) ──
+            # ConfigMap and Secret metadata are deliberately NOT collected —
+            # see this file's module docstring for the full safety review.
+            admissionregistration_v1 = k8s_client.AdmissionregistrationV1Api(api_client)
+
+            validating_config_records, validating_webhook_records, validating_status = _collect_webhook_configurations(
+                admissionregistration_v1.list_validating_webhook_configuration,
+                kind="validating", cluster_id=cluster_id, cluster_name=display_cluster_name,
+            )
+            mutating_config_records, mutating_webhook_records, mutating_status = _collect_webhook_configurations(
+                admissionregistration_v1.list_mutating_webhook_configuration,
+                kind="mutating", cluster_id=cluster_id, cluster_name=display_cluster_name,
+            )
+            resource_quota_records, resource_quota_status = _collect_resource_quotas(
+                core_v1.list_resource_quota_for_all_namespaces,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+            limit_range_records, limit_range_status = _collect_limit_ranges(
+                core_v1.list_limit_range_for_all_namespaces,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                namespace_allowlist=allowlist,
+            )
+            pod_security_admission_records = _build_pod_security_admission_records(
+                namespace_records, cluster_id=cluster_id, cluster_name=display_cluster_name,
+                cluster_major_minor=major_minor(kubernetes_version),
+            )
+
+            if "partial" in (validating_status, mutating_status, resource_quota_status, limit_range_status):
+                partial_permission = True
+
+            namespace_governance_posture_records = _build_namespace_governance_postures(
+                namespace_records=namespace_records,
+                psa_records=pod_security_admission_records,
+                validating_webhook_records=validating_webhook_records,
+                mutating_webhook_records=mutating_webhook_records,
+                quota_records=resource_quota_records,
+                limit_range_records=limit_range_records,
+                network_posture_records=namespace_network_posture_records,
+                workload_records=all_workload_records,
+                service_account_records=service_account_full_records,
+                cluster_id=cluster_id, cluster_name=display_cluster_name,
+                admission_collection_status=("partial" if validating_status == "partial" or mutating_status == "partial" else "complete"),
+                quota_collection_status=resource_quota_status,
+                limit_range_collection_status=limit_range_status,
+            )
+
+            all_admission_records = (
+                validating_config_records + validating_webhook_records
+                + mutating_config_records + mutating_webhook_records
+                + pod_security_admission_records
+                + resource_quota_records + limit_range_records
+                + namespace_governance_posture_records
+            )
+
             collection_completeness = "complete" if not partial_permission else "partial"
 
             cluster_record = {
@@ -3983,7 +4811,7 @@ class KubernetesConnector(BaseConnector):
             return (
                 [cluster_record] + selected_namespace_records + capability_records
                 + all_workload_records + all_container_records + service_account_records
-                + all_rbac_records + all_network_records
+                + all_rbac_records + all_network_records + all_admission_records
             )
         finally:
             api_client.rest_client.pool_manager.clear()
