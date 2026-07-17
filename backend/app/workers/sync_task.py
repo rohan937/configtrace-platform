@@ -349,6 +349,13 @@ def sync_integration(
 
                 connector = TerraformCloudConnector()
                 records = connector.fetch(credentials)
+            elif integration.provider == "kubernetes":
+                # SECURITY: kubeconfig content (and any bearer token/client
+                # key/certificate it embeds) is NEVER logged.
+                from app.connectors.kubernetes import KubernetesConnector
+
+                connector = KubernetesConnector()
+                records = connector.fetch(credentials)
             else:
                 logger.warning(
                     "sync_integration: unknown provider %r — skipping resource %s",

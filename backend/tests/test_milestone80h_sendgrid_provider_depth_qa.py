@@ -374,7 +374,8 @@ def test_expansion_framework_points_to_m80i():
         f"M80H is done; pointer must advance past it (got: {planned!r})"
     )
     # After M80I/M81x completes, the pointer advances further — any M80I/M81x is acceptable.
-    assert "M89A" in planned or "Kubernetes" in planned, (
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
     )
 
@@ -1603,6 +1604,7 @@ def test_expansion_framework_sendgrid_arc_not_abandoned():
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
     # M80I or M81A (Auth0) are both acceptable — SendGrid arc should not be skipped.
-    assert "M89A" in planned or "Kubernetes" in planned, (
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"After M80H, planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
     )

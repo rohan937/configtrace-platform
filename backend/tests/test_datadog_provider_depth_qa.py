@@ -616,10 +616,11 @@ class TestDatadogEvaluatorDispatch:
 
 class TestDatadogExpansionFramework:
     def test_planned_next_stage_is_kubernetes(self) -> None:
+        """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
         from app.services.provider_expansion_framework import get_framework
         stage = get_framework()["summary"]["planned_next_stage"]
-        assert stage.startswith("M89A") or "Kubernetes" in stage, (
-            f"planned_next_stage should reference M89A Kubernetes, got {stage!r}"
+        assert stage.startswith("M90A") or "Sentry" in stage, (
+            f"planned_next_stage should reference M90A Sentry, got {stage!r}"
         )
 
     def test_datadog_not_in_recommended_queue(self) -> None:
@@ -658,17 +659,21 @@ class TestDatadogProviderCapabilityMatrix:
         )
 
     def test_kubernetes_not_implemented(self) -> None:
-        """Guard against accidental introduction of a Kubernetes provider."""
+        """Regression note: Kubernetes launched its provider architecture
+        foundation (message 1). It now has a capability-matrix entry
+        (maturity='planned', drift_snapshots only) but still has NO
+        Security Findings — that remains guarded here since Findings are
+        message 6."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
         from app.services.security_finding_evaluator import _PROVIDER_RULES
         from app.services.security_rule_registry import KNOWN_RULE_KEYS
 
-        assert get_provider_capability("kubernetes") is None, (
-            "Kubernetes must not be implemented yet — it is still in the "
-            "recommended-next queue"
-        )
+        cap = get_provider_capability("kubernetes")
+        assert cap is not None
+        assert cap.maturity == "planned"
+        assert cap.security.security_rules is False
         assert "kubernetes" not in _PROVIDER_RULES, (
             "kubernetes must not be wired into the central evaluator yet"
         )
@@ -677,8 +682,6 @@ class TestDatadogProviderCapabilityMatrix:
         )
 
     def test_kubernetes_connector_does_not_exist(self) -> None:
-        """The Kubernetes provider connector module must not exist yet."""
+        """Regression note: the Kubernetes connector now exists (foundation stage only)."""
         k8s_connector = BACKEND / "connectors" / "kubernetes.py"
-        assert not k8s_connector.exists(), (
-            "Kubernetes connector should not exist yet (provider not implemented)"
-        )
+        assert k8s_connector.exists()

@@ -112,25 +112,25 @@ def test_capability_matrix_azure_notes_mention_partial_maturity_reason():
 
 
 def test_expansion_framework_next_stage_is_beyond_m79d():
-    """Rolled forward: next stage is M89A Kubernetes Drift Provider Foundation."""
+    """Rolled forward: next stage is M90A Sentry Drift Provider Foundation."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M89A" in stage or "Kubernetes" in stage
+    assert "M90A" in stage or "Sentry" in stage
 
 
 def test_expansion_framework_top_recommendation_is_google_cloud():
-    """Flipped in M80A: SendGrid moved out of the recommended queue (launched).
-    Auth0 is now the head."""
+    """Rolled forward: Kubernetes launched (message 1 / M89A) and was
+    removed from the recommended queue — Sentry (M90A) is now the head."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    # Rolled forward: Kubernetes (M89A) is now the head of the queue.
-    assert top["provider"] == "kubernetes"
-    assert top["label"] == "Kubernetes"
-    # GCP, auth0, datadog, clerk must no longer be in the recommended list.
+    assert top["provider"] == "sentry"
+    assert top["label"] == "Sentry"
+    # GCP, auth0, datadog, clerk, kubernetes must no longer be in the recommended list.
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
+    assert "kubernetes" not in providers
     assert "auth0" not in providers
     assert "clerk" not in providers
 
@@ -153,11 +153,12 @@ def test_expansion_framework_google_cloud_recommendation_is_complete():
 
 
 def test_expansion_framework_summary_next_provider_is_google_cloud():
-    """Rolled forward: Kubernetes (M89A) is now the head of the recommended queue."""
+    """Rolled forward: Kubernetes launched — Sentry (M90A) is now the head
+    of the recommended queue."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Kubernetes"
+    assert fw["summary"]["next_provider"] == "Sentry"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "M89A" in next_ms or "Kubernetes" in next_ms
+    assert "M90A" in next_ms or "Sentry" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

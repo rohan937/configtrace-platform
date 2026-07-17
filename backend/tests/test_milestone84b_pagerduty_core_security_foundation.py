@@ -674,7 +674,8 @@ def test_g_expansion_framework_planned_next_stage_m84c() -> None:
             or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned
             or "M87" in planned or "GitLab" in planned
-            or "M89A" in planned or "Kubernetes" in planned), (
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should reference M84C or beyond; got: {planned!r}"
     )
 

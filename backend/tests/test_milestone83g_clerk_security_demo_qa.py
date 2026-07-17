@@ -235,7 +235,8 @@ def test_expansion_framework_m83h() -> None:
             or "M86" in planned or "Jira" in planned
             or "M87" in planned or "GitLab" in planned
             or "M88" in planned or "Terraform" in planned
-            or "M89A" in planned or "Kubernetes" in planned)
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned)
 
 
 # ── Section I: Frontend ───────────────────────────────────────────────────────

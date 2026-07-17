@@ -1311,7 +1311,8 @@ def test_g1_planned_next_stage_references_jira_core_or_m86b() -> None:
     assert isinstance(planned, str) and len(planned) > 0, (
         f"planned_next_stage must be a non-empty string; got {planned!r}"
     )
-    assert "M89A" in planned or "Kubernetes" in planned, (
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should reference M89A / Kubernetes; got {planned!r}"
     )
 

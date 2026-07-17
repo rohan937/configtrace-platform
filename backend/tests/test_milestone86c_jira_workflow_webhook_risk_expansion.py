@@ -619,6 +619,7 @@ def test_m86c_expansion_framework_points_to_m86d():
         or "M87A" in planned or "GitLab" in planned
         or "M88A" in planned or "Terraform" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), (
         f"planned_next_stage should reference M86D or later; got {planned!r}"
     )

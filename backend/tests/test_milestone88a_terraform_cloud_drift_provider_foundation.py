@@ -1186,6 +1186,7 @@ def test_expansion_framework_planned_next_stage_m88b() -> None:
         or "M88H" in planned or "Provider Depth" in planned
         or "M88I" in planned or "Cross-Cloud" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), (
         f"planned_next_stage should point to M88B or later; got: {planned!r}"
     )
@@ -1198,10 +1199,12 @@ def test_expansion_framework_terraform_cloud_in_queue() -> None:
     provider_keys = [
         r.get("provider", "").lower() for r in recommended if isinstance(r, dict)
     ]
-    # M88I complete — Terraform Cloud arc done; now Kubernetes is head
-    # Accept either terraform_cloud (during M88 arc) or kubernetes (after M88I)
-    assert any("terraform" in p for p in provider_keys) or any("kubernetes" in p for p in provider_keys), (
-        "Terraform Cloud or Kubernetes should be in recommended_next_providers queue"
+    # M88I complete — Terraform Cloud arc done; Kubernetes then launched
+    # (message 1 / M89A) and completed too; Sentry is now head.
+    assert (any("terraform" in p for p in provider_keys)
+            or any("kubernetes" in p for p in provider_keys)
+            or any("sentry" in p for p in provider_keys)), (
+        "Terraform Cloud, Kubernetes, or Sentry should be in recommended_next_providers queue"
     )
 
 

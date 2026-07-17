@@ -593,7 +593,8 @@ def test_expansion_framework_planned_next_stage_is_m89a() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M89A" in planned or "Kubernetes" in planned, (
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should point to M89A/Kubernetes; got: {planned!r}"
     )
 
@@ -610,11 +611,14 @@ def test_expansion_framework_terraform_cloud_arc_complete() -> None:
 
 
 def test_expansion_framework_kubernetes_is_in_queue() -> None:
+    """Regression note: Kubernetes launched and was removed from the
+    recommended queue — Sentry is now there instead."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     queue = fw.get("recommended_next_providers", [])
     providers = [p.get("provider", "") for p in queue]
-    assert "kubernetes" in providers
+    assert "kubernetes" not in providers
+    assert "sentry" in providers
 
 
 # ── Section R: Safety check — Cloudflare evaluator dispatch ───────────────────

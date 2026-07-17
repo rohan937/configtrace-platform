@@ -885,7 +885,8 @@ def test_expansion_framework_planned_next_stage_is_m83b():
             or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned or "GitLab" in planned
             or "M88A" in planned or "Terraform" in planned
-            or "M89A" in planned or "Kubernetes" in planned), (
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should reference an M83 Clerk stage or later; got {planned!r}"
     )
 
@@ -907,8 +908,8 @@ def test_expansion_framework_pagerduty_at_head():
     # Full provider arc complete through M88I Terraform Cloud.
     # Kubernetes is now head of the recommended queue.
     first_provider = recs[0]["provider"] if isinstance(recs[0], dict) else str(recs[0])
-    assert first_provider in ("pagerduty", "linear", "jira", "gitlab", "terraform_cloud", "kubernetes"), (
-        f"PagerDuty/Linear/Jira/GitLab/Terraform/Kubernetes should be head of recommended queue; "
+    assert first_provider in ("pagerduty", "linear", "jira", "gitlab", "terraform_cloud", "kubernetes", "sentry"), (
+        f"PagerDuty/Linear/Jira/GitLab/Terraform/Kubernetes/Sentry should be head of recommended queue; "
         f"got {first_provider!r}"
     )
 

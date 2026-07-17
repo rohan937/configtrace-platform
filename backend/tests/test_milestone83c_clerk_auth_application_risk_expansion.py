@@ -669,6 +669,7 @@ class TestCapabilityMatrixAndFramework:
             or "M87" in planned or "GitLab" in planned
             or "M88" in planned or "Terraform" in planned
             or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
         ), (
             f"Expected planned_next_stage to contain M83D or a later stage, got: {planned!r}"
         )

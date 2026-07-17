@@ -29,6 +29,9 @@ Supported providers
                  (or ``auth0_management_api_token`` for direct-token mode).
 ``datadog``  (M82A)
     Credentials: ``datadog_api_key`` + ``datadog_application_key`` + optional ``datadog_site``.
+``kubernetes``  (Kubernetes message 1 — provider foundation)
+    Credentials: ``kubeconfig`` + optional ``context`` + optional ``cluster_name``
+                 + optional ``namespace_allowlist``.
 
 Provider-specific fields are made optional at the Pydantic level and
 cross-validated by ``validate_provider_fields`` to produce clear error
@@ -82,6 +85,8 @@ class IntegrationCreateRequest(BaseModel):
         "gitlab",
         # M88A — Terraform Cloud drift provider foundation.
         "terraform_cloud",
+        # Kubernetes message 1 — provider architecture foundation.
+        "kubernetes",
     ] = Field(
         ...,
         description=(
@@ -557,6 +562,46 @@ class IntegrationCreateRequest(BaseModel):
         ),
     )
 
+    # ── Kubernetes fields (message 1 — provider foundation) ────────────────────
+    kubeconfig: Optional[str] = Field(
+        None,
+        description=(
+            "Required when provider='kubernetes'. "
+            "Full kubeconfig YAML content for the cluster to monitor. "
+            "Stored encrypted — NEVER returned in API responses or logged. "
+            "'exec' and 'auth-provider' authentication entries in the "
+            "selected context are rejected at connection time; ConfigTrace "
+            "does not execute external auth plugins."
+        ),
+    )
+    context: Optional[str] = Field(
+        None,
+        description=(
+            "Optional when provider='kubernetes'. "
+            "The kubeconfig context to use. Defaults to the kubeconfig's "
+            "current-context if omitted."
+        ),
+    )
+    cluster_name: Optional[str] = Field(
+        None,
+        description=(
+            "Optional when provider='kubernetes'. "
+            "User-supplied display name for the cluster. Non-authoritative — "
+            "the stable cluster identity is derived from cluster metadata, "
+            "not this name."
+        ),
+    )
+    namespace_allowlist: Optional[list[str]] = Field(
+        None,
+        description=(
+            "Optional when provider='kubernetes'. "
+            "If supplied, only these namespaces are collected. Omitted means "
+            "all visible namespaces are collected — ConfigTrace does not "
+            "silently exclude 'kube-system', 'kube-public', or "
+            "'kube-node-lease'."
+        ),
+    )
+
     # ── M50: workspace assignment ─────────────────────────────────────────────
     workspace_id: Optional[UUID4] = Field(
         None,
@@ -756,6 +801,12 @@ class IntegrationCreateRequest(BaseModel):
             if not self.terraform_cloud_organization:
                 raise ValueError(
                     "terraform_cloud_organization is required for Terraform Cloud integrations."
+                )
+        # ── Kubernetes message 1 — provider foundation ────────────────────────
+        elif self.provider == "kubernetes":
+            if not self.kubeconfig:
+                raise ValueError(
+                    "kubeconfig is required for Kubernetes integrations."
                 )
         return self
 

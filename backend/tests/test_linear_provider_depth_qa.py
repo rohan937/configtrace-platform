@@ -517,28 +517,34 @@ def test_linear_rule_copy_no_forbidden_phrases() -> None:
 
 
 def test_planned_next_stage_structural_invariant() -> None:
+    """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A
+    is now the planned next stage."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
     assert isinstance(planned, str) and planned, "planned_next_stage must be a non-empty string"
-    assert "M89A" in planned, f"planned_next_stage should reference M89A, got {planned!r}"
+    assert "M90A" in planned, f"planned_next_stage should reference M90A, got {planned!r}"
 
 
 def test_kubernetes_not_yet_implemented() -> None:
-    # No kubernetes connector / rules modules.
-    assert not (_REPO_ROOT / "backend" / "app" / "connectors" / "kubernetes.py").exists()
+    """Regression note: the Kubernetes connector now exists (Kubernetes
+    message 1 — provider architecture foundation only). It still has no
+    security-rules module or registered rule keys, and it has been removed
+    from the recommended-next queue since it has launched."""
+    assert (_REPO_ROOT / "backend" / "app" / "connectors" / "kubernetes.py").exists()
     assert not (
         _REPO_ROOT / "backend" / "app" / "services" / "security_rules" / "kubernetes.py"
     ).exists()
     assert "kubernetes" not in _PROVIDER_RULES
-    assert get_provider_capability("kubernetes") is None
-    # Kubernetes is still in the recommended (not-yet-implemented) queue.
+    cap = get_provider_capability("kubernetes")
+    assert cap is not None
+    assert cap.maturity == "planned"
     fw = get_framework()
     recommended = [
         r.get("provider", "").lower()
         for r in fw.get("recommended_next_providers", [])
         if isinstance(r, dict)
     ]
-    assert "kubernetes" in recommended, "Kubernetes should be a recommended next provider"
+    assert "kubernetes" not in recommended, "Kubernetes has launched and should not be recommended-next"
 
 
 # ═════════════════════════════════════════════════════════════════════════════

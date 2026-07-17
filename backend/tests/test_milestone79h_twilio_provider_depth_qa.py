@@ -362,7 +362,8 @@ def test_expansion_framework_points_to_m79i():
     assert "M79I" not in planned, (
         f"M79I is done; stale reference (got: {planned!r})"
     )
-    assert "M89A" in planned or "Kubernetes" in planned, (
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
     )
 
@@ -1498,7 +1499,8 @@ def test_expansion_framework_sendgrid_correctly_follows_m79i():
     """Current roadmap position — the next stage is M89A Kubernetes."""
     fw = get_framework()
     planned = fw["summary"]["planned_next_stage"]
-    assert "M89A" in planned or "Kubernetes" in planned, (
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should reference M89A Kubernetes; got: {planned!r}"
     )
 

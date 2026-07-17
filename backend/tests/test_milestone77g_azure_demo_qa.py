@@ -388,12 +388,12 @@ def test_capability_matrix_marks_azure_demo_ready():
 
 
 def test_expansion_framework_next_stage_is_m77h():
-    """Rolled forward: next stage is M89A Kubernetes Drift Provider Foundation."""
+    """Rolled forward: next stage is M90A Sentry Drift Provider Foundation."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M89A" in stage
-    assert "Kubernetes" in stage
+    assert "M90A" in stage
+    assert "Sentry" in stage
 
 
 # ── 11. demo case copy is review-safe (no overclaim) ────────────────────────

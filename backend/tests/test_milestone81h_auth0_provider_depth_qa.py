@@ -412,7 +412,7 @@ def test_expansion_framework_points_to_m81i():
     assert any(tag in planned for tag in (
         "M81I", "M82A", "M82", "M83", "Clerk",
         "M84", "M85", "M86H", "M86I", "M87",
-        "M88", "M89", "Kubernetes",
+        "M88", "M89", "Kubernetes", "M90", "Sentry",
     )), (
         f"planned_next_stage must point past M81H; got: {planned!r}"
     )
@@ -1956,6 +1956,8 @@ def test_expansion_framework_auth0_arc_not_abandoned():
         or "M88" in planned
         or "M89" in planned
         or "Kubernetes" in planned
+        or "M90" in planned
+        or "Sentry" in planned
     ), (
         f"After M81H, planned_next_stage should be M81I or M82/M83/beyond; got: {planned!r}"
     )

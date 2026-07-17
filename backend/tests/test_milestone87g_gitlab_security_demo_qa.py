@@ -575,6 +575,7 @@ def test_expansion_framework_planned_next_stage_m87h() -> None:
         or "M87I" in planned or "Cross-Cloud" in planned
         or "M88A" in planned or "Terraform" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     )
 
 

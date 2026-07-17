@@ -158,13 +158,16 @@ def test_capability_matrix_maturity_partial() -> None:
 
 # ── Section B: Provider expansion framework ───────────────────────────────────
 
-def test_expansion_framework_planned_next_stage_m89a() -> None:
+def test_expansion_framework_planned_next_stage_m90a() -> None:
+    """Regression note: this previously expected M89A/Kubernetes. Kubernetes
+    launched its provider architecture foundation (Kubernetes message 1 /
+    M89A) and is no longer the planned next stage — Sentry/M90A is."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     assert (
-        "M89A" in planned or "Kubernetes" in planned
-    ), f"planned_next_stage should point to M89A; got: {planned!r}"
+        "M90A" in planned or "Sentry" in planned
+    ), f"planned_next_stage should point to M90A; got: {planned!r}"
 
 
 def test_expansion_framework_terraform_cloud_not_in_queue() -> None:
@@ -177,14 +180,19 @@ def test_expansion_framework_terraform_cloud_not_in_queue() -> None:
     )
 
 
-def test_expansion_framework_kubernetes_is_head_of_queue() -> None:
+def test_expansion_framework_sentry_is_head_of_queue() -> None:
+    """Regression note: Kubernetes was head of the recommended queue when
+    this test was written (M88I). Kubernetes launched its provider
+    architecture foundation (Kubernetes message 1 / M89A) and was removed
+    from the queue, matching every other provider's launch pattern — Sentry
+    is now the head of the queue."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     queue = fw.get("recommended_next_providers", [])
     assert len(queue) >= 1
     first = queue[0]
-    assert "kubernetes" in first.get("provider", "").lower() or "Kubernetes" in first.get("label", ""), (
-        f"Kubernetes should be first in recommended queue; got: {first}"
+    assert "sentry" in first.get("provider", "").lower() or "Sentry" in first.get("label", ""), (
+        f"Sentry should be first in recommended queue; got: {first}"
     )
 
 
@@ -330,10 +338,15 @@ def test_fe_demo_script_page_tc_in_capability_table() -> None:
     assert "demo: true" in tc_row, f"TC row missing demo:true; got: {tc_row!r}"
 
 
-def test_fe_demo_script_page_kubernetes_in_next_queue() -> None:
+def test_fe_demo_script_page_sentry_in_next_queue() -> None:
+    """Regression note: this previously asserted "Kubernetes"/"M89" were in
+    the next-queue brief. Kubernetes launched its provider architecture
+    foundation (Kubernetes message 1 / M89A) and was removed from the
+    queue; the frontend brief was updated to match — Sentry/M90 is now the
+    sole entry."""
     text = _read(FE_DEMO_SCRIPT_PAGE)
-    assert "Kubernetes" in text
-    assert "M89" in text
+    assert "Sentry" in text
+    assert "M90" in text
 
 
 def test_fe_demo_script_page_tc_not_in_next_providers() -> None:

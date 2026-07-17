@@ -27,6 +27,9 @@ Design decisions
     (``app.services.risk_rules.google_cloud``).
   - Record types starting with ``"azure_"`` → Azure rule set
     (``app.services.risk_rules.azure``).
+  - Record types starting with ``"kubernetes_"`` → Kubernetes rule set
+    (``app.services.risk_rules.kubernetes``) — foundation-stage only; see
+    that module's docstring for scope.
   - All other records → Cloudflare DNS rule set
     (``app.services.risk_rules.cloudflare_dns``).
   This approach works without a DB lookup: the record type is embedded in
@@ -159,6 +162,10 @@ def classify_change(change: Change) -> tuple[str, str]:
     if record_type.startswith("azure_"):
         from app.services.risk_rules.azure import classify_azure_change
         return classify_azure_change(change)
+
+    if record_type.startswith("kubernetes_"):
+        from app.services.risk_rules.kubernetes import classify_kubernetes_change
+        return classify_kubernetes_change(change)
 
     if record_type == "cloudflare_ruleset":
         from app.services.risk_rules.cloudflare_dns import classify_cloudflare_ruleset_change

@@ -916,7 +916,8 @@ class TestExpansionFramework:
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M89A" in planned or "Kubernetes" in planned, (
+        assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
             f"planned_next_stage should point to M89A, got: {planned!r}"
         )
 

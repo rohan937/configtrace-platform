@@ -892,7 +892,7 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
             term in planned
             for term in ("M83E", "Activity Signals", "Clerk", "M84A", "PagerDuty",
                          "M85A", "Linear", "M86", "Jira", "M87", "GitLab",
-                         "M88", "Terraform", "M89A", "Kubernetes")
+                         "M88", "Terraform", "M89A", "Kubernetes", "M90A", "Sentry")
         ), (
             f"planned_next_stage must reference M83E or later, got: {planned!r}"
         )

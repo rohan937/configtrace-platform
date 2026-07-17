@@ -1117,24 +1117,24 @@ def test_azure_not_in_security_coverage_providers():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def test_expansion_framework_planned_next_stage_is_m77b():
-    """Rolled forward: next stage is M89A: Kubernetes Drift Provider Foundation."""
+    """Rolled forward: next stage is M90A: Sentry Drift Provider Foundation."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "M89A" in planned, (
-        f"planned_next_stage should be M89A, got: {planned!r}"
+    assert "M90A" in planned, (
+        f"planned_next_stage should be M90A, got: {planned!r}"
     )
 
 
 def test_expansion_framework_planned_next_stage_mentions_azure():
-    """Rolled forward: next stage is M89A: Kubernetes Drift Provider Foundation."""
+    """Rolled forward: next stage is M90A: Sentry Drift Provider Foundation."""
     from app.services import provider_expansion_framework as svc
 
     framework = svc.get_framework()
     planned = framework["summary"]["planned_next_stage"]
-    assert "Kubernetes" in planned, (
-        f"planned_next_stage should reference Kubernetes, "
+    assert "Sentry" in planned, (
+        f"planned_next_stage should reference Sentry, "
         f"got: {planned!r}"
     )
 

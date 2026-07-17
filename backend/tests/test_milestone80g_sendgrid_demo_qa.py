@@ -714,11 +714,12 @@ def test_i4_notes_mention_m80g_or_demo():
 
 
 def test_i5_expansion_framework_points_to_m80h():
+    """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert "M89A" in stage or "Kubernetes" in stage, (
-        f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
+    assert "M90A" in stage or "Sentry" in stage, (
+        f"planned_next_stage should reference M90A Sentry; got: {stage!r}"
     )
 
 

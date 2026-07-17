@@ -271,13 +271,23 @@ def create_integration(
             workspace_id=workspace_id,
             db=db,
         )
+    elif provider == "kubernetes":
+        return _create_kubernetes_integration(
+            user_id=user_id,
+            display_name=display_name,
+            credentials=credentials,
+            scheduled_sync_enabled=scheduled_sync_enabled,
+            sync_interval_minutes=sync_interval_minutes,
+            workspace_id=workspace_id,
+            db=db,
+        )
     else:
         raise ValueError(
             f"Unsupported provider: {provider!r}. "
             "Supported values: 'cloudflare', 'github', 'vercel', 'stripe', "
             "'aws', 'firebase', 'supabase', 'azure', 'google_cloud', "
             "'twilio', 'sendgrid', 'auth0', 'datadog', 'clerk', 'pagerduty', "
-            "'linear', 'jira'."
+            "'linear', 'jira', 'kubernetes'."
         )
 
 
@@ -1498,6 +1508,79 @@ def _create_jira_integration(
         resource_metadata={
             "site_url": site_url,
             "provider_family": "project_management",
+        },
+        is_active=True,
+    )
+    db.add(resource)
+
+    # ── 4. Commit ─────────────────────────────────────────────────────────────
+    db.commit()
+    db.refresh(integration)
+    return integration
+
+
+def _create_kubernetes_integration(
+    *,
+    user_id: uuid.UUID,
+    display_name: str,
+    credentials: dict,
+    scheduled_sync_enabled: bool = False,
+    sync_interval_minutes: int | None = None,
+    workspace_id: uuid.UUID | None = None,
+    db: Session,
+) -> Integration:
+    """Create a Kubernetes integration + cluster resource (Kubernetes message 1).
+
+    SECURITY: credentials["kubeconfig"] (and any bearer token, client key,
+    or client certificate it embeds) is NEVER logged, NEVER returned, NEVER
+    stored in plaintext outside the encrypted credentials column, and NEVER
+    copied into resource_metadata. Only the user-supplied display name and
+    optional cluster_name/context are used for resource identity — both are
+    non-secret, user-chosen labels.
+
+    Live API validation (parsing the kubeconfig, resolving the context,
+    confirming the API server answers ``/version``) is deferred to the
+    first sync, matching the established pattern for other multi-resource
+    providers — this avoids leaking cluster-reachability details through a
+    synchronous create-time error message.
+    """
+    context_name: str = (credentials.get("context") or "").strip()
+    cluster_name: str = (credentials.get("cluster_name") or "").strip()
+    resource_key = cluster_name or context_name or str(user_id)
+
+    # ── 1. Encrypt credentials ────────────────────────────────────────────────
+    ciphertext, iv = encrypt_credentials(credentials)
+
+    # ── 2. Create Integration row ─────────────────────────────────────────────
+    integration = Integration(
+        user_id=user_id,
+        provider="kubernetes",
+        display_name=display_name,
+        encrypted_credentials=ciphertext,
+        credential_iv=iv,
+        status="active",
+        scheduled_sync_enabled=scheduled_sync_enabled,
+        sync_interval_minutes=sync_interval_minutes,
+        workspace_id=workspace_id,
+    )
+    db.add(integration)
+    db.flush()
+
+    # ── 3. Create Resource row ─────────────────────────────────────────────────
+    # SECURITY: resource_metadata stores ONLY the user-supplied display
+    # labels (cluster_name / context). kubeconfig content, tokens, client
+    # keys, and certificates are NEVER copied here — the real stable
+    # cluster_id is computed by the connector from the kube-system
+    # namespace UID (or a host hash) during fetch(), not at creation time.
+    resource = Resource(
+        integration_id=integration.id,
+        user_id=user_id,
+        provider_resource_type="kubernetes_cluster",
+        provider_resource_id=str(integration.id),
+        display_name=f"{display_name} ({resource_key})" if resource_key else display_name,
+        resource_metadata={
+            "cluster_name": cluster_name or None,
+            "context_name": context_name or None,
         },
         is_active=True,
     )

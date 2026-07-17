@@ -386,17 +386,20 @@ def test_aws_in_capability_matrix() -> None:
 
 
 def test_expansion_framework_points_to_kubernetes() -> None:
+    """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     labels = [p.get("label", "") for p in fw.get("recommended_next_providers", [])]
-    assert "M89" in planned or "Kubernetes" in planned or any(
-        "Kubernetes" in label for label in labels
+    assert "M90" in planned or "Sentry" in planned or any(
+        "Sentry" in label for label in labels
     )
 
 
 def test_no_kubernetes_connector_file() -> None:
-    assert not os.path.exists(
+    """Regression note: the Kubernetes connector now exists (Kubernetes
+    message 1 — provider architecture foundation only)."""
+    assert os.path.exists(
         str(REPO_ROOT / "backend" / "app" / "connectors" / "kubernetes.py")
     )
 

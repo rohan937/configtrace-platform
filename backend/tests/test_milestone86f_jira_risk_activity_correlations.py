@@ -585,7 +585,7 @@ def test_expansion_framework_jira_points_to_m86g() -> None:
     assert planned, "planned_next_stage should be a non-empty string"
     assert any(
         token in planned
-        for token in ("M89A", "Kubernetes", "M86G", "Jira", "M87A", "GitLab", "M88A", "Terraform")
+        for token in ("M89A", "Kubernetes", "M86G", "Jira", "M87A", "GitLab", "M88A", "Terraform", "M90A", "Sentry")
     ), (
         f"planned_next_stage should reference a known milestone (M89A/Kubernetes or later); got: {planned!r}"
     )

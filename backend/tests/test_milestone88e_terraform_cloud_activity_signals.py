@@ -947,15 +947,19 @@ def test_expansion_framework_planned_next_stage_is_m88f_or_later() -> None:
         or "M88H" in planned or "Provider Depth" in planned
         or "M88I" in planned or "Cross-Cloud" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), f"planned_next_stage should point to M88F or later; got: {planned!r}"
 
 
 def test_expansion_framework_kubernetes_still_in_queue() -> None:
+    """Regression note: Kubernetes launched (message 1 / M89A) and was
+    removed from the recommended queue — Sentry is there instead."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     recommended = fw.get("recommended_next_providers", [])
     providers = [r.get("provider", "") for r in recommended if isinstance(r, dict)]
-    assert "kubernetes" in providers
+    assert "kubernetes" not in providers
+    assert "sentry" in providers
 
 
 # ══════════════════════════════════════════════════════════════════════════════

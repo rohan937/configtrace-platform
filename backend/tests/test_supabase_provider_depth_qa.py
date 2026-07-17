@@ -529,23 +529,27 @@ def test_supabase_capability_is_complete() -> None:
 
 
 def test_expansion_framework_points_at_kubernetes() -> None:
+    """Regression note: Kubernetes launched its provider architecture
+    foundation (Kubernetes message 1 / M89A) and was removed from the
+    recommended queue — Sentry (M90A) is now the head."""
     from app.services.provider_expansion_framework import (
         RECOMMENDED_NEXT_PROVIDERS,
     )
     providers = {p.provider for p in RECOMMENDED_NEXT_PROVIDERS}
-    assert "kubernetes" in providers, (
-        "Expansion framework should still recommend Kubernetes (M89A) next"
-    )
+    assert "kubernetes" not in providers
     head = RECOMMENDED_NEXT_PROVIDERS[0]
-    assert head.provider == "kubernetes"
-    assert "M89" in (head.first_milestone_name or "")
+    assert head.provider == "sentry"
+    assert "M90" in (head.first_milestone_name or "")
 
 
 def test_kubernetes_is_not_implemented() -> None:
-    # No Kubernetes connector or security-rules module should exist.
-    assert not (BACKEND / "connectors" / "kubernetes.py").exists()
+    """Regression note: the Kubernetes connector now exists (Kubernetes
+    message 1 — provider architecture foundation only). It still has NO
+    Security Findings module or registered rule keys — that remains
+    guarded here since Findings are message 6."""
+    assert (BACKEND / "connectors" / "kubernetes.py").exists()
     assert not (BACKEND / "services" / "security_rules" / "kubernetes.py").exists()
-    # No Kubernetes rule keys registered.
+    # No Kubernetes rule keys registered yet.
     from app.services.security_rule_registry import KNOWN_RULE_KEYS
     assert not any("kubernetes" in k.lower() or k.lower().startswith("k8s")
                    for k in KNOWN_RULE_KEYS)

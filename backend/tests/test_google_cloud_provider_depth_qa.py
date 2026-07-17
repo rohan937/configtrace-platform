@@ -504,11 +504,12 @@ class TestGoogleCloudCanonicalProviderKey:
 
 class TestGoogleCloudExpansionFramework:
     def test_planned_next_stage_points_at_kubernetes(self) -> None:
+        """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
         from app.services.provider_expansion_framework import get_framework
         stage = get_framework()["summary"]["planned_next_stage"]
-        assert "M89A" in stage, f"planned_next_stage should contain M89A, got {stage!r}"
-        assert "Kubernetes" in stage, (
-            f"planned_next_stage should contain Kubernetes, got {stage!r}"
+        assert "M90A" in stage, f"planned_next_stage should contain M90A, got {stage!r}"
+        assert "Sentry" in stage, (
+            f"planned_next_stage should contain Sentry, got {stage!r}"
         )
 
     def test_google_cloud_is_not_the_next_stage(self) -> None:
@@ -528,11 +529,13 @@ class TestGoogleCloudExpansionFramework:
         )
 
     def test_kubernetes_is_head_of_recommended_queue(self) -> None:
+        """Regression note: Kubernetes launched and was removed from the
+        recommended queue — Sentry is now the head."""
         from app.services.provider_expansion_framework import (
             RECOMMENDED_NEXT_PROVIDERS,
         )
         head = RECOMMENDED_NEXT_PROVIDERS[0]
-        assert head.provider == "kubernetes"
+        assert head.provider == "sentry"
 
 
 # ── TestGoogleCloudProviderCapabilityMatrix ───────────────────────────────────
@@ -553,11 +556,13 @@ class TestGoogleCloudProviderCapabilityMatrix:
         assert cap.drift.drift_risk_classification is True
 
     def test_kubernetes_is_not_yet_implemented(self) -> None:
-        """Guard against accidental introduction of a Kubernetes provider."""
+        """Regression note: Kubernetes launched its provider architecture
+        foundation (message 1) — capability entry exists (maturity='planned',
+        no security rules yet)."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
-        assert get_provider_capability("kubernetes") is None, (
-            "Kubernetes must not be implemented yet — it is still in the "
-            "recommended-next queue"
-        )
+        cap = get_provider_capability("kubernetes")
+        assert cap is not None
+        assert cap.maturity == "planned"
+        assert cap.security.security_rules is False

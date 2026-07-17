@@ -65,8 +65,9 @@ EXPECTED_NEXT_PROVIDER_ORDER = [
     # (moved into PROVIDER_CAPABILITIES_PARTIAL). M82A launched Datadog.
     # M83A launched Clerk. M84A launched PagerDuty. M85A launched Linear.
     # M86A launched Jira. M87A launched GitLab. M88A launched Terraform Cloud.
-    # M88I completed the Terraform Cloud arc; Kubernetes is now the head.
-    "kubernetes",
+    # M88I completed the Terraform Cloud arc; Kubernetes was then the head.
+    # Kubernetes message 1 (M89A) launched the provider architecture
+    # foundation, removing it from the queue; Sentry is now the head.
     "sentry",
 ]
 
@@ -281,6 +282,8 @@ def test_get_framework_structure():
         or "Terraform" in summary["planned_next_stage"]
         or "M89A" in summary["planned_next_stage"]
         or "Kubernetes" in summary["planned_next_stage"]
+        or "M90A" in summary["planned_next_stage"]
+        or "Sentry" in summary["planned_next_stage"]
     )
 
 
@@ -355,7 +358,12 @@ def test_endpoint_next_providers_include_twilio_sendgrid_auth0(client):
     assert "Jira" not in labels  # Jira launched in M86A
     assert "GitLab" not in labels  # GitLab launched in M87A
     assert "Terraform Cloud" not in labels  # Terraform Cloud launched in M88A and arc completed M88I
-    assert "Kubernetes" in labels  # Kubernetes is now head after M88I
+    # Regression note: this previously asserted "Kubernetes" was in the
+    # queue. Kubernetes launched its provider architecture foundation
+    # (Kubernetes message 1 / M89A) and was removed from the queue — Sentry
+    # is now the head.
+    assert "Kubernetes" not in labels
+    assert "Sentry" in labels
 
 
 def test_endpoint_unauthenticated_rejected():

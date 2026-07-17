@@ -873,10 +873,12 @@ class TestSendGridEvaluatorDispatch:
 
 class TestSendGridExpansionFramework:
     def test_planned_next_stage_points_at_kubernetes(self) -> None:
+        """Regression note: Kubernetes launched (Kubernetes message 1 /
+        M89A) and is no longer the planned next stage — Sentry/M90A is."""
         from app.services.provider_expansion_framework import get_framework
         stage = get_framework()["summary"]["planned_next_stage"]
-        assert "M89A" in stage or "Kubernetes" in stage, (
-            f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
+        assert "M90A" in stage or "Sentry" in stage, (
+            f"planned_next_stage should reference M90A Sentry; got: {stage!r}"
         )
 
     def test_sendgrid_is_not_the_next_stage(self) -> None:
@@ -895,20 +897,23 @@ class TestSendGridExpansionFramework:
         )
 
     def test_kubernetes_is_the_next_recommended_provider(self) -> None:
+        """Regression note: Kubernetes launched and was removed from the
+        recommended queue — Sentry is now #1."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
         recs = fw["recommended_next_providers"]
         assert recs, "recommended_next_providers must not be empty"
         top = recs[0]
-        assert top["provider"] == "kubernetes", (
-            f"Kubernetes should be #1 recommended provider; got: {top['provider']!r}"
+        assert top["provider"] == "sentry", (
+            f"Sentry should be #1 recommended provider; got: {top['provider']!r}"
         )
 
     def test_next_provider_summary_is_kubernetes(self) -> None:
+        """Regression note: Kubernetes launched — Sentry is now next_provider."""
         from app.services.provider_expansion_framework import get_framework
         fw = get_framework()
-        assert fw["summary"]["next_provider"] == "Kubernetes", (
-            f"next_provider should be 'Kubernetes'; got: {fw['summary']['next_provider']!r}"
+        assert fw["summary"]["next_provider"] == "Sentry", (
+            f"next_provider should be 'Sentry'; got: {fw['summary']['next_provider']!r}"
         )
 
 
@@ -959,21 +964,22 @@ class TestSendGridProviderCapabilityMatrix:
         )
 
     def test_kubernetes_is_not_yet_implemented(self) -> None:
-        """Guard against accidental introduction of a Kubernetes provider."""
+        """Regression note: Kubernetes launched its provider architecture
+        foundation (Kubernetes message 1) — a capability-matrix entry now
+        exists (maturity='planned', drift_snapshots only, no security rules)."""
         from app.services.provider_capability_matrix_service import (
             get_provider_capability,
         )
-        assert get_provider_capability("kubernetes") is None, (
-            "Kubernetes must not be implemented yet — it is still in the "
-            "recommended-next queue"
-        )
+        cap = get_provider_capability("kubernetes")
+        assert cap is not None
+        assert cap.maturity == "planned"
+        assert cap.security.security_rules is False
 
     def test_kubernetes_connector_does_not_exist(self) -> None:
-        """The Kubernetes provider connector module must not exist yet."""
+        """Regression note: the Kubernetes connector now exists (foundation
+        stage only — see kubernetes_foundation_contract.md)."""
         k8s_connector = BACKEND / "connectors" / "kubernetes.py"
-        assert not k8s_connector.exists(), (
-            "Kubernetes connector should not exist yet (provider not implemented)"
-        )
+        assert k8s_connector.exists()
 
     def test_sendgrid_notes_mention_key_milestones(self) -> None:
         """Capability matrix notes should reference core SendGrid milestones."""

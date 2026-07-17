@@ -151,7 +151,8 @@ def test_jira_planned_next_stage_reflects_completion() -> None:
     )
     assert (planned in (None, "", "complete") or "M87A" in planned or "GitLab" in planned
             or "M88A" in planned or "Terraform" in planned
-            or "M89A" in planned or "Kubernetes" in planned), (
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should be None/''/'complete' or M87A/GitLab or later; got: {planned!r}"
     )
 
@@ -176,11 +177,13 @@ def test_expansion_framework_gitlab_is_next() -> None:
     assert recommended, "recommended_next_providers should not be empty"
     first = recommended[0]
     provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-    # GitLab launched in M87A — Terraform Cloud is now head; accept either.
+    # GitLab launched in M87A, then Terraform Cloud, then Kubernetes
+    # (message 1 / M89A) — Sentry is now head; accept any of these.
     assert ("gitlab" in provider.lower() or "terraform" in provider.lower()
             or "GitLab" in str(first) or "Terraform" in str(first)
-            or "kubernetes" in provider.lower() or "Kubernetes" in str(first)), (
-        f"Head of recommended_next_providers should be GitLab, Terraform, or Kubernetes; got: {provider!r}"
+            or "kubernetes" in provider.lower() or "Kubernetes" in str(first)
+            or "sentry" in provider.lower() or "Sentry" in str(first)), (
+        f"Head of recommended_next_providers should be GitLab, Terraform, Kubernetes, or Sentry; got: {provider!r}"
     )
 
 

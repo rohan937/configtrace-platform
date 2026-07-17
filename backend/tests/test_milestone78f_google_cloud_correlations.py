@@ -1033,7 +1033,8 @@ class TestExpansionFramework:
         """The next stage is M89A: Kubernetes Drift Provider Foundation."""
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M89A" in planned or "Kubernetes" in planned
+        assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned)
 
     def test_m78f_not_in_planned_next_stage(self):
         fw = get_framework()

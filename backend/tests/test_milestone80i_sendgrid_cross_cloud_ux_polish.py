@@ -195,7 +195,7 @@ def test_capability_matrix_sendgrid_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_m81a():
-    """All SendGrid + subsequent arcs complete — planned_next_stage points to M89A Kubernetes."""
+    """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M80I" not in stage, (
@@ -204,19 +204,20 @@ def test_expansion_framework_planned_next_stage_is_m81a():
     assert "M81A" not in stage, (
         f"planned_next_stage still points to M81A after it launched: {stage!r}"
     )
-    assert "M89A" in stage or "Kubernetes" in stage, (
-        f"planned_next_stage should reference M89A Kubernetes; got: {stage!r}"
+    assert "M90A" in stage or "Sentry" in stage, (
+        f"planned_next_stage should reference M90A Sentry; got: {stage!r}"
     )
 
 
 def test_expansion_framework_top_recommendation_is_auth0():
-    """All prior arcs complete — Kubernetes is the head of the recommended queue."""
+    """Regression note: Kubernetes launched and was removed from the
+    recommended queue — Sentry is now the head."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "kubernetes"
-    assert top["label"] == "Kubernetes"
+    assert top["provider"] == "sentry"
+    assert top["label"] == "Sentry"
 
 
 def test_expansion_framework_sendgrid_not_in_recommended_queue():
@@ -236,11 +237,11 @@ def test_expansion_framework_twilio_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_auth0():
-    """Framework summary next_provider = Kubernetes (all prior arcs complete)."""
+    """Regression note: Kubernetes launched — Sentry is now next_provider."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Kubernetes"
+    assert fw["summary"]["next_provider"] == "Sentry"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "Kubernetes" in next_ms or "M89A" in next_ms
+    assert "Sentry" in next_ms or "M90A" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

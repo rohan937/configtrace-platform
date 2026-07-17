@@ -1431,6 +1431,47 @@ _TERRAFORM_CLOUD = ProviderCapability(
 )
 
 
+_KUBERNETES = ProviderCapability(
+    provider="kubernetes",
+    label="Kubernetes",
+    category="cloud",
+    drift=DriftCapabilities(
+        drift_snapshots=True,
+        drift_diff=False,
+        drift_risk_classification=False,
+        drift_review_workflow=False,
+        drift_remediation_preview=False,
+    ),
+    security=SecurityCapabilities(
+        security_rules=False,
+        activity_ingestion=False,
+        activity_signals=False,
+        risk_activity_correlations=False,
+        demo_seed_clear=False,
+        case_report=False,
+        evidence_timeline=False,
+        evidence_graph=False,
+    ),
+    maturity="planned",
+    notes=(
+        "Kubernetes message 1 establishes the provider architecture foundation "
+        "only: connector client initialization (kubeconfig content, one context "
+        "per integration), a stable cluster identity (kube-system namespace UID, "
+        "falling back to a host hash), namespace collection with an optional "
+        "allowlist, safe API discovery (capability records only, never the full "
+        "discovery document), a fail-soft API-call wrapper distinguishing "
+        "auth/permission/not-found/throttling/server/connection/TLS failures, "
+        "and a bounded pagination helper following the Kubernetes '_continue' "
+        "convention. Three record types are emitted: kubernetes_cluster, "
+        "kubernetes_namespace, kubernetes_api_capability. No Secret or ConfigMap "
+        "data (not even metadata) is fetched yet. No workload, RBAC, network, or "
+        "admission-control collection exists yet, and no Security Findings or "
+        "broad risk classification are implemented. "
+        "planned_next_stage: Kubernetes message 2: Workloads and Pod security."
+    ),
+)
+
+
 PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _AZURE,
     _GOOGLE_CLOUD,
@@ -1444,6 +1485,7 @@ PROVIDER_CAPABILITIES_PARTIAL: list[ProviderCapability] = [
     _JIRA,
     _GITLAB,
     _TERRAFORM_CLOUD,
+    _KUBERNETES,
 ]
 
 # Fast lookup by provider key — includes both complete and partial providers.

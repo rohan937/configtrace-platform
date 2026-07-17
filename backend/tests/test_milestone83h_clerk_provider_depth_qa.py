@@ -1293,6 +1293,7 @@ def test_i6_expansion_framework_planned_next_stage_is_m83i() -> None:
         or "M87" in planned or "GitLab" in planned
         or "M88" in planned or "Terraform" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), (
         f"planned_next_stage should point to M83I or beyond after M83H QA, got: {planned!r}"
     )
@@ -1357,6 +1358,7 @@ def test_i9_capability_matrix_notes_no_stale_planned_next_stage_m83h() -> None:
         or "M87" in planned or "GitLab" in planned
         or "M88" in planned or "Terraform" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), (
         f"Expansion framework planned_next_stage still points to M83H: {planned!r}"
     )

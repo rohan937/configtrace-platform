@@ -516,7 +516,8 @@ def test_webhook_without_secret_fires_no_secret_rule() -> None:
 def test_framework_planned_next_stage_is_kubernetes() -> None:
     summary = get_framework()["summary"]
     planned = summary["planned_next_stage"]
-    assert "M89A" in planned or "Kubernetes" in planned
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned)
 
 
 def test_jira_not_in_recommended_next_providers() -> None:
@@ -527,9 +528,12 @@ def test_jira_not_in_recommended_next_providers() -> None:
 
 
 def test_kubernetes_is_planned_next_provider() -> None:
+    """Regression note: Kubernetes launched and was removed from the
+    recommended queue — Sentry is now there instead."""
     recs = get_framework()["recommended_next_providers"]
     providers = {r["provider"] if isinstance(r, dict) else r.provider for r in recs}
-    assert "kubernetes" in providers
+    assert "kubernetes" not in providers
+    assert "sentry" in providers
 
 
 def test_jira_capability_is_security_implemented() -> None:

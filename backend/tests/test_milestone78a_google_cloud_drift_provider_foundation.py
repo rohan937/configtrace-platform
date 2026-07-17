@@ -1068,27 +1068,29 @@ def test_google_cloud_in_security_coverage_providers():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78c():
-    """The planned next stage has advanced to M89A: Kubernetes Drift Provider Foundation."""
+    """The planned next stage has advanced to M90A: Sentry Drift Provider Foundation."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    # Kubernetes arc is open — next stage is M89A Kubernetes Drift Provider Foundation.
-    assert "M89A" in stage
-    assert "Kubernetes" in stage
+    # Kubernetes launched and completed message 1 — next stage is M90A Sentry.
+    assert "M90A" in stage
+    assert "Sentry" in stage
     for done in ("M78C", "M78D", "M78E", "M78F", "M78G", "M78H", "M78I"):
         assert done not in stage, f"{done} is done; pointer has advanced past it"
 
 
 def test_expansion_framework_no_longer_recommends_google_cloud():
     """Google Cloud launched in M78A and is no longer 'recommended' —
-    it has moved into PROVIDER_CAPABILITIES_PARTIAL. Kubernetes is now the head
-    of the recommended queue."""
+    it has moved into PROVIDER_CAPABILITIES_PARTIAL. Kubernetes also
+    launched (message 1 / M89A) and was removed from the queue — Sentry is
+    now the head."""
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     recs = fw["recommended_next_providers"]
     providers = [r["provider"] for r in recs]
     assert "google_cloud" not in providers
-    assert recs[0]["provider"] == "kubernetes"
+    assert "kubernetes" not in providers
+    assert recs[0]["provider"] == "sentry"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

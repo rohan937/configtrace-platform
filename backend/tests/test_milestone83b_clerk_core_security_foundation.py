@@ -1229,6 +1229,7 @@ class TestCapabilityMatrix:
             or "M87A" in stage or "GitLab" in stage
             or "M88A" in stage or "Terraform" in stage
             or "M89A" in stage or "Kubernetes" in stage
+            or "M90A" in stage or "Sentry" in stage
         ), (
             f"After M83B, planned_next_stage should reference a post-M83B stage; got {stage!r}"
         )
@@ -1248,6 +1249,7 @@ class TestCapabilityMatrix:
             or "M87" in stage or "GitLab" in stage
             or "M88" in stage or "Terraform" in stage
             or "M89" in stage or "Kubernetes" in stage
+            or "M90" in stage or "Sentry" in stage
         ), (
             f"Unexpected planned_next_stage value (expected post-M83B): {stage!r}"
         )

@@ -477,49 +477,10 @@ class RecommendedProvider:
 # the recommended queue. GitLab launched in M87A and completed its arc in
 # M87I; GitLab is no longer in the recommended queue. Terraform Cloud
 # launched in M88A and completed its arc in M88I; Terraform Cloud is no
-# longer in the recommended queue. Kubernetes is now the head of the
-# recommended queue (Kubernetes → Sentry).
+# longer in the recommended queue. Kubernetes launched its provider
+# architecture foundation (Kubernetes message 1 / M89A) and is no longer in
+# the recommended queue. Sentry is now the head of the recommended queue.
 RECOMMENDED_NEXT_PROVIDERS: list[RecommendedProvider] = [
-    RecommendedProvider(
-        provider="kubernetes",
-        label="Kubernetes",
-        category="devops",
-        why_high_fit=(
-            "Kubernetes RBAC, NetworkPolicy, PodSecurityPolicy/Admission, "
-            "and ServiceAccount posture are common cluster configuration surfaces "
-            "with high-impact drift patterns. Overly broad ClusterRole bindings "
-            "and missing NetworkPolicies are reviewable security signals."
-        ),
-        drift_surfaces=(
-            "rbac_roles_and_bindings",
-            "network_policies",
-            "service_accounts",
-            "pod_security_admission",
-            "namespace_resource_quotas",
-        ),
-        security_surfaces=(
-            "overly_broad_cluster_role",
-            "missing_network_policy",
-            "service_account_secret_posture",
-            "pod_security_admission_weakened",
-        ),
-        sensitive_data_to_avoid=(
-            "secret_values_or_data",
-            "config_map_values_if_sensitive",
-            "kubeconfig_credentials",
-            "service_account_tokens",
-            "pod_environment_variable_values",
-            "container_image_registry_credentials",
-        ),
-        first_milestone_name="M89A: Kubernetes Drift Provider Foundation",
-        notes=(
-            "Use the Kubernetes API (in-cluster or kubeconfig). Focus on RBAC "
-            "ClusterRoles and bindings (count and category — never raw rule expressions), "
-            "NetworkPolicies (count and presence — never raw selectors), and "
-            "ServiceAccount posture (token automount flag). Never store Secret values, "
-            "ConfigMap values, kubeconfig credentials, or pod environment variable values."
-        ),
-    ),
     RecommendedProvider(
         provider="sentry",
         label="Sentry",
@@ -629,6 +590,6 @@ def get_framework() -> dict[str, Any]:
             "next_milestone": (
                 recommendations[0]["first_milestone_name"] if recommendations else None
             ),
-            "planned_next_stage": "M89A: Kubernetes Drift Provider Foundation",
+            "planned_next_stage": "M90A: Sentry Drift Provider Foundation",
         },
     }

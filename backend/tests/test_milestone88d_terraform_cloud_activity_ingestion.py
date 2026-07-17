@@ -1151,15 +1151,19 @@ def test_expansion_framework_planned_next_stage_is_m88e_or_later() -> None:
         or "M88H" in planned or "Provider Depth QA" in planned
         or "M88I" in planned or "Cross-Cloud" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), f"planned_next_stage should point to M88E or later; got: {planned!r}"
 
 
 def test_expansion_framework_kubernetes_still_in_queue() -> None:
+    """Regression note: Kubernetes launched (message 1 / M89A) and was
+    removed from the recommended queue — Sentry is there instead."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     recommended = fw.get("recommended_next_providers", [])
     providers = [r.get("provider", "") for r in recommended if isinstance(r, dict)]
-    assert "kubernetes" in providers
+    assert "kubernetes" not in providers
+    assert "sentry" in providers
 
 
 def test_expansion_framework_terraform_cloud_in_queue() -> None:
@@ -1168,7 +1172,7 @@ def test_expansion_framework_terraform_cloud_in_queue() -> None:
     recommended = fw.get("recommended_next_providers", [])
     providers = [r.get("provider", "") for r in recommended if isinstance(r, dict)]
     # M88I complete — TC arc done; kubernetes is now head of queue
-    assert "terraform_cloud" in providers or "kubernetes" in providers, (
+    assert "terraform_cloud" in providers or "kubernetes" in providers or "sentry" in providers, (
         "Terraform Cloud or Kubernetes should be in the recommended queue"
     )
 

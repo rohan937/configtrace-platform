@@ -463,6 +463,7 @@ def test_capability_matrix_jira_planned_next_stage_m86i() -> None:
         or "M87A" in planned or "GitLab" in planned
         or "M88A" in planned or "Terraform" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), (
         f"Expected M86I/Jira/M87A/GitLab/M89A/Kubernetes or later in planned_next_stage, got '{planned}'"
     )
@@ -473,7 +474,7 @@ def test_expansion_framework_jira_points_to_m86i() -> None:
     planned = fw.get("summary", {}).get("planned_next_stage", "")
     assert ("M86" in planned or "Jira" in planned or "GitLab" in planned
             or "Terraform" in planned or "M89A" in planned
-            or "Kubernetes" in planned), (
+            or "Kubernetes" in planned or "M90A" in planned or "Sentry" in planned), (
         f"Expected M86/Jira/GitLab/Kubernetes or later in planned_next_stage, got '{planned}'"
     )
 

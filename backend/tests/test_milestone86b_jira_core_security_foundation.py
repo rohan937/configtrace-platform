@@ -907,7 +907,8 @@ class TestCapabilityMatrixAndFramework:
         assert isinstance(planned, str) and len(planned) > 0, (
             f"planned_next_stage should be a non-empty string; got {planned!r}"
         )
-        assert "M89A" in planned or "Kubernetes" in planned, (
+        assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
             f"planned_next_stage should reference M89A or Kubernetes; got {planned!r}"
         )
 

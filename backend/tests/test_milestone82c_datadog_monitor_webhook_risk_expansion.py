@@ -863,7 +863,8 @@ class TestCapabilityAndFramework:
                 or "M85A" in stage or "Linear" in stage
                 or "M86" in stage or "Jira" in stage
                 or "M87" in stage or "GitLab" in stage
-                or "M88" in stage or "M89" in stage or "Kubernetes" in stage)
+                or "M88" in stage or "M89" in stage or "Kubernetes" in stage
+                or "M90" in stage or "Sentry" in stage)
 
     def test_expansion_framework_datadog_not_in_queue(self):
         from app.services.provider_expansion_framework import RECOMMENDED_NEXT_PROVIDERS

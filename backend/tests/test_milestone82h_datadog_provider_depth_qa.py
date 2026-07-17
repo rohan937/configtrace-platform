@@ -1279,7 +1279,8 @@ def test_expansion_framework_points_past_m82i():
             or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned
             or "M87" in planned or "GitLab" in planned
-            or "M89A" in planned or "Kubernetes" in planned), (
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should reference M83A/Clerk or later; got: {planned!r}"
     )
 
@@ -1299,9 +1300,9 @@ def test_expansion_framework_pagerduty_at_head_of_queue():
     framework = get_framework()
     recs = framework.get("recommended_next_providers", [])
     assert recs, "RECOMMENDED_NEXT_PROVIDERS is empty"
-    # After the PagerDuty/Linear/Jira/GitLab/Terraform arcs shipped, Kubernetes is now at head.
-    assert recs[0]["provider"] in ("kubernetes", "pagerduty", "linear", "jira", "gitlab"), (
-        f"Kubernetes should be head of RECOMMENDED_NEXT_PROVIDERS; got: {recs[0]['provider']!r}"
+    # After the PagerDuty/Linear/Jira/GitLab/Terraform/Kubernetes arcs shipped, Sentry is now at head.
+    assert recs[0]["provider"] in ("kubernetes", "pagerduty", "linear", "jira", "gitlab", "sentry"), (
+        f"Sentry should be head of RECOMMENDED_NEXT_PROVIDERS; got: {recs[0]['provider']!r}"
     )
 
 
@@ -1337,6 +1338,7 @@ def test_expansion_framework_arc_not_abandoned():
             or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned
             or "M87" in planned or "GitLab" in planned
-            or "M89A" in planned or "Kubernetes" in planned), (
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"Datadog arc appears abandoned in expansion framework: {planned!r}"
     )

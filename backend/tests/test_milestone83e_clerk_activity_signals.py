@@ -846,7 +846,8 @@ class TestSectionH_CapabilityMatrixAndExpansionFramework:
                 or "M86" in planned or "Jira" in planned
                 or "M87" in planned or "GitLab" in planned
                 or "M88" in planned or "Terraform" in planned
-                or "M89A" in planned or "Kubernetes" in planned), (
+                or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
             f"planned_next_stage must reference M83F or later, got: {planned!r}"
         )
 

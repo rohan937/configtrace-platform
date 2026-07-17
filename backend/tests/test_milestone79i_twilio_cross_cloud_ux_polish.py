@@ -184,19 +184,19 @@ def test_expansion_framework_planned_next_stage_is_m80a():
     assert "M79I" not in stage, (
         f"planned_next_stage still points to M79I after arc closed: {stage!r}"
     )
-    assert "M89A" in stage or "Kubernetes" in stage, (
-        f"planned_next_stage should point to M89A Kubernetes (got: {stage!r})"
+    assert "M90A" in stage or "Sentry" in stage, (
+        f"planned_next_stage should point to M90A Sentry (got: {stage!r})"
     )
 
 
 def test_expansion_framework_top_recommendation_is_sendgrid():
-    """Kubernetes is the head of the recommended queue at the current roadmap position."""
+    """Sentry is the head of the recommended queue at the current roadmap position."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    assert top["provider"] == "kubernetes"
-    assert top["label"] == "Kubernetes"
+    assert top["provider"] == "sentry"
+    assert top["label"] == "Sentry"
 
 
 def test_expansion_framework_twilio_not_in_recommended_queue():
@@ -220,11 +220,11 @@ def test_expansion_framework_sendgrid_first_milestone_is_m80a():
 
 
 def test_expansion_framework_summary_next_provider_sendgrid():
-    """Framework summary next_provider = Kubernetes; next_milestone mentions M89A."""
+    """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
     fw = exp_svc.get_framework()
-    assert fw["summary"]["next_provider"] == "Kubernetes"
+    assert fw["summary"]["next_provider"] == "Sentry"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "Kubernetes" in next_ms or "M89A" in next_ms
+    assert "Sentry" in next_ms or "M90A" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

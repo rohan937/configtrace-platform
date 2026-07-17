@@ -329,10 +329,11 @@ const EXPANSION_STAGES_BRIEF: string[] = [
 // Clerk arc complete M83A–M83I; PagerDuty arc complete M84A–M84I;
 // Linear arc complete M85A–M85I; Jira arc complete M86A–M86I;
 // GitLab arc complete M87A–M87I; Terraform Cloud arc complete M88A–M88I.
-// Kubernetes is now the head of the recommended provider queue at M89A.
+// Kubernetes launched its provider architecture foundation at M89A
+// (Kubernetes message 1) and is no longer in the recommended queue.
+// Sentry is now the head of the recommended provider queue at M90A.
 const NEXT_PROVIDERS_BRIEF: Array<{ label: string; category: string; milestone: string }> = [
-  { label: "Kubernetes", category: "devops", milestone: "M89A" },
-  { label: "Sentry",     category: "devops", milestone: "M90A" },
+  { label: "Sentry", category: "devops", milestone: "M90A" },
 ];
 
 // M75C — Static capability table data. Source of truth lives in the backend

@@ -417,9 +417,9 @@ def test_disclaimer_present_on_all_findings():
 
 
 def test_kubernetes_not_implemented():
-    assert not os.path.exists(KUBERNETES_CONNECTOR_PATH), (
-        "Kubernetes connector exists — should not be implemented yet"
-    )
+    """Regression note: the Kubernetes connector now exists (Kubernetes
+    message 1 — provider architecture foundation only)."""
+    assert os.path.exists(KUBERNETES_CONNECTOR_PATH)
 
 
 def test_provider_expansion_references_kubernetes():

@@ -902,7 +902,8 @@ def test_m1_expansion_framework_planned_next_stage_m84b() -> None:
             or "M85A" in planned or "Linear" in planned
             or "M86" in planned or "Jira" in planned
             or "M87" in planned or "GitLab" in planned
-            or "M89A" in planned or "Kubernetes" in planned), (
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should point to M84B or beyond; got: {planned!r}"
     )
 
@@ -942,8 +943,8 @@ def test_m5_expansion_framework_next_provider_is_linear() -> None:
     fw = get_framework()
     summary = fw.get("summary", {})
     next_prov = summary.get("next_provider", "") or ""
-    assert "Kubernetes" in next_prov or "kubernetes" in next_prov.lower() or "Linear" in next_prov or "linear" in next_prov.lower() or "Jira" in next_prov or "jira" in next_prov.lower() or "GitLab" in next_prov or "gitlab" in next_prov.lower(), (
-        f"next_provider should be Kubernetes (current roadmap head); got: {next_prov!r}"
+    assert "Kubernetes" in next_prov or "kubernetes" in next_prov.lower() or "Linear" in next_prov or "linear" in next_prov.lower() or "Jira" in next_prov or "jira" in next_prov.lower() or "GitLab" in next_prov or "gitlab" in next_prov.lower() or "Sentry" in next_prov or "sentry" in next_prov.lower(), (
+        f"next_provider should be Sentry (current roadmap head); got: {next_prov!r}"
     )
 
 

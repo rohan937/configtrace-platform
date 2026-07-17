@@ -172,24 +172,24 @@ def test_capability_matrix_google_cloud_notes_partial_rationale():
 
 
 def test_expansion_framework_planned_next_stage_is_beyond_m78i():
-    """Planned next stage points to M89A (Kubernetes Drift Provider Foundation)."""
+    """Planned next stage points to M90A (Sentry Drift Provider Foundation)."""
     fw = exp_svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
     assert "M78I" not in stage, (
         f"planned_next_stage still points to M78I after arc closed: {stage!r}"
     )
-    assert "M89A" in stage or "Kubernetes" in stage
+    assert "M90A" in stage or "Sentry" in stage
 
 
 def test_expansion_framework_top_recommendation_is_twilio():
-    """Kubernetes is now the head of the recommended queue."""
+    """Regression note: Kubernetes launched (message 1 / M89A) and was
+    removed from the recommended queue — Sentry is now the head."""
     fw = exp_svc.get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    # Terraform Cloud completed its arc; Kubernetes is now at head.
-    assert top["provider"] == "kubernetes"
-    assert top["label"] == "Kubernetes"
+    assert top["provider"] == "sentry"
+    assert top["label"] == "Sentry"
 
 
 def test_expansion_framework_google_cloud_not_in_recommended_queue():
@@ -200,12 +200,12 @@ def test_expansion_framework_google_cloud_not_in_recommended_queue():
 
 
 def test_expansion_framework_summary_next_provider_and_milestone():
-    """Framework summary next_provider = Kubernetes; next_milestone mentions M89A."""
+    """Framework summary next_provider = Sentry; next_milestone mentions M90A."""
     fw = exp_svc.get_framework()
-    # Terraform Cloud completed its arc; Kubernetes is now head.
-    assert fw["summary"]["next_provider"] == "Kubernetes"
+    # Kubernetes launched and completed message 1; Sentry is now head.
+    assert fw["summary"]["next_provider"] == "Sentry"
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "M89A" in next_ms or "Kubernetes" in next_ms
+    assert "M90A" in next_ms or "Sentry" in next_ms
 
 
 def test_expansion_framework_twilio_first_milestone_is_m79a():

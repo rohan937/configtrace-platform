@@ -494,7 +494,8 @@ class TestExpansionFramework:
         assert ("M87F" in planned or "Correlations" in planned
                 or "M87G" in planned or "Demo" in planned or "M87H" in planned or "M87I" in planned or "Cross-Cloud" in planned
                 or "M88A" in planned or "Terraform" in planned
-                or "M89A" in planned or "Kubernetes" in planned)
+                or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned)
 
     def test_terraform_cloud_remains_in_queue(self) -> None:
         recs = get_framework().get("recommended_next_providers", [])

@@ -452,6 +452,7 @@ def test_expansion_framework_jira_points_to_m86e() -> None:
     planned = fw["summary"]["planned_next_stage"]
     assert (
         "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
         or "M86E" in planned or "Jira Activity Signals" in planned
         or "M86F" in planned or "M86G" in planned or "M86H" in planned
         or "M86I" in planned

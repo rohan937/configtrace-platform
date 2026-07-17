@@ -269,6 +269,7 @@ def create_scheduled_syncs_for_active_integrations(db: Session) -> dict:
         "jira",
         "gitlab",
         "terraform_cloud",
+        "kubernetes",
     )
 
     # ── Diagnostic pre-scan ────────────────────────────────────────────────

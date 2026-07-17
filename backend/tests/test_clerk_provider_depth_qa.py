@@ -948,7 +948,8 @@ class TestRoadmapState:
     def test_planned_next_stage_is_m89a_kubernetes(self) -> None:
         fw = get_framework()
         planned = fw["summary"]["planned_next_stage"]
-        assert "M89A" in planned or "Kubernetes" in planned, (
+        assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
             f"planned_next_stage should be M89A/Kubernetes, got {planned!r}"
         )
 
@@ -973,13 +974,15 @@ class TestRoadmapState:
         )
 
     def test_kubernetes_is_head_of_recommended_providers(self) -> None:
+        """Regression note: Kubernetes launched and was removed from the
+        recommended queue — Sentry is now the head."""
         fw = get_framework()
         recommended = fw.get("recommended_next_providers", [])
         assert recommended, "recommended_next_providers must not be empty"
         first = recommended[0]
         provider = first.get("provider", "") if isinstance(first, dict) else str(first)
-        assert "kubernetes" in provider.lower(), (
-            f"Expected kubernetes at head of recommended providers, got: {provider!r}"
+        assert "sentry" in provider.lower(), (
+            f"Expected sentry at head of recommended providers, got: {provider!r}"
         )
 
 
@@ -991,10 +994,10 @@ class TestRoadmapState:
 class TestKubernetesNotImplemented:
 
     def test_no_kubernetes_connector(self) -> None:
+        """Regression note: the Kubernetes connector now exists (Kubernetes
+        message 1 — provider architecture foundation only)."""
         connector_path = _REPO_ROOT / "backend" / "app" / "connectors" / "kubernetes.py"
-        assert not connector_path.exists(), (
-            "Kubernetes connector already exists — M89A may have started unexpectedly"
-        )
+        assert connector_path.exists()
 
     def test_no_kubernetes_security_rules(self) -> None:
         rules_path = (
@@ -1042,8 +1045,10 @@ class TestCapabilityMatrix:
             )
 
     def test_kubernetes_not_in_capability_matrix(self) -> None:
-        """Kubernetes must not yet have a capability matrix entry."""
+        """Regression note: Kubernetes launched its provider architecture
+        foundation (message 1) — capability entry exists (maturity='planned',
+        no security rules yet)."""
         kube_cap = get_provider_capability("kubernetes")
-        assert kube_cap is None, (
-            "Kubernetes capability matrix entry found — M89A may have started"
-        )
+        assert kube_cap is not None
+        assert kube_cap.maturity == "planned"
+        assert kube_cap.security.security_rules is False

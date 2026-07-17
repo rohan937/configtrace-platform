@@ -615,6 +615,7 @@ def test_expansion_framework_planned_next_stage_is_m89a() -> None:
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     planned = fw.get("summary", {}).get("planned_next_stage", "")
-    assert "M89A" in planned or "Kubernetes" in planned, (
+    assert ("M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"planned_next_stage should point to M89A/Kubernetes; got: {planned!r}"
     )

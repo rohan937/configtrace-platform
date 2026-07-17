@@ -2856,6 +2856,36 @@ _AZURE_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
 }
 
 
+# Kubernetes — foundation stage (message 1 of a 9-message arc). Only the
+# fields already emitted by KubernetesConnector.fetch() are tracked here.
+# ``kubernetes_api_capability`` is deliberately left untracked (empty tuple)
+# — per the message-1 scope, API-capability drift should not yet generate
+# noisy user-facing Changes; this is revisited once later messages give
+# capability transitions real meaning (e.g. a resource family disappearing
+# ahead of removing collection for it).
+_KUBERNETES_TRACKED_FIELDS_BY_TYPE: dict[str, tuple[str, ...]] = {
+    "kubernetes_cluster": (
+        "kubernetes_version",
+        "kubernetes_major_minor",
+        "platform",
+        "partial_permission_indicator",
+        "collection_completeness_category",
+        "server_certificate_verification_enabled",
+    ),
+    "kubernetes_namespace": (
+        "phase",
+        "terminating",
+        "psa_enforce",
+        "psa_enforce_version",
+        "psa_audit",
+        "psa_audit_version",
+        "psa_warn",
+        "psa_warn_version",
+    ),
+    "kubernetes_api_capability": (),
+}
+
+
 def _tracked_fields_for(record: dict) -> tuple[str, ...]:
     """Return the tuple of field names to compare for *record*.
 
@@ -2897,6 +2927,9 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
       ``_GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE``.
     * Record types starting with ``"azure_"`` look up in
       ``_AZURE_TRACKED_FIELDS_BY_TYPE``.
+    * Record types starting with ``"kubernetes_"`` look up in
+      ``_KUBERNETES_TRACKED_FIELDS_BY_TYPE`` (foundation stage — see that
+      dict's comment for scope).
     * All other records (Cloudflare DNS) use ``_TRACKED_FIELDS``.
 
     Args:
@@ -2944,6 +2977,8 @@ def _tracked_fields_for(record: dict) -> tuple[str, ...]:
         return _GOOGLE_CLOUD_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("azure_"):
         return _AZURE_TRACKED_FIELDS_BY_TYPE.get(rt, ())
+    if isinstance(rt, str) and rt.startswith("kubernetes_"):
+        return _KUBERNETES_TRACKED_FIELDS_BY_TYPE.get(rt, ())
     if isinstance(rt, str) and rt.startswith("cloudflare_"):
         # Explicit cloudflare_* prefix → look up in the Cloudflare table.
         # Unknown cloudflare_* subtypes return () (empty), matching every

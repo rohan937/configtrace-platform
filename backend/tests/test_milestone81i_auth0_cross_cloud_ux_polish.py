@@ -229,7 +229,8 @@ def test_expansion_framework_planned_next_stage_is_m82_pre():
             or "M85A" in stage or "Linear" in stage
             or "M86A" in stage or "M86B" in stage or "Jira" in stage
             or "M87A" in stage or "GitLab" in stage
-            or "M88" in stage or "M89" in stage or "Kubernetes" in stage), (
+            or "M88" in stage or "M89" in stage or "Kubernetes" in stage
+            or "M90" in stage or "Sentry" in stage), (
         f"planned_next_stage should point to M82/M83/Clerk or later; got: {stage!r}"
     )
 
@@ -240,9 +241,9 @@ def test_expansion_framework_top_recommendation_is_datadog():
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
     top = recs[0]
-    # After M88A, Terraform Cloud launched; Kubernetes is now at head.
-    assert top["provider"] in ("pagerduty", "linear", "jira", "gitlab", "kubernetes")
-    assert top["label"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Kubernetes")
+    # Kubernetes launched (message 1 / M89A) and completed; Sentry is now at head.
+    assert top["provider"] in ("pagerduty", "linear", "jira", "gitlab", "kubernetes", "sentry")
+    assert top["label"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Kubernetes", "Sentry")
 
 
 def test_expansion_framework_auth0_not_in_recommended_queue():
@@ -264,10 +265,10 @@ def test_expansion_framework_sendgrid_not_in_recommended_queue():
 def test_expansion_framework_summary_next_provider_is_datadog():
     """Framework summary next_provider = Clerk (Datadog launched in M82A)."""
     fw = exp_svc.get_framework()
-    # After M88A, Terraform Cloud launched; Kubernetes is now head.
-    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Kubernetes")
+    # Kubernetes launched (message 1 / M89A) and completed; Sentry is now head.
+    assert fw["summary"]["next_provider"] in ("PagerDuty", "Linear", "Jira", "GitLab", "Kubernetes", "Sentry")
     next_ms = fw["summary"]["next_milestone"] or ""
-    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms or "M86B" in next_ms or "M87A" in next_ms or "GitLab" in next_ms or "M88" in next_ms or "M89" in next_ms or "Kubernetes" in next_ms
+    assert "PagerDuty" in next_ms or "M84A" in next_ms or "Clerk" in next_ms or "Linear" in next_ms or "M85A" in next_ms or "Jira" in next_ms or "M86A" in next_ms or "M86B" in next_ms or "M87A" in next_ms or "GitLab" in next_ms or "M88" in next_ms or "M89" in next_ms or "Kubernetes" in next_ms or "M90" in next_ms or "Sentry" in next_ms
 
 
 # ════════════════════════════════════════════════════════════════════════════

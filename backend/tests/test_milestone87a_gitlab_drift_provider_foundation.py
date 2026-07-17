@@ -1478,7 +1478,8 @@ class TestExpansionFramework:
                 or "Provider Depth" in planned
                 or "M87I" in planned or "Cross-Cloud" in planned
                 or "M88A" in planned or "Terraform" in planned
-                or "M89A" in planned or "Kubernetes" in planned), (
+                or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
             f"planned_next_stage should reference M87B or later GitLab arc stage; got: {planned!r}"
         )
 

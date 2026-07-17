@@ -1252,7 +1252,7 @@ def test_expansion_framework_planned_next_stage_is_m81b():
     assert "M81A" not in stage, (
         f"M81A is done; pointer must advance past it (got: {stage!r})"
     )
-    assert any(tag in stage for tag in ("M81B", "M81C", "M81D", "M81E", "M81F", "M81G", "M81H", "M81I", "M82", "M83", "M84", "M85", "M86", "M87", "M88", "M89", "Kubernetes")), (
+    assert any(tag in stage for tag in ("M81B", "M81C", "M81D", "M81E", "M81F", "M81G", "M81H", "M81I", "M82", "M83", "M84", "M85", "M86", "M87", "M88", "M89", "Kubernetes", "M90", "Sentry")), (
         f"planned_next_stage should point to M81B or beyond after M81A; got: {stage!r}"
     )
 
@@ -1267,15 +1267,15 @@ def test_expansion_framework_auth0_not_in_recommended_queue():
 
 
 def test_expansion_framework_top_recommendation_is_kubernetes():
+    """Regression note: Kubernetes launched its provider architecture
+    foundation (Kubernetes message 1 / M89A) and was removed from the
+    recommended queue — Sentry (M90A) is now the head."""
     from app.services.provider_expansion_framework import get_framework
     fw = get_framework()
     recs = fw["recommended_next_providers"]
     assert len(recs) > 0
-    # Datadog launched in M82A and has fully completed its dual-stack arc, so it
-    # is no longer in the recommended-next queue. The queue head has advanced to
-    # Kubernetes (M89A), which is the provider the framework now actually returns.
-    assert recs[0]["provider"] == "kubernetes", (
-        f"expansion-framework queue head should be kubernetes; got "
+    assert recs[0]["provider"] == "sentry", (
+        f"expansion-framework queue head should be sentry; got "
         f"{recs[0]['provider']!r}"
     )
 

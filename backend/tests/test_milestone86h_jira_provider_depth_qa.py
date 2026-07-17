@@ -628,6 +628,7 @@ def test_expansion_framework_jira_points_to_m86i() -> None:
         or "M87A" in planned or "GitLab" in planned
         or "M88A" in planned or "Terraform" in planned
         or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned
     ), (
         f"Expected M86I/Jira/M87A/GitLab/M88A/Terraform/M89A/Kubernetes in planned_next_stage, got '{planned}'"
     )

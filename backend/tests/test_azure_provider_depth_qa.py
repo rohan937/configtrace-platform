@@ -402,11 +402,12 @@ class TestAzureSeverityCalibration:
 
 class TestAzureExpansionFramework:
     def test_planned_next_stage_points_at_kubernetes(self) -> None:
+        """Regression note: Kubernetes launched (message 1 / M89A) — Sentry/M90A is now next."""
         from app.services.provider_expansion_framework import get_framework
         stage = get_framework()["summary"]["planned_next_stage"]
-        assert "M89A" in stage, f"planned_next_stage should contain M89A, got {stage!r}"
-        assert "Kubernetes" in stage, (
-            f"planned_next_stage should contain Kubernetes, got {stage!r}"
+        assert "M90A" in stage, f"planned_next_stage should contain M90A, got {stage!r}"
+        assert "Sentry" in stage, (
+            f"planned_next_stage should contain Sentry, got {stage!r}"
         )
 
     def test_azure_is_not_the_next_stage(self) -> None:

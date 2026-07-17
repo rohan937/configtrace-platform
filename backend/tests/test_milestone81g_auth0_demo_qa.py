@@ -851,7 +851,7 @@ def test_i5_expansion_framework_points_to_m81h():
     from app.services import provider_expansion_framework as svc
     fw = svc.get_framework()
     stage = fw["summary"]["planned_next_stage"]
-    assert any(tag in stage for tag in ("M81H", "M81I", "M82", "M83", "M84", "M85", "M86", "M87", "M88", "M89", "Kubernetes")), (
+    assert any(tag in stage for tag in ("M81H", "M81I", "M82", "M83", "M84", "M85", "M86", "M87", "M88", "M89", "Kubernetes", "M90", "Sentry")), (
         f"expected planned_next_stage to reference M81H, M81I, or M82-era; got {stage!r}"
     )
 

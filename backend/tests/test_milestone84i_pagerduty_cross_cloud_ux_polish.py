@@ -232,7 +232,8 @@ def test_b1_expansion_framework_planned_next_stage_m85a() -> None:
             or "M86A" in planned or "Jira" in planned
             or "M87A" in planned or "GitLab" in planned
             or "M88A" in planned or "Terraform" in planned
-            or "M89A" in planned or "Kubernetes" in planned), (
+            or "M89A" in planned or "Kubernetes" in planned
+                or "M90A" in planned or "Sentry" in planned), (
         f"After M84I, planned_next_stage should point to M85A/Linear or later; got: {planned!r}"
     )
 
@@ -282,7 +283,8 @@ def test_b5_expansion_framework_next_milestone_m85a() -> None:
             or "M86A" in next_ms or "Jira" in next_ms
             or "M87A" in next_ms or "GitLab" in next_ms
             or "M88A" in next_ms or "Terraform" in next_ms
-            or "M89A" in next_ms or "Kubernetes" in next_ms), (
+            or "M89A" in next_ms or "Kubernetes" in next_ms
+            or "M90A" in next_ms or "Sentry" in next_ms), (
         f"next_milestone should reference M85A/Linear through M89A/Kubernetes; got: {next_ms!r}"
     )
 
@@ -296,8 +298,9 @@ def test_b6_expansion_framework_next_provider_linear() -> None:
             or "Jira" in next_prov or "jira" in next_prov.lower()
             or "GitLab" in next_prov or "gitlab" in next_prov.lower()
             or "Terraform" in next_prov or "terraform" in next_prov.lower()
-            or "Kubernetes" in next_prov or "kubernetes" in next_prov.lower()), (
-        f"next_provider should be Linear, Jira, GitLab, Terraform, or Kubernetes; got: {next_prov!r}"
+            or "Kubernetes" in next_prov or "kubernetes" in next_prov.lower()
+            or "Sentry" in next_prov or "sentry" in next_prov.lower()), (
+        f"next_provider should be Linear, Jira, GitLab, Terraform, Kubernetes, or Sentry; got: {next_prov!r}"
     )
 
 
